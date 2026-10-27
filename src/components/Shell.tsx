@@ -5,6 +5,7 @@ import { client } from "../data";
 import { Logo } from "./Logo";
 import { UserMenu } from "./UserMenu";
 import { useAsync } from "../lib/useAsync";
+import { useWorkspaceVersion } from "../lib/workspace";
 
 const NAV = [
   { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
@@ -28,7 +29,8 @@ function initials(name: string) {
 }
 
 function Workspace() {
-  const settings = useAsync(() => client.getSettings(), []);
+  const version = useWorkspaceVersion();
+  const settings = useAsync(() => client.getSettings(), [version]);
   const name = settings.status === "ready" ? settings.data.workspaceName : "";
   return (
     <div className="workspace">

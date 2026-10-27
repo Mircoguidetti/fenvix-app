@@ -1,9 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { client, type Settings } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session/SessionProvider";
 import { useToast } from "../components/Toast";
+import { workspaceChanged } from "../lib/workspace";
 
 export function SettingsPage() {
   const loaded = useAsync(() => client.getSettings(), []);
@@ -23,14 +25,17 @@ export function SettingsPage() {
     if (!form.workspaceName.trim()) return setError("Enter a workspace name.");
     setError(null);
     await client.saveSettings({ ...form, workspaceName: form.workspaceName.trim() });
+    workspaceChanged();
     setSaved(true);
+    toast("Settings saved");
   }
 
   return (
     <>
-      <PageHeader title="Settings" description="Workspace and appearance." />
+      <PageHeader title="Settings" description="Your workspace and your account." />
 
-      <Card id="workspace" title="Workspace">
+      <div className="grid-2 even">
+      <Card id="workspace" title="Workspace" description="Everyone in this workspace sees these settings.">
         {loaded.status === "loading" && <Message>Loading settings</Message>}
         {loaded.status === "error" && <Message role="alert">{loaded.message}</Message>}
         {form && (
@@ -55,29 +60,45 @@ export function SettingsPage() {
             </label>
             <div className="row-actions">
               <button type="submit" className="btn btn-primary">Save changes</button>
-              <span role="status" className="muted">{saved ? "Saved (sample data, nothing is stored)" : ""}</span>
+              <span role="status" className="muted">{saved ? "Saved" : ""}</span>
             </div>
           </form>
         )}
       </Card>
 
-      <Card id="account" title="Account">
-        <dl className="facts">
+      <Card id="account" title="Account" description="You are signed in on this device.">
+        <dl className="facts facts-fill">
           <div>
             <dt>Name</dt>
             <dd>{user?.name}</dd>
           </div>
           <div>
             <dt>Email</dt>
-            <dd>{user?.email}</dd>
+            <dd className="ellipsis">{user?.email}</dd>
+          </div>
+          <div>
+            <dt>Plan</dt>
+            <dd>
+              Managed · <Link to="/billing" className="row-link">Billing</Link>
+            </dd>
+          </div>
+          <div>
+            <dt>Role</dt>
+            <dd>Owner</dd>
+          </div>
+          <div>
+            <dt>Member since</dt>
+            <dd>March 2026</dd>
           </div>
         </dl>
         <div className="row-actions">
           <button type="button" className="btn" onClick={async () => (await signOut(), toast("Signed out"))}>
             Sign out
           </button>
+          <span className="muted small">Signing out affects this browser only.</span>
         </div>
       </Card>
+      </div>
     </>
   );
 }

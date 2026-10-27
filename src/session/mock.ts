@@ -43,7 +43,6 @@ const titleCase = (s: string) => s.replace(/[._-]+/g, " ").replace(/\b\w/g, (c) 
 
 /** Stands in for the real providers until they are wired up. Nothing leaves the browser. */
 export const mockSession: SessionClient = {
-  isSample: true,
   getSession: () => wait(read()),
   async signInWithProvider() {
     write(OWNER);

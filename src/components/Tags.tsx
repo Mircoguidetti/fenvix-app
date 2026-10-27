@@ -18,11 +18,11 @@ export function TagChips({ tags, max = 2, onPick }: { tags: string[]; max?: numb
       )}
       {rest.length > 0 && (
         <span className="chip-rest">
-          <button type="button" className="chip chip-more" aria-label={`${rest.length} more tags: ${rest.join(", ")}`}>
+          <button type="button" className="chip chip-more" aria-label={`All tags: ${tags.join(", ")}`}>
             +{rest.length}
           </button>
           <span className="chip-pop" role="presentation">
-            {rest.map((t) => (
+            {tags.map((t) => (
               <span key={t} className="chip">
                 {t}
               </span>

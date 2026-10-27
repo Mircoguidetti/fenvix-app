@@ -246,8 +246,8 @@ table.plain th.num, table.plain td.num { text-align: right; }
 .tags-cell { min-width: 180px; }
 
 /* Selection and bulk actions */
-.select-hit { display: grid; place-items: center; width: 40px; height: 40px; cursor: pointer; }
-table.data th.select-col, table.data td.select-cell { width: 48px; padding: 0 0 0 8px; }
+.select-hit { display: grid; place-items: center; width: 36px; height: 40px; cursor: pointer; }
+table.data th.select-col, table.data td.select-cell { width: 48px; padding: 0 0 0 10px; overflow: visible; }
 table.data tr[data-selected] { background: var(--surface-2); }
 .bulk-bar { box-shadow: var(--shadow); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 10px 14px; border: 1px solid var(--text); border-radius: var(--radius); background: var(--bg); }
 .bulk-count { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
@@ -273,7 +273,7 @@ table.data tr[data-selected] { background: var(--surface-2); }
 .toast-close { width: 32px; height: 32px; border-color: transparent; background: transparent; color: inherit; flex-shrink: 0; }
 .toast-close:hover { background: transparent; opacity: 0.7; }
 .toast-close:focus-visible { outline-color: var(--on-text); }
-.dialog-body { color: var(--muted); }
+.dialog-body { color: var(--muted); display: flex; flex-direction: column; gap: 14px; }
 .dialog-body .field label { color: var(--text); }
 .stack.wide { max-width: none; }
 .tag-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
@@ -297,10 +297,15 @@ table.data tr[data-selected] { background: var(--surface-2); }
 .boot { padding: 24px; }
 .user-menu { position: relative; }
 .user-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; background: transparent; border: 1px solid transparent; border-radius: 10px; cursor: pointer; text-align: left; }
-.user-btn:hover { background: var(--surface-2); }
+.user-btn:hover, .user-btn[aria-expanded="true"] { background: var(--nav-hover); }
+.user-btn:focus-visible { outline-color: var(--nav-text); }
 .user-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 500; }
 .flip { transform: rotate(180deg); }
-.user-panel { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); background: var(--bg); border: 1px solid var(--border-strong); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 4px; z-index: 60; }
+.user-panel { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); background: var(--nav-hover); color: var(--nav-text); border: 1px solid var(--nav-border); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 4px; z-index: 60; box-shadow: var(--shadow-lg); }
+.user-panel .muted { color: var(--nav-muted); }
+.user-panel .btn { background: transparent; border-color: var(--nav-border); color: var(--nav-text); }
+.user-panel .btn:hover { background: var(--nav-active); }
+.user-panel .btn:focus-visible { outline-color: var(--nav-text); }
 .user-panel .btn { margin-top: 8px; }
 .user-full { font-weight: 600; overflow-wrap: anywhere; }
 .user-email { overflow-wrap: anywhere; }
@@ -390,7 +395,8 @@ a.btn { text-decoration: none; }
 /* ---------------------------------------------------------------- tag chips that never wrap */
 .tags-cell { min-width: 150px; }
 .tags-cell .chips { flex-wrap: nowrap; overflow: visible; min-width: 0; }
-.tags-cell .chip { flex-shrink: 0; }
+.tags-cell .chip { flex-shrink: 1; min-width: 0; }
+.tags-cell .chip-more { flex-shrink: 0; }
 .state-cell { line-height: 1.25; }
 .kept { display: block; margin-top: 1px; font-size: 11.5px; }
 .chip-rest { position: relative; display: inline-flex; }
@@ -409,9 +415,10 @@ a.btn { text-decoration: none; }
 @media (min-width: 761px) {
   table.data.dbs { table-layout: fixed; }
   table.data.dbs th, table.data.dbs td { padding: 0 12px; overflow: hidden; }
-  table.data.dbs th:nth-child(1) { width: 46px; padding-left: 8px; padding-right: 0; }
-  table.data.dbs th:nth-child(2) { width: 20%; }
-  table.data.dbs th:nth-child(3) { width: 28%; }
+  table.data.dbs th:nth-child(1) { width: 52px; }
+  table.data.dbs th.select-col, table.data.dbs td.select-cell { padding-left: 10px; padding-right: 6px; }
+  table.data.dbs th:nth-child(2) { width: 18%; }
+  table.data.dbs th:nth-child(3) { width: 30%; }
   table.data.dbs th:nth-child(4) { width: 120px; }
   table.data.dbs th:nth-child(5) { width: 12%; }
   table.data.dbs th:nth-child(6) { width: 14%; }
@@ -463,3 +470,9 @@ table.data.dbs tbody tr { height: 58px; }
 .plan-features { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 6px; flex: 1; font-size: 13px; }
 .plan-features li { display: flex; align-items: flex-start; gap: 8px; }
 .plan-features svg { flex-shrink: 0; margin-top: 3px; }
+.ticks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
+.ticks li { position: relative; padding-left: 22px; }
+.ticks li::before { content: ""; position: absolute; left: 2px; top: 7px; width: 8px; height: 8px; border-radius: 50%; background: var(--text); }
+#create .field.grow, .card .inline-form .field.grow { max-width: 460px; }
+.card > .ticks { flex: 1; justify-content: space-between; }
+@media (max-width: 760px) { .counts-sep { display: none; } .counts-bar { gap: 6px 16px; } }

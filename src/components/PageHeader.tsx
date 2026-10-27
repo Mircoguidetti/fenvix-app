@@ -18,7 +18,7 @@ export function PageHeader({ title, description, actions, back }: { title: React
 export function Card({ title, description, tag, actions, children, id }: { title: ReactNode; description?: ReactNode; tag?: ReactNode; actions?: ReactNode; children?: ReactNode; id?: string }) {
   const headingId = id ? `${id}-h` : undefined;
   return (
-    <section className="card" aria-labelledby={headingId}>
+    <section className="card" id={id} aria-labelledby={headingId}>
       <div className="card-head">
         <div className="card-head-main">
           <h2 id={headingId}>{title}</h2>

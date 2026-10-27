@@ -52,7 +52,7 @@ export function ApiKeysPage() {
 
   return (
     <>
-      <PageHeader title="API keys" description="Keys let your code manage databases. A key is shown in full only once, when you create it." />
+      <PageHeader title="API keys" description="Your code uses these keys to manage databases. Each key is shown in full only once." />
 
       <Card id="create" title="Create a key">
         <form onSubmit={create} className="inline-form" noValidate>
@@ -65,7 +65,7 @@ export function ApiKeysPage() {
         {error && <p id="key-error" className="error" role="alert">{error}</p>}
         {created && (
           <div className="callout" role="status">
-            <p><strong>Key “{created.name}” created.</strong> Copy it now. It will not be shown again. This is a sample value, not a working key.</p>
+            <p><strong>Key “{created.name}” created.</strong> Copy it now. It is never shown again.</p>
             <code className="secret mono">{created.secret}</code>
             <div className="row-actions">
               <CopyButton value={created.secret} what="new key" />

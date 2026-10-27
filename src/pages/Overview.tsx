@@ -4,6 +4,7 @@ import { client, type UsageRange } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
 import { AwakeAreaChart, CostLineChart, HBars, Sparkline, TimeBarsChart } from "../components/charts";
 import { useAsync } from "../lib/useAsync";
+import { useWorkspaceVersion } from "../lib/workspace";
 import { formatCompact, formatCount, formatMoney, formatRelative } from "../lib/format";
 
 const RANGES: { value: UsageRange; label: string }[] = [
@@ -33,7 +34,8 @@ export function OverviewPage() {
   const [tagKey, setTagKey] = useState("customer");
   const [metric, setMetric] = useState<"requests" | "storageGb">("requests");
 
-  const settings = useAsync(() => client.getSettings(), []);
+  const version = useWorkspaceVersion();
+  const settings = useAsync(() => client.getSettings(), [version]);
   const data = useAsync(() => client.getOverview(range), [range]);
   const tags = useAsync(() => client.listTags(), []);
   const breakdown = useAsync(() => client.getTagBreakdown(tagKey, 8), [tagKey]);

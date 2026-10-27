@@ -1,4 +1,4 @@
-/** Smallest valid PDF with lines of text, for the sample invoice download. */
+/** Smallest valid PDF with lines of text, for the invoice download. */
 export function simplePdf(lines: string[]): string {
   const esc = (t: string) => t.replace(/[\\()]/g, "\\$&");
   const content = ["BT", "/F1 12 Tf", "72 760 Td", "16 TL", ...lines.map((l) => `(${esc(l)}) Tj T*`), "ET"].join("\n");

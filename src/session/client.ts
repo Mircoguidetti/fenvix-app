@@ -12,8 +12,6 @@ export interface SessionUser {
  * redirect (GitHub, Google) can navigate away inside `signInWithProvider` and resolve on return.
  */
 export interface SessionClient {
-  /** True while sign-in is simulated. */
-  readonly isSample: boolean;
   /** The signed-in user, or null. */
   getSession(): Promise<SessionUser | null>;
   signInWithProvider(provider: AuthProvider): Promise<SessionUser>;

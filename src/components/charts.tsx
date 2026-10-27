@@ -395,7 +395,7 @@ export function MonthBars({ months, format }: { months: { label: string; value: 
 
   return (
     <div ref={ref}>
-      <Frame width={width} height={height} label={`Cost by month. Latest ${format(months[months.length - 1]?.value ?? 0)}.`}>
+      <Frame width={width} height={height} label={`Cost by month. This month so far ${format(months[months.length - 1]?.value ?? 0)}.`}>
         {grid(max, inner, format)}
         {months.map((m, i) => {
           const h = (m.value / max) * inner.h;

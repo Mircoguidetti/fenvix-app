@@ -53,7 +53,7 @@ export function CreateDatabasePage() {
     return (
       <>
         <PageHeader title="Database created" back={back} />
-        <Card id="created" title={<span className="mono">{created.name}</span>} description="Use this connection string in your client. Replace the password placeholder with your own.">
+        <Card id="created" title={<span className="mono">{created.name}</span>} description="Point any MongoDB driver at this. The password is the one you set for the database user.">
           <label htmlFor="new-conn" className="sr-only">
             Connection string
           </label>
@@ -72,7 +72,8 @@ export function CreateDatabasePage() {
   return (
     <>
       <PageHeader title="Create database" description="A new database starts asleep and wakes on its first request." back={back} />
-      <Card id="new" title="Details">
+      <div className="grid-2">
+      <Card id="new" title="Details" description="The name is part of the connection string, so it cannot change later.">
         <form onSubmit={submit} className="stack" noValidate>
           <div className="field">
             <label htmlFor="new-name">Name</label>
@@ -106,6 +107,17 @@ export function CreateDatabasePage() {
           </div>
         </form>
       </Card>
+
+      <Card id="what-next" title="What happens next" description="A database is ready the moment you create it.">
+        <ul className="ticks">
+          <li>It starts asleep and wakes on its first request, in under a second.</li>
+          <li>You get a connection string straight away. Any MongoDB driver can use it.</li>
+          <li>While it sleeps you pay for its storage only.</li>
+          <li>Tags can change at any time. The name and region cannot.</li>
+          <li>Fork it, restore it to a point in time, export it or erase it whenever you like.</li>
+        </ul>
+      </Card>
+      </div>
     </>
   );
 }

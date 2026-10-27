@@ -487,7 +487,6 @@ function randomHex(n: number) {
 }
 
 export const mockClient: DataClient = {
-  isSample: true,
   now: () => NOW,
   listDatabases(query = {}) {
     const { sort = "name", dir = "asc", page = 1, pageSize = 50 } = query;

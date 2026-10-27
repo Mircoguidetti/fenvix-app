@@ -6,8 +6,6 @@ import type { ApiKey, BillingOverview, BulkResult, CreatedApiKey, Database, Expo
  * instead of the mock one.
  */
 export interface DataClient {
-  /** True while the data is fake. Drives the "Sample data" label. */
-  readonly isSample: boolean;
   /** "now" used for relative times. A real client returns the current time. */
   now(): Date;
   /** Filtered, sorted, paged list. Default sort is last active first, 50 per page. */

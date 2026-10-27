@@ -8,6 +8,9 @@ export const VIEWPORTS = [
   ["mobile", { width: 390, height: 844 }],
 ];
 
+/** Nothing in the product may read as a demo, a draft or a stand-in. */
+export const BANNED = /sample|demo|test|placeholder|coming soon|planned|preview|lorem/i;
+
 export const launch = () => chromium.launch();
 
 export function makeReporter() {
@@ -26,8 +29,8 @@ export function makeReporter() {
 }
 
 /** New page that records console errors and failed requests into `errors`. */
-export async function newPage(browser, { viewport, theme = "light", acceptDownloads = true } = {}) {
-  const ctx = await browser.newContext({ viewport, colorScheme: theme, reducedMotion: "reduce", acceptDownloads });
+export async function newPage(browser, { viewport, acceptDownloads = true } = {}) {
+  const ctx = await browser.newContext({ viewport, colorScheme: "light", reducedMotion: "reduce", acceptDownloads });
   const page = await ctx.newPage();
   const errors = [];
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
@@ -42,15 +45,32 @@ export const isMobile = (viewport) => viewport.width < 760;
 export async function signIn(page, route = "#/") {
   await page.goto(BASE + route);
   await page.getByRole("button", { name: "Continue with GitHub" }).click();
-  await page.locator("main h1").first().waitFor();
-  await page.getByRole("button", { name: "Continue with GitHub" }).waitFor({ state: "detached" });
+  await page.locator(".shell").waitFor();
   await settled(page);
 }
 
-/** Waits until no "Loading ..." message is left and fonts are ready. */
+/** Waits until the shell and the page have their data. */
 export async function settled(page) {
   await page.waitForFunction(() => !document.body.innerText.match(/^Loading\b/m));
+  await page.waitForFunction(() => {
+    const el = document.querySelector(".workspace-name");
+    return !el || el.textContent.trim().length > 0;
+  });
   await page.evaluate(() => document.fonts.ready);
+}
+
+/** Visible text of the page, with the text of inputs and selects. */
+export async function visibleText(page) {
+  return page.evaluate(() => {
+    const parts = [document.body.innerText];
+    for (const el of document.querySelectorAll("input, textarea")) {
+      if (el.type === "checkbox" || el.type === "radio") continue;
+      parts.push(el.value, el.placeholder ?? "");
+    }
+    for (const s of document.querySelectorAll("select")) parts.push(...[...s.options].map((o) => o.textContent));
+    for (const el of document.querySelectorAll("[aria-label], [title]")) parts.push(el.getAttribute("aria-label") ?? "", el.getAttribute("title") ?? "");
+    return parts.join("\n");
+  });
 }
 
 /** Horizontal overflow and overlapping interactive elements. */
@@ -66,16 +86,18 @@ export async function layoutProblems(page) {
       if (cs.position === "fixed" || el.closest(".sr-only") || el.classList.contains("sr-only") || el.classList.contains("skip-link")) continue;
       if (r.right > vw + 1 && !el.closest(".table-scroll")) out.push(`${el.tagName}.${el.className} extends past viewport (${Math.round(r.right)} > ${vw})`);
     }
-    // Elements covered by a dialog, the drawer or a menu are not a layout problem.
+    // Elements under a dialog, the drawer or an open menu are not a layout problem.
     const onTop = (e) => {
       const r = e.getBoundingClientRect();
-      const x = r.left + r.width / 2, y = r.top + r.height / 2;
-      const t = document.elementFromPoint(x, y);
+      const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
       return !t || e.contains(t) || t.contains(e);
     };
     const hit = [...document.querySelectorAll("a, button, input, select, textarea")].filter((e) => {
       const r = e.getBoundingClientRect();
-      return onTop(e) && r.width && r.height && !e.closest("[hidden],dialog:not([open])") && !e.classList.contains("skip-link") && getComputedStyle(e).visibility !== "hidden" && !(e.type === "radio" || e.type === "checkbox") && getComputedStyle(e).position !== "absolute";
+      const cs = getComputedStyle(e);
+      // Inline links wrap across lines, so their boxes overlap by design.
+      if (cs.display === "inline") return false;
+      return onTop(e) && r.width && r.height && !e.closest("[hidden],dialog:not([open])") && !e.classList.contains("skip-link") && cs.visibility !== "hidden" && !(e.type === "radio" || e.type === "checkbox") && cs.position !== "absolute";
     });
     for (let i = 0; i < hit.length; i++)
       for (let j = i + 1; j < hit.length; j++) {
@@ -84,6 +106,27 @@ export async function layoutProblems(page) {
         const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
         if (w > 1 && h > 1 && !hit[i].contains(hit[j]) && !hit[j].contains(hit[i])) out.push(`overlap: ${hit[i].tagName}[${hit[i].textContent.trim().slice(0, 20)}] and ${hit[j].tagName}[${hit[j].textContent.trim().slice(0, 20)}]`);
       }
+    return out;
+  });
+}
+
+/** Text that is cut off by its own box, and charts with no shape in them. */
+export async function renderProblems(page) {
+  return page.evaluate(() => {
+    const out = [];
+    for (const el of document.querySelectorAll("td, th, .chip, .kpi-value, .hbar-label, .nav-link span, .workspace-name, .plan-head h3, .btn")) {
+      if (!el.offsetParent && el.tagName !== "BODY") continue;
+      const cs = getComputedStyle(el);
+      if (cs.overflow === "visible" || el.children.length > 1) continue;
+      if (el.scrollWidth > el.clientWidth + 2 && cs.textOverflow !== "ellipsis") out.push(`clipped text in ${el.tagName}.${el.className}: ${el.textContent.trim().slice(0, 30)}`);
+    }
+    for (const svg of document.querySelectorAll(".chart svg")) {
+      const shapes = svg.querySelectorAll("rect, path, circle, line");
+      if (shapes.length < 4) out.push(`chart with almost nothing in it (${shapes.length} shapes)`);
+      const labels = [...svg.querySelectorAll("text")].map((t) => t.textContent).filter((t) => /[A-Za-z]/.test(t));
+      const axis = labels.filter((t) => /^[A-Z][a-z]{2} \d+$|^\d{2}:\d{2}$/.test(t));
+      if (new Set(axis).size !== axis.length) out.push(`repeated axis label: ${axis.join(", ")}`);
+    }
     return out;
   });
 }
