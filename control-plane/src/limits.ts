@@ -10,7 +10,7 @@ export interface Limits {
   maxPageSize: number;
   defaultPageSize: number;
   invoicePageSize: number;
-  maxUsageExportRows: number;
+  historyMonths: number;
   maxApiKeyNameLength: number;
   maxWorkspaceNameLength: number;
   allowedIdleMinutes: number[];
@@ -73,7 +73,7 @@ export function parseLimits(raw: unknown, file = "limits"): Limits {
     maxPageSize: num("maxPageSize"),
     defaultPageSize: num("defaultPageSize"),
     invoicePageSize: num("invoicePageSize"),
-    maxUsageExportRows: num("maxUsageExportRows"),
+    historyMonths: num("historyMonths"),
     maxApiKeyNameLength: num("maxApiKeyNameLength"),
     maxWorkspaceNameLength: num("maxWorkspaceNameLength"),
     allowedIdleMinutes: idle as number[],

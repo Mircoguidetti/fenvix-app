@@ -9,11 +9,16 @@
   "maxPageSize": 200,
   "defaultPageSize": 50,
   "invoicePageSize": 12,
-  "maxUsageExportRows": 5000,
   "maxApiKeyNameLength": 60,
   "maxWorkspaceNameLength": 60,
-  "allowedIdleMinutes": [1, 5, 15, 60],
+  "allowedIdleMinutes": [
+    1,
+    5,
+    15,
+    60
+  ],
   "exportUrlTtlSeconds": 900,
   "idempotencyTtlHours": 24,
-  "emailLinksPerAddressPerHour": 5
+  "emailLinksPerAddressPerHour": 5,
+  "historyMonths": 12
 }

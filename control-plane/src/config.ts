@@ -9,6 +9,8 @@ export interface Config {
   /** Connection string of the restricted role fenvix_control_plane. Never logged. */
   databaseUrl: string;
   supabaseUrl: string;
+  /** Where Supabase publishes the keys that sign session tokens. */
+  supabaseJwksUrl: string;
   /** The public (anon) key, used only to call Supabase Auth. Not a secret and not the service_role key. */
   supabaseAnonKey: string;
   baseDomain: string;
@@ -73,13 +75,15 @@ export function loadConfig(env: Env = process.env): Config {
     if (u.origin !== o) throw new Error(`DASHBOARD_ORIGINS: write "${u.origin}" (no path, no trailing slash)`);
   }
   const apiPublicUrl = (env.API_PUBLIC_URL ?? "").replace(/\/+$/, "");
+  const supabaseUrl = required(env, "SUPABASE_URL").replace(/\/+$/, "");
   const cfg: Config = {
     port: int(env, "PORT", 3000, 1),
     host: env.HOST ?? "0.0.0.0",
     logLevel: env.LOG_LEVEL ?? "info",
     nodeEnv,
     databaseUrl: required(env, "CONTROL_PLANE_DATABASE_URL"),
-    supabaseUrl: required(env, "SUPABASE_URL").replace(/\/+$/, ""),
+    supabaseUrl,
+    supabaseJwksUrl: env.SUPABASE_JWKS_URL || `${supabaseUrl}/auth/v1/.well-known/jwks.json`,
     supabaseAnonKey: required(env, "SUPABASE_ANON_KEY"),
     baseDomain: (env.BASE_DOMAIN ?? "").trim().replace(/^\.+|\.+$/g, ""),
     hostTemplate: env.HOST_TEMPLATE?.trim() || DEFAULT_HOST_TEMPLATE,
