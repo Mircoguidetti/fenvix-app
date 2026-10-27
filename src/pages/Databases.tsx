@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { ChevronDown, ChevronRight, Search, X } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { ChevronDown, ChevronRight, Plus, Search, X } from "lucide-react";
 import { client, type DatabaseFilter, type DatabaseSort } from "../data";
 import { PageHeader, Message } from "../components/PageHeader";
 import { DbTable, COLUMNS, isTextSort, type Dir } from "../components/DbTable";
@@ -116,6 +116,12 @@ export function DatabasesPage() {
       <PageHeader
         title="Databases"
         description="Every database sleeps when idle. Tag them, filter by tag, and group by a tag key such as customer."
+        actions={
+          <Link to="/databases/new" className="btn btn-primary">
+            <Plus size={16} aria-hidden="true" />
+            Create database
+          </Link>
+        }
       />
 
       <div className="toolbar">

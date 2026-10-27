@@ -1,4 +1,4 @@
-import type { ApiKey, BillingSummary, BulkResult, CreatedApiKey, Database, DatabaseFilter, DatabaseQuery, GroupedDatabases, Page, Settings, TagCount, UsagePoint, UsageRange } from "./types";
+import type { ApiKey, BillingSummary, BulkResult, CreatedApiKey, Database, ExportResult, NewDatabase, DatabaseFilter, DatabaseQuery, GroupedDatabases, Page, Settings, TagCount, UsagePoint, UsageRange } from "./types";
 
 /**
  * Everything the dashboard needs from a backend. The screens only talk to this interface.
@@ -19,6 +19,19 @@ export interface DataClient {
   /** Every tag in use with its database count. */
   listTags(): Promise<TagCount[]>;
   getDatabase(id: string): Promise<Database | null>;
+  listRegions(): Promise<string[]>;
+  /** The connection string is on the returned database. Names are unique, lowercase, 3 to 48 characters. */
+  createDatabase(input: NewDatabase): Promise<Database>;
+  /** Instant copy under a new name, with the same region and tags. The copy starts asleep. */
+  forkDatabase(id: string, name: string): Promise<Database>;
+  /** Rolls the data back to `at` (ISO time, between creation and now). */
+  restoreDatabase(id: string, at: string): Promise<Database>;
+  /** Prepares a download of the data of one or more databases. */
+  exportDatabases(ids: string[]): Promise<ExportResult>;
+  /** Permanently deletes databases and their data. */
+  eraseDatabases(ids: string[]): Promise<BulkResult>;
+  /** Keeps databases awake (true) or lets them sleep when idle (false). */
+  setKeepAwake(ids: string[], enabled: boolean): Promise<BulkResult>;
   /** Replaces the tags of one database. */
   setTags(id: string, tags: string[]): Promise<Database>;
   /** Adds tags to several databases. A key already on a database gets the new value. */

@@ -1,12 +1,13 @@
 import { useState } from "react";
-import { Tag, X } from "lucide-react";
+import { Download, Tag, Trash2, X } from "lucide-react";
 import { client } from "../data";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "./Toast";
+import { download } from "../lib/download";
 import { parseTag } from "../lib/tags";
 import { formatCount } from "../lib/format";
 
-type Action = "add-tag" | "remove-tag";
+type Action = "add-tag" | "remove-tag" | "erase";
 
 const plural = (n: number) => `${formatCount(n)} ${n === 1 ? "database" : "databases"}`;
 
@@ -36,6 +37,16 @@ export function BulkBar({ selected, matching, onSelectAll, onClear, onDone }: { 
     } catch (e) {
       setError(e instanceof Error ? e.message : "That did not work. Try again.");
       setBusy(false);
+    }
+  }
+
+  async function exportSelected() {
+    try {
+      const file = await client.exportDatabases(selected);
+      download(file);
+      toast(`Export ready: ${file.filename}`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Export failed.");
     }
   }
 
@@ -69,11 +80,32 @@ export function BulkBar({ selected, matching, onSelectAll, onClear, onDone }: { 
         <button type="button" className="btn btn-sm" onClick={() => setAction("remove-tag")}>
           Remove tag
         </button>
+        <button type="button" className="btn btn-sm" onClick={() => run(`${plural(n)} will stay awake`, () => client.setKeepAwake(selected, true))}>
+          Keep awake on
+        </button>
+        <button type="button" className="btn btn-sm" onClick={() => run(`${plural(n)} can sleep when idle`, () => client.setKeepAwake(selected, false))}>
+          Keep awake off
+        </button>
+        <button type="button" className="btn btn-sm" onClick={exportSelected}>
+          <Download size={15} aria-hidden="true" />
+          Export
+        </button>
+        <button type="button" className="btn btn-sm" onClick={() => setAction("erase")}>
+          <Trash2 size={15} aria-hidden="true" />
+          Erase
+        </button>
         <button type="button" className="btn btn-sm" onClick={onClear}>
           <X size={15} aria-hidden="true" />
           Clear selection
         </button>
       </div>
+
+      <ConfirmDialog open={action === "erase"} title={`Erase ${plural(n)}?`} confirmLabel={`Erase ${plural(n)}`} busy={busy} onConfirm={() => run(`Erased ${plural(n)}`, () => client.eraseDatabases(selected))} onCancel={close}>
+        <p>
+          This permanently deletes {plural(n)} and all their data. It cannot be undone.
+        </p>
+        {error && <p className="error" role="alert">{error}</p>}
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={action === "add-tag" || action === "remove-tag"}

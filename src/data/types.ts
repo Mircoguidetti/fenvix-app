@@ -17,6 +17,23 @@ export interface Database {
   tags: string[];
   /** When true the database never goes to sleep. */
   keepAwake: boolean;
+  /** Set when this database was created as a fork. */
+  forkedFrom: string | null;
+  /** Point in time the data was last restored to, if ever. */
+  restoredTo: string | null;
+}
+
+export interface NewDatabase {
+  name: string;
+  region: string;
+  tags: string[];
+}
+
+/** A file the browser can download. */
+export interface ExportResult {
+  filename: string;
+  mimeType: string;
+  downloadUrl: string;
 }
 
 /** One page of a list. Pages are numbered from 1. */

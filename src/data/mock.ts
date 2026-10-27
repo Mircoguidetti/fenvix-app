@@ -1,6 +1,6 @@
 // All mock data lives in this file. Every number and name here is fake.
 import type { DataClient } from "./client";
-import type { ApiKey, BillingSummary, BulkResult, Database, DatabaseFilter, DatabaseGroup, DatabaseSort, DbState, GroupedDatabases, Page, Settings, TagCount, UsagePoint, UsageRange } from "./types";
+import type { ApiKey, BillingSummary, BulkResult, Database, ExportResult, DatabaseFilter, DatabaseGroup, DatabaseSort, DbState, GroupedDatabases, Page, Settings, TagCount, UsagePoint, UsageRange } from "./types";
 import { matchesTagFilter, mergeTags, parseTag, sortTags, splitTag } from "../lib/tags";
 
 const NOW = new Date("2026-10-26T12:00:00Z");
@@ -58,6 +58,8 @@ function makeDatabase(s: Seed): Database {
     ...connectionStringFor(s.name),
     tags: sortTags(s.tags),
     keepAwake: !!s.keepAwake,
+    forkedFrom: null,
+    restoredTo: null,
   };
 }
 
@@ -153,6 +155,28 @@ function parseTagsOrKeys(tags: string[]): string[] {
   return tags.map((t) => (t.includes(":") ? parseTags([t])[0] : t.trim().toLowerCase()));
 }
 
+function blank(name: string, region: string): Database {
+  return makeDatabase({ id: `db_${randomHex(8)}`, name, state: "asleep", storageMb: 0, requests24h: 0, lastActiveMs: 0, ageDays: 0, region, tags: [] });
+}
+
+function checkName(name: string): string {
+  const clean = name.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]{1,46}[a-z0-9]$/.test(clean)) throw new Error("Use 3 to 48 lowercase letters, numbers or dashes, starting and ending with a letter or number.");
+  if (databases.some((d) => d.name === clean)) throw new Error(`A database named ${clean} already exists.`);
+  return clean;
+}
+
+function checkTags(tags: string[]): string[] {
+  const next = sortTags(parseTags(tags));
+  if (new Set(next.map((t) => splitTag(t).key)).size !== next.length) throw new Error("A database can have one value per tag key.");
+  if (next.length > 20) throw new Error("A database can have up to 20 tags.");
+  return next;
+}
+
+export function blobUrl(content: string, type: string): string {
+  return URL.createObjectURL(new Blob([content], { type }));
+}
+
 function parseTags(tags: string[]): string[] {
   return tags.map((t) => {
     const parsed = parseTag(t);
@@ -161,8 +185,15 @@ function parseTags(tags: string[]): string[] {
   });
 }
 
+/** Stable number from a string, for seeding. */
+function hash(text: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return (h >>> 0) % 100000;
+}
+
 function usageFor(db: Database, range: UsageRange): UsagePoint[] {
-  const seed = Number(db.id.slice(3)) * 7919;
+  const seed = hash(db.id) * 7919;
   const rand = rng(seed + range.length);
   const [count, step] = range === "24h" ? [24, HOUR] : range === "7d" ? [7 * 4, 6 * HOUR] : [30, DAY];
   const perBucket = Math.max(db.requests24h, 40) / (range === "24h" ? 24 : range === "7d" ? 4 : 1);
@@ -241,10 +272,51 @@ export const mockClient: DataClient = {
     const tags: TagCount[] = [...counts].map(([t, count]) => ({ ...splitTag(t), count })).sort((a, b) => a.key.localeCompare(b.key) || b.count - a.count || a.value.localeCompare(b.value));
     return wait(tags);
   },
+  listRegions: () => wait([...REGIONS]),
+  async createDatabase({ name, region, tags }) {
+    const clean = checkName(name);
+    if (!REGIONS.includes(region)) throw new Error("Choose a region.");
+    const next = checkTags(tags);
+    const db: Database = { ...blank(clean, region), tags: next };
+    databases = [db, ...databases];
+    return wait(copy(db));
+  },
+  async forkDatabase(id, name) {
+    const source = databases.find((d) => d.id === id);
+    if (!source) throw new Error("Database not found");
+    const clean = checkName(name);
+    const db: Database = { ...blank(clean, source.region), tags: [...source.tags], storageMb: source.storageMb, forkedFrom: source.id };
+    databases = [db, ...databases];
+    return wait(copy(db));
+  },
+  async restoreDatabase(id, at) {
+    const source = databases.find((d) => d.id === id);
+    if (!source) throw new Error("Database not found");
+    const t = new Date(at).getTime();
+    if (Number.isNaN(t)) throw new Error("Choose a date and time.");
+    if (t > NOW.getTime()) throw new Error("Choose a time in the past.");
+    if (t < new Date(source.createdAt).getTime()) throw new Error("That is before this database was created.");
+    mutate([id], (d) => ({ ...d, restoredTo: new Date(t).toISOString(), lastActiveAt: NOW.toISOString() }));
+    return wait(copy(databases.find((d) => d.id === id)!));
+  },
+  async exportDatabases(ids) {
+    const picked = databases.filter((d) => ids.includes(d.id));
+    if (picked.length === 0) throw new Error("Nothing to export.");
+    const body = { sample: true, exportedAt: NOW.toISOString(), databases: picked.map((d) => ({ name: d.name, region: d.region, tags: d.tags, storageMb: d.storageMb, collections: [{ name: "items", documents: [{ _id: "sample-1" }, { _id: "sample-2" }] }] })) };
+    const filename = picked.length === 1 ? `fenvix-export-${picked[0].name}.json` : `fenvix-export-${picked.length}-databases.json`;
+    return wait<ExportResult>({ filename, mimeType: "application/json", downloadUrl: blobUrl(JSON.stringify(body, null, 2), "application/json") });
+  },
+  async eraseDatabases(ids) {
+    const gone = new Set(ids);
+    const before = databases.length;
+    databases = databases.filter((d) => !gone.has(d.id));
+    return wait({ affected: before - databases.length });
+  },
+  async setKeepAwake(ids, enabled) {
+    return wait(mutate(ids, (d) => ({ ...d, keepAwake: enabled, state: enabled ? "awake" : d.state })));
+  },
   async setTags(id, tags) {
-    const next = sortTags(parseTags(tags));
-    if (new Set(next.map((t) => splitTag(t).key)).size !== next.length) throw new Error("A database can have one value per tag key.");
-    if (next.length > 20) throw new Error("A database can have up to 20 tags.");
+    const next = checkTags(tags);
     if (!databases.some((d) => d.id === id)) throw new Error("Database not found");
     mutate([id], (d) => ({ ...d, tags: next }));
     return wait(copy(databases.find((d) => d.id === id)!));
