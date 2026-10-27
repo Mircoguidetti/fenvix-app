@@ -1,6 +1,6 @@
 import { App, BootstraplessSynthesizer, Stack } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
-import { envVarName, FenvixConfig, loadConfig } from '../lib/config';
+import { FenvixConfig, loadConfig } from '../lib/config';
 import { FenvixStack } from '../lib/fenvix-stack';
 
 export const BASE_CONTEXT: Record<string, string> = {
@@ -23,7 +23,7 @@ export const BASE_CONTEXT: Record<string, string> = {
 export function buildApp(overrides: Record<string, string> = {}): { app: App; stacks: FenvixStack[]; config: FenvixConfig } {
   const ctx = { ...BASE_CONTEXT, ...overrides };
   const app = new App({ analyticsReporting: false });
-  const config = loadConfig((k) => ctx[k] ?? process.env[envVarName(k) + '__TEST_ONLY']);
+  const config = loadConfig((k) => ctx[k]);
   const stacks = config.regions.map(
     (region, i) =>
       new FenvixStack(app, `fenvix-${config.envName}-${region}`, {

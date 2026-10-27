@@ -47,6 +47,18 @@ function int(name: string, raw: string, min: number, max: number): number {
   return n;
 }
 
+/**
+ * Environment variables win over CDK context (cdk.json and -c), because cdk.json ships placeholder defaults
+ * and the founder sets the real values with `export` in the shell. An empty variable counts as not set.
+ */
+export function makeLookup(context: Lookup, env: Record<string, string | undefined>): Lookup {
+  return (key) => {
+    const fromEnv = env[envVarName(key)];
+    if (fromEnv !== undefined && fromEnv.trim() !== '') return fromEnv;
+    return context(key);
+  };
+}
+
 export function loadConfig(get: Lookup): FenvixConfig {
   const val = (key: string): string | undefined => {
     const v = get(key);

@@ -22,7 +22,7 @@ Everything is tagged `project=fenvix` and `env=<prod|...>`.
 
 ## Settings
 
-Set them in `cdk.json` (section `context`) or per command with `-c name=value`. Environment variables also work (name in the last column). Command line beats environment beats `cdk.json`.
+Set them in `cdk.json` (section `context`) or per command with `-c name=value`. Environment variables also work (name in the last column). An environment variable beats `cdk.json` and `-c` (so the `export` lines in Step 4 always win).
 
 | Setting | Default | Meaning | Env variable |
 |---|---|---|---|

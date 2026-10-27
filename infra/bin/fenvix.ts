@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { App, BootstraplessSynthesizer } from 'aws-cdk-lib';
-import { envVarName, loadConfig } from '../lib/config';
+import { loadConfig, makeLookup } from '../lib/config';
 import { FenvixStack } from '../lib/fenvix-stack';
 
 const app = new App();
-const ctx = (key: string): string | undefined => {
-  const v = app.node.tryGetContext(key) ?? process.env[envVarName(key)];
+const ctx = makeLookup((key) => {
+  const v = app.node.tryGetContext(key);
   return v === undefined || v === null ? undefined : String(v);
-};
+}, process.env);
 
 const config = loadConfig(ctx);
 
