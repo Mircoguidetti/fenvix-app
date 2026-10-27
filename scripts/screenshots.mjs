@@ -1,24 +1,24 @@
 // Regenerates every screenshot in screenshots/ and checks layout, rendering and accessibility on each one.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: npm run screenshots
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
-import { BANNED, BASE, VIEWPORTS, axeViolations, isMobile, launch, layoutProblems, makeReporter, newPage, renderProblems, settled, visibleText } from "./lib.mjs";
+import { BANNED, BASE, VIEWPORTS, axeViolations, go, isMobile, launch, layoutProblems, makeReporter, newPage, renderProblems, settled, visibleText } from "./lib.mjs";
 
 const { fail, state } = makeReporter();
 const MAX_HEIGHT = 2600; // long lists are cut here so the files stay a sensible size
 
 const SCREENS = [
-  ["overview", "#/"],
-  ["databases", "#/databases"],
-  ["databases-filtered", "#/databases?tag=customer:acme-labs&state=awake"],
-  ["databases-grouped", "#/databases?group=customer&q=acme"],
-  ["database-detail", "#/databases/db_0001"],
-  ["database-detail-asleep", "#/databases/db_0011"],
-  ["create-database", "#/databases/new"],
-  ["usage", "#/usage"],
-  ["usage-by-tag", "#/usage?by=tag&key=customer"],
-  ["billing", "#/billing"],
-  ["api-keys", "#/api-keys"],
-  ["settings", "#/settings"],
+  ["overview", "overview"],
+  ["databases", "databases"],
+  ["databases-filtered", "databases?tag=customer:acme-labs&state=awake"],
+  ["databases-grouped", "databases?group=customer&q=acme"],
+  ["database-detail", "databases/db_0001"],
+  ["database-detail-asleep", "databases/db_0011"],
+  ["create-database", "databases/new"],
+  ["usage", "usage"],
+  ["usage-by-tag", "usage?by=tag&key=customer"],
+  ["billing", "billing"],
+  ["api-keys", "api-keys"],
+  ["settings", "settings"],
 ];
 
 mkdirSync("screenshots", { recursive: true });
@@ -61,7 +61,7 @@ for (const [vpName, viewport] of VIEWPORTS) {
   };
 
   // Signed out.
-  await page.goto(BASE + "#/");
+  await go(page, "overview");
   await page.getByRole("button", { name: "Continue with GitHub" }).waitFor();
   await page.evaluate(() => document.fonts.ready);
   await check(`sign-in ${vpName}`);
@@ -73,7 +73,7 @@ for (const [vpName, viewport] of VIEWPORTS) {
 
   for (const [name, hash] of SCREENS) {
     const label = `${name} ${vpName}`;
-    await page.goto(BASE + hash);
+    await go(page, hash);
     await page.waitForSelector("main h1");
     await settled(page);
     await page.waitForTimeout(250);
@@ -82,7 +82,7 @@ for (const [vpName, viewport] of VIEWPORTS) {
   }
 
   // Grouped list with a group open and the bulk bar showing.
-  await page.goto(BASE + "#/databases?group=customer&q=acme");
+  await go(page, "databases?group=customer&q=acme");
   await settled(page);
   await page.locator(".group-toggle").first().click();
   await page.getByRole("button", { name: /^Select all \d+ in / }).click();
@@ -91,7 +91,7 @@ for (const [vpName, viewport] of VIEWPORTS) {
   await shot("databases-bulk");
 
   // Dialogs
-  await page.goto(BASE + "#/databases/db_0001");
+  await go(page, "databases/db_0001");
   await settled(page);
   for (const [name, button, dialogName] of [
     ["fork-dialog", "Fork", "Fork this database"],
@@ -106,7 +106,7 @@ for (const [vpName, viewport] of VIEWPORTS) {
     await page.getByRole("dialog").waitFor({ state: "hidden" });
   }
 
-  await page.goto(BASE + "#/api-keys");
+  await go(page, "api-keys");
   await settled(page);
   await page.getByRole("button", { name: "Revoke key Deploy pipeline" }).click();
   await page.getByRole("dialog").waitFor();
@@ -115,7 +115,7 @@ for (const [vpName, viewport] of VIEWPORTS) {
   await page.keyboard.press("Escape");
 
   // A confirmation message
-  await page.goto(BASE + "#/databases/db_0001");
+  await go(page, "databases/db_0001");
   await settled(page);
   await page.getByLabel("Add a tag").fill("team:data");
   await page.getByRole("button", { name: "Add tag", exact: true }).click();

@@ -8,7 +8,7 @@ import { useAsync } from "../lib/useAsync";
 import { useWorkspaceVersion } from "../lib/workspace";
 
 const NAV = [
-  { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
+  { to: "/overview", label: "Overview", icon: LayoutDashboard, end: true },
   { to: "/databases", label: "Databases", icon: Database, end: false },
   { to: "/usage", label: "Usage", icon: ChartColumn, end: false },
   { to: "/billing", label: "Billing", icon: CreditCard, end: false },

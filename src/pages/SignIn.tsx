@@ -14,7 +14,7 @@ export function SignInPage() {
   const [busy, setBusy] = useState(false);
   const token = params.get("token");
 
-  // The emailed link comes back as ...#/?token=..., which signs the browser in.
+  // A link that reaches the page as ?token=… (the mock's email link) signs the browser in.
   useEffect(() => {
     if (!token) return;
     let alive = true;

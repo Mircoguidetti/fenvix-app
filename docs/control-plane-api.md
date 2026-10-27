@@ -397,19 +397,19 @@ Response `200`: `SessionUser`, or `401 unauthenticated` when signed out (the cli
 
 ### `signInWithProvider` — `POST /session/providers/{provider}`
 
-`provider` is `github` or `google`. Body: `{ "returnTo": "https://app.fenvix.cloud/#/" }`.
+`provider` is `github` or `google`. Body: `{ "returnTo": "https://app.fenvix.cloud/overview" }`.
 
 Response `200`: `{ "redirectUrl": "https://github.com/login/oauth/authorize?..." }`. The client navigates the browser to `redirectUrl`. The provider sends the user back to the API callback (`GET /session/providers/{provider}/callback`, handled by the server only), which sets the session cookie and redirects to `returnTo`. On return the dashboard calls `getSession`. A cancelled or failed sign-in redirects to `returnTo` with `?error=sign_in_failed`.
 
 ### `requestEmailLink` — `POST /session/email-link`
 
-Body: `{ "email": "you@company.com" }`. Sends a one-time link that opens `https://app.fenvix.cloud/#/sign-in?token=...`. Response `202`: `{}`. The answer is the same whether or not the address has an account. Rate limit: 5 links per address per hour (`429`). `400` for a malformed address. The link works once and expires after 15 minutes.
+Body: `{ "email": "you@company.com" }`. Sends a one-time link that opens `https://app.fenvix.cloud/?code=...`. Response `202`: `{}`. The answer is the same whether or not the address has an account. Rate limit: 5 links per address per hour (`429`). `400` for a malformed address. The link works once and expires after 15 minutes.
 
 ### `completeEmailLink` — `POST /session/email-link/complete`
 
 Body: `{ "token": "..." }`. Response `200`: `SessionUser`, and the session cookie is set. `400 validation_failed` with the message "This sign-in link has expired. Request a new one." for a used, expired or unknown token.
 
-The emailed link points at `https://app.fenvix.cloud/#/?token=<token>`. The dashboard reads the token out of the URL, calls this endpoint, drops the token from the address bar and shows the workspace.
+The emailed link points at `https://app.fenvix.cloud/?token=<token>`. The dashboard reads the token out of the URL, calls this endpoint, drops the token from the address bar and shows the workspace.
 
 ### `signOut` — `DELETE /session`
 
@@ -477,5 +477,5 @@ Where the behaviour is not what the sections above describe:
 | `signOut` | `auth.signOut()` |
 | `subscribe` | `auth.onAuthStateChange` |
 
-The code in the returned URL is exchanged once, the address is cleaned to `#/`, and a replayed or invalid code is
+The code in the returned URL is exchanged once, the address is cleaned to `/overview`, and a replayed or invalid code is
 shown as a message on the sign-in page.

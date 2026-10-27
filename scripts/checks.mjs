@@ -2,7 +2,7 @@
 // (fresh data, signed out) and signs in through the real sign-in page unless it is testing sign-in.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: npm run checks
 import { readFile } from "node:fs/promises";
-import { BANNED, BASE, VIEWPORTS, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText } from "./lib.mjs";
+import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText } from "./lib.mjs";
 
 const { fail, pass, state } = makeReporter();
 const browser = await launch();
@@ -62,11 +62,11 @@ const search = async (page, text) => {
   await settled(page);
 };
 
-const ROUTES = ["#/", "#/databases", "#/databases/db_0001", "#/databases/new", "#/usage", "#/usage?by=tag", "#/billing", "#/api-keys", "#/settings"];
+const ROUTES = ["overview", "databases", "databases/db_0001", "databases/new", "usage", "usage?by=tag", "billing", "api-keys", "settings"];
 
 const TESTS = {
   async "sign in and out"(page, vp) {
-    await page.goto(BASE + "#/databases/db_0001");
+    await go(page, "databases/db_0001");
     await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
     assert(!(await page.locator(".shell").count()), "the dashboard is visible while signed out");
     const order = await page.evaluate(() => [...document.querySelectorAll(".signin-card button, .signin-card [type=submit]")].map((b) => b.textContent.trim()));
@@ -99,7 +99,7 @@ const TESTS = {
     await page.getByRole("button", { name: "Email me a sign-in link" }).click();
     await page.getByText("We sent a sign-in link to sam.rivera@northwind.cloud").waitFor();
     // The emailed link lands back on the dashboard with a one-time token.
-    await page.goto(BASE + "#/?token=one-time");
+    await go(page, "?token=one-time");
     await page.locator(".shell").waitFor();
     await openUserMenu(page, vp);
     await page.locator(".user-panel").getByText("Sam Rivera").waitFor();
@@ -107,7 +107,7 @@ const TESTS = {
   },
 
   async "nothing reads as a demo"(page) {
-    await page.goto(BASE + "#/");
+    await go(page, "overview");
     await settled(page);
     const signedOut = await visibleText(page);
     assert(!BANNED.test(signedOut), `sign-in page says "${signedOut.match(BANNED)?.[0]}"`);
@@ -115,7 +115,7 @@ const TESTS = {
     await page.getByRole("button", { name: "Continue with GitHub" }).click();
     await page.locator(".shell").waitFor();
     for (const route of ROUTES) {
-      await page.goto(BASE + route);
+      await go(page, route);
       await page.waitForSelector("main h1");
       await settled(page);
       await page.waitForTimeout(150);
@@ -124,7 +124,7 @@ const TESTS = {
       assert(!bad, `${route} says "${bad?.[0]}" in: ${text.split("\n").find((l) => BANNED.test(l))}`);
     }
     // Dialogs too.
-    await page.goto(BASE + "#/databases/db_0001");
+    await go(page, "databases/db_0001");
     await settled(page);
     for (const button of ["Fork", "Restore to a point in time", "Erase"]) {
       await page.getByRole("button", { name: button, exact: true }).click();
@@ -137,7 +137,11 @@ const TESTS = {
   },
 
   async "overview"(page) {
-    await signIn(page, "#/");
+    await signIn(page, "");
+    await page.getByRole("heading", { name: "Northwind Cloud" }).waitFor();
+    // Real URLs: the root goes to /overview, and there is no # anywhere.
+    assert(new URL(page.url()).pathname === "/overview" && !page.url().includes("#"), `the home page is at ${page.url()}`);
+    await page.reload(); // a deep link survives a real page load: assets and routes resolve from any path
     await page.getByRole("heading", { name: "Northwind Cloud" }).waitFor();
     const kpis = await page.locator(".kpi-value").allTextContents();
     assert(kpis.length === 6, `expected 6 numbers, got ${kpis.length}`);
@@ -166,7 +170,7 @@ const TESTS = {
 
   async "create a database"(page) {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-    await signIn(page, "#/databases");
+    await signIn(page, "databases");
     await page.getByRole("link", { name: "Create database" }).click();
     await page.getByLabel("Name", { exact: true }).fill("check-create-01");
     await page.getByLabel("Region").selectOption("us-east");
@@ -185,7 +189,7 @@ const TESTS = {
     await page.getByText("customer:checkco").first().waitFor();
     await page.getByText("us-east").first().waitFor();
 
-    await page.goto(BASE + "#/databases/new");
+    await go(page, "databases/new");
     await page.getByLabel("Name", { exact: true }).fill("check-create-01");
     await page.getByRole("button", { name: "Create database" }).click();
     await page.getByRole("alert").getByText("already exists").waitFor();
@@ -193,13 +197,13 @@ const TESTS = {
     await page.getByRole("button", { name: "Create database" }).click();
     await page.getByRole("alert").getByText("3 to 48").waitFor();
 
-    await page.goto(BASE + "#/databases");
+    await go(page, "databases");
     await search(page, "check-create-01");
     await eventually(async () => (await counted(page)) === 1, "the new database is not in the list");
   },
 
   async "tags: add, edit, remove, filter"(page) {
-    await signIn(page, "#/databases/db_0001");
+    await signIn(page, "databases/db_0001");
     await page.getByLabel("Add a tag").fill("team:alpha");
     await page.getByRole("button", { name: "Add tag", exact: true }).click();
     await toast(page, "Added tag team:alpha");
@@ -220,7 +224,7 @@ const TESTS = {
     await page.getByRole("button", { name: "Remove tag team:beta" }).click();
     await toast(page, "Removed tag team:beta");
 
-    await page.goto(BASE + "#/databases");
+    await go(page, "databases");
     await settled(page);
     await page.locator("#db-tag").fill("customer:acme-labs");
     await page.getByRole("button", { name: "Add tag filter" }).click();
@@ -235,7 +239,7 @@ const TESTS = {
 
   async "fleet size, paging and group by customer"(page) {
     const t0 = Date.now();
-    await signIn(page, "#/databases");
+    await signIn(page, "databases");
     await page.waitForSelector("tbody tr");
     assert(Date.now() - t0 < 6000, `the list took ${Date.now() - t0} ms to appear`);
     assert((await counted(page)) === 3000, "the fleet should hold 3,000 databases");
@@ -276,7 +280,7 @@ const TESTS = {
   },
 
   async "fork"(page) {
-    await signIn(page, "#/databases/db_0002");
+    await signIn(page, "databases/db_0002");
     await page.getByRole("button", { name: "Fork", exact: true }).click();
     await page.getByLabel("Name of the copy").fill("orders-prod");
     await page.getByRole("button", { name: "Fork and open" }).click();
@@ -287,13 +291,13 @@ const TESTS = {
     await toast(page, "Forked agent-memory as check-fork-a");
     await page.getByText("customer:northwind").first().waitFor();
     await page.getByText("Forked from").waitFor();
-    await page.goto(BASE + "#/databases");
+    await go(page, "databases");
     await search(page, "check-fork-a");
     await eventually(async () => (await counted(page)) === 1, "the fork is not in the list");
   },
 
   async "restore to a point in time"(page) {
-    await signIn(page, "#/databases/db_0001");
+    await signIn(page, "databases/db_0001");
     await page.getByRole("button", { name: "Restore to a point in time" }).click();
     await page.getByLabel("Date and time (UTC)").fill("2026-12-01T10:00");
     await page.getByRole("button", { name: "Restore database" }).click();
@@ -306,7 +310,7 @@ const TESTS = {
   },
 
   async "export"(page) {
-    await signIn(page, "#/databases/db_0001");
+    await signIn(page, "databases/db_0001");
     const file = await savedFile(page, () => page.getByRole("button", { name: "Export", exact: true }).click());
     assert(file.name === "fenvix-export-orders-prod.json", `file name ${file.name}`);
     const json = JSON.parse(file.text);
@@ -315,7 +319,7 @@ const TESTS = {
   },
 
   async "erase"(page) {
-    await signIn(page, "#/databases/db_0003");
+    await signIn(page, "databases/db_0003");
     await page.getByRole("button", { name: "Erase", exact: true }).click();
     const confirm = page.getByRole("button", { name: "Erase database" });
     assert(await confirm.isDisabled(), "erase should need the name typed");
@@ -327,16 +331,16 @@ const TESTS = {
     await page.getByRole("heading", { name: "Databases", exact: true }).waitFor();
     await search(page, "orders-staging");
     await page.getByText("No databases match these filters").waitFor();
-    await page.goto(BASE + "#/databases/db_0003");
+    await go(page, "databases/db_0003");
     await page.getByRole("heading", { name: "Database not found" }).waitFor();
   },
 
   async "keep awake"(page) {
-    await signIn(page, "#/databases/db_0003");
+    await signIn(page, "databases/db_0003");
     await page.getByLabel("Keep awake").check();
     await toast(page, "orders-staging will stay awake");
     await page.locator(".facts").getByText("Awake").first().waitFor();
-    await page.goto(BASE + "#/databases");
+    await go(page, "databases");
     await settled(page);
     await clickTab(page, "Kept awake");
     await search(page, "orders-staging");
@@ -344,15 +348,15 @@ const TESTS = {
     const row = page.locator("tbody tr").filter({ hasText: "orders-staging" });
     await row.getByText("Kept awake").waitFor();
     await row.getByText("Awake", { exact: true }).waitFor();
-    await page.goto(BASE + "#/databases/db_0003");
+    await go(page, "databases/db_0003");
     await page.getByLabel("Keep awake").uncheck();
     await toast(page, "orders-staging can sleep when idle");
-    await page.goto(BASE + "#/databases?keep=on&q=orders-staging");
+    await go(page, "databases?keep=on&q=orders-staging");
     await page.getByText("No databases match these filters").waitFor();
   },
 
   async "bulk actions"(page) {
-    await signIn(page, "#/databases?q=northwind-dev");
+    await signIn(page, "databases?q=northwind-dev");
     await eventually(async () => (await counted(page)) < 3000, "the search did not apply");
     const total = await counted(page);
     assert(total > 50, `this test needs more than one page, got ${total}`);
@@ -377,20 +381,20 @@ const TESTS = {
     await toast(page, "Added tag batch:one to 3 databases");
     assert(!(await page.getByRole("region", { name: "Bulk actions" }).count()), "the selection should clear after an action");
 
-    await page.goto(BASE + "#/databases?tag=batch:one");
+    await go(page, "databases?tag=batch:one");
     await eventually(async () => (await counted(page)) === 3, "the tagged databases are not found by the new tag");
     await page.getByRole("checkbox", { name: "Select all on this page" }).first().check();
     await page.getByRole("button", { name: "Keep awake on" }).click();
     await toast(page, "3 databases will stay awake");
-    await page.goto(BASE + "#/databases?tag=batch:one&keep=on&state=awake");
+    await go(page, "databases?tag=batch:one&keep=on&state=awake");
     await eventually(async () => (await counted(page)) === 3, "keep awake on did not apply to all three");
     await page.getByRole("checkbox", { name: "Select all on this page" }).first().check();
     await page.getByRole("button", { name: "Keep awake off" }).click();
     await toast(page, "3 databases can sleep when idle");
-    await page.goto(BASE + "#/databases?tag=batch:one&keep=on");
+    await go(page, "databases?tag=batch:one&keep=on");
     await page.getByText("No databases match these filters").waitFor();
 
-    await page.goto(BASE + "#/databases?tag=batch:one");
+    await go(page, "databases?tag=batch:one");
     await eventually(async () => (await counted(page)) === 3, "the tag filter did not apply");
     await page.getByRole("checkbox", { name: "Select all on this page" }).first().check();
     const file = await savedFile(page, () => page.getByRole("button", { name: "Export", exact: true }).click());
@@ -402,7 +406,7 @@ const TESTS = {
     await toast(page, "Removed tag key batch from 3 databases");
     await page.getByText("No databases match these filters").waitFor();
 
-    await page.goto(BASE + "#/databases?q=northwind-dev-0");
+    await go(page, "databases?q=northwind-dev-0");
     await eventually(async () => (await counted(page)) >= 3, "the search did not apply");
     const before = await counted(page);
     for (const n of names) await page.getByRole("checkbox", { name: `Select ${n}` }).check();
@@ -414,7 +418,7 @@ const TESTS = {
   },
 
   async "usage: sort, chart and CSV export"(page) {
-    await signIn(page, "#/usage");
+    await signIn(page, "usage");
     await page.waitForSelector("tbody tr");
     assert((await page.locator(".kpi .spark").count()) === 3, "the usage numbers need trend lines");
     await page.getByRole("heading", { name: "Requests by customer" }).waitFor();
@@ -462,7 +466,7 @@ const TESTS = {
   },
 
   async "billing"(page) {
-    await signIn(page, "#/billing");
+    await signIn(page, "billing");
     await page.getByRole("heading", { name: "Month to date" }).waitFor();
     await page.getByText("•••• •••• •••• 4242").waitFor();
     await page.getByRole("cell", { name: "Storage" }).first().waitFor();
@@ -478,7 +482,7 @@ const TESTS = {
   },
 
   async "api keys"(page) {
-    await signIn(page, "#/api-keys");
+    await signIn(page, "api-keys");
     await page.getByLabel("Key name").fill("Check runner");
     await page.getByRole("button", { name: "Create key" }).click();
     await page.getByText("Key “Check runner” created.").waitFor();
@@ -490,11 +494,11 @@ const TESTS = {
   },
 
   async "settings"(page) {
-    await signIn(page, "#/settings");
+    await signIn(page, "settings");
     await page.getByLabel("Workspace name").fill("Northwind Platform");
     await page.getByRole("button", { name: "Save changes" }).click();
     await page.getByText("Settings saved").waitFor();
-    await page.goto(BASE + "#/");
+    await go(page, "overview");
     await settled(page);
     // The sidebar is a drawer on a phone, so read the text instead of waiting for it to be visible.
     await eventually(async () => (await page.locator(".workspace-name").first().textContent()).includes("Northwind Platform"), "the sidebar still shows the old workspace name");

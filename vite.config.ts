@@ -1,5 +1,5 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// base "./" keeps the static output relocatable (any path or CDN prefix).
-export default defineConfig({ base: "./", plugins: [react()] });
+// base "/" because routes are real paths (/databases/…): relative asset URLs would break on them.
+export default defineConfig({ base: "/", plugins: [react()] });

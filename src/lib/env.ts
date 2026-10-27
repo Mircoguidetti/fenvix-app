@@ -32,8 +32,7 @@ export const configError: string | null =
             ? `VITE_SUPABASE_URL does not look like a Supabase project URL: ${supabaseUrl}`
             : null;
 
-/** Where a provider sends the browser back to: the folder this app is served from. */
+/** Where a provider sends the browser back to: the root of the site. */
 export function redirectTarget(): string {
-  const { origin, pathname } = window.location;
-  return origin + pathname.replace(/[^/]*$/, "");
+  return `${window.location.origin}/`;
 }

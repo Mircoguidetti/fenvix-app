@@ -1,4 +1,4 @@
-import { HashRouter, Route, Routes, Link } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, Link } from "react-router-dom";
 import { ToastProvider } from "./components/Toast";
 import { SessionProvider, useSession } from "./session/SessionProvider";
 import { SignInPage } from "./pages/SignIn";
@@ -33,7 +33,8 @@ function Routed() {
   return (
     <Shell>
       <Routes>
-        <Route path="/" element={<OverviewPage />} />
+        <Route path="/" element={<Navigate to="/overview" replace />} />
+        <Route path="/overview" element={<OverviewPage />} />
         <Route path="/databases" element={<DatabasesPage />} />
         <Route path="/databases/new" element={<CreateDatabasePage />} />
         <Route path="/databases/:id" element={<DatabaseDetailPage />} />
@@ -47,16 +48,16 @@ function Routed() {
   );
 }
 
-// HashRouter: the static output works on any file host with no rewrite rules.
+// BrowserRouter: real URLs (/overview, /databases/…). The host must answer every path with index.html (see vercel.json).
 // Signed-out visitors see the sign-in page on every route.
 export default function App() {
   return (
-    <HashRouter>
+    <BrowserRouter>
       <ToastProvider>
         <SessionProvider>
           <Routed />
         </SessionProvider>
       </ToastProvider>
-    </HashRouter>
+    </BrowserRouter>
   );
 }

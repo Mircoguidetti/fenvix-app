@@ -7,8 +7,8 @@ let client: SupabaseClient | null = null;
  * The one Supabase client for the browser. It holds the anon key, which is a public value:
  * every table is protected by row level security, so a signed-out key can read nothing.
  *
- * `detectSessionInUrl` is off because this app uses a hash router: the redirect back from a
- * provider is finished by hand in `src/session/redirect.ts` before React renders.
+ * `detectSessionInUrl` is off: the redirect back from a provider is finished by hand in
+ * `src/session/redirect.ts` before React renders, so the code never reaches the router.
  */
 export function getSupabase(): SupabaseClient {
   if (configError) throw new Error(configError);

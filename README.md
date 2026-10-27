@@ -77,20 +77,20 @@ Project → Settings → Environment Variables, for Production and Preview (and 
 | `VITE_SUPABASE_ANON_KEY` | the anon key |
 
 Do not set `VITE_DATA_BACKEND` (or set it to `supabase`). Redeploy after changing a variable. The app uses
-a hash router, so no rewrite rules are needed.
+real URLs (`/overview`, `/databases/…`), so every path must be answered with `index.html`. `vercel.json` does
+that; on another host add the equivalent rewrite.
 
-## How sign-in finishes with a hash router
+## How sign-in finishes
 
-Supabase sends the browser back to the site root as `https://site/?code=…` (PKCE). The routes of this app live
-after the `#`, so the two never collide: `src/main.tsx` awaits `completeAuthRedirect()`
-(`src/session/redirect.ts`) **before React renders**. It exchanges the code for a session, then replaces the
-URL with `…/#/`, which removes the code from the address bar and from history. The router then starts on a
-clean URL with the session already stored. A failed exchange (an expired or replayed link, or a provider
-error) is shown on the sign-in page. The supabase-js option `detectSessionInUrl` is turned off, so the library
-never tries to read the hash as an auth response. Because the PKCE verifier is kept in the browser, an
-emailed link must be opened in the same browser that asked for it.
+Supabase sends the browser back to the site root as `https://site/?code=…` (PKCE). `src/main.tsx` awaits
+`completeAuthRedirect()` (`src/session/redirect.ts`) **before React renders**. It exchanges the code for a
+session, then replaces the address with `/overview`, which removes the code from the address bar and from
+history. The router then starts on a clean URL with the session already stored. A failed exchange (an expired
+or replayed link, or a provider error) is shown on the sign-in page. The supabase-js option `detectSessionInUrl`
+is turned off, so the library never tries to read the URL itself. Because the PKCE verifier is kept in the
+browser, an emailed link must be opened in the same browser that asked for it.
 
-After a provider or email sign-in the user lands on `#/` (the overview), not on the page they first asked for.
+After a provider or email sign-in the user lands on `/overview`, not on the page they first asked for.
 
 ## Tests
 

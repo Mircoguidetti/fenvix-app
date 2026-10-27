@@ -83,10 +83,10 @@ step("missing settings: the sign-in page explains, it never goes blank", async (
 });
 
 let ownerContext;
-step("sign in with Google: the ?code= is exchanged before the router, the URL ends on #/", async () => {
+step("sign in with Google: the ?code= is exchanged before the router, the URL ends on /overview", async () => {
   const { ctx, page } = await newPage();
   ownerContext = { ctx, page };
-  await page.goto(APP + "#/databases"); // asked for a deep link while signed out
+  await page.goto(APP + "databases"); // asked for a deep link while signed out
   await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
   const seen = [];
   page.on("framenavigated", (f) => f === page.mainFrame() && seen.push(f.url()));
@@ -95,7 +95,7 @@ step("sign in with Google: the ?code= is exchanged before the router, the URL en
   assert(seen.some((u) => /[?&]code=/.test(u)), "the provider never sent the browser back with a code");
   const url = page.url();
   assert(!/[?&]code=/.test(url) && !url.includes("?"), `the code is still in the address bar: ${url}`);
-  assert(new URL(url).hash === "#/", `expected to land on #/, got ${new URL(url).hash}`);
+  assert(new URL(url).pathname === "/overview", `expected to land on /overview, got ${new URL(url).pathname}`);
   assert(await page.evaluate(() => !!localStorage.getItem(Object.keys(localStorage).find((k) => /auth-token$/.test(k)) ?? "")), "no session was stored");
   // The SDK removes the verifier it used. It keeps a per-flow slot index of its own, which holds no secret that works twice.
   assert(!(await page.evaluate(() => Object.keys(localStorage).some((k) => /auth-token-code-verifier$/.test(k)))), "the PKCE code verifier was left behind");
@@ -115,13 +115,13 @@ step("the session survives a reload and a router navigation", async () => {
   const { page } = ownerContext;
   await page.reload();
   await dashboard(page);
-  await page.goto(APP + "#/billing");
+  await page.goto(APP + "billing");
   await page.getByRole("heading", { name: "Month to date" }).waitFor();
 });
 
 step("overview shows the seeded fleet", async () => {
   const { page } = ownerContext;
-  await page.goto(APP + "#/");
+  await page.goto(APP + "overview");
   await page.getByRole("heading", { name: "Northwind Cloud" }).waitFor();
   await page.waitForFunction(() => document.querySelectorAll(".kpi-value").length === 6 && document.querySelector(".kpi-value").textContent !== "");
   const k = await page.locator(".kpi-value").allTextContents();
@@ -136,7 +136,7 @@ step("overview shows the seeded fleet", async () => {
 
 step("databases: 3,000, paged, filtered by tag, grouped by customer", async () => {
   const { page } = ownerContext;
-  await page.goto(APP + "#/databases");
+  await page.goto(APP + "databases");
   await page.locator("tbody tr").first().waitFor();
   assert((await page.locator("tbody tr").count()) === 50, "first page is not 50 rows");
   assert(num(await page.locator(".counts-bar b").first().innerText()) === 3000, "count is not 3,000");
@@ -154,7 +154,7 @@ step("databases: 3,000, paged, filtered by tag, grouped by customer", async () =
 let createdId;
 step("create, duplicate name, tags, keep awake, fork, restore, export, erase", async () => {
   const { page } = ownerContext;
-  await page.goto(APP + "#/databases/new");
+  await page.goto(APP + "databases/new");
   await page.getByLabel("Name", { exact: true }).fill("e2e-created-01");
   await page.getByLabel("Region").selectOption("us-east");
   await page.getByLabel("Tags").fill("customer:acme-labs env:prod");
@@ -163,13 +163,13 @@ step("create, duplicate name, tags, keep awake, fork, restore, export, erase", a
   const conn = await page.getByRole("textbox", { name: "Connection string" }).inputValue();
   assert(conn === "mongodb://app_user:<password>@e2e-created-01.db.fenvix.cloud:27017/e2e_created_01?tls=true", conn);
   await toast(page, "Created database e2e-created-01");
-  await page.goto(APP + "#/databases"); // leave the "created" screen, then open the form again
+  await page.goto(APP + "databases"); // leave the "created" screen, then open the form again
   await page.getByRole("link", { name: "Create database" }).click();
   await page.getByLabel("Name", { exact: true }).fill("e2e-created-01");
   await page.getByRole("button", { name: "Create database" }).click();
   await page.getByRole("alert").getByText("A database named e2e-created-01 already exists.").waitFor();
 
-  await page.goto(APP + "#/databases?q=e2e-created-01");
+  await page.goto(APP + "databases?q=e2e-created-01");
   await page.getByRole("link", { name: "e2e-created-01" }).click();
   await page.getByRole("heading", { name: "e2e-created-01" }).waitFor();
   createdId = page.url().split("/").pop();
@@ -189,7 +189,7 @@ step("create, duplicate name, tags, keep awake, fork, restore, export, erase", a
   await page.getByText("Forked from").waitFor();
   await page.getByText("customer:acme-labs").first().waitFor();
 
-  await page.goto(APP + "#/databases/" + createdId);
+  await page.goto(APP + "databases/" + createdId);
   await page.getByRole("button", { name: "Restore to a point in time" }).click();
   await page.getByLabel("Date and time (UTC)").fill("2026-01-01T10:00");
   await page.getByRole("button", { name: "Restore database" }).click();
@@ -202,14 +202,14 @@ step("create, duplicate name, tags, keep awake, fork, restore, export, erase", a
   await page.getByLabel(/^Type e2e-created-01/).fill("e2e-created-01");
   await page.getByRole("button", { name: "Erase database" }).click();
   await toast(page, "Erased e2e-created-01");
-  await page.goto(APP + "#/databases/" + createdId);
+  await page.goto(APP + "databases/" + createdId);
   await page.getByRole("heading", { name: "Database not found" }).waitFor();
   assert(query("select count(*) from public.databases where name like 'e2e-created-01%'") === "1", "the fork should remain, the original should be gone");
 });
 
 step("bulk actions: tag, keep awake, export, erase with a count", async () => {
   const { page } = ownerContext;
-  await page.goto(APP + "#/databases?q=northwind-dev-0");
+  await page.goto(APP + "databases?q=northwind-dev-0");
   await page.waitForFunction(() => Number(document.querySelector(".counts-bar b")?.textContent?.replace(/\D/g, "")) >= 3);
   const names = (await page.locator("tbody tr td a").allTextContents()).slice(0, 3);
   for (const n of names) await page.getByRole("checkbox", { name: `Select ${n}` }).check();
@@ -218,7 +218,7 @@ step("bulk actions: tag, keep awake, export, erase with a count", async () => {
   await page.getByLabel("Tag (key:value)").fill("batch:e2e");
   await page.getByRole("dialog").getByRole("button", { name: "Add tag" }).click();
   await toast(page, "Added tag batch:e2e to 3 databases");
-  await page.goto(APP + "#/databases?tag=batch:e2e");
+  await page.goto(APP + "databases?tag=batch:e2e");
   await page.waitForFunction(() => document.querySelectorAll("tbody tr").length === 3); // the table, not just the counts
   await page.getByRole("checkbox", { name: "Select all on this page" }).first().check();
   await page.getByRole("button", { name: "Keep awake on" }).click();
@@ -236,7 +236,7 @@ step("bulk actions: tag, keep awake, export, erase with a count", async () => {
 
 step("usage: per database and per tag, sorted, CSV with every row", async () => {
   const { page } = ownerContext;
-  await page.goto(APP + "#/usage");
+  await page.goto(APP + "usage");
   await page.locator("tbody tr").first().waitFor();
   const r = async () => (await page.locator('tbody td[data-label="Requests"]').allTextContents()).map(num);
   await page.getByLabel("Sort by").selectOption("requests:desc");
@@ -263,7 +263,7 @@ step("usage: per database and per tag, sorted, CSV with every row", async () => 
 
 step("billing: month to date, invoices, a real PDF, plans", async () => {
   const { page } = ownerContext;
-  await page.goto(APP + "#/billing");
+  await page.goto(APP + "billing");
   await page.getByRole("heading", { name: "Month to date" }).waitFor();
   await page.waitForFunction(() => /\$\d/.test(document.querySelector(".big-number")?.textContent ?? ""));
   await page.waitForFunction(() => document.querySelectorAll("#invoices tbody tr").length === 6);
@@ -277,7 +277,7 @@ step("billing: month to date, invoices, a real PDF, plans", async () => {
 
 step("API keys: the key is shown once, the database holds only a hash", async () => {
   const { page } = ownerContext;
-  await page.goto(APP + "#/api-keys");
+  await page.goto(APP + "api-keys");
   await page.getByLabel("Key name").fill("E2E runner");
   await page.getByRole("button", { name: "Create key" }).click();
   await page.getByText("Key “E2E runner” created.").waitFor();
@@ -296,11 +296,11 @@ step("API keys: the key is shown once, the database holds only a hash", async ()
 
 step("settings: saving renames the workspace everywhere", async () => {
   const { page } = ownerContext;
-  await page.goto(APP + "#/settings");
+  await page.goto(APP + "settings");
   await page.getByLabel("Workspace name").fill("Northwind Platform");
   await page.getByRole("button", { name: "Save changes" }).click();
   await page.getByText("Settings saved").waitFor();
-  await page.goto(APP + "#/");
+  await page.goto(APP + "overview");
   await page.getByRole("heading", { name: "Northwind Platform" }).waitFor();
   assert(query("select name from public.workspaces limit 1") === "Northwind Platform", "not saved in the database");
 });
@@ -316,7 +316,7 @@ step("sign out clears the session, and the next sign-in is a fresh one", async (
   await ownerContext.ctx.close();
 });
 
-step("email link: the link comes back with ?code=, finishes before the router, lands on #/", async () => {
+step("email link: the link comes back with ?code=, finishes before the router, lands on /overview", async () => {
   const { ctx, page } = await newPage();
   await page.goto(APP);
   await page.getByLabel("Work email").fill("not-an-email");
@@ -329,11 +329,11 @@ step("email link: the link comes back with ?code=, finishes before the router, l
   assert(/\?code=/.test(link) && link.startsWith(APP), `link ${link}`);
   await page.goto(link); // what clicking the link in the mail does, in the same browser
   await dashboard(page);
-  assert(!page.url().includes("code=") && new URL(page.url()).hash === "#/", page.url());
+  assert(!page.url().includes("code=") && new URL(page.url()).pathname === "/overview", page.url());
   await page.locator(".sidebar .user-btn").click();
   await page.locator(".user-panel").getByText("elena.marsh@northwind.cloud").waitFor();
   // A brand-new person gets an empty workspace of their own and can see none of the seeded fleet.
-  await page.goto(APP + "#/databases");
+  await page.goto(APP + "databases");
   await page.getByText("No databases match these filters").waitFor();
   assert(query("select count(*) from public.workspaces") === "2", "a second workspace should exist");
   await ctx.close();
@@ -341,12 +341,12 @@ step("email link: the link comes back with ?code=, finishes before the router, l
 
 step("a replayed or tampered code is refused with a message, not a blank page", async () => {
   const { ctx, page } = await newPage();
-  await page.goto(APP + "?code=does-not-exist#/");
+  await page.goto(APP + "?code=does-not-exist");
   await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
   const text = await page.locator("[role=alert]").innerText();
   assert(/invalid flow state|flow state|code/i.test(text), `message was: ${text}`);
   assert(!page.url().includes("code="), "the bad code was left in the address bar");
-  await page.goto(APP + "?error=access_denied&error_description=Access+denied#/");
+  await page.goto(APP + "?error=access_denied&error_description=Access+denied");
   await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
   assert(/access denied/i.test(await page.locator("[role=alert]").innerText()), "a provider error was not shown");
   await ctx.close();

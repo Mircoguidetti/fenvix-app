@@ -39,10 +39,23 @@ export async function newPage(browser, { viewport, acceptDownloads = true } = {}
   return { ctx, page, errors };
 }
 
+/**
+ * Moves to a path the way a click on a link does: no page load, so the mock's in-memory data
+ * survives (a real load resets it). The first visit of a page is a normal load.
+ */
+export async function go(page, path) {
+  if (!page.url().startsWith("http")) return page.goto(BASE + path);
+  await page.evaluate((p) => {
+    history.pushState({}, "", `/${p}`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, path);
+  await page.waitForTimeout(60);
+}
+
 export const isMobile = (viewport) => viewport.width < 760;
 
 /** Signs in with GitHub through the real sign-in page and waits for the dashboard. */
-export async function signIn(page, route = "#/") {
+export async function signIn(page, route = "overview") {
   await page.goto(BASE + route);
   await page.getByRole("button", { name: "Continue with GitHub" }).click();
   await page.locator(".shell").waitFor();
