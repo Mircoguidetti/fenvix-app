@@ -13,7 +13,8 @@
     "checks": "node scripts/checks.mjs",
     "check": "node scripts/run.mjs",
     "test:unit": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test tests/unit/*.test.ts",
-    "test:rls": "bash supabase/tests/run-local.sh"
+    "test:rls": "bash supabase/tests/run-local.sh",
+    "test:e2e": "node scripts/supabase-e2e.mjs"
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.2.0",

@@ -4,3 +4,6 @@ dist
 .env
 .env.*
 !.env.example
+dist-e2e
+dist-e2e-noenv
+e2e-failure.png

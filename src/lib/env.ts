@@ -12,6 +12,12 @@ export const backend: Backend = raw.VITE_DATA_BACKEND === "mock" ? "mock" : "sup
 export const supabaseUrl: string = (raw.VITE_SUPABASE_URL ?? "").trim();
 export const supabaseAnonKey: string = (raw.VITE_SUPABASE_ANON_KEY ?? "").trim();
 
+/** A hosted project (https://<ref>.supabase.co) or a local one (http://127.0.0.1:54321). */
+export function isSupabaseUrl(url: string): boolean {
+  const u = url.replace(/\/$/, "");
+  return /^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/.test(u) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(u);
+}
+
 /** A message to show instead of a broken screen when the environment is incomplete. */
 export const configError: string | null =
   backend === "mock"
@@ -22,7 +28,7 @@ export const configError: string | null =
         ? "VITE_SUPABASE_URL is missing from this deployment."
         : !supabaseAnonKey
           ? "VITE_SUPABASE_ANON_KEY is missing from this deployment."
-          : !/^https:\/\/[^/]+\.supabase\.(co|in)$/.test(supabaseUrl.replace(/\/$/, ""))
+          : !isSupabaseUrl(supabaseUrl)
             ? `VITE_SUPABASE_URL does not look like a Supabase project URL: ${supabaseUrl}`
             : null;
 

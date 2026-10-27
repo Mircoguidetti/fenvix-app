@@ -1,5 +1,6 @@
 import { backend, configError } from "../lib/env";
 import { getSupabase } from "../lib/supabaseClient";
+import { friendlyError } from "../data/queries";
 
 let redirectError: string | null = null;
 
@@ -27,9 +28,9 @@ export async function completeAuthRedirect(): Promise<void> {
   else {
     try {
       const { error } = await getSupabase().auth.exchangeCodeForSession(code!);
-      if (error) redirectError = error.message;
+      if (error) redirectError = friendlyError({ message: error.message, status: error.status });
     } catch (e) {
-      redirectError = e instanceof Error ? e.message : "That sign-in link did not work.";
+      redirectError = friendlyError({ message: e instanceof Error ? e.message : "" }) || "That sign-in link did not work.";
     }
   }
 
