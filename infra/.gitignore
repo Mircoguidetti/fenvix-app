@@ -4,3 +4,4 @@ cdk.out
 *.d.ts
 !jest.config.js
 coverage
+cdk.context.json

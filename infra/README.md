@@ -72,7 +72,7 @@ You need: a web browser, the AWS login of the account `865859654353`, and about 
    cd olvix-app && git checkout infra-aws && cd infra
    npm ci
    ```
-   If CloudShell says `node` is too old, run `nvm install 22` first.
+   If CloudShell says `node` is too old, run `nvm install 22` first. If the repository is private, `git clone` asks for a login and will fail for a password: ask your engineer for a read-only access token, or download the `infra-aws` branch as a zip on your computer and upload it with CloudShell menu Actions, Upload file, then `unzip` it.
 
 ### Step 3. Create the secrets (before the first deploy)
 1. In CloudShell, make two random values: `openssl rand -hex 32` (run it twice and keep each result for the next step; do not paste them anywhere else).
