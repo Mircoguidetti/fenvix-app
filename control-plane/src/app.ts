@@ -33,6 +33,8 @@ export interface AppOptions {
 export interface App {
   fastify: FastifyInstance;
   deps: Deps;
+  /** Every route that was registered, as "METHOD /path". */
+  routes: string[];
   /** Starts the background sweeps (operations, usage sync). */
   startBackground(): void;
   close(): Promise<void>;
@@ -65,6 +67,9 @@ export async function buildApp(opts: AppOptions): Promise<App> {
       },
     },
   });
+
+  const routes: string[] = [];
+  fastify.addHook("onRoute", (r) => { for (const m of [r.method].flat()) if (m !== "HEAD" && m !== "OPTIONS") routes.push(`${m} ${r.url}`); });
 
   const s: Services = { cfg, db, engine: opts.engine, log: fastify.log };
   const runner = new OperationRunner(s);
@@ -138,6 +143,7 @@ export async function buildApp(opts: AppOptions): Promise<App> {
   return {
     fastify,
     deps,
+    routes,
     startBackground() {
       runner.start(cfg.operationSweepSeconds);
       void runner.sweepOnce().catch((e) => fastify.log.error({ err: String(e) }, "first operation sweep failed"));

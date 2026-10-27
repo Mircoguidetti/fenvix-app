@@ -99,12 +99,13 @@ const dropActiveOperations = (admin: pg.Pool) =>
   admin.query("update public.operations set status = 'failed', finished_at = now(), error = '{\"code\":\"internal\",\"message\":\"test cleanup\"}' where status in ('queued', 'running')");
 
 export async function startHarness(over: Record<string, string | undefined> = {}, opts: { engine?: FakeEngine; gateway?: FakeGateway } = {}): Promise<Harness> {
-  const admin = new pg.Pool({ connectionString: ADMIN_URL, max: 4 });
+  const adminUrl = process.env.TEST_DATABASE_URL ?? ADMIN_URL;
+  const admin = new pg.Pool({ connectionString: adminUrl, max: 4 });
   // The sweeper looks across workspaces, so leftovers of an earlier test must not be picked up by this one.
   await dropActiveOperations(admin);
   const cpPassword = randomBytes(18).toString("hex"); // random per run, only ever on the local scratch database
   await admin.query(`alter role fenvix_control_plane with password '${cpPassword}'`);
-  const u = new URL(ADMIN_URL);
+  const u = new URL(adminUrl);
   u.username = "fenvix_control_plane";
   u.password = cpPassword;
   const cpUrl = u.toString();

@@ -22,7 +22,15 @@ try {
   process.exit(1);
 }
 
-const app = await buildApp({ cfg, engine: makeEngine(cfg.engineDriver), gateway: new SupabaseGateway(cfg.supabaseUrl, cfg.supabaseAnonKey) });
+let engine: EngineClient;
+try {
+  engine = makeEngine(cfg.engineDriver);
+} catch (e) {
+  console.error(JSON.stringify({ level: "fatal", msg: e instanceof Error ? e.message : String(e) }));
+  process.exit(1);
+}
+
+const app = await buildApp({ cfg, engine, gateway: new SupabaseGateway(cfg.supabaseUrl, cfg.supabaseAnonKey) });
 app.startBackground();
 await app.fastify.listen({ port: cfg.port, host: cfg.host });
 
