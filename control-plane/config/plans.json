@@ -1,0 +1,31 @@
+{
+  "_comment": "Plans, their limits and the unit rates. Pricing is not decided yet, so every price and rate is empty (null) and every limit is null (no limit). Fill them in here; nothing in the code knows a price. A rate of null makes every cost 0 and the billing page says pricing is not set.",
+  "defaultPlan": "managed",
+  "rates": { "storagePerGbMonth": null, "requestsPerMillion": null },
+  "plans": [
+    {
+      "id": "open-source", "name": "Open source", "price": "", "period": "",
+      "description": "One database, run by you, on your machine or your cloud storage.",
+      "features": ["The complete engine", "MongoDB drivers and tools", "Community support"],
+      "limits": { "maxDatabases": null, "maxStorageGb": null, "retentionDays": null }
+    },
+    {
+      "id": "managed", "name": "Managed", "price": "", "period": "",
+      "description": "Pay for what you use.",
+      "features": ["Asleep databases cost only storage", "Fork, restore, export, erase", "Usage per customer"],
+      "limits": { "maxDatabases": null, "maxStorageGb": null, "retentionDays": null }
+    },
+    {
+      "id": "dedicated", "name": "Dedicated", "price": "", "period": "",
+      "description": "Your own environment in the region you choose, plus usage.",
+      "features": ["Servers for you alone", "Region of your choice", "Keep busy customers awake", "Priority support"],
+      "limits": { "maxDatabases": null, "maxStorageGb": null, "retentionDays": null }
+    },
+    {
+      "id": "in-your-cloud", "name": "In your cloud", "price": "", "period": "",
+      "description": "Runs in your own cloud account. Your data never leaves it.",
+      "features": ["Your cloud, your region", "Single sign-on and audit log", "Support with an agreed response time"],
+      "limits": { "maxDatabases": null, "maxStorageGb": null, "retentionDays": null }
+    }
+  ]
+}

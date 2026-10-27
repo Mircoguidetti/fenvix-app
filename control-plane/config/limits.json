@@ -1,0 +1,24 @@
+{
+  "_comment": "Validation limits of the API contract (docs/control-plane-api.md). They are not prices and not plan limits; plan limits live in plans.json.",
+  "nameMinLength": 3,
+  "nameMaxLength": 48,
+  "maxTagsPerDatabase": 20,
+  "maxIdsListIds": 10000,
+  "maxIdsBulk": 1000,
+  "maxIdsExport": 100,
+  "maxPageSize": 200,
+  "defaultPageSize": 50,
+  "invoicePageSize": 12,
+  "maxApiKeyNameLength": 60,
+  "maxWorkspaceNameLength": 60,
+  "allowedIdleMinutes": [
+    1,
+    5,
+    15,
+    60
+  ],
+  "exportUrlTtlSeconds": 900,
+  "idempotencyTtlHours": 24,
+  "emailLinksPerAddressPerHour": 5,
+  "historyMonths": 12
+}
