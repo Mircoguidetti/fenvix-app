@@ -29,9 +29,13 @@ export function UserMenu() {
   return (
     <div className="user-menu" ref={ref}>
       <button type="button" className="user-btn" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((o) => !o)}>
-        <span className="avatar" aria-hidden="true">
-          {initials(user.name)}
-        </span>
+        {user.avatarUrl ? (
+          <img className="avatar avatar-photo" src={user.avatarUrl} alt="" width={28} height={28} referrerPolicy="no-referrer" />
+        ) : (
+          <span className="avatar" aria-hidden="true">
+            {initials(user.name)}
+          </span>
+        )}
         <span className="user-name">{user.name}</span>
         <ChevronUp size={16} aria-hidden="true" className={open ? "flip" : ""} />
       </button>

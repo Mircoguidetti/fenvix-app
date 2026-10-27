@@ -461,3 +461,4 @@ table.data.dbs tbody tr { height: 58px; }
 #create .field.grow, .card .inline-form .field.grow { max-width: 460px; }
 .card > .ticks { flex: 1; justify-content: space-between; }
 @media (max-width: 760px) { .counts-sep { display: none; } .counts-bar { gap: 6px 16px; } }
+.avatar-photo { object-fit: cover; border: 0; }

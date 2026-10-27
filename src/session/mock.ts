@@ -42,10 +42,15 @@ function pending(value?: string | null): string | null {
 const titleCase = (s: string) => s.replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim();
 
 /** Stands in for the real providers until they are wired up. Nothing leaves the browser. */
+const listeners = new Set<(user: SessionUser | null) => void>();
+const announce = (user: SessionUser | null) => listeners.forEach((l) => l(user));
+
 export const mockSession: SessionClient = {
+  configError: null,
   getSession: () => wait(read()),
   async signInWithProvider() {
     write(OWNER);
+    announce(OWNER);
     return wait(OWNER);
   },
   async requestEmailLink(email) {
@@ -60,10 +65,16 @@ export const mockSession: SessionClient = {
     const user: SessionUser = { id: "usr_2", name: titleCase(address.split("@")[0]) || OWNER.name, email: address };
     pending(null);
     write(user);
+    announce(user);
     return wait(user);
   },
   async signOut() {
     write(null);
+    announce(null);
     await wait(null);
+  },
+  subscribe(onChange) {
+    listeners.add(onChange);
+    return () => listeners.delete(onChange);
   },
 };

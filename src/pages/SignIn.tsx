@@ -10,7 +10,7 @@ export function SignInPage() {
   const [params, setParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [sentTo, setSentTo] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(session.configError ?? null);
   const [busy, setBusy] = useState(false);
   const token = params.get("token");
 

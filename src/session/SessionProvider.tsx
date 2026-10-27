@@ -15,9 +15,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let alive = true;
-    session.getSession().then((user) => alive && setState({ status: "ready", user }), () => alive && setState({ status: "ready", user: null }));
+    session.getSession().then(
+      (user) => alive && setState({ status: "ready", user }),
+      () => alive && setState({ status: "ready", user: null }),
+    );
+    // Sign-in, sign-out and token refreshes, including in another tab. A client that cannot
+    // subscribe must never take the whole screen down: the sign-in page explains the problem.
+    let stop: (() => void) | undefined;
+    try {
+      stop = session.subscribe?.((user) => alive && setState({ status: "ready", user }));
+    } catch {
+      stop = undefined;
+    }
     return () => {
       alive = false;
+      stop?.();
     };
   }, []);
 

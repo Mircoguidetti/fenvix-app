@@ -4,6 +4,8 @@ export interface SessionUser {
   id: string;
   name: string;
   email: string;
+  /** Picture from the provider, when there is one. */
+  avatarUrl?: string | null;
 }
 
 /**
@@ -12,6 +14,8 @@ export interface SessionUser {
  * redirect (GitHub, Google) can navigate away inside `signInWithProvider` and resolve on return.
  */
 export interface SessionClient {
+  /** Set when the app cannot sign anyone in, for example because its settings are missing. */
+  readonly configError?: string | null;
   /** The signed-in user, or null. */
   getSession(): Promise<SessionUser | null>;
   signInWithProvider(provider: AuthProvider): Promise<SessionUser>;
@@ -20,4 +24,6 @@ export interface SessionClient {
   /** Signs in with the token from the emailed link. The mock accepts any token for the last requested address. */
   completeEmailLink(token: string): Promise<SessionUser>;
   signOut(): Promise<void>;
+  /** Calls back whenever the session changes, in this tab or another. Returns an unsubscribe. */
+  subscribe?(onChange: (user: SessionUser | null) => void): () => void;
 }
