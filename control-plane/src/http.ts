@@ -124,6 +124,8 @@ export async function authenticate(d: Deps, req: FastifyRequest, reply: FastifyR
   if (access.role === "admin" && caller.role === "member") throw forbidden("Only a workspace owner or admin can do this.");
   d.limiter.hit(`ws:${caller.workspaceId}`, s.cfg.rateLimitPerMinute);
   req.log = req.log.child({ workspaceId: caller.workspaceId, actor: caller.actor });
+  // The built-in "request completed" line is written before this binding exists, so say who it was once.
+  req.log.info("request authenticated");
   return caller;
 }
 
