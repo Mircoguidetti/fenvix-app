@@ -4,7 +4,7 @@
 -- The service never uses the service_role key. It connects as the restricted role
 -- fenvix_control_plane created below. That role:
 --   * has no password in this file (you set it yourself, see control-plane/README.md),
---   * cannot bypass row level security,
+--   * cannot bypass row level security (checked at the end of the isolation tests),
 --   * only gets the table rights listed here, and every one of its table policies is
 --     "workspace_id = the workspace the service says it is acting for in this transaction"
 --     (the setting app.workspace_id, set with set_config(..., true) at the start of each
@@ -15,12 +15,20 @@
 
 -- ---------------------------------------------------------------- the role
 
+-- A new role gets Postgres's safe defaults: no superuser, no create-db, no create-role, no
+-- replication and no BYPASSRLS, and it is a member of no role. No password is set here: you set
+-- it yourself, outside this file (see control-plane/README.md).
 do $$ begin
-  create role fenvix_control_plane login nosuperuser nocreatedb nocreaterole noinherit nobypassrls;
+  create role fenvix_control_plane login;
 exception when duplicate_object then null; end $$;
 
--- If an earlier run (or a person) gave it more, take it back.
-alter role fenvix_control_plane nosuperuser nocreatedb nocreaterole noinherit nobypassrls;
+-- If an earlier run (or a person) gave the role more, take it back. Where the account running
+-- this file may not change an attribute, say so instead of failing.
+do $$ begin
+  alter role fenvix_control_plane nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
+exception when insufficient_privilege then
+  raise notice 'Could not reset the attributes of fenvix_control_plane. Check with: select rolsuper, rolbypassrls from pg_roles where rolname = ''fenvix_control_plane'' (both must be false).';
+end $$;
 
 grant usage on schema public to fenvix_control_plane;
 

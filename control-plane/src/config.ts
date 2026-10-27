@@ -33,6 +33,8 @@ export interface Config {
   rateLimitPerMinute: number;
   rateLimitAnonPerMinute: number;
   trustProxy: boolean;
+  dbPoolMax: number;
+  dbStatementTimeoutMs: number;
   limits: Limits;
   catalogue: Catalogue;
 }
@@ -103,6 +105,8 @@ export function loadConfig(env: Env = process.env): Config {
     rateLimitPerMinute: int(env, "RATE_LIMIT_PER_MINUTE", 600, 1),
     rateLimitAnonPerMinute: int(env, "RATE_LIMIT_ANON_PER_MINUTE", 30, 1),
     trustProxy: env.TRUST_PROXY === "true",
+    dbPoolMax: int(env, "DB_POOL_MAX", 10, 1),
+    dbStatementTimeoutMs: int(env, "DB_STATEMENT_TIMEOUT_MS", 30000, 1000),
     limits: parseLimits(loadJson(env.LIMITS_FILE ?? here("../config/limits.json")), "limits"),
     catalogue: parseCatalogue(loadJson(env.PLANS_FILE ?? here("../config/plans.json")), "plans"),
   };
@@ -110,6 +114,9 @@ export function loadConfig(env: Env = process.env): Config {
   if (cfg.nodeEnv === "production") {
     if (!cfg.apiPublicUrl.startsWith("https://")) throw new Error("API_PUBLIC_URL must be an https:// URL in production");
     if (!cfg.cookieSecure) throw new Error("COOKIE_SECURE=false is not allowed in production");
+    // Behind a load balancer every client has the load balancer's address unless this is true, and
+    // the per-address limits would then be shared by everyone. Make the choice explicit.
+    if (env.TRUST_PROXY !== "true" && env.TRUST_PROXY !== "false") throw new Error("TRUST_PROXY must be set to true (behind a load balancer) or false in production");
     if (cfg.dashboardOrigins.length === 0) throw new Error("DASHBOARD_ORIGINS is required in production");
   }
   return cfg;

@@ -444,6 +444,28 @@ describe("long operations: records, polling, retries, crash recovery", () => {
     } finally { await t.close(); }
   });
 
+  test("two runners sweeping at the same moment: the operation runs once", async () => {
+    const { OperationRunner } = await import("../../src/services/operations.ts");
+    const t = await startHarness({ OPERATION_WAIT_MS: "50" });
+    try {
+      const w = await t.user();
+      t.engine.delay("create", 400);
+      const res = await t.as(w).post("/databases", { name: "twice-01", region: "eu-central-1" });
+      assert.equal(res.statusCode, 202);
+      const opId = json(res).operation.id;
+      // the inline run is still going; pretend it died by freeing the lease, then let two other runners race for it
+      await sleep(500);
+      await t.admin.query("update public.operations set status = 'queued', retry_at = now(), locked_until = null, attempts = 0 where id = $1 and status <> 'succeeded'", [opId]);
+      const second = new OperationRunner(t.app.deps.s);
+      const third = new OperationRunner(t.app.deps.s);
+      await Promise.all([second.sweepOnce(), third.sweepOnce()]);
+      assert.equal(json(await t.as(w).get(`/operations/${opId}`)).status, "succeeded");
+      assert.equal(t.engine.effects.create, 1, "one database in the engine");
+      assert.equal(t.engine.dbs.size, 1);
+      assert.ok(t.engine.calls.create <= 2, `at most the first run and one racer reached the engine (got ${t.engine.calls.create})`);
+    } finally { t.engine.delay("create", 0); await t.close(); }
+  });
+
   test("after too many failed attempts the operation fails for good and the database row is removed", async () => {
     const t = await startHarness({ OPERATION_WAIT_MS: "2000" });
     try {

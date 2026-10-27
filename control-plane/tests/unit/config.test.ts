@@ -38,6 +38,10 @@ test("missing or wrong settings fail with a readable message, never with a value
   assert.throws(() => loadConfig({ ...base, DASHBOARD_ORIGINS: "https://app.test/" }), /no trailing slash/);
   assert.throws(() => loadConfig({ ...base, NODE_ENV: "production", API_PUBLIC_URL: "http://x" }), /https/);
   assert.throws(() => loadConfig({ ...base, PORT: "abc" }), /PORT/);
+  const prod = { ...base, NODE_ENV: "production", API_PUBLIC_URL: "https://api.test/v1", DASHBOARD_ORIGINS: "https://app.test" };
+  assert.throws(() => loadConfig(prod), /TRUST_PROXY must be set/);
+  assert.equal(loadConfig({ ...prod, TRUST_PROXY: "true" }).trustProxy, true);
+  assert.equal(loadConfig({ ...prod, TRUST_PROXY: "false" }).trustProxy, false);
   try { loadConfig({ ...base, DOWNLOAD_SIGNING_KEY: "secret-value-that-is-too-short" }); } catch (e) { assert.ok(!String((e as Error).message).includes("secret-value")); }
 });
 

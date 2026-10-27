@@ -17,8 +17,8 @@ export const iso = (d: Date | string | null | undefined): string | null =>
 export class Db {
   readonly pool: pg.Pool;
 
-  constructor(connectionString: string, max = 10) {
-    this.pool = new pg.Pool({ connectionString, max, idleTimeoutMillis: 30_000, application_name: "fenvix-control-plane" });
+  constructor(connectionString: string, max = 10, statementTimeoutMs = 30_000) {
+    this.pool = new pg.Pool({ connectionString, max, idleTimeoutMillis: 30_000, application_name: "fenvix-control-plane", statement_timeout: statementTimeoutMs });
     // An idle client dropping must not crash the process.
     this.pool.on("error", () => {});
   }

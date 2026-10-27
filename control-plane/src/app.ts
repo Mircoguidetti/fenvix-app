@@ -44,7 +44,7 @@ const REQ_ID = /^[A-Za-z0-9._-]{8,64}$/;
 
 export async function buildApp(opts: AppOptions): Promise<App> {
   const { cfg } = opts;
-  const db = opts.db ?? new Db(cfg.databaseUrl);
+  const db = opts.db ?? new Db(cfg.databaseUrl, cfg.dbPoolMax, cfg.dbStatementTimeoutMs);
 
   const fastify = Fastify({
     trustProxy: cfg.trustProxy,

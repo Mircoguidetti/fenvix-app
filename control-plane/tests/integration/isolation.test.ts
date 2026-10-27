@@ -249,8 +249,8 @@ describe("the database role itself cannot cross workspaces", () => {
   });
 
   test("the role has the narrow rights the migration promises", async () => {
-    const attrs = (await h.admin.query("select rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolinherit from pg_roles where rolname = 'fenvix_control_plane'")).rows[0];
-    assert.deepEqual(attrs, { rolsuper: false, rolbypassrls: false, rolcreaterole: false, rolcreatedb: false, rolinherit: false });
+    const attrs = (await h.admin.query("select rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolreplication from pg_roles where rolname = 'fenvix_control_plane'")).rows[0];
+    assert.deepEqual(attrs, { rolsuper: false, rolbypassrls: false, rolcreaterole: false, rolcreatedb: false, rolreplication: false });
     const member = (await h.admin.query("select count(*)::int as n from pg_auth_members m join pg_roles r on r.oid = m.member where r.rolname = 'fenvix_control_plane'")).rows[0].n;
     assert.equal(member, 0, "it is a member of no role (not authenticated, not service_role)");
     await as(a.workspaceId, async () => {
