@@ -281,17 +281,27 @@ export class OperationRunner {
 
   constructor(s: Services) { this.s = s; }
 
-  /** Runs the operation now and waits up to `waitMs` for it. Returns its latest state. */
+  /**
+   * Runs the operation now (a no-op when another runner already holds it) and waits up to
+   * `waitMs` for it to finish. Returns its latest state, which may still be queued or running.
+   */
   async runAndWait(row: OperationRow, waitMs: number): Promise<OperationRow> {
-    if (row.status === "succeeded" || row.status === "failed") return row;
-    const p = this.run(row.workspace_id, row.id).catch((e) => {
-      this.s.log.error({ err: e instanceof Error ? e.message : String(e), operationId: row.id }, "operation run crashed");
-    });
-    this.track(p);
-    let timer: NodeJS.Timeout | undefined;
-    await Promise.race([p, new Promise<void>((r) => { timer = setTimeout(r, waitMs); })]);
-    clearTimeout(timer);
-    return (await loadOperation(this.s, row.workspace_id, row.id)) ?? row;
+    const deadline = Date.now() + waitMs;
+    if (row.status !== "succeeded" && row.status !== "failed") {
+      const p = this.run(row.workspace_id, row.id).catch((e) => {
+        this.s.log.error({ err: e instanceof Error ? e.message : String(e), operationId: row.id }, "operation run crashed");
+      });
+      this.track(p);
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([p, new Promise<void>((r) => { timer = setTimeout(r, waitMs); })]);
+      clearTimeout(timer);
+    }
+    for (;;) {
+      const latest = (await loadOperation(this.s, row.workspace_id, row.id)) ?? row;
+      const waitingForRetry = latest.status === "queued" && new Date(latest.retry_at).getTime() > Date.now();
+      if (latest.status === "succeeded" || latest.status === "failed" || waitingForRetry || Date.now() >= deadline) return latest;
+      await new Promise<void>((r) => setTimeout(r, 50));
+    }
   }
 
   private track(p: Promise<unknown>): void {

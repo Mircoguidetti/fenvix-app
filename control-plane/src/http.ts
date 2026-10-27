@@ -183,8 +183,9 @@ export function routeHelpers(app: FastifyInstance, d: Deps): RouteHelpers {
             if (begun.state === "replay") {
               reply.header("Idempotent-Replay", "true");
               if (begun.operationId) {
-                const op = await loadOperation(d.s, caller.workspaceId, begun.operationId);
-                if (op) return send(reply, await renderOperation(d, op));
+                const first = await loadOperation(d.s, caller.workspaceId, begun.operationId);
+                // A retry that arrives while the first request is still working waits for it too.
+                if (first) return send(reply, await renderOperation(d, await d.runner.runAndWait(first, d.s.cfg.operationWaitMs)));
               }
               if (mode === "no-replay") throw new ApiError("conflict", "This request was already completed, and its result cannot be shown a second time.");
               return send(reply, { status: begun.status ?? 200, body: begun.body });
