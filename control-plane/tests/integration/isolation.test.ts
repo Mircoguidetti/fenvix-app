@@ -20,8 +20,6 @@ let bKeyId = "";
 let bInvoice = "";
 let bOperation = "";
 
-const NIL = "00000000-0000-4000-8000-000000000000";
-
 async function snapshotOf(ws: string): Promise<string> {
   const q = async (sql: string) => JSON.stringify((await h.admin.query(sql, [ws])).rows);
   return [
@@ -81,6 +79,13 @@ describe("reading: A never sees B", () => {
       assert.ok(!JSON.stringify(ov).includes("bob-"));
       assert.deepEqual(json(await h.as(who).get("/usage/months")).items, []);
     }
+  });
+
+  test("B's own API key sees B's data and nothing of A's", async () => {
+    const list = json(await h.as(bKey).get("/databases"));
+    assert.equal(list.total, 3);
+    assert.ok(list.items.every((d: { name: string }) => d.name.startsWith("bob-")));
+    assert.equal((await h.as(bKey).get(`/databases/${json(await h.as(a).get("/databases")).items[0].id}`)).statusCode, 404);
   });
 
   test("searching for B's names or tags finds nothing", async () => {

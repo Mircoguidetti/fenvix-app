@@ -241,7 +241,7 @@ export async function getUsageReport(s: Services, caller: Caller, q: UsageQuery,
   });
 }
 
-const csvField = (v: string | number) => {
+export const csvField = (v: string | number) => {
   const t = String(v);
   return /[",\n\r]/.test(t) ? `"${t.replaceAll('"', '""')}"` : t;
 };

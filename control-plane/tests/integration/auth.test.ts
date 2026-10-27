@@ -38,10 +38,11 @@ describe("every data endpoint needs a session or an API key", () => {
   test("a garbage cookie, an expired token, a wrong-audience token and a forged key are all 401", async () => {
     const expired = await h.signer.token({ id: u.userId, email: u.email }, { expiresIn: "-1m" });
     const wrongAud = await h.signer.token({ id: u.userId, email: u.email }, { audience: "anon" });
-    for (const headers of [
+    const cases: Record<string, string>[] = [
       { cookie: "fnx_session=garbage" }, { cookie: `fnx_session=${expired}` }, { cookie: `fnx_session=${wrongAud}` },
       { authorization: "Bearer fnx_deadbeef" }, { authorization: `Bearer fnx_${randomBytes(32).toString("hex")}` }, { authorization: "Bearer nonsense" }, { authorization: "Basic abc" },
-    ]) {
+    ];
+    for (const headers of cases) {
       const res = await inject("GET", "/databases", headers);
       assert.equal(res.statusCode, 401, JSON.stringify(headers));
     }

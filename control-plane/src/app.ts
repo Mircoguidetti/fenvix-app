@@ -47,6 +47,8 @@ export async function buildApp(opts: AppOptions): Promise<App> {
   const fastify = Fastify({
     trustProxy: cfg.trustProxy,
     bodyLimit: 256 * 1024,
+    // Signed download links are longer than the default of 100 characters.
+    routerOptions: { maxParamLength: 2048 },
     genReqId: (req) => {
       const given = req.headers["x-request-id"];
       return typeof given === "string" && REQ_ID.test(given) ? given : randomUUID();
