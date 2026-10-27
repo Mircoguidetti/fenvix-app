@@ -6,7 +6,7 @@ The dashboard ships with mock implementations. To go live, write an HTTP impleme
 
 ## Conventions
 
-- Base URL `https://api.fenvix.example/v1` (placeholder). JSON in, JSON out, UTF-8. All JSON property names are camelCase, exactly as in the TypeScript types.
+- Base URL `https://api.fenvix.cloud/v1`. JSON in, JSON out, UTF-8. All JSON property names are camelCase, exactly as in the TypeScript types.
 - Times are ISO 8601 strings in UTC (`2026-10-26T12:00:00Z`). Months are `YYYY-MM`.
 - Authentication: the dashboard sends the session cookie set by the sign-in endpoints (section 3), `SameSite=Lax`, `HttpOnly`, `Secure`. Scripts send `Authorization: Bearer <API key>`. Every endpoint except those in section 3 needs one of them. All data is scoped to the caller's workspace.
 - A tag is a string `key:value`. Keys and values match `^[a-z0-9][a-z0-9._-]{0,39}$`. A database has at most 20 tags and one value per key.
@@ -57,7 +57,7 @@ interface Database {
   createdAt: string;
   region: string;
   host: string;
-  /** mongodb://app_user:<password>@host:27017/db?tls=true  (password is always a placeholder) */
+  /** mongodb://app_user:<password>@<name>.db.fenvix.cloud:27017/<db>?tls=true */
   connectionString: string;
   tags: string[];
   keepAwake: boolean;
@@ -95,8 +95,8 @@ Response `200`: `{ "items": Database[], "total", "page", "pageSize" }`.
     {
       "id": "db_0013", "name": "acme-labs-prod-01", "state": "asleep", "storageMb": 412,
       "requests24h": 18, "lastActiveAt": "2026-10-25T09:14:00Z", "createdAt": "2026-03-02T08:00:00Z",
-      "region": "eu-west", "host": "acme-labs-prod-01.db.fenvix.example",
-      "connectionString": "mongodb://app_user:<password>@acme-labs-prod-01.db.fenvix.example:27017/acme_labs_prod_01?tls=true",
+      "region": "eu-west", "host": "acme-labs-prod-01.db.fenvix.cloud",
+      "connectionString": "mongodb://app_user:<password>@acme-labs-prod-01.db.fenvix.cloud:27017/acme_labs_prod_01?tls=true",
       "tags": ["customer:acme-labs", "env:prod"], "keepAwake": false, "forkedFrom": null, "restoredTo": null
     }
   ],
@@ -219,11 +219,36 @@ Adds the tags to every listed database. If a database already has the key, its v
 
 Query: `range` = `24h | 7d | 30d`. Time series for the chart on the database page, oldest first: 24 hourly points for `24h`, 28 six-hourly points for `7d`, 30 daily points for `30d`.
 
-Response `200`: `{ "items": [{ "at": "2026-10-26T11:00:00Z", "requests": 1204, "storageMb": 4820 }] }` (the client method returns `items`). `404` if the database does not exist.
+Response `200`: `{ "items": [{ "at": "2026-10-26T11:00:00Z", "requests": 1204, "storageMb": 4820, "awake": true }] }` (the client method returns `items`). `awake` is true when the database was serving for part of that bucket; the dashboard draws the wake/sleep timeline from it. `404` if the database does not exist.
 
 ---
 
-## 2. Data: usage, billing, keys, settings
+## 2. Data: overview, usage, billing, keys, settings
+
+### `getOverview` — `GET /overview`
+
+Everything the overview page shows. Query: `range` = `24h | 7d | 30d` (required). Buckets are hourly for `24h` and daily otherwise.
+
+```json
+{
+  "range": "7d",
+  "totals": { "databases": 3000, "awake": 247, "asleep": 2753, "asleepPercent": 92, "requests": 220978532, "storageGb": 2616.4, "costMtd": 859.58, "currency": "USD" },
+  "sparks": { "databases": [], "awake": [], "requests": [], "storageGb": [], "cost": [] },
+  "awakeSeries": [{ "at": "2026-10-20T00:00:00Z", "awake": 212, "total": 2964 }],
+  "requestSeries": [{ "at": "2026-10-20T00:00:00Z", "requests": 36783887 }],
+  "costSeries": [{ "at": "2026-10-01T00:00:00Z", "cost": 31.4, "reference": 29.8 }],
+  "topDatabases": [{ "id": "db_0137", "name": "acme-labs-staging-06", "requests": 1301884 }],
+  "recentWakeUps": [{ "id": "db_0137", "name": "acme-labs-staging-06", "at": "2026-10-26T11:58:00Z", "latencyMs": 571 }]
+}
+```
+
+`sparks` holds up to 12 plain numbers per measure, oldest first, for the small trend lines on the number cards. `costSeries` always covers the current month by day: `cost` is the running total this month (0 for days that have not happened), `reference` the same running total one month earlier, or null when that month was shorter. `topDatabases` is the ten busiest over the last 24 hours, `recentWakeUps` the last eight databases that woke from sleep.
+
+### `getTagBreakdown` — `GET /tags/breakdown`
+
+Query: `key` (a tag key, required), `limit` (default 8, maximum 50). Biggest first by requests.
+
+Response `200`: `{ "items": [{ "value": "acme-labs", "databases": 154, "storageGb": 125.18, "requests": 2644216 }] }`. Databases without the key are grouped under the value `(none)`.
 
 ### `listUsageMonths` — `GET /usage/months`
 
@@ -265,6 +290,32 @@ With `by=database`, `id` is the database id, `name` its name, `tags` its tags an
 Same query as `getUsageReport` without `page` and `pageSize`. Returns all rows as a CSV file. Response `200`: `ExportResult` with `mimeType: "text/csv"`.
 
 CSV header: `database,tags,storage_gb_avg,requests` for `by=database` (tags separated by spaces) and `tag,databases,storage_gb_avg,requests` for `by=tag`. UTF-8, `\n` line ends, fields containing a comma, quote or newline are quoted with doubled quotes.
+
+### `getUsageHistory` — `GET /usage/history`
+
+Totals per month, oldest first, for the trend lines on the usage page.
+
+Response `200`: `{ "items": [{ "month": "2026-05", "databases": 2103, "storageGb": 1712.4, "requests": 611204331 }] }`.
+
+### `getUsageTrend` — `GET /usage/trend`
+
+Query: `month` (`YYYY-MM`) and `tagKey`. Daily requests of that month split over the five biggest values of the key, with the rest added up as `Other`.
+
+```json
+{
+  "days": ["2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"],
+  "series": [
+    { "label": "acme-labs", "values": [2409133, 2502881] },
+    { "label": "Other", "values": [19782260, 20553119] }
+  ]
+}
+```
+
+Every `values` array is the same length as `days`.
+
+### `listPlans` — `GET /plans`
+
+Response `200`: `{ "items": [{ "id": "managed", "name": "Managed", "price": "$29", "period": "/ month", "description": "…", "features": ["…"], "current": true }] }`. `price` and `period` are ready to display; exactly one plan has `current: true`.
 
 ### `getBilling` — `GET /billing`
 
@@ -344,17 +395,19 @@ Response `200`: `SessionUser`, or `401 unauthenticated` when signed out (the cli
 
 ### `signInWithProvider` — `POST /session/providers/{provider}`
 
-`provider` is `github` or `google`. Body: `{ "returnTo": "https://app.fenvix.example/#/" }`.
+`provider` is `github` or `google`. Body: `{ "returnTo": "https://app.fenvix.cloud/#/" }`.
 
 Response `200`: `{ "redirectUrl": "https://github.com/login/oauth/authorize?..." }`. The client navigates the browser to `redirectUrl`. The provider sends the user back to the API callback (`GET /session/providers/{provider}/callback`, handled by the server only), which sets the session cookie and redirects to `returnTo`. On return the dashboard calls `getSession`. A cancelled or failed sign-in redirects to `returnTo` with `?error=sign_in_failed`.
 
 ### `requestEmailLink` — `POST /session/email-link`
 
-Body: `{ "email": "you@company.com" }`. Sends a one-time link that opens `https://app.fenvix.example/#/sign-in?token=...`. Response `202`: `{}`. The answer is the same whether or not the address has an account. Rate limit: 5 links per address per hour (`429`). `400` for a malformed address. The link works once and expires after 15 minutes.
+Body: `{ "email": "you@company.com" }`. Sends a one-time link that opens `https://app.fenvix.cloud/#/sign-in?token=...`. Response `202`: `{}`. The answer is the same whether or not the address has an account. Rate limit: 5 links per address per hour (`429`). `400` for a malformed address. The link works once and expires after 15 minutes.
 
 ### `completeEmailLink` — `POST /session/email-link/complete`
 
 Body: `{ "token": "..." }`. Response `200`: `SessionUser`, and the session cookie is set. `400 validation_failed` with the message "This sign-in link has expired. Request a new one." for a used, expired or unknown token.
+
+The emailed link points at `https://app.fenvix.cloud/#/?token=<token>`. The dashboard reads the token out of the URL, calls this endpoint, drops the token from the address bar and shows the workspace.
 
 ### `signOut` — `DELETE /session`
 
