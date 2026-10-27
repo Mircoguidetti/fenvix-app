@@ -79,7 +79,9 @@ export function SettingsPage() {
           <div>
             <dt>Plan</dt>
             <dd>
-              Managed · <Link to="/billing" className="row-link">Billing</Link>
+              <Link to="/billing" className="row-link">
+                Managed
+              </Link>
             </dd>
           </div>
           <div>

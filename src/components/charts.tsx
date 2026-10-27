@@ -334,11 +334,13 @@ export function StackedBars({ days, series, valueLabel }: { days: string[]; seri
 
 /** Awake and asleep stretches over the range, as one bar. */
 export function WakeTimeline({ points, range }: { points: { at: string; awake: boolean }[]; range: UsageRange }) {
+  const [ref, width] = useMeasure<HTMLDivElement>(200);
   const awakeCount = points.filter((p) => p.awake).length;
   const share = Math.round((awakeCount / Math.max(points.length, 1)) * 100);
-  const ticks = timeTicks(points.map((p) => p.at), range, 6);
+  // Room for one label every 100 px, so labels never run into each other.
+  const ticks = timeTicks(points.map((p) => p.at), range, Math.max(2, Math.floor(width / 100)));
   return (
-    <div className="timeline">
+    <div className="timeline" ref={ref}>
       <div className="timeline-bar" role="img" aria-label={`Awake for ${share} percent of the last ${range}.`}>
         {points.map((p) => (
           <span key={p.at} className={p.awake ? "tl-on" : "tl-off"} title={`${pointLabel(p.at, range)}: ${p.awake ? "awake" : "asleep"}`} />

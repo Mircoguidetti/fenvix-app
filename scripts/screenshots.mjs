@@ -4,7 +4,7 @@ import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { BANNED, BASE, VIEWPORTS, axeViolations, isMobile, launch, layoutProblems, makeReporter, newPage, renderProblems, settled, visibleText } from "./lib.mjs";
 
 const { fail, state } = makeReporter();
-const MAX_HEIGHT = 2400; // long lists are cut here so the files stay a sensible size
+const MAX_HEIGHT = 2600; // long lists are cut here so the files stay a sensible size
 
 const SCREENS = [
   ["overview", "#/"],
@@ -35,12 +35,29 @@ for (const [vpName, viewport] of VIEWPORTS) {
     const text = await visibleText(page);
     if (BANNED.test(text)) fail(`${label}: says "${text.match(BANNED)?.[0]}"`);
   };
-  const shot = async (name, clip) => {
+  /**
+   * The shell fills the window and the content column scrolls inside it, so a "full page"
+   * screenshot is just the window. To show a whole page, the window is grown to fit the
+   * content first: the navigation column then still runs the full height of the picture.
+   */
+  const shot = async (name, fixed) => {
+    await page.mouse.move(2, 2); // no stray hover highlight in the picture
     const path = `screenshots/${name}-${vpName}.png`;
-    if (clip) return page.screenshot({ path });
-    const height = await page.evaluate(() => document.documentElement.scrollHeight);
-    if (height > MAX_HEIGHT) await page.screenshot({ path, clip: { x: 0, y: 0, width: viewport.width, height: MAX_HEIGHT } });
-    else await page.screenshot({ path, fullPage: true });
+    if (fixed) return page.screenshot({ path });
+    const needed = await page.evaluate(() => {
+      const el = document.querySelector(".content") ?? document.documentElement;
+      return Math.ceil(el.scrollHeight);
+    });
+    const height = Math.min(Math.max(needed, viewport.height), MAX_HEIGHT);
+    if (height !== viewport.height) {
+      await page.setViewportSize({ width: viewport.width, height });
+      await page.waitForTimeout(250); // charts measure themselves again
+    }
+    await page.screenshot({ path });
+    if (height !== viewport.height) {
+      await page.setViewportSize(viewport);
+      await page.waitForTimeout(150);
+    }
   };
 
   // Signed out.
@@ -104,6 +121,8 @@ for (const [vpName, viewport] of VIEWPORTS) {
   await page.getByRole("button", { name: "Add tag", exact: true }).click();
   await page.getByText("Added tag team:data").waitFor();
   await shot("confirmation", true);
+  await page.locator(".toast").getByRole("button", { name: "Dismiss message" }).click();
+  await page.locator(".toast").waitFor({ state: "hidden" });
 
   // Navigation drawer and the account menu
   if (isMobile(viewport)) {

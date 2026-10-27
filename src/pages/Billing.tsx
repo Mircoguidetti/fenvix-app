@@ -76,12 +76,12 @@ export function BillingPage() {
                   </tbody>
                   <tfoot>
                     <tr>
-                      <th scope="row" data-label="Total">
+                      <th scope="row" className="hide-narrow">
                         Total
                       </th>
                       <td className="hide-narrow" />
                       <td className="hide-narrow" />
-                      <td data-label="Cost" className="num mono">
+                      <td data-label="Total" className="num mono">
                         {formatMoney(billing.data.monthToDate.total, currency)}
                       </td>
                     </tr>
