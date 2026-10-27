@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 export type ThemeChoice = "system" | "light" | "dark";
-const KEY = "olvix-theme";
+const KEY = "fenvix-theme";
 
 function readChoice(): ThemeChoice {
   try {

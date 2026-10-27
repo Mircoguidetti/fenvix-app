@@ -27,7 +27,7 @@ Reference project (visual and structural only, not modified): a public sibling r
 - Product logic, API routes (`/api/v1/*`), Supabase client and schema, auth flows, worker,
   eval, models, server actions, Next.js runtime.
 - Text and copy, product names, images, video components, env files, secrets.
-- Colours: the reference uses accent hues; Olvix is black and white only.
+- Colours: the reference uses accent hues; FENVIX is black and white only.
 - Dependencies: no Tailwind, Radix, Sonner or Zod here. Plain CSS with tokens, native `<dialog>`.
 
 Its CLAUDE.md and README were ignored.

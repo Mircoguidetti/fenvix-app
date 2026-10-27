@@ -1,6 +1,7 @@
 {
   "name": "olvix-app",
   "private": true,
+  "description": "FENVIX customer dashboard",
   "version": "0.1.0",
   "type": "module",
   "scripts": {

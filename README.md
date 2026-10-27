@@ -1,6 +1,6 @@
-# olvix-app
+# FENVIX dashboard (olvix-app)
 
-Customer dashboard for Olvix. Static React app (Vite): no server runtime, no database, no auth provider. All data is mock data under a "Sample data" label. Documentation lives in the olvix-landing repository.
+Customer dashboard for FENVIX. Static React app (Vite): no server runtime, no database, no auth provider. All data is mock data under a "Sample data" label. Documentation lives in the olvix-landing repository.
 
 ```bash
 npm install

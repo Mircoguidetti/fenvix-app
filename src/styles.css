@@ -1,4 +1,4 @@
-/* Tokens. Black and white only: no accent hue, no gradients. */
+/* Tokens. Black, white and greys only: no accent hue. The only gradient is the logo mark. */
 :root {
   color-scheme: light;
   --bg: #ffffff;
@@ -67,7 +67,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* Logo */
 .logo { display: inline-flex; align-items: center; gap: 9px; }
-.logo-word { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
+.logo-word { font-size: 16px; font-weight: 600; letter-spacing: 0.14em; }
 
 /* Shell */
 .shell { display: flex; min-height: 100dvh; }
