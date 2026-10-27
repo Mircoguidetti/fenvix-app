@@ -1196,3 +1196,6 @@ begin
     execute format('grant execute on function %s to authenticated', r.sig);
   end loop;
 end $$;
+
+-- Tell the API layer to pick up the new functions straight away.
+notify pgrst, 'reload schema';
