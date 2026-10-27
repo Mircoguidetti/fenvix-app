@@ -2,7 +2,7 @@
 
 This is the HTTP API the dashboard needs. Each method of `DataClient` (`src/data/client.ts`) and `SessionClient` (`src/session/client.ts`) maps to exactly one endpoint below. The TypeScript types in `src/data/types.ts` and `src/session/client.ts` are the source of truth for the JSON shapes; they are copied here so the engine team does not need the front-end code.
 
-The dashboard ships with mock implementations. To go live, write an HTTP implementation of each interface, then export it from `src/data/index.ts` and `src/session/index.ts`.
+The dashboard ships with two implementations of each interface: a mock (`VITE_DATA_BACKEND=mock`) and one on Supabase (the default). The Supabase one does not use the HTTP endpoints below; see "Running on Supabase" at the end for how each method maps onto database functions and where its behaviour differs. These endpoints remain the contract for the engine team.
 
 ## Conventions
 
@@ -386,8 +386,10 @@ Body: the full object above. Response `200`: the saved settings. `400` if `works
 These endpoints need no session. Sessions are cookies; the dashboard never sees a token.
 
 ```ts
-interface SessionUser { id: string; name: string; email: string }
+interface SessionUser { id: string; name: string; email: string; avatarUrl?: string | null }
 ```
+
+`avatarUrl` is the picture the provider gave, if any.
 
 ### `getSession` — `GET /session`
 
@@ -412,3 +414,68 @@ The emailed link points at `https://app.fenvix.cloud/#/?token=<token>`. The dash
 ### `signOut` — `DELETE /session`
 
 Ends the session and clears the cookie. Response `204`. Signing out when already signed out is also `204`.
+
+
+---
+
+## Running on Supabase
+
+`src/data/supabase.ts` and `src/session/supabase.ts` implement the two interfaces on Supabase. Every data
+method is one call to a Postgres function (`supabase/migrations/0001_init.sql`), so each change is a single
+transaction, and the functions run as the signed-in user under row level security.
+
+| Client method | Database function |
+| --- | --- |
+| `listDatabases` | `fenvix_list_databases` |
+| `listDatabaseIds` | `fenvix_database_ids` |
+| `groupDatabases` | `fenvix_group_databases` |
+| `listTags` | `fenvix_list_tags` |
+| `getDatabase` | `fenvix_get_database` |
+| `getOverview` | `fenvix_overview` |
+| `getTagBreakdown` | `fenvix_tag_breakdown` |
+| `getUsageTrend` | `fenvix_usage_trend` |
+| `createDatabase` | `fenvix_create_database` |
+| `forkDatabase` | `fenvix_fork_database` |
+| `restoreDatabase` | `fenvix_restore_database` |
+| `exportDatabases` | `fenvix_export_databases` |
+| `eraseDatabases` | `fenvix_erase_databases` |
+| `setKeepAwake` | `fenvix_set_keep_awake` |
+| `setTags` / `addTags` / `removeTags` | `fenvix_set_tags` / `fenvix_add_tags` / `fenvix_remove_tags` |
+| `getUsage` | `fenvix_usage_series` |
+| `listUsageMonths` | `fenvix_usage_months` |
+| `getUsageReport` | `fenvix_usage_report` |
+| `getUsageHistory` | `fenvix_usage_history` |
+| `exportUsageReport` | `fenvix_usage_export` |
+| `getBilling` | `fenvix_billing` |
+| `listInvoices` / `downloadInvoice` | `fenvix_list_invoices` / `fenvix_get_invoice` |
+| `listApiKeys` / `createApiKey` / `revokeApiKey` | `fenvix_list_api_keys` / `fenvix_create_api_key` / `fenvix_revoke_api_key` |
+| `getSettings` / `saveSettings` | `fenvix_settings` / `fenvix_save_settings` |
+| `listPlans` | the plan catalogue in the client, plus `fenvix_settings` for the current plan |
+| `listRegions` | fixed list in the client: `eu-west`, `us-east`, `us-west`, `ap-south` |
+
+Where the behaviour is not what the sections above describe:
+
+- **Ids** are UUIDs, not `db_0001`. A malformed id returns "not found" instead of an error.
+- **Rows only.** Fork, restore, erase and the rest change records. Nothing is sent to an engine yet.
+- **Limits.** Bulk actions take up to 5,000 ids per call; a page is at most 200 rows (5,000 for the usage export).
+- **Exports are built in the browser** from the rows the function returns, and `downloadUrl` is a local `blob:` address, not a hosted file that expires. Invoice PDFs and usage CSVs work the same way.
+- **API keys.** The browser makes the key (`fnx_` and 64 hex characters) and sends only its SHA-256 hash and last four characters. The database never sees the key and cannot show it again.
+- **Usage history** is whatever is in `usage_daily`; the seed holds 61 days, so `listUsageMonths` returns the current and the previous month. `getUsage` for `24h` reads `usage_hourly` (hourly rows for the last 24 hours), for `7d` and `30d` it reads `usage_daily`.
+- **Money** comes from one rate table in `fenvix_rates()`: 0.25 per GB-month of storage and 0.40 per million requests.
+- **Tags** allow one value per key; values may contain `a-z`, `0-9`, `.`, `_`, `-`, and `(none)` is reserved for "no value" in usage reports.
+- **Workspace.** Each person gets one personal workspace on first sign-in (a trigger on `auth.users`). There is no invitation flow yet; `workspace_members` can hold several users, but only the trigger and the SQL editor can add them.
+- **Errors** are the messages raised by the functions (for example "A database named acme-prod-01 already exists."); network, expired-session and permission errors are turned into plain sentences by `friendlyError` in `src/data/queries.ts`.
+
+### Sessions on Supabase
+
+| Client method | Supabase Auth call |
+| --- | --- |
+| `getSession` | `auth.getSession()` |
+| `signInWithProvider('github' \| 'google')` | `auth.signInWithOAuth` with PKCE; the browser is sent to the provider and comes back to the site root with `?code=` |
+| `requestEmailLink` | `auth.signInWithOtp` with `emailRedirectTo` set to the site root |
+| `completeEmailLink` | `auth.exchangeCodeForSession`; normally the code is exchanged before the app renders (see the README) |
+| `signOut` | `auth.signOut()` |
+| `subscribe` | `auth.onAuthStateChange` |
+
+The code in the returned URL is exchanged once, the address is cleaned to `#/`, and a replayed or invalid code is
+shown as a message on the sign-in page.
