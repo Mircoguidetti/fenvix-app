@@ -1,38 +1,60 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { ChartColumn, CreditCard, Database, KeyRound, Menu, Moon, Settings, Sun, X } from "lucide-react";
+import { ChartColumn, CreditCard, Database, KeyRound, LayoutDashboard, Menu, Settings, X } from "lucide-react";
+import { client } from "../data";
 import { Logo } from "./Logo";
 import { UserMenu } from "./UserMenu";
-import { SampleLabel } from "./Tags";
-import { useTheme } from "../lib/theme";
+import { useAsync } from "../lib/useAsync";
 
 const NAV = [
-  { to: "/", label: "Databases", icon: Database, end: true },
+  { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
+  { to: "/databases", label: "Databases", icon: Database, end: false },
   { to: "/usage", label: "Usage", icon: ChartColumn, end: false },
   { to: "/billing", label: "Billing", icon: CreditCard, end: false },
+];
+
+const NAV_WORKSPACE = [
   { to: "/api-keys", label: "API keys", icon: KeyRound, end: false },
   { to: "/settings", label: "Settings", icon: Settings, end: false },
 ];
 
-function ThemeToggle() {
-  const { resolved, setChoice } = useTheme();
-  const next = resolved === "dark" ? "light" : "dark";
+function initials(name: string) {
+  return name
+    .split(/\s+/)
+    .map((p) => p[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
+function Workspace() {
+  const settings = useAsync(() => client.getSettings(), []);
+  const name = settings.status === "ready" ? settings.data.workspaceName : "";
   return (
-    <button type="button" className="icon-btn" onClick={() => setChoice(next)} aria-label={`Switch to ${next} theme`}>
-      {resolved === "dark" ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
-    </button>
+    <div className="workspace">
+      <span className="avatar" aria-hidden="true">
+        {name ? initials(name) : ""}
+      </span>
+      <span className="workspace-name">
+        {name}
+        <span className="workspace-sub">Managed plan</span>
+      </span>
+    </div>
   );
 }
 
 function SideNav({ onNavigate }: { onNavigate?: () => void }) {
+  const item = ({ to, label, icon: Icon, end }: (typeof NAV)[number]) => (
+    <NavLink key={to} to={to} end={end} onClick={onNavigate} className="nav-link">
+      <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
+      <span>{label}</span>
+    </NavLink>
+  );
   return (
     <nav aria-label="Main" className="nav">
-      {NAV.map(({ to, label, icon: Icon, end }) => (
-        <NavLink key={to} to={to} end={end} onClick={onNavigate} className="nav-link">
-          <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
-          <span>{label}</span>
-        </NavLink>
-      ))}
+      {NAV.map(item)}
+      <p className="nav-label">Workspace</p>
+      {NAV_WORKSPACE.map(item)}
     </nav>
   );
 }
@@ -59,12 +81,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="sidebar-top">
           <Logo />
         </div>
-        <div className="workspace">
-          <span className="avatar" aria-hidden="true">
-            S
-          </span>
-          <span className="workspace-name">Sample workspace</span>
-        </div>
+        <Workspace />
         <SideNav />
         <div className="sidebar-bottom">
           <UserMenu />
@@ -79,6 +96,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <X size={18} aria-hidden="true" />
           </button>
         </div>
+        <Workspace />
         <SideNav onNavigate={() => setOpen(false)} />
         <div className="sidebar-bottom">
           <UserMenu />
@@ -93,12 +111,6 @@ export function Shell({ children }: { children: ReactNode }) {
           <span className="topbar-logo">
             <Logo />
           </span>
-          <div className="topbar-right">
-            <span className="topbar-sample">
-              <SampleLabel />
-            </span>
-            <ThemeToggle />
-          </div>
         </header>
         <main id="main" tabIndex={-1}>
           {children}

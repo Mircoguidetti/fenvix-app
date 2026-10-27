@@ -1,6 +1,10 @@
-// All mock data lives in this file. Every number and name here is fake.
+// All mock data lives in this file. Every number and name here is made up.
 import type { DataClient } from "./client";
-import type { ApiKey, BillingOverview, BulkResult, Database, ExportResult, Invoice, UsageQuery, UsageReport, UsageRow, UsageSort, DatabaseFilter, DatabaseGroup, DatabaseSort, DbState, GroupedDatabases, Page, Settings, TagCount, UsagePoint, UsageRange } from "./types";
+import type {
+  ApiKey, AwakePoint, BillingOverview, BulkResult, CostPoint, Database, DatabaseFilter, DatabaseGroup, DatabaseSort,
+  DbState, ExportResult, GroupedDatabases, Invoice, Overview, Page, Plan, RequestPoint, Settings, TagBreakdownRow,
+  TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport, UsageRow, UsageSort, UsageTrend, WakeUp,
+} from "./types";
 import { simplePdf } from "./pdf";
 import { matchesTagFilter, mergeTags, parseTag, sortTags, splitTag } from "../lib/tags";
 
@@ -9,7 +13,14 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
+/** Every database answers on this host. */
+export const DB_HOST = "db.fenvix.cloud";
+export const WORKSPACE = "Northwind Cloud";
+export const REGIONS = ["eu-west", "us-east", "us-west", "ap-south"];
+
 const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const formatNumber = (n: number) => new Intl.NumberFormat("en-US").format(n);
 
 interface Seed {
   id: string;
@@ -25,24 +36,22 @@ interface Seed {
 }
 
 const SEEDS: Seed[] = [
-  { id: "db_0001", name: "orders-prod", state: "awake", storageMb: 4820, requests24h: 182340, lastActiveMs: 2 * MIN, ageDays: 210, region: "eu-west", tags: ["customer:internal", "env:prod", "app:orders"], keepAwake: true },
-  { id: "db_0002", name: "agent-memory", state: "awake", storageMb: 912, requests24h: 54210, lastActiveMs: 9 * MIN, ageDays: 64, region: "us-east", tags: ["customer:internal", "env:prod", "app:agents"] },
-  { id: "db_0003", name: "staging-copy", state: "asleep", storageMb: 1730, requests24h: 1204, lastActiveMs: 5 * HOUR, ageDays: 120, region: "eu-west", tags: ["customer:internal", "env:staging", "app:orders"] },
-  { id: "db_0004", name: "ci-test-4417", state: "asleep", storageMb: 38, requests24h: 311, lastActiveMs: 19 * HOUR, ageDays: 2, region: "us-east", tags: ["customer:internal", "env:dev"] },
-  { id: "db_0005", name: "analytics-sandbox", state: "asleep", storageMb: 12400, requests24h: 0, lastActiveMs: 6 * DAY, ageDays: 300, region: "eu-west", tags: ["customer:internal", "env:dev", "app:analytics"] },
-  { id: "db_0006", name: "support-bot", state: "awake", storageMb: 256, requests24h: 9120, lastActiveMs: 41 * MIN, ageDays: 33, region: "ap-south", tags: ["customer:internal", "env:prod", "app:agents"] },
-  { id: "db_0007", name: "feature-flags", state: "asleep", storageMb: 12, requests24h: 4410, lastActiveMs: 3 * HOUR, ageDays: 400, region: "eu-west", tags: ["customer:internal", "env:prod"] },
-  { id: "db_0008", name: "demo-tenant-acme", state: "asleep", storageMb: 640, requests24h: 87, lastActiveMs: 2 * DAY, ageDays: 18, region: "us-east", tags: ["customer:acme-labs", "env:preview"] },
-  { id: "db_0009", name: "billing-events", state: "awake", storageMb: 7305, requests24h: 98560, lastActiveMs: 30_000, ageDays: 180, region: "us-east", tags: ["customer:internal", "env:prod", "app:billing"] },
-  { id: "db_0010", name: "preview-pr-982", state: "asleep", storageMb: 54, requests24h: 0, lastActiveMs: 11 * DAY, ageDays: 12, region: "eu-west", tags: ["customer:internal", "env:preview"] },
-  { id: "db_0011", name: "research-notes", state: "asleep", storageMb: 2210, requests24h: 530, lastActiveMs: 8 * HOUR, ageDays: 75, region: "ap-south", tags: ["customer:internal", "env:dev"] },
-  { id: "db_0012", name: "load-test-run", state: "asleep", storageMb: 20480, requests24h: 12, lastActiveMs: 26 * HOUR, ageDays: 5, region: "us-east", tags: ["customer:internal", "env:dev"] },
+  { id: "db_0001", name: "orders-prod", state: "awake", storageMb: 4820, requests24h: 182340, lastActiveMs: 2 * MIN, ageDays: 210, region: "eu-west", tags: ["customer:northwind", "env:prod", "app:orders"], keepAwake: true },
+  { id: "db_0002", name: "agent-memory", state: "awake", storageMb: 912, requests24h: 54210, lastActiveMs: 9 * MIN, ageDays: 64, region: "us-east", tags: ["customer:northwind", "env:prod", "app:agents"] },
+  { id: "db_0003", name: "orders-staging", state: "asleep", storageMb: 1730, requests24h: 1204, lastActiveMs: 5 * HOUR, ageDays: 120, region: "eu-west", tags: ["customer:northwind", "env:staging", "app:orders"] },
+  { id: "db_0004", name: "ci-4417", state: "asleep", storageMb: 38, requests24h: 311, lastActiveMs: 19 * HOUR, ageDays: 2, region: "us-east", tags: ["customer:northwind", "env:dev"] },
+  { id: "db_0005", name: "analytics-archive", state: "asleep", storageMb: 12400, requests24h: 0, lastActiveMs: 6 * DAY, ageDays: 300, region: "eu-west", tags: ["customer:northwind", "env:dev", "app:analytics"] },
+  { id: "db_0006", name: "support-bot", state: "awake", storageMb: 256, requests24h: 9120, lastActiveMs: 41 * MIN, ageDays: 33, region: "ap-south", tags: ["customer:northwind", "env:prod", "app:agents"] },
+  { id: "db_0007", name: "feature-flags", state: "asleep", storageMb: 12, requests24h: 4410, lastActiveMs: 3 * HOUR, ageDays: 400, region: "eu-west", tags: ["customer:northwind", "env:prod"] },
+  { id: "db_0008", name: "acme-labs-prod", state: "asleep", storageMb: 640, requests24h: 87, lastActiveMs: 2 * DAY, ageDays: 18, region: "us-east", tags: ["customer:acme-labs", "env:prod"] },
+  { id: "db_0009", name: "billing-events", state: "awake", storageMb: 7305, requests24h: 98560, lastActiveMs: 30_000, ageDays: 180, region: "us-east", tags: ["customer:northwind", "env:prod", "app:billing"] },
+  { id: "db_0010", name: "branch-982", state: "asleep", storageMb: 54, requests24h: 0, lastActiveMs: 11 * DAY, ageDays: 12, region: "eu-west", tags: ["customer:northwind", "env:sandbox"] },
+  { id: "db_0011", name: "research-notes", state: "asleep", storageMb: 2210, requests24h: 530, lastActiveMs: 8 * HOUR, ageDays: 75, region: "ap-south", tags: ["customer:northwind", "env:dev"] },
+  { id: "db_0012", name: "bench-run-12", state: "asleep", storageMb: 20480, requests24h: 12, lastActiveMs: 26 * HOUR, ageDays: 5, region: "us-east", tags: ["customer:northwind", "env:dev"] },
 ];
 
-export const REGIONS = ["eu-west", "us-east", "us-west", "ap-south"];
-
 export function connectionStringFor(name: string): { host: string; connectionString: string } {
-  const host = `${name}.sample.invalid`;
+  const host = `${name}.${DB_HOST}`;
   return { host, connectionString: `mongodb://app_user:<password>@${host}:27017/${name.replace(/-/g, "_")}?tls=true` };
 }
 
@@ -64,7 +73,7 @@ function makeDatabase(s: Seed): Database {
   };
 }
 
-/** Small deterministic pseudo-random generator so screenshots are stable. */
+/** Small deterministic pseudo-random generator so screens are stable. */
 function rng(seed: number) {
   let t = seed >>> 0;
   return () => {
@@ -75,14 +84,22 @@ function rng(seed: number) {
   };
 }
 
+/** Stable number from a string, for seeding. */
+function hash(text: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return (h >>> 0) % 100000;
+}
+
 const FLEET_SIZE = 3000;
 const CUSTOMER_FIRST = ["acme", "brio", "cald", "dyna", "elan", "fenn", "glim", "hexa", "ivor", "juno", "kest", "lumo", "mera", "nova", "orbi", "pyra", "quil", "rhea", "sova", "tavi"];
 const CUSTOMER_SECOND = ["labs", "works", "corp", "soft", "pay", "data", "logic", "cloud", "bank", "mart"];
-/** 200 customers: "internal" plus 199 generated names. */
-const CUSTOMERS = ["internal", ...CUSTOMER_FIRST.flatMap((a) => CUSTOMER_SECOND.map((b) => `${a}-${b}`)).slice(0, 199)];
-const ENVS = ["prod", "prod", "prod", "staging", "dev", "dev", "preview"];
+/** 200 customers: the workspace itself plus 199 generated names. */
+const CUSTOMERS = ["northwind", ...CUSTOMER_FIRST.flatMap((a) => CUSTOMER_SECOND.map((b) => `${a}-${b}`)).slice(0, 199)];
+const ENVS = ["prod", "prod", "prod", "staging", "dev", "dev", "sandbox"];
+const APPS = ["orders", "agents", "analytics", "billing"];
 
-/** About 3,000 databases over 200 customers; a few large customers and a long tail. Most are asleep. */
+/** About 3,000 databases over 200 customers, a few large ones and a long tail. Around 9 in 10 are asleep. */
 function buildFleet(): Database[] {
   const fleet = SEEDS.map(makeDatabase);
   const rand = rng(20261026);
@@ -99,16 +116,16 @@ function buildFleet(): Database[] {
       const env = ENVS[Math.floor(rand() * ENVS.length)];
       const seq = (perEnv.get(env) ?? 0) + 1;
       perEnv.set(env, seq);
-      const awake = rand() < 0.08;
+      const awake = rand() < 0.085;
       const tags = [`customer:${customer}`, `env:${env}`];
-      if (rand() < 0.3) tags.push(`app:${["orders", "agents", "analytics", "billing"][Math.floor(rand() * 4)]}`);
+      if (rand() < 0.3) tags.push(`app:${APPS[Math.floor(rand() * APPS.length)]}`);
       fleet.push(
         makeDatabase({
           id: `db_${String(n).padStart(4, "0")}`,
           name: `${customer}-${env}-${String(seq).padStart(2, "0")}`,
           state: awake ? "awake" : "asleep",
           storageMb: awake ? Math.round(200 + rand() * 8800) : Math.max(2, Math.round(Math.exp(Math.log(5) + rand() * Math.log(800)))),
-          requests24h: awake ? Math.round(5000 + rand() * 195000) : rand() < 0.6 ? Math.round(rand() * 50) : Math.round(rand() * 3000),
+          requests24h: awake ? Math.round((5000 + rand() * 195000) * (rand() < 0.04 ? 3 + rand() * 5 : 1)) : rand() < 0.6 ? Math.round(rand() * 50) : Math.round(rand() * 3000),
           lastActiveMs: awake ? Math.round(rand() * 25 * MIN) : HOUR + Math.round(rand() ** 2 * 45 * DAY),
           ageDays: 1 + Math.round(rand() * 500),
           region: REGIONS[Math.floor(rand() * REGIONS.length)],
@@ -151,11 +168,6 @@ function mutate(ids: string[], change: (d: Database) => Database): BulkResult {
   return { affected };
 }
 
-/** Like parseTags, but a bare "key" is allowed (removes the key). */
-function parseTagsOrKeys(tags: string[]): string[] {
-  return tags.map((t) => (t.includes(":") ? parseTags([t])[0] : t.trim().toLowerCase()));
-}
-
 function blank(name: string, region: string): Database {
   return makeDatabase({ id: `db_${randomHex(8)}`, name, state: "asleep", storageMb: 0, requests24h: 0, lastActiveMs: 0, ageDays: 0, region, tags: [] });
 }
@@ -178,19 +190,17 @@ export function blobUrl(content: string, type: string): string {
   return URL.createObjectURL(new Blob([content], { type }));
 }
 
+/** Like parseTags, but a bare "key" is allowed (removes the key). */
+function parseTagsOrKeys(tags: string[]): string[] {
+  return tags.map((t) => (t.includes(":") ? parseTags([t])[0] : t.trim().toLowerCase()));
+}
+
 function parseTags(tags: string[]): string[] {
   return tags.map((t) => {
     const parsed = parseTag(t);
     if ("error" in parsed) throw new Error(parsed.error);
     return parsed.tag;
   });
-}
-
-/** Stable number from a string, for seeding. */
-function hash(text: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
-  return (h >>> 0) % 100000;
 }
 
 function usageFor(db: Database, range: UsageRange): UsagePoint[] {
@@ -200,7 +210,7 @@ function usageFor(db: Database, range: UsageRange): UsagePoint[] {
   const perBucket = Math.max(db.requests24h, 40) / (range === "24h" ? 24 : range === "7d" ? 4 : 1);
   const startStorage = db.storageMb * 0.82;
   return Array.from({ length: count }, (_, i) => {
-    const at = new Date(NOW.getTime() - (count - i) * step).toISOString();
+    const at = new Date(NOW.getTime() - (count - 1 - i) * step).toISOString();
     const wave = 0.55 + 0.45 * Math.sin((i / count) * Math.PI * (range === "24h" ? 2 : 4) + seed);
     const idle = db.state === "asleep" && rand() < 0.45 ? 0.04 : 1;
     const requests = Math.round(perBucket * wave * idle * (0.6 + rand() * 0.8));
@@ -209,10 +219,11 @@ function usageFor(db: Database, range: UsageRange): UsagePoint[] {
   });
 }
 
+// ---------------------------------------------------------------- usage and billing
+
 const USAGE_MONTHS = ["2026-10", "2026-09", "2026-08", "2026-07", "2026-06", "2026-05"];
 const STORAGE_RATE = 0.25; // per GB-month
 const REQUEST_RATE = 0.4; // per million requests
-const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Usage of one database in a month. The current month is counted up to "now". */
 function monthlyUsage(d: Database, month: string): { requests: number; storageGb: number } {
@@ -224,7 +235,8 @@ function monthlyUsage(d: Database, month: string): { requests: number; storageGb
   const active = Math.min(1, (end - Math.max(start, created)) / (end - start));
   const days = (end - start) / DAY;
   const jitter = 0.7 + 0.6 * (hash(d.id + month) / 100000);
-  const trend = 1 - 0.04 * (USAGE_MONTHS.indexOf(month) < 0 ? 0 : USAGE_MONTHS.indexOf(month));
+  const index = USAGE_MONTHS.indexOf(month);
+  const trend = 1 - 0.04 * (index < 0 ? 0 : index);
   return { requests: Math.round(d.requests24h * days * active * jitter), storageGb: round2((d.storageMb / 1024) * active * trend) };
 }
 
@@ -263,19 +275,31 @@ function costs(t: { storageGb: number; requests: number }, fraction = 1) {
   return { storage: round2(t.storageGb * STORAGE_RATE * fraction), requests: round2((t.requests / 1e6) * REQUEST_RATE) };
 }
 
+const monthFraction = (month: string) => (month === "2026-10" ? NOW.getUTCDate() / 31 : 1);
+const monthCost = (month: string) => {
+  const c = costs(monthTotals(month), monthFraction(month));
+  return round2(c.storage + c.requests);
+};
+
 const INVOICES: Invoice[] = USAGE_MONTHS.slice(1).map((month) => {
-  const c = costs(monthTotals(month));
   const [y, m] = month.split("-").map(Number);
-  return { id: `inv_${month}`, number: `FNX-${month}`, month, issuedAt: new Date(Date.UTC(y, m, 1)).toISOString(), amount: round2(c.storage + c.requests), currency: "USD", status: "paid" as const };
+  return { id: `inv_${month}`, number: `FNX-${month}`, month, issuedAt: new Date(Date.UTC(y, m, 1)).toISOString(), amount: monthCost(month), currency: "USD", status: "paid" as const };
 });
+
+const PLANS: Plan[] = [
+  { id: "open-source", name: "Open source", price: "Free", period: "", description: "One database, run by you, on your machine or your cloud storage.", features: ["The complete engine", "MongoDB drivers and tools", "Community support"], current: false },
+  { id: "managed", name: "Managed", price: "$29", period: "/ month", description: "Includes 10 GB and 10 million requests, then pay for what you use.", features: ["Unlimited databases", "Asleep databases cost only storage", "Fork, restore, export, erase", "Usage per customer"], current: true },
+  { id: "dedicated", name: "Dedicated", price: "$499", period: "/ month", description: "Your own environment in the region you choose, plus usage.", features: ["Servers for you alone", "Region of your choice", "Keep busy customers awake", "Priority support"], current: false },
+  { id: "in-your-cloud", name: "In your cloud", price: "Custom", period: "", description: "Runs in your own cloud account. Your data never leaves it.", features: ["Your cloud, your region", "Single sign-on and audit log", "Support with an agreed response time"], current: false },
+];
 
 function getBillingOverview(): BillingOverview {
   const t = monthTotals("2026-10");
-  const fraction = NOW.getUTCDate() / 31;
+  const fraction = monthFraction("2026-10");
   const c = costs(t, fraction);
   return {
     currency: "USD",
-    plan: { name: "Pay as you go", description: "No base fee. You pay for the storage and requests of your databases, billed monthly." },
+    plan: { name: "Managed", description: "Includes 10 GB and 10 million requests, then pay for what you use." },
     monthToDate: {
       periodLabel: "October 1 to 26, 2026",
       lines: [
@@ -288,18 +312,169 @@ function getBillingOverview(): BillingOverview {
   };
 }
 
-const formatNumber = (n: number) => new Intl.NumberFormat("en-US").format(n);
+// ---------------------------------------------------------------- overview
+
+const BUCKETS: Record<UsageRange, { count: number; step: number }> = {
+  "24h": { count: 24, step: HOUR },
+  "7d": { count: 7, step: DAY },
+  "30d": { count: 30, step: DAY },
+};
+
+/** Bucket starts for a range, oldest first, ending at the bucket "now" is in. */
+function bucketStarts(range: UsageRange): string[] {
+  const { count, step } = BUCKETS[range];
+  const end = Math.floor(NOW.getTime() / step) * step;
+  return Array.from({ length: count }, (_, i) => new Date(end - (count - 1 - i) * step).toISOString());
+}
+
+/** Fleet-wide daily rhythm: busier in the European working day, quieter at the weekend. */
+function fleetShape(at: Date, range: UsageRange): number {
+  const hour = at.getUTCHours() + (range === "24h" ? 0 : 12);
+  const day = at.getUTCDay();
+  const ofDay = range === "24h" ? 0.62 + 0.38 * Math.sin(((hour - 4) / 24) * 2 * Math.PI) : 1;
+  const ofWeek = day === 0 || day === 6 ? 0.72 : 1;
+  return ofDay * ofWeek;
+}
+
+function awakeSeries(range: UsageRange): AwakePoint[] {
+  const total = databases.length;
+  const awakeNow = databases.filter((d) => d.state === "awake").length;
+  const rand = rng(hash(`awake-${range}`));
+  return bucketStarts(range).map((at, i, all) => {
+    const shape = fleetShape(new Date(at), range);
+    const drift = 1 - 0.12 * ((all.length - 1 - i) / all.length);
+    const awake = Math.max(40, Math.round(awakeNow * shape * drift * (0.94 + rand() * 0.12)));
+    return { at, awake: i === all.length - 1 ? awakeNow : awake, total: Math.round(total * drift) };
+  });
+}
+
+function requestSeries(range: UsageRange): RequestPoint[] {
+  const perDay = databases.reduce((a, d) => a + d.requests24h, 0);
+  const perBucket = range === "24h" ? perDay / 24 : perDay;
+  const rand = rng(hash(`requests-${range}`));
+  return bucketStarts(range).map((at) => ({ at, requests: Math.round(perBucket * fleetShape(new Date(at), range) * (0.88 + rand() * 0.24)) }));
+}
+
+/** Cost so far this month by day, with the same days of the month before for reference. */
+function costSeries(): CostPoint[] {
+  const thisMonth = monthCost("2026-10");
+  const lastMonth = monthCost("2026-09");
+  const days = NOW.getUTCDate();
+  const rand = rng(hash("cost"));
+  const weights = Array.from({ length: 30 }, (_, i) => fleetShape(new Date(Date.UTC(2026, 9, i + 1, 12)), "30d") * (0.9 + rand() * 0.2));
+  const totalWeight = weights.slice(0, days).reduce((a, b) => a + b, 0);
+  const lastWeight = weights.reduce((a, b) => a + b, 0);
+  let run = 0;
+  let runRef = 0;
+  return Array.from({ length: 30 }, (_, i) => {
+    const at = new Date(Date.UTC(2026, 9, i + 1)).toISOString();
+    runRef += (lastMonth * weights[i]) / lastWeight;
+    if (i < days) run += (thisMonth * weights[i]) / totalWeight;
+    return { at, cost: i < days ? round2(run) : 0, reference: round2(runRef) };
+  }).slice(0, days + 4);
+}
+
+function sparkFrom(values: number[], points = 12): number[] {
+  if (values.length <= points) return values.map(round2);
+  const step = values.length / points;
+  return Array.from({ length: points }, (_, i) => round2(values[Math.min(values.length - 1, Math.round(i * step))]));
+}
+
+const WAKE_MINUTES = [2, 6, 13, 21, 34, 52, 78, 115];
+
+function recentWakeUps(): WakeUp[] {
+  const rand = rng(hash("wake-ups"));
+  return [...databases]
+    .filter((d) => !d.keepAwake && d.requests24h > 0)
+    .sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime())
+    .slice(0, WAKE_MINUTES.length)
+    .map((d, i) => ({ id: d.id, name: d.name, at: ago(WAKE_MINUTES[i] * MIN), latencyMs: 180 + Math.round(rand() * 760) }));
+}
+
+function overviewFor(range: UsageRange): Overview {
+  const awake = awakeSeries(range);
+  const requests = requestSeries(range);
+  const cost = costSeries();
+  const awakeNow = databases.filter((d) => d.state === "awake").length;
+  const storageGb = round2(databases.reduce((a, d) => a + d.storageMb, 0) / 1024);
+  const totalRequests = requests.reduce((a, p) => a + p.requests, 0);
+  const paid = cost.filter((p) => p.cost > 0);
+  return {
+    range,
+    totals: {
+      databases: databases.length,
+      awake: awakeNow,
+      asleep: databases.length - awakeNow,
+      asleepPercent: Math.round(((databases.length - awakeNow) / databases.length) * 100),
+      requests: totalRequests,
+      storageGb,
+      costMtd: paid.length ? paid[paid.length - 1].cost : 0,
+      currency: "USD",
+    },
+    sparks: {
+      databases: sparkFrom(awake.map((p) => p.total)),
+      awake: sparkFrom(awake.map((p) => p.awake)),
+      requests: sparkFrom(requests.map((p) => p.requests)),
+      storageGb: sparkFrom(awake.map((_, i) => round2((storageGb * (0.93 + (0.07 * i) / awake.length))))),
+      cost: sparkFrom(paid.map((p) => p.cost)),
+    },
+    awakeSeries: awake,
+    requestSeries: requests,
+    costSeries: cost,
+    topDatabases: [...databases].sort((a, b) => b.requests24h - a.requests24h).slice(0, 10).map((d) => ({ id: d.id, name: d.name, requests: d.requests24h })),
+    recentWakeUps: recentWakeUps(),
+  };
+}
+
+function tagBreakdown(key: string, limit: number): TagBreakdownRow[] {
+  const rows = new Map<string, TagBreakdownRow>();
+  for (const d of databases) {
+    const tag = d.tags.find((t) => splitTag(t).key === key);
+    const value = tag ? splitTag(tag).value : "(none)";
+    const r = rows.get(value) ?? { value, databases: 0, storageGb: 0, requests: 0 };
+    r.databases++;
+    r.storageGb = round2(r.storageGb + d.storageMb / 1024);
+    r.requests += d.requests24h;
+    rows.set(value, r);
+  }
+  return [...rows.values()].sort((a, b) => b.requests - a.requests || b.storageGb - a.storageGb).slice(0, limit);
+}
+
+/** Daily requests of a month, split over the five biggest values of a tag key plus "Other". */
+function usageTrend(month: string, tagKey: string): UsageTrend {
+  const [y, m] = month.split("-").map(Number);
+  const lastDay = month === "2026-10" ? NOW.getUTCDate() : new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const days = Array.from({ length: lastDay }, (_, i) => new Date(Date.UTC(y, m - 1, i + 1)).toISOString());
+  const perValue = new Map<string, number>();
+  for (const d of databases) {
+    const tag = d.tags.find((t) => splitTag(t).key === tagKey);
+    const value = tag ? splitTag(tag).value : "(none)";
+    perValue.set(value, (perValue.get(value) ?? 0) + monthlyUsage(d, month).requests);
+  }
+  const sorted = [...perValue.entries()].sort((a, b) => b[1] - a[1]);
+  const top = sorted.slice(0, 5);
+  const otherTotal = sorted.slice(5).reduce((a, x) => a + x[1], 0);
+  const entries = otherTotal > 0 ? [...top, ["Other", otherTotal] as [string, number]] : top;
+  const weights = days.map((at) => fleetShape(new Date(at), "30d"));
+  const weightSum = weights.reduce((a, b) => a + b, 0);
+  return {
+    days,
+    series: entries.map(([label, total]) => ({ label, values: weights.map((w) => Math.round((total * w) / weightSum)) })),
+  };
+}
+
+// ---------------------------------------------------------------- keys and settings
 
 let apiKeys: ApiKey[] = [
   { id: "key_1", name: "Production backend", hint: "a91f", createdAt: ago(90 * DAY), lastUsedAt: ago(4 * MIN), revokedAt: null },
-  { id: "key_2", name: "CI pipeline", hint: "3c07", createdAt: ago(41 * DAY), lastUsedAt: ago(19 * HOUR), revokedAt: null },
+  { id: "key_2", name: "Deploy pipeline", hint: "3c07", createdAt: ago(41 * DAY), lastUsedAt: ago(19 * HOUR), revokedAt: null },
   { id: "key_3", name: "Agent runner", hint: "e5d2", createdAt: ago(12 * DAY), lastUsedAt: ago(3 * DAY), revokedAt: null },
   { id: "key_4", name: "Old laptop", hint: "77b0", createdAt: ago(200 * DAY), lastUsedAt: ago(120 * DAY), revokedAt: ago(100 * DAY) },
 ];
 
-let settings: Settings = { workspaceName: "Sample workspace", idleMinutes: 5, emailNotices: true };
+let settings: Settings = { workspaceName: WORKSPACE, idleMinutes: 5, emailNotices: true };
 
-const wait = <T,>(value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(value), 120));
+const wait = <T,>(value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(value), 90));
 
 function randomHex(n: number) {
   const bytes = new Uint8Array(n);
@@ -311,7 +486,7 @@ export const mockClient: DataClient = {
   isSample: true,
   now: () => NOW,
   listDatabases(query = {}) {
-    const { sort = "lastActiveAt", dir = "desc", page = 1, pageSize = 50 } = query;
+    const { sort = "name", dir = "asc", page = 1, pageSize = 50 } = query;
     const sign = dir === "asc" ? 1 : -1;
     const rows = databases.filter((d) => matches(d, query)).sort((a, b) => sign * compareBy(a, b, sort) || a.name.localeCompare(b.name));
     const items = rows.slice((page - 1) * pageSize, page * pageSize).map(copy);
@@ -342,6 +517,11 @@ export const mockClient: DataClient = {
     const tags: TagCount[] = [...counts].map(([t, count]) => ({ ...splitTag(t), count })).sort((a, b) => a.key.localeCompare(b.key) || b.count - a.count || a.value.localeCompare(b.value));
     return wait(tags);
   },
+  getDatabase: (id) => wait(copyOrNull(databases.find((d) => d.id === id))),
+  getOverview: (range) => wait(overviewFor(range)),
+  getTagBreakdown: (key, limit = 8) => wait(tagBreakdown(key, limit)),
+  getUsageTrend: (month, tagKey) => wait(usageTrend(month, tagKey)),
+  listPlans: () => wait(PLANS.map((p) => ({ ...p, features: [...p.features] }))),
   listRegions: () => wait([...REGIONS]),
   async createDatabase({ name, region, tags }) {
     const clean = checkName(name);
@@ -372,7 +552,7 @@ export const mockClient: DataClient = {
   async exportDatabases(ids) {
     const picked = databases.filter((d) => ids.includes(d.id));
     if (picked.length === 0) throw new Error("Nothing to export.");
-    const body = { sample: true, exportedAt: NOW.toISOString(), databases: picked.map((d) => ({ name: d.name, region: d.region, tags: d.tags, storageMb: d.storageMb, collections: [{ name: "items", documents: [{ _id: "sample-1" }, { _id: "sample-2" }] }] })) };
+    const body = { exportedAt: NOW.toISOString(), databases: picked.map((d) => ({ name: d.name, region: d.region, tags: d.tags, storageMb: d.storageMb, collections: [{ name: "orders", documents: 18204 }, { name: "users", documents: 412 }] })) };
     const filename = picked.length === 1 ? `fenvix-export-${picked[0].name}.json` : `fenvix-export-${picked.length}-databases.json`;
     return wait<ExportResult>({ filename, mimeType: "application/json", downloadUrl: blobUrl(JSON.stringify(body, null, 2), "application/json") });
   },
@@ -399,7 +579,6 @@ export const mockClient: DataClient = {
     const drop = parseTagsOrKeys(tags);
     return wait(mutate(ids, (d) => ({ ...d, tags: d.tags.filter((t) => !drop.some((x) => matchesTagFilter([t], x))) })));
   },
-  getDatabase: (id) => wait(copyOrNull(databases.find((d) => d.id === id))),
   getUsage: (id, range) => {
     const db = databases.find((d) => d.id === id);
     return wait(db ? usageFor(db, range) : []);
@@ -427,12 +606,12 @@ export const mockClient: DataClient = {
   async downloadInvoice(id) {
     const inv = INVOICES.find((i) => i.id === id);
     if (!inv) throw new Error("Invoice not found");
-    const pdf = simplePdf(["FENVIX (sample invoice)", "", `Invoice ${inv.number}`, `Month: ${inv.month}`, `Issued: ${inv.issuedAt.slice(0, 10)}`, `Amount: ${inv.currency} ${inv.amount.toFixed(2)}`, `Status: ${inv.status}`, "", "This is sample data, not a real invoice."]);
+    const pdf = simplePdf(["FENVIX", "", `Invoice ${inv.number}`, `Workspace: ${settings.workspaceName}`, `Month: ${inv.month}`, `Issued: ${inv.issuedAt.slice(0, 10)}`, `Amount: ${inv.currency} ${inv.amount.toFixed(2)}`, `Status: ${inv.status}`]);
     return wait<ExportResult>({ filename: `${inv.number}.pdf`, mimeType: "application/pdf", downloadUrl: blobUrl(pdf, "application/pdf") });
   },
   listApiKeys: () => wait(apiKeys.map((k) => ({ ...k }))),
   async createApiKey(name) {
-    const secret = `sample_${randomHex(32)}`;
+    const secret = `fnx_${randomHex(32)}`;
     const key: ApiKey = { id: `key_${randomHex(6)}`, name, hint: secret.slice(-4), createdAt: NOW.toISOString(), lastUsedAt: null, revokedAt: null };
     apiKeys = [key, ...apiKeys];
     return wait({ key: { ...key }, secret });

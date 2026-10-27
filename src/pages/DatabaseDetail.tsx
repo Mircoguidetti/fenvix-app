@@ -45,7 +45,7 @@ function DatabaseDetail({ id }: { id: string }) {
   useEffect(() => setKeepLocal(null), [loadedKeep]);
 
   const back = (
-    <Link to="/" className="back-link">
+    <Link to="/databases" className="back-link">
       <ArrowLeft size={16} aria-hidden="true" />
       All databases
     </Link>

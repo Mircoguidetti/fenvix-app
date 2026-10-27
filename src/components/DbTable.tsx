@@ -32,7 +32,23 @@ function Check({ label, checked, indeterminate, onChange }: { label: string; che
   );
 }
 
-/** Databases as a table on wide screens and as stacked rows on phones. */
+function Head({ col, sort, onSort }: { col: (typeof COLUMNS)[number]; sort?: { key: DatabaseSort; dir: Dir }; onSort?: (key: DatabaseSort) => void }) {
+  const active = sort?.key === col.key;
+  return (
+    <th scope="col" className={col.num ? "num" : undefined} aria-sort={sort ? (active ? (sort.dir === "asc" ? "ascending" : "descending") : "none") : undefined}>
+      {onSort ? (
+        <button type="button" className="th-btn" onClick={() => onSort(col.key)}>
+          {col.label}
+          {active ? sort.dir === "asc" ? <ArrowUp size={14} aria-hidden="true" /> : <ArrowDown size={14} aria-hidden="true" /> : <ArrowUpDown size={14} aria-hidden="true" className="faint" />}
+        </button>
+      ) : (
+        col.label
+      )}
+    </th>
+  );
+}
+
+/** Databases as a table on wide screens and as stacked rows on phones. Every row is the same height. */
 export function DbTable({
   items,
   selected,
@@ -66,9 +82,7 @@ export function DbTable({
             <th scope="col" className="select-col">
               <Check label="Select all on this page" checked={picked > 0 && picked === ids.length} indeterminate={picked > 0 && picked < ids.length} onChange={(on) => onToggle(ids, on)} />
             </th>
-            {COLUMNS.slice(0, 1).map((c) => (
-              <Head key={c.key} col={c} sort={sort} onSort={onSort} />
-            ))}
+            <Head col={COLUMNS[0]} sort={sort} onSort={onSort} />
             <th scope="col">Tags</th>
             {COLUMNS.slice(1).map((c) => (
               <Head key={c.key} col={c} sort={sort} onSort={onSort} />
@@ -81,7 +95,7 @@ export function DbTable({
               <td className="select-cell">
                 <Check label={`Select ${d.name}`} checked={selected.has(d.id)} onChange={(on) => onToggle([d.id], on)} />
               </td>
-              <td data-label="Name">
+              <td data-label="Name" className="name-cell">
                 <Link to={`/databases/${d.id}`} className="row-link mono">
                   {d.name}
                 </Link>
@@ -107,21 +121,5 @@ export function DbTable({
         </tbody>
       </table>
     </div>
-  );
-}
-
-function Head({ col, sort, onSort }: { col: (typeof COLUMNS)[number]; sort?: { key: DatabaseSort; dir: Dir }; onSort?: (key: DatabaseSort) => void }) {
-  const active = sort?.key === col.key;
-  return (
-    <th scope="col" className={col.num ? "num" : undefined} aria-sort={sort ? (active ? (sort.dir === "asc" ? "ascending" : "descending") : "none") : undefined}>
-      {onSort ? (
-        <button type="button" className="th-btn" onClick={() => onSort(col.key)}>
-          {col.label}
-          {active ? sort.dir === "asc" ? <ArrowUp size={14} aria-hidden="true" /> : <ArrowDown size={14} aria-hidden="true" /> : <ArrowUpDown size={14} aria-hidden="true" className="faint" />}
-        </button>
-      ) : (
-        col.label
-      )}
-    </th>
   );
 }

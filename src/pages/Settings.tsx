@@ -4,17 +4,9 @@ import { Card, Message, PageHeader } from "../components/PageHeader";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session/SessionProvider";
 import { useToast } from "../components/Toast";
-import { useTheme, type ThemeChoice } from "../lib/theme";
-
-const THEMES: { value: ThemeChoice; label: string }[] = [
-  { value: "system", label: "System" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-];
 
 export function SettingsPage() {
   const loaded = useAsync(() => client.getSettings(), []);
-  const { choice, setChoice } = useTheme();
   const { user, signOut } = useSession();
   const toast = useToast();
   const [form, setForm] = useState<Settings | null>(null);
@@ -37,18 +29,6 @@ export function SettingsPage() {
   return (
     <>
       <PageHeader title="Settings" description="Workspace and appearance." />
-
-      <Card id="appearance" title="Appearance" description="System follows your device. Your choice is stored in this browser only.">
-        <fieldset className="radio-group">
-          <legend className="sr-only">Theme</legend>
-          {THEMES.map((t) => (
-            <label key={t.value} className="radio">
-              <input type="radio" name="theme" value={t.value} checked={choice === t.value} onChange={() => setChoice(t.value)} />
-              {t.label}
-            </label>
-          ))}
-        </fieldset>
-      </Card>
 
       <Card id="workspace" title="Workspace">
         {loaded.status === "loading" && <Message>Loading settings</Message>}

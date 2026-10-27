@@ -22,7 +22,7 @@ export function CreateDatabasePage() {
   const [created, setCreated] = useState<Database | null>(null);
 
   const back = (
-    <Link to="/" className="back-link">
+    <Link to="/databases" className="back-link">
       <ArrowLeft size={16} aria-hidden="true" />
       All databases
     </Link>
@@ -100,7 +100,7 @@ export function CreateDatabasePage() {
             <button type="submit" className="btn btn-primary" disabled={busy || !region}>
               Create database
             </button>
-            <Link to="/" className="btn">
+            <Link to="/databases" className="btn">
               Cancel
             </Link>
           </div>

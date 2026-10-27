@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { SampleLabel } from "./Tags";
 
 export function PageHeader({ title, description, actions, back }: { title: ReactNode; description?: ReactNode; actions?: ReactNode; back?: ReactNode }) {
   return (
@@ -8,7 +7,6 @@ export function PageHeader({ title, description, actions, back }: { title: React
         {back}
         <div className="page-title-row">
           <h1>{title}</h1>
-          <SampleLabel />
         </div>
         {description && <p className="muted page-desc">{description}</p>}
       </div>
@@ -17,15 +15,18 @@ export function PageHeader({ title, description, actions, back }: { title: React
   );
 }
 
-export function Card({ title, description, tag, children, id }: { title: ReactNode; description?: ReactNode; tag?: ReactNode; children?: ReactNode; id?: string }) {
+export function Card({ title, description, tag, actions, children, id }: { title: ReactNode; description?: ReactNode; tag?: ReactNode; actions?: ReactNode; children?: ReactNode; id?: string }) {
   const headingId = id ? `${id}-h` : undefined;
   return (
     <section className="card" aria-labelledby={headingId}>
       <div className="card-head">
-        <h2 id={headingId}>{title}</h2>
+        <div className="card-head-main">
+          <h2 id={headingId}>{title}</h2>
+          {description && <p className="muted card-desc">{description}</p>}
+        </div>
+        {actions}
         {tag}
       </div>
-      {description && <p className="muted card-desc">{description}</p>}
       {children}
     </section>
   );

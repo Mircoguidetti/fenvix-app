@@ -20,6 +20,13 @@ const SORT_OPTIONS = COLUMNS.flatMap((c) => [
 
 type Selection = { selected: Set<string>; toggle: (ids: string[], on: boolean) => void };
 
+const STATE_TABS: { id: string; label: string; state?: string; keep?: string }[] = [
+  { id: "all", label: "All" },
+  { id: "awake", label: "Awake", state: "awake" },
+  { id: "asleep", label: "Asleep", state: "asleep" },
+  { id: "keep", label: "Kept awake", keep: "on" },
+];
+
 export function DatabasesPage() {
   const [params, setParams] = useSearchParams();
   const search = params.get("q") ?? "";
@@ -27,7 +34,8 @@ export function DatabasesPage() {
   const awakeParam = params.get("keep");
   const tagFilters = params.getAll("tag");
   const groupBy = params.get("group") ?? "";
-  const sort = { key: (params.get("sort") ?? "lastActiveAt") as DatabaseSort, dir: (params.get("dir") ?? "desc") as Dir };
+  const sort = { key: (params.get("sort") ?? "name") as DatabaseSort, dir: (params.get("dir") ?? "asc") as Dir };
+  const stateTab = awakeParam === "on" ? "keep" : stateParam === "awake" ? "awake" : stateParam === "asleep" ? "asleep" : "all";
   const page = Math.max(1, Number(params.get("page")) || 1);
 
   const [version, setVersion] = useState(0);
@@ -106,6 +114,16 @@ export function DatabasesPage() {
   };
 
   const [matching, setMatching] = useState(0);
+  const countFilter = useMemo(() => ({ ...filter, state: undefined, keepAwake: undefined }), [filter]);
+  const counts = useAsync(
+    () =>
+      Promise.all([
+        client.listDatabases({ ...countFilter, pageSize: 1 }),
+        client.listDatabases({ ...countFilter, state: "awake", pageSize: 1 }),
+        client.listDatabases({ ...countFilter, keepAwake: true, pageSize: 1 }),
+      ]).then(([all, awake, keep]) => ({ all: all.total, awake: awake.total, keep: keep.total })),
+    [countFilter, version],
+  );
   async function selectAllMatching() {
     const ids = await client.listDatabaseIds(filter);
     setSelected(new Set(ids));
@@ -115,7 +133,7 @@ export function DatabasesPage() {
     <>
       <PageHeader
         title="Databases"
-        description="Every database sleeps when idle. Tag them, filter by tag, and group by a tag key such as customer."
+        description="Every database sleeps when idle and wakes on its first request."
         actions={
           <Link to="/databases/new" className="btn btn-primary">
             <Plus size={16} aria-hidden="true" />
@@ -132,21 +150,15 @@ export function DatabasesPage() {
             <input id="db-search" type="search" value={search} onChange={(e) => update({ q: e.target.value || null })} placeholder="Search databases" autoComplete="off" />
           </div>
         </div>
-        <div className="field">
-          <label htmlFor="db-state">State</label>
-          <select id="db-state" value={stateParam ?? "all"} onChange={(e) => update({ state: e.target.value === "all" ? null : e.target.value })}>
-            <option value="all">All states</option>
-            <option value="awake">Awake</option>
-            <option value="asleep">Asleep</option>
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="db-keep">Keep awake</label>
-          <select id="db-keep" value={awakeParam ?? "all"} onChange={(e) => update({ keep: e.target.value === "all" ? null : e.target.value })}>
-            <option value="all">Any</option>
-            <option value="on">On</option>
-            <option value="off">Off</option>
-          </select>
+        <div className="field field-seg">
+          <span className="label" id="db-state-label">State</span>
+          <div className="seg" role="group" aria-labelledby="db-state-label">
+            {STATE_TABS.map((t) => (
+              <button key={t.id} type="button" aria-pressed={stateTab === t.id} onClick={() => update({ state: t.state ?? null, keep: t.keep ?? null })}>
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="field">
           <label htmlFor="db-group">Group by tag</label>
@@ -207,6 +219,31 @@ export function DatabasesPage() {
         </div>
       )}
 
+      {counts.status === "ready" && (
+        <div className="counts-bar" role="status">
+          <span>
+            <b>{formatCount(counts.data.all)}</b> {counts.data.all === 1 ? "database" : "databases"}
+            {search || tagFilters.length ? " match these filters" : " in this workspace"}
+          </span>
+          <span className="counts-sep" aria-hidden="true">
+            |
+          </span>
+          <span>
+            <b>{formatCount(counts.data.awake)}</b> awake
+          </span>
+          <span>
+            <b>{formatCount(counts.data.all - counts.data.awake)}</b> asleep
+          </span>
+          <span className="muted">{Math.round(((counts.data.all - counts.data.awake) / Math.max(counts.data.all, 1)) * 100)}% of them asleep right now</span>
+          <span className="counts-sep" aria-hidden="true">
+            |
+          </span>
+          <span>
+            <b>{formatCount(counts.data.keep)}</b> kept awake
+          </span>
+        </div>
+      )}
+
       {selected.size > 0 && <BulkBar selected={[...selected]} matching={matching} onSelectAll={selectAllMatching} onClear={() => setSelected(new Set())} onDone={reloadAll} />}
 
       {groupBy ? (
@@ -232,8 +269,8 @@ function Flat({ filter, filterKey, version, sort, page, selection, setMatching, 
   return (
     <>
       <p className="muted result-count" role="status">
-        {formatCount(total)} {total === 1 ? "database" : "databases"}
-        {filtersActive ? " match these filters" : ""}
+        Showing {formatCount(Math.min(items.length + (data.data.page - 1) * data.data.pageSize, total))} of {formatCount(total)}
+        {filtersActive ? " matching" : ""} {total === 1 ? "database" : "databases"}
       </p>
       {items.length === 0 ? (
         <div className="empty">

@@ -1,9 +1,11 @@
 import type { SessionClient, SessionUser } from "./client";
 
 const KEY = "fenvix-session";
-const wait = <T,>(value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(value), 150));
+const PENDING = "fenvix-pending-email";
+const wait = <T,>(value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(value), 120));
 
-let pendingEmail: string | null = null;
+const OWNER: SessionUser = { id: "usr_1", name: "Elena Marsh", email: "elena.marsh@northwind.cloud" };
+
 let memory: SessionUser | null = null;
 
 function read(): SessionUser | null {
@@ -26,27 +28,38 @@ function write(user: SessionUser | null) {
   }
 }
 
+function pending(value?: string | null): string | null {
+  try {
+    if (value === undefined) return sessionStorage.getItem(PENDING);
+    if (value === null) sessionStorage.removeItem(PENDING);
+    else sessionStorage.setItem(PENDING, value);
+  } catch {
+    /* ignore */
+  }
+  return value ?? null;
+}
+
 const titleCase = (s: string) => s.replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim();
 
-/** Fake sign-in: no network, no credentials. The session is kept in this browser only. */
+/** Stands in for the real providers until they are wired up. Nothing leaves the browser. */
 export const mockSession: SessionClient = {
   isSample: true,
   getSession: () => wait(read()),
-  async signInWithProvider(provider) {
-    const user: SessionUser = provider === "github" ? { id: "usr_github", name: "Ada Sample", email: "ada@example.com" } : { id: "usr_google", name: "Grace Sample", email: "grace@example.com" };
-    write(user);
-    return wait(user);
+  async signInWithProvider() {
+    write(OWNER);
+    return wait(OWNER);
   },
   async requestEmailLink(email) {
     const clean = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) throw new Error("Enter a valid email address.");
-    pendingEmail = clean;
+    pending(clean);
     await wait(null);
   },
   async completeEmailLink() {
-    if (!pendingEmail) throw new Error("This sign-in link has expired. Request a new one.");
-    const user: SessionUser = { id: "usr_email", name: titleCase(pendingEmail.split("@")[0]) || "Sample User", email: pendingEmail };
-    pendingEmail = null;
+    const address = pending();
+    if (!address) throw new Error("This sign-in link has expired. Request a new one.");
+    const user: SessionUser = { id: "usr_2", name: titleCase(address.split("@")[0]) || OWNER.name, email: address };
+    pending(null);
     write(user);
     return wait(user);
   },

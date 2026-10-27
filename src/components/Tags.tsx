@@ -1,15 +1,8 @@
-import { client } from "../data";
-
-/** Visible on every screen while the data is fake. */
-export function SampleLabel() {
-  if (!client.isSample) return null;
-  return <span className="tag tag-sample">Sample data</span>;
-}
-
 /** Tags of a database as small chips. With `onPick` a chip filters the list by that tag. */
-export function TagChips({ tags, max = 3, onPick }: { tags: string[]; max?: number; onPick?: (tag: string) => void }) {
+export function TagChips({ tags, max = 2, onPick }: { tags: string[]; max?: number; onPick?: (tag: string) => void }) {
   if (tags.length === 0) return <span className="muted">No tags</span>;
   const shown = tags.slice(0, max);
+  const rest = tags.slice(max);
   return (
     <span className="chips">
       {shown.map((t) =>
@@ -23,7 +16,20 @@ export function TagChips({ tags, max = 3, onPick }: { tags: string[]; max?: numb
           </span>
         ),
       )}
-      {tags.length > max && <span className="chip chip-more" title={tags.slice(max).join(", ")}>+{tags.length - max}</span>}
+      {rest.length > 0 && (
+        <span className="chip-rest">
+          <button type="button" className="chip chip-more" aria-label={`${rest.length} more tags: ${rest.join(", ")}`}>
+            +{rest.length}
+          </button>
+          <span className="chip-pop" role="presentation">
+            {rest.map((t) => (
+              <span key={t} className="chip">
+                {t}
+              </span>
+            ))}
+          </span>
+        </span>
+      )}
     </span>
   );
 }

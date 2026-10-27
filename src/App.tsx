@@ -4,6 +4,7 @@ import { SessionProvider, useSession } from "./session/SessionProvider";
 import { SignInPage } from "./pages/SignIn";
 import { Shell } from "./components/Shell";
 import { PageHeader } from "./components/PageHeader";
+import { OverviewPage } from "./pages/Overview";
 import { DatabasesPage } from "./pages/Databases";
 import { CreateDatabasePage } from "./pages/CreateDatabase";
 import { DatabaseDetailPage } from "./pages/DatabaseDetail";
@@ -15,20 +16,25 @@ import { SettingsPage } from "./pages/Settings";
 function NotFound() {
   return (
     <>
-      <PageHeader title="Page not found" />
-      <p><Link to="/" className="row-link">Back to databases</Link></p>
+      <PageHeader title="Page not found" description="The page you asked for does not exist." />
+      <p>
+        <Link to="/databases" className="row-link">
+          Back to databases
+        </Link>
+      </p>
     </>
   );
 }
 
 function Routed() {
   const { status, user } = useSession();
-  if (status === "loading") return <p className="message boot" role="status">Loading</p>;
+  if (status === "loading") return null;
   if (!user) return <SignInPage />;
   return (
     <Shell>
       <Routes>
-        <Route path="/" element={<DatabasesPage />} />
+        <Route path="/" element={<OverviewPage />} />
+        <Route path="/databases" element={<DatabasesPage />} />
         <Route path="/databases/new" element={<CreateDatabasePage />} />
         <Route path="/databases/:id" element={<DatabaseDetailPage />} />
         <Route path="/usage" element={<UsagePage />} />

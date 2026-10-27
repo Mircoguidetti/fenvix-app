@@ -1,4 +1,4 @@
-import type { ApiKey, BillingOverview, BulkResult, CreatedApiKey, Database, ExportResult, NewDatabase, DatabaseFilter, DatabaseQuery, GroupedDatabases, Invoice, Page, Settings, TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport } from "./types";
+import type { ApiKey, BillingOverview, BulkResult, CreatedApiKey, Database, ExportResult, NewDatabase, DatabaseFilter, DatabaseQuery, GroupedDatabases, Invoice, Overview, Page, Plan, TagBreakdownRow, UsageTrend, Settings, TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport } from "./types";
 
 /**
  * Everything the dashboard needs from a backend. The screens only talk to this interface.
@@ -19,6 +19,14 @@ export interface DataClient {
   /** Every tag in use with its database count. */
   listTags(): Promise<TagCount[]>;
   getDatabase(id: string): Promise<Database | null>;
+  /** Everything the overview page shows for one time range. */
+  getOverview(range: UsageRange): Promise<Overview>;
+  /** Storage and requests per value of one tag key, biggest first. */
+  getTagBreakdown(key: string, limit?: number): Promise<TagBreakdownRow[]>;
+  /** Daily requests of one month split by the values of a tag key. */
+  getUsageTrend(month: string, tagKey: string): Promise<UsageTrend>;
+  /** The plans on offer, with the one the workspace is on marked. */
+  listPlans(): Promise<Plan[]>;
   listRegions(): Promise<string[]>;
   /** The connection string is on the returned database. Names are unique, lowercase, 3 to 48 characters. */
   createDatabase(input: NewDatabase): Promise<Database>;

@@ -11,7 +11,7 @@ export interface Database {
   createdAt: string;
   region: string;
   host: string;
-  /** Connection string with a password placeholder. The real value is never shown here. */
+  /** Connection string. The password is written as <password>; the real secret is never sent here. */
   connectionString: string;
   /** Tags as "key:value" strings, for example "customer:acme-labs". */
   tags: string[];
@@ -186,4 +186,97 @@ export interface Settings {
   workspaceName: string;
   idleMinutes: number;
   emailNotices: boolean;
+}
+
+/** Fleet-wide numbers for the overview page. */
+export interface OverviewTotals {
+  databases: number;
+  awake: number;
+  asleep: number;
+  /** Share of the fleet asleep right now, 0 to 100. */
+  asleepPercent: number;
+  requests: number;
+  storageGb: number;
+  costMtd: number;
+  currency: string;
+}
+
+/** Small series behind each number on the overview, oldest first. */
+export interface OverviewSparks {
+  databases: number[];
+  awake: number[];
+  requests: number[];
+  storageGb: number[];
+  cost: number[];
+}
+
+export interface AwakePoint {
+  at: string;
+  awake: number;
+  total: number;
+}
+
+export interface RequestPoint {
+  at: string;
+  requests: number;
+}
+
+export interface CostPoint {
+  at: string;
+  /** Running cost this month up to this day. */
+  cost: number;
+  /** Same day of the month before, for reference. Null past the end of that month. */
+  reference: number | null;
+}
+
+export interface WakeUp {
+  id: string;
+  name: string;
+  at: string;
+  /** How long the first request waited, in milliseconds. */
+  latencyMs: number;
+}
+
+export interface TopDatabase {
+  id: string;
+  name: string;
+  requests: number;
+}
+
+export interface Overview {
+  range: UsageRange;
+  totals: OverviewTotals;
+  sparks: OverviewSparks;
+  awakeSeries: AwakePoint[];
+  requestSeries: RequestPoint[];
+  costSeries: CostPoint[];
+  topDatabases: TopDatabase[];
+  recentWakeUps: WakeUp[];
+}
+
+/** One value of a tag key, with what it uses. */
+export interface TagBreakdownRow {
+  value: string;
+  databases: number;
+  storageGb: number;
+  requests: number;
+}
+
+/** Daily usage of a month split by tag value, for a stacked chart. */
+export interface UsageTrend {
+  /** ISO day starts, oldest first. */
+  days: string[];
+  /** One entry per tag value, plus "Other" when there are more. */
+  series: { label: string; values: number[] }[];
+}
+
+export interface Plan {
+  id: string;
+  name: string;
+  price: string;
+  /** "/ month", or empty for Free and Custom. */
+  period: string;
+  description: string;
+  features: string[];
+  current: boolean;
 }
