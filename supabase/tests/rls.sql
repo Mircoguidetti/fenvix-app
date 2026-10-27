@@ -52,6 +52,15 @@ begin
     end;
   end loop;
 end $$;
+do $$
+begin
+  begin perform public.fenvix_list_databases(); assert false, 'a signed-out visitor can call fenvix_list_databases';
+  exception when insufficient_privilege then null; end;
+  begin perform public.fenvix_create_database('anon-made-01', 'eu-west', '{}'); assert false, 'a signed-out visitor can create databases';
+  exception when insufficient_privilege then null; end;
+  begin perform public.fenvix_overview('7d'); assert false, 'a signed-out visitor can call fenvix_overview';
+  exception when insufficient_privilege then null; end;
+end $$;
 reset role;
 
 -- ---------------------------------------------------------------- user A reads

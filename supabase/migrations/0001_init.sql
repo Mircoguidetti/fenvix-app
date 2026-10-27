@@ -1181,3 +1181,18 @@ grant select on public.workspace_members to authenticated;
 revoke insert, update, delete on public.workspace_members from authenticated;
 revoke insert, delete on public.workspaces from authenticated;
 alter default privileges in schema public revoke all on tables from anon;
+
+-- Every dashboard function is for signed-in users only. (Functions are executable by everyone
+-- unless that is taken away, and anon inherits it from PUBLIC.)
+do $$
+declare r record;
+begin
+  for r in
+    select p.oid::regprocedure as sig
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname like 'fenvix\_%'
+  loop
+    execute format('revoke all on function %s from public, anon', r.sig);
+    execute format('grant execute on function %s to authenticated', r.sig);
+  end loop;
+end $$;
