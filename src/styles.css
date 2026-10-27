@@ -442,3 +442,24 @@ table.data.dbs tbody tr { height: 58px; }
 .empty h2 { font-size: 16px; }
 .facts-fill { flex: 1; align-content: space-between; }
 #tags .inline-form .field.grow { max-width: 420px; }
+.kpis-3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+@media (min-width: 1180px) { .kpis-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* Billing */
+.big-number { font-size: 34px; font-weight: 600; letter-spacing: -0.03em; }
+.chart-bar-open { fill: none; stroke: var(--text); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.pay-card { display: flex; flex-direction: column; gap: 6px; padding: 16px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); }
+.pay-brand { font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.pay-number { font-size: 16px; letter-spacing: 0.06em; }
+.plans { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr; gap: 14px; }
+@media (min-width: 760px) { .plans { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1180px) { .plans { grid-template-columns: repeat(4, 1fr); } }
+.plan { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+.plan-current { border-color: var(--text); box-shadow: inset 0 0 0 1px var(--text); }
+.plan-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+.plan-head h3 { font-size: 15px; font-weight: 600; margin: 0; }
+.plan-price strong { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
+.plan-desc { min-height: 48px; }
+.plan-features { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 6px; flex: 1; font-size: 13px; }
+.plan-features li { display: flex; align-items: flex-start; gap: 8px; }
+.plan-features svg { flex-shrink: 0; margin-top: 3px; }

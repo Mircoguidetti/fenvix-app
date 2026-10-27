@@ -244,7 +244,8 @@ function monthlyUsage(d: Database, month: string): { requests: number; storageGb
 }
 
 function usageRows(q: UsageQuery): { rows: UsageRow[]; totals: UsageReport["totals"] } {
-  const per = databases.map((d) => ({ d, u: monthlyUsage(d, q.month) }));
+  // Only databases that existed during the month are billed for it.
+  const per = databases.map((d) => ({ d, u: monthlyUsage(d, q.month) })).filter((x) => x.u.storageGb > 0 || x.u.requests > 0);
   const totals = { databases: per.length, storageGb: round2(per.reduce((a, x) => a + x.u.storageGb, 0)), requests: per.reduce((a, x) => a + x.u.requests, 0) };
   if (q.by === "database") {
     return { rows: per.map(({ d, u }) => ({ id: d.id, name: d.name, tags: d.tags, databases: 1, storageGb: u.storageGb, requests: u.requests })), totals };
@@ -594,6 +595,7 @@ export const mockClient: DataClient = {
     const sorted = sortUsage(rows, sort, dir);
     return wait<UsageReport>({ month: q.month, items: sorted.slice((page - 1) * pageSize, page * pageSize), total: sorted.length, page, pageSize, totals });
   },
+  getUsageHistory: () => wait([...USAGE_MONTHS].reverse().map((month) => ({ month, ...monthTotals(month) }))),
   async exportUsageReport(q) {
     const { rows } = usageRows(q);
     const sorted = sortUsage(rows, q.sort ?? "requests", q.dir ?? "desc");

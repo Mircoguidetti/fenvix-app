@@ -272,6 +272,14 @@ export interface UsageTrend {
   series: { label: string; values: number[] }[];
 }
 
+/** Totals for one month, for the small trend lines on the usage page. */
+export interface UsageHistoryPoint {
+  month: string;
+  databases: number;
+  storageGb: number;
+  requests: number;
+}
+
 export interface Plan {
   id: string;
   name: string;

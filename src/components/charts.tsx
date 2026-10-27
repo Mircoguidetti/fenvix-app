@@ -22,7 +22,7 @@ export function niceMax(v: number): number {
   if (v <= 0) return 1;
   const p = 10 ** Math.floor(Math.log10(v));
   const n = v / p;
-  return (n <= 1 ? 1 : n <= 1.5 ? 1.5 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
+  return (n <= 1 ? 1 : n <= 1.5 ? 1.5 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 3 ? 3 : n <= 4 ? 4 : n <= 5 ? 5 : n <= 6 ? 6 : n <= 8 ? 8 : 10) * p;
 }
 
 const DAY_FMT = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
@@ -380,5 +380,38 @@ export function Sparkline({ values }: { values: number[] }) {
       <path d={`${line} L${W} ${H} L0 ${H} Z`} className="spark-area" />
       <path d={line} className="spark-line" fill="none" vectorEffect="non-scaling-stroke" />
     </svg>
+  );
+}
+
+/** One bar per month, with the running month marked as not finished yet. */
+export function MonthBars({ months, format }: { months: { label: string; value: number; partial?: boolean }[]; format: (n: number) => string }) {
+  const [ref, width] = useMeasure<HTMLDivElement>();
+  const height = 230;
+  const max = niceMax(Math.max(...months.map((m) => m.value), 1));
+  const left = leftPad(max, format);
+  const inner = { x: left, y: PAD.top, w: Math.max(40, width - left - PAD.right), h: height - PAD.top - PAD.bottom };
+  const step = inner.w / Math.max(months.length, 1);
+  const barW = Math.min(64, step * 0.56);
+
+  return (
+    <div ref={ref}>
+      <Frame width={width} height={height} label={`Cost by month. Latest ${format(months[months.length - 1]?.value ?? 0)}.`}>
+        {grid(max, inner, format)}
+        {months.map((m, i) => {
+          const h = (m.value / max) * inner.h;
+          const x = inner.x + i * step + (step - barW) / 2;
+          return (
+            <g key={m.label}>
+              <rect x={x} y={inner.y + inner.h - h} width={barW} height={Math.max(h, 1.5)} rx="2" className={m.partial ? "chart-bar-open" : "chart-bar"}>
+                <title>{`${m.label}: ${format(m.value)}${m.partial ? " so far" : ""}`}</title>
+              </rect>
+              <text x={x + barW / 2} y={height - 8} textAnchor="middle" className="chart-text">
+                {m.label}
+              </text>
+            </g>
+          );
+        })}
+      </Frame>
+    </div>
   );
 }

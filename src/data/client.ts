@@ -1,4 +1,4 @@
-import type { ApiKey, BillingOverview, BulkResult, CreatedApiKey, Database, ExportResult, NewDatabase, DatabaseFilter, DatabaseQuery, GroupedDatabases, Invoice, Overview, Page, Plan, TagBreakdownRow, UsageTrend, Settings, TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport } from "./types";
+import type { ApiKey, BillingOverview, BulkResult, CreatedApiKey, Database, ExportResult, NewDatabase, DatabaseFilter, DatabaseQuery, GroupedDatabases, Invoice, Overview, Page, Plan, TagBreakdownRow, UsageTrend, Settings, TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport, UsageHistoryPoint } from "./types";
 
 /**
  * Everything the dashboard needs from a backend. The screens only talk to this interface.
@@ -51,6 +51,8 @@ export interface DataClient {
   listUsageMonths(): Promise<string[]>;
   /** Storage and requests for a month, per database or per tag, sorted and paged. */
   getUsageReport(query: UsageQuery): Promise<UsageReport>;
+  /** Totals for every month with a report, oldest first. */
+  getUsageHistory(): Promise<UsageHistoryPoint[]>;
   /** The same report as a CSV file, all rows, ignoring paging. */
   exportUsageReport(query: UsageQuery): Promise<ExportResult>;
   /** What the customer pays FENVIX: plan, month-to-date cost and payment method. */
