@@ -1,0 +1,192 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudFormationOwnStacksOnly",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateStack", "cloudformation:UpdateStack", "cloudformation:DeleteStack",
+        "cloudformation:DescribeStacks", "cloudformation:DescribeStackEvents", "cloudformation:DescribeStackResources",
+        "cloudformation:GetTemplate", "cloudformation:GetTemplateSummary", "cloudformation:ListStackResources",
+        "cloudformation:CreateChangeSet", "cloudformation:DescribeChangeSet", "cloudformation:ExecuteChangeSet", "cloudformation:DeleteChangeSet"
+      ],
+      "Resource": "arn:aws:cloudformation:eu-central-1:865859654353:stack/fenvix-*/*"
+    },
+    {
+      "Sid": "CloudFormationTemplateCheck",
+      "Effect": "Allow",
+      "Action": ["cloudformation:ValidateTemplate"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ResolveLatestAmazonLinuxAmi",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:GetParameters"],
+      "Resource": "arn:aws:ssm:eu-central-1::parameter/aws/service/ami-amazon-linux-latest/*"
+    },
+    {
+      "Sid": "Ec2ReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeAddresses", "ec2:DescribeAvailabilityZones", "ec2:DescribeImages", "ec2:DescribeInstanceAttribute",
+        "ec2:DescribeInstanceCreditSpecifications", "ec2:DescribeInstanceStatus", "ec2:DescribeInstanceTypes", "ec2:DescribeInstances",
+        "ec2:DescribeInternetGateways", "ec2:DescribeNetworkInterfaces", "ec2:DescribeRouteTables", "ec2:DescribeSecurityGroupRules",
+        "ec2:DescribeSecurityGroups", "ec2:DescribeSubnets", "ec2:DescribeTags", "ec2:DescribeVolumes", "ec2:DescribeVpcAttribute",
+        "ec2:DescribeVpcEndpoints", "ec2:DescribeVpcs", "ec2:DescribePrefixLists"
+      ],
+      "Resource": "*",
+      "Condition": { "StringEquals": { "aws:RequestedRegion": ["eu-central-1"] } }
+    },
+    {
+      "Sid": "Ec2CreateTaggedProjectResources",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateVpc", "ec2:CreateSubnet", "ec2:CreateSecurityGroup", "ec2:CreateRouteTable",
+        "ec2:CreateInternetGateway", "ec2:CreateVpcEndpoint", "ec2:AllocateAddress"
+      ],
+      "Resource": [
+        "arn:aws:ec2:eu-central-1:865859654353:vpc/*", "arn:aws:ec2:eu-central-1:865859654353:subnet/*",
+        "arn:aws:ec2:eu-central-1:865859654353:security-group/*", "arn:aws:ec2:eu-central-1:865859654353:route-table/*",
+        "arn:aws:ec2:eu-central-1:865859654353:internet-gateway/*", "arn:aws:ec2:eu-central-1:865859654353:vpc-endpoint/*",
+        "arn:aws:ec2:eu-central-1:865859654353:elastic-ip/*", "arn:aws:ec2:eu-central-1::ipv4pool-ec2/*"
+      ],
+      "Condition": { "StringEquals": { "aws:RequestTag/project": "fenvix" } }
+    },
+    {
+      "Sid": "Ec2TagOnCreateOnly",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateTags"],
+      "Resource": "arn:aws:ec2:eu-central-1:865859654353:*/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/project": "fenvix",
+          "ec2:CreateAction": [
+            "CreateVpc", "CreateSubnet", "CreateSecurityGroup", "CreateRouteTable", "CreateInternetGateway",
+            "CreateVpcEndpoint", "AllocateAddress", "RunInstances"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "Ec2ChangeOrDeleteProjectResources",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AttachInternetGateway", "ec2:DetachInternetGateway", "ec2:DeleteInternetGateway", "ec2:DeleteVpc", "ec2:ModifyVpcAttribute",
+        "ec2:DeleteSubnet", "ec2:ModifySubnetAttribute", "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable", "ec2:CreateRoute",
+        "ec2:DeleteRoute", "ec2:DeleteRouteTable", "ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress", "ec2:ModifySecurityGroupRules", "ec2:DeleteSecurityGroup",
+        "ec2:ModifyVpcEndpoint", "ec2:DeleteVpcEndpoints", "ec2:ReleaseAddress", "ec2:StartInstances", "ec2:StopInstances",
+        "ec2:TerminateInstances", "ec2:ModifyInstanceAttribute"
+      ],
+      "Resource": "arn:aws:ec2:eu-central-1:865859654353:*/*",
+      "Condition": { "StringEquals": { "aws:ResourceTag/project": "fenvix" } }
+    },
+    {
+      "Sid": "Ec2ElasticIpAssociation",
+      "Effect": "Allow",
+      "Action": ["ec2:AssociateAddress", "ec2:DisassociateAddress"],
+      "Resource": [
+        "arn:aws:ec2:eu-central-1:865859654353:instance/*", "arn:aws:ec2:eu-central-1:865859654353:elastic-ip/*",
+        "arn:aws:ec2:eu-central-1:865859654353:network-interface/*"
+      ]
+    },
+    {
+      "Sid": "Ec2LaunchEngineInstance",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": ["arn:aws:ec2:eu-central-1:865859654353:instance/*", "arn:aws:ec2:eu-central-1:865859654353:volume/*"],
+      "Condition": { "StringEquals": { "aws:RequestTag/project": "fenvix" } }
+    },
+    {
+      "Sid": "Ec2LaunchUsesProjectNetworkOnly",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": ["arn:aws:ec2:eu-central-1:865859654353:subnet/*", "arn:aws:ec2:eu-central-1:865859654353:security-group/*"],
+      "Condition": { "StringEquals": { "aws:ResourceTag/project": "fenvix" } }
+    },
+    {
+      "Sid": "Ec2LaunchOtherParts",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": ["arn:aws:ec2:eu-central-1:865859654353:network-interface/*", "arn:aws:ec2:eu-central-1::image/ami-*"]
+    },
+    {
+      "Sid": "IamRolesAndProfilesNamedFenvix",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole", "iam:UntagRole", "iam:UpdateAssumeRolePolicy",
+        "iam:PutRolePolicy", "iam:GetRolePolicy", "iam:DeleteRolePolicy", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies",
+        "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile", "iam:GetInstanceProfile", "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile", "iam:TagInstanceProfile", "iam:UntagInstanceProfile"
+      ],
+      "Resource": ["arn:aws:iam::865859654353:role/fenvix-*", "arn:aws:iam::865859654353:instance-profile/fenvix-*"]
+    },
+    {
+      "Sid": "PassOnlyFenvixRolesToEc2AndBudgets",
+      "Effect": "Allow",
+      "Action": ["iam:PassRole"],
+      "Resource": "arn:aws:iam::865859654353:role/fenvix-*",
+      "Condition": { "StringEquals": { "iam:PassedToService": ["ec2.amazonaws.com", "budgets.amazonaws.com"] } }
+    },
+    {
+      "Sid": "S3DataBucketsNamedFenvix",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket", "s3:ListBucket", "s3:GetBucketLocation", "s3:PutBucketPolicy", "s3:GetBucketPolicy", "s3:DeleteBucketPolicy",
+        "s3:PutEncryptionConfiguration", "s3:GetEncryptionConfiguration", "s3:PutBucketVersioning", "s3:GetBucketVersioning",
+        "s3:PutLifecycleConfiguration", "s3:GetLifecycleConfiguration", "s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock",
+        "s3:PutBucketTagging", "s3:GetBucketTagging"
+      ],
+      "Resource": "arn:aws:s3:::fenvix-*"
+    },
+    {
+      "Sid": "CloudWatchAlarmsNamedFenvix",
+      "Effect": "Allow",
+      "Action": ["cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms", "cloudwatch:TagResource", "cloudwatch:ListTagsForResource"],
+      "Resource": "arn:aws:cloudwatch:eu-central-1:865859654353:alarm:fenvix-*"
+    },
+    {
+      "Sid": "CloudWatchAlarmsRead",
+      "Effect": "Allow",
+      "Action": ["cloudwatch:DescribeAlarms"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BudgetsNamedFenvix",
+      "Effect": "Allow",
+      "Action": [
+        "budgets:ViewBudget", "budgets:ModifyBudget", "budgets:CreateBudgetAction", "budgets:DescribeBudgetAction",
+        "budgets:DescribeBudgetActionsForBudget", "budgets:UpdateBudgetAction", "budgets:DeleteBudgetAction"
+      ],
+      "Resource": "arn:aws:budgets::865859654353:budget/fenvix-*"
+    },
+    {
+      "Sid": "OptionalDnsCreateZoneOnlyWhenBaseDomainIsSet",
+      "Effect": "Allow",
+      "Action": ["route53:CreateHostedZone"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "OptionalDnsManageZonesOnlyWhenBaseDomainIsSet",
+      "Effect": "Allow",
+      "Action": [
+        "route53:GetHostedZone", "route53:DeleteHostedZone", "route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets",
+        "route53:ChangeTagsForResource", "route53:ListTagsForResource", "route53:GetChange"
+      ],
+      "Resource": ["arn:aws:route53:::hostedzone/*", "arn:aws:route53:::change/*"]
+    },
+    {
+      "Sid": "OptionalCertificateRequestOnlyWhenBaseDomainIsSet",
+      "Effect": "Allow",
+      "Action": ["acm:RequestCertificate"],
+      "Resource": "*",
+      "Condition": { "StringEquals": { "aws:RequestedRegion": ["eu-central-1"], "aws:RequestTag/project": "fenvix" } }
+    },
+    {
+      "Sid": "OptionalCertificateManageOnlyWhenBaseDomainIsSet",
+      "Effect": "Allow",
+      "Action": ["acm:DescribeCertificate", "acm:DeleteCertificate", "acm:AddTagsToCertificate", "acm:ListTagsForCertificate"],
+      "Resource": "arn:aws:acm:eu-central-1:865859654353:certificate/*"
+    }
+  ]
+}
