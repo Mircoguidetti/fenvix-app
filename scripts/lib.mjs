@@ -123,9 +123,16 @@ export async function renderProblems(page) {
     for (const svg of document.querySelectorAll(".chart svg")) {
       const shapes = svg.querySelectorAll("rect, path, circle, line");
       if (shapes.length < 4) out.push(`chart with almost nothing in it (${shapes.length} shapes)`);
-      const labels = [...svg.querySelectorAll("text")].map((t) => t.textContent).filter((t) => /[A-Za-z]/.test(t));
-      const axis = labels.filter((t) => /^[A-Z][a-z]{2} \d+$|^\d{2}:\d{2}$/.test(t));
-      if (new Set(axis).size !== axis.length) out.push(`repeated axis label: ${axis.join(", ")}`);
+      const labels = [...svg.querySelectorAll("text")].filter((t) => /^[A-Z][a-z]{2} \d+$|^\d{2}:\d{2}$/.test(t.textContent));
+      const names = labels.map((t) => t.textContent);
+      if (new Set(names).size !== names.length) out.push(`repeated axis label: ${names.join(", ")}`);
+      // Labels that sit on top of each other.
+      const boxes = labels.map((t) => t.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+      for (let i = 1; i < boxes.length; i++) if (boxes[i].left < boxes[i - 1].right + 2) out.push(`axis labels overlap: ${names.join(", ")}`);
+    }
+    for (const axis of document.querySelectorAll(".timeline-axis")) {
+      const boxes = [...axis.querySelectorAll("span")].map((s) => s.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+      for (let i = 1; i < boxes.length; i++) if (boxes[i].left < boxes[i - 1].right + 2) out.push(`timeline labels overlap: ${[...axis.querySelectorAll("span")].map((s) => s.textContent).join(", ")}`);
     }
     return out;
   });

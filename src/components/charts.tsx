@@ -110,19 +110,39 @@ function grid(max: number, inner: { x: number; y: number; w: number; h: number }
   });
 }
 
+/**
+ * Drops any label that would sit on top of the one before it. Two day boundaries can fall a
+ * bucket apart when a series starts just before midnight, and both would land in the same place.
+ */
+export function spaceOut<T>(items: T[], at: (item: T) => number, width: (item: T) => number): T[] {
+  const out: T[] = [];
+  let lastRight = -Infinity;
+  for (const item of items) {
+    const half = width(item) / 2;
+    if (at(item) - half < lastRight + 8) continue;
+    out.push(item);
+    lastRight = at(item) + half;
+  }
+  return out;
+}
+
+const labelWidth = (label: string) => label.length * 6.7;
+
 /** X labels, with the first and last pulled inside the box so they are never cut off. */
 function axis(ticks: { index: number; label: string }[], count: number, inner: { x: number; y: number; w: number; h: number }, height: number, band: boolean) {
   const step = inner.w / Math.max(count, 1);
-  return ticks.map((t) => {
+  const placed = ticks.map((t) => {
     const x = inner.x + t.index * step + (band ? step / 2 : 0);
-    const half = t.label.length * 3.4;
-    const anchor = x - half < inner.x - 6 ? "start" : x + half > inner.x + inner.w + 6 ? "end" : "middle";
-    return (
-      <text key={t.index} x={anchor === "start" ? Math.max(x - half, inner.x - 6) : anchor === "end" ? Math.min(x + half, inner.x + inner.w + 6) : x} y={height - 8} textAnchor={anchor} className="chart-text">
-        {t.label}
-      </text>
-    );
+    const half = labelWidth(t.label) / 2;
+    const anchor: "start" | "end" | "middle" = x - half < inner.x - 6 ? "start" : x + half > inner.x + inner.w + 6 ? "end" : "middle";
+    const at = anchor === "start" ? Math.max(x - half, inner.x - 6) + half : anchor === "end" ? Math.min(x + half, inner.x + inner.w + 6) - half : x;
+    return { ...t, at, anchor };
   });
+  return spaceOut(placed, (t) => t.at, (t) => labelWidth(t.label)).map((t) => (
+    <text key={t.index} x={t.anchor === "start" ? t.at - labelWidth(t.label) / 2 : t.anchor === "end" ? t.at + labelWidth(t.label) / 2 : t.at} y={height - 8} textAnchor={t.anchor} className="chart-text">
+      {t.label}
+    </text>
+  ));
 }
 
 const PAD: Plot = { left: 52, top: 12, right: 14, bottom: 26 };
@@ -337,8 +357,17 @@ export function WakeTimeline({ points, range }: { points: { at: string; awake: b
   const [ref, width] = useMeasure<HTMLDivElement>(200);
   const awakeCount = points.filter((p) => p.awake).length;
   const share = Math.round((awakeCount / Math.max(points.length, 1)) * 100);
-  // Room for one label every 100 px, so labels never run into each other.
-  const ticks = timeTicks(points.map((p) => p.at), range, Math.max(2, Math.floor(width / 100)));
+  const ticks = spaceOut(
+    timeTicks(points.map((p) => p.at), range, Math.max(2, Math.floor(width / 90))).map((t) => {
+      const pct = (t.index / Math.max(points.length - 1, 1)) * 100;
+      const w = t.label.length * 6.7;
+      // The first and last labels are pulled inside the box, so place them by their real edges.
+      const at = pct < 6 ? w / 2 : pct > 94 ? width - w / 2 : (pct / 100) * width;
+      return { ...t, pct, at, w };
+    }),
+    (t) => t.at,
+    (t) => t.w,
+  );
   return (
     <div className="timeline" ref={ref}>
       <div className="timeline-bar" role="img" aria-label={`Awake for ${share} percent of the last ${range}.`}>
@@ -347,16 +376,11 @@ export function WakeTimeline({ points, range }: { points: { at: string; awake: b
         ))}
       </div>
       <div className="timeline-axis" aria-hidden="true">
-        {ticks.map((t) => {
-          const pct = (t.index / Math.max(points.length - 1, 1)) * 100;
-          // Keep the first and last labels inside the box instead of hanging over the edge.
-          const style = pct < 6 ? { left: 0 } : pct > 94 ? { right: 0 } : { left: `${pct}%`, transform: "translateX(-50%)" };
-          return (
-            <span key={t.index} style={style}>
-              {t.label}
-            </span>
-          );
-        })}
+        {ticks.map((t) => (
+          <span key={t.index} style={t.pct < 6 ? { left: 0 } : t.pct > 94 ? { right: 0 } : { left: `${t.pct}%`, transform: "translateX(-50%)" }}>
+            {t.label}
+          </span>
+        ))}
       </div>
       <p className="muted chart-summary">
         Awake {share}% of the last {range === "24h" ? "24 hours" : range === "7d" ? "7 days" : "30 days"}, asleep the rest of the time.
