@@ -13,6 +13,65 @@ export interface Database {
   host: string;
   /** Connection string with a password placeholder. The real value is never shown here. */
   connectionString: string;
+  /** Tags as "key:value" strings, for example "customer:acme-labs". */
+  tags: string[];
+  /** When true the database never goes to sleep. */
+  keepAwake: boolean;
+}
+
+/** One page of a list. Pages are numbered from 1. */
+export interface Page<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export type DatabaseSort = "name" | "state" | "keepAwake" | "storageMb" | "requests24h" | "lastActiveAt";
+
+/** Which databases to list. All parts combine with AND. */
+export interface DatabaseFilter {
+  /** Case-insensitive match on the name. */
+  search?: string;
+  state?: DbState;
+  keepAwake?: boolean;
+  /** "key:value" matches that tag exactly; a bare "key" matches any database that has the key; "!key" matches databases without the key. */
+  tags?: string[];
+}
+
+export interface DatabaseQuery extends DatabaseFilter {
+  sort?: DatabaseSort;
+  dir?: "asc" | "desc";
+  page?: number;
+  pageSize?: number;
+}
+
+export interface TagCount {
+  key: string;
+  value: string;
+  /** Databases carrying this tag. */
+  count: number;
+}
+
+export interface DatabaseGroup {
+  /** Value of the group key, or null for databases without that key. */
+  value: string | null;
+  count: number;
+  awake: number;
+  keepAwake: number;
+  storageMb: number;
+}
+
+export interface GroupedDatabases {
+  groupBy: string;
+  groups: DatabaseGroup[];
+  /** Databases that match the filter, across all groups. */
+  total: number;
+}
+
+export interface BulkResult {
+  /** Databases that were changed. */
+  affected: number;
 }
 
 export type UsageRange = "24h" | "7d" | "30d";

@@ -5,6 +5,7 @@ import { client, type UsageRange } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
 import { CopyButton } from "../components/CopyButton";
 import { StateBadge } from "../components/StateBadge";
+import { TagEditor } from "../components/TagEditor";
 import { UsageChart, type Metric } from "../components/UsageChart";
 import { useAsync } from "../lib/useAsync";
 import { formatCount, formatDate, formatDateTime, formatRelative, formatStorage } from "../lib/format";
@@ -82,6 +83,10 @@ export function DatabaseDetailPage() {
           </dl>
         </Card>
       </div>
+
+      <Card id="tags" title="Tags" description="Tags group and filter databases across your fleet, for example by customer or environment.">
+        <TagEditor db={d} onChanged={db.reload} />
+      </Card>
 
       <Card id="usage" title="Usage over time">
         <div className="chart-controls">

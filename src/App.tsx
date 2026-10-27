@@ -1,4 +1,5 @@
 import { HashRouter, Route, Routes, Link } from "react-router-dom";
+import { ToastProvider } from "./components/Toast";
 import { Shell } from "./components/Shell";
 import { PageHeader } from "./components/PageHeader";
 import { DatabasesPage } from "./pages/Databases";
@@ -20,6 +21,7 @@ function NotFound() {
 export default function App() {
   return (
     <HashRouter>
+      <ToastProvider>
       <Shell>
         <Routes>
           <Route path="/" element={<DatabasesPage />} />
@@ -30,6 +32,7 @@ export default function App() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Shell>
+      </ToastProvider>
     </HashRouter>
   );
 }
