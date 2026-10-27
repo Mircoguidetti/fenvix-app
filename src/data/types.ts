@@ -98,6 +98,8 @@ export interface UsagePoint {
   at: string;
   requests: number;
   storageMb: number;
+  /** True when the database was serving for part of this bucket. */
+  awake: boolean;
 }
 
 export type UsageSort = "name" | "databases" | "storageGb" | "requests";

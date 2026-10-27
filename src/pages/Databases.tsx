@@ -205,6 +205,14 @@ export function DatabasesPage() {
 
       {(tagFilters.length > 0 || filtersActive) && (
         <div className="active-filters">
+          {search && (
+            <span className="chip chip-removable">
+              name: {search}
+              <button type="button" onClick={() => update({ q: null })} aria-label="Clear the name search">
+                <X size={12} aria-hidden="true" />
+              </button>
+            </span>
+          )}
           {tagFilters.map((t) => (
             <span key={t} className="chip chip-removable">
               {t}
@@ -249,13 +257,13 @@ export function DatabasesPage() {
       {groupBy ? (
         <Grouped key={`${groupBy}`} groupBy={groupBy} filter={filter} filterKey={filterKey} version={version} selection={selection} setMatching={setMatching} update={update} tagFilters={tagFilters} />
       ) : (
-        <Flat filter={filter} filterKey={filterKey} version={version} sort={sort} page={page} selection={selection} setMatching={setMatching} filtersActive={filtersActive} update={update} tagFilters={tagFilters} />
+        <Flat filter={filter} filterKey={filterKey} version={version} sort={sort} page={page} selection={selection} setMatching={setMatching} update={update} tagFilters={tagFilters} />
       )}
     </>
   );
 }
 
-function Flat({ filter, filterKey, version, sort, page, selection, setMatching, filtersActive, update, tagFilters }: { filter: DatabaseFilter; filterKey: string; version: number; sort: { key: DatabaseSort; dir: Dir }; page: number; selection: Selection; setMatching: (n: number) => void; filtersActive: boolean; update: (c: Record<string, string | string[] | null>, keepPage?: boolean) => void; tagFilters: string[] }) {
+function Flat({ filter, filterKey, version, sort, page, selection, setMatching, update, tagFilters }: { filter: DatabaseFilter; filterKey: string; version: number; sort: { key: DatabaseSort; dir: Dir }; page: number; selection: Selection; setMatching: (n: number) => void; update: (c: Record<string, string | string[] | null>, keepPage?: boolean) => void; tagFilters: string[] }) {
   const data = useAsync(() => client.listDatabases({ ...filter, sort: sort.key, dir: sort.dir, page, pageSize: PAGE_SIZE }), [filterKey, sort.key, sort.dir, page, version]);
   useEffect(() => {
     if (data.status === "ready") setMatching(data.data.total);
@@ -268,16 +276,18 @@ function Flat({ filter, filterKey, version, sort, page, selection, setMatching, 
   const { items, total } = data.data;
   return (
     <>
-      <p className="muted result-count" role="status">
-        Showing {formatCount(Math.min(items.length + (data.data.page - 1) * data.data.pageSize, total))} of {formatCount(total)}
-        {filtersActive ? " matching" : ""} {total === 1 ? "database" : "databases"}
-      </p>
       {items.length === 0 ? (
         <div className="empty">
-          <p>No databases match these filters.</p>
-          <button type="button" className="btn" onClick={() => update({ q: null, state: null, keep: null, tag: null })}>
-            Clear filters
-          </button>
+          <h2>No databases match these filters</h2>
+          <p className="muted">Clear the filters to see the whole fleet, or create a database with these tags.</p>
+          <div className="row-actions">
+            <button type="button" className="btn" onClick={() => update({ q: null, state: null, keep: null, tag: null })}>
+              Clear filters
+            </button>
+            <Link to="/databases/new" className="btn btn-primary">
+              Create database
+            </Link>
+          </div>
         </div>
       ) : (
         <>

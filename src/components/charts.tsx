@@ -159,6 +159,31 @@ export function AwakeAreaChart({ points, range }: { points: { at: string; awake:
   );
 }
 
+/** A filled area over time, for a value that moves slowly, such as storage. */
+export function AreaSeriesChart({ points, range, valueLabel, axisLabel = valueLabel }: { points: { at: string; value: number }[]; range: UsageRange; valueLabel: (n: number) => string; axisLabel?: (n: number) => string }) {
+  const [ref, width] = useMeasure<HTMLDivElement>();
+  const height = 220;
+  const max = niceMax(Math.max(...points.map((p) => p.value), 1));
+  const left = leftPad(max, axisLabel);
+  const inner = { x: left, y: PAD.top, w: Math.max(40, width - left - PAD.right), h: height - PAD.top - PAD.bottom };
+  const x = (i: number) => inner.x + (i / Math.max(points.length - 1, 1)) * inner.w;
+  const y = (v: number) => inner.y + inner.h - (v / max) * inner.h;
+  const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i)} ${y(p.value)}`).join(" ");
+  const first = points[0]?.value ?? 0;
+  const last = points[points.length - 1]?.value ?? 0;
+
+  return (
+    <div ref={ref}>
+      <Frame width={width} height={height} label={`From ${valueLabel(first)} to ${valueLabel(last)} over the period.`} summary={`From ${valueLabel(first)} to ${valueLabel(last)} over the period.`}>
+        {grid(max, inner, axisLabel)}
+        <path d={`${line} L${x(points.length - 1)} ${y(0)} L${x(0)} ${y(0)} Z`} className="chart-area" />
+        <path d={line} className="chart-line" fill="none" />
+        {axis(timeTicks(points.map((p) => p.at), range, Math.max(2, Math.floor(inner.w / 80))), points.length - 1, inner, height, false)}
+      </Frame>
+    </div>
+  );
+}
+
 /** Bars over time. */
 export function TimeBarsChart({
   points,
@@ -183,7 +208,7 @@ export function TimeBarsChart({
 
   return (
     <div ref={ref}>
-      <Frame width={width} height={height} label={`${valueLabel(total)} in total over the period.`} summary={`${valueLabel(total)} in total, busiest ${bucketNoun ?? (range === "24h" ? "hour" : "day")} ${valueLabel(Math.max(...points.map((p) => p.value)))}.`}>
+      <Frame width={width} height={height} label={`${valueLabel(total)} in total over the period.`} summary={`${valueLabel(total)} in total, peak ${valueLabel(Math.max(...points.map((p) => p.value)))} in one ${bucketNoun ?? (range === "24h" ? "hour" : "day")}.`}>
         {grid(max, inner, formatCompact)}
         {points.map((p, i) => {
           const h = (p.value / max) * inner.h;
@@ -308,15 +333,15 @@ export function StackedBars({ days, series, valueLabel }: { days: string[]; seri
 }
 
 /** Awake and asleep stretches over the range, as one bar. */
-export function WakeTimeline({ points, range }: { points: { at: string; requests: number }[]; range: UsageRange }) {
-  const awakeCount = points.filter((p) => p.requests > 0).length;
+export function WakeTimeline({ points, range }: { points: { at: string; awake: boolean }[]; range: UsageRange }) {
+  const awakeCount = points.filter((p) => p.awake).length;
   const share = Math.round((awakeCount / Math.max(points.length, 1)) * 100);
   const ticks = timeTicks(points.map((p) => p.at), range, 6);
   return (
     <div className="timeline">
       <div className="timeline-bar" role="img" aria-label={`Awake for ${share} percent of the last ${range}.`}>
         {points.map((p) => (
-          <span key={p.at} className={p.requests > 0 ? "tl-on" : "tl-off"} title={`${pointLabel(p.at, range)}: ${p.requests > 0 ? "awake" : "asleep"}`} />
+          <span key={p.at} className={p.awake ? "tl-on" : "tl-off"} title={`${pointLabel(p.at, range)}: ${p.awake ? "awake" : "asleep"}`} />
         ))}
       </div>
       <div className="timeline-axis" aria-hidden="true">
@@ -332,7 +357,7 @@ export function WakeTimeline({ points, range }: { points: { at: string; requests
         })}
       </div>
       <p className="muted chart-summary">
-        Awake {share}% of the last {range}, asleep the rest of the time.
+        Awake {share}% of the last {range === "24h" ? "24 hours" : range === "7d" ? "7 days" : "30 days"}, asleep the rest of the time.
       </p>
     </div>
   );

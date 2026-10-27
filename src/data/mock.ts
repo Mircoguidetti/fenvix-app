@@ -209,14 +209,17 @@ function usageFor(db: Database, range: UsageRange): UsagePoint[] {
   const [count, step] = range === "24h" ? [24, HOUR] : range === "7d" ? [7 * 4, 6 * HOUR] : [30, DAY];
   const perBucket = Math.max(db.requests24h, 40) / (range === "24h" ? 24 : range === "7d" ? 4 : 1);
   const startStorage = db.storageMb * 0.82;
-  return Array.from({ length: count }, (_, i) => {
+  const points = Array.from({ length: count }, (_, i) => {
     const at = new Date(NOW.getTime() - (count - 1 - i) * step).toISOString();
     const wave = 0.55 + 0.45 * Math.sin((i / count) * Math.PI * (range === "24h" ? 2 : 4) + seed);
     const idle = db.state === "asleep" && rand() < 0.45 ? 0.04 : 1;
     const requests = Math.round(perBucket * wave * idle * (0.6 + rand() * 0.8));
     const storageMb = Math.round(startStorage + (db.storageMb - startStorage) * (i / (count - 1)));
-    return { at, requests, storageMb };
+    return { at, requests, storageMb, awake: false };
   });
+  // A database is awake for a bucket when it kept serving in it, not for a single stray request.
+  const peak = Math.max(...points.map((p) => p.requests), 1);
+  return points.map((p) => ({ ...p, awake: db.keepAwake || p.requests >= Math.max(3, peak * 0.22) }));
 }
 
 // ---------------------------------------------------------------- usage and billing

@@ -84,7 +84,7 @@ export function DbTable({
             </th>
             <Head col={COLUMNS[0]} sort={sort} onSort={onSort} />
             <th scope="col">Tags</th>
-            {COLUMNS.slice(1).map((c) => (
+            {COLUMNS.filter((c) => c.key !== "name" && c.key !== "keepAwake").map((c) => (
               <Head key={c.key} col={c} sort={sort} onSort={onSort} />
             ))}
           </tr>
@@ -103,10 +103,10 @@ export function DbTable({
               <td data-label="Tags" className="tags-cell">
                 <TagChips tags={d.tags} max={2} onPick={onPickTag} />
               </td>
-              <td data-label="State">
+              <td data-label="State" className="state-cell">
                 <StateBadge state={d.state} />
+                {d.keepAwake && <span className="muted small kept">Kept awake</span>}
               </td>
-              <td data-label="Keep awake">{d.keepAwake ? "On" : <span className="muted">Off</span>}</td>
               <td data-label="Storage" className="num mono">
                 {formatStorage(d.storageMb)}
               </td>

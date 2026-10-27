@@ -43,7 +43,7 @@ h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.
 h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 a { color: inherit; }
 button, input, select, textarea { font: inherit; color: inherit; }
-.mono { font-family: var(--mono); font-size: 0.92em; }
+.mono { font-family: var(--mono); font-size: 0.92em; font-variant-ligatures: none; }
 .small { font-size: 12.5px; }
 .muted { color: var(--muted); }
 .faint { color: var(--muted); opacity: 0.8; }
@@ -140,7 +140,7 @@ input[type="text"], input:not([type]), input[type="search"], input[type="email"]
   height: 40px; width: 100%; padding: 0 12px; background: var(--bg); border: 1px solid var(--border-strong); border-radius: 10px;
 }
 select { padding-right: 8px; }
-textarea.code { height: auto; padding: 10px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.5; resize: none; overflow-wrap: anywhere; background: var(--bg); }
+textarea.code { font-variant-ligatures: none; height: auto; padding: 10px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.5; resize: none; overflow-wrap: anywhere; background: var(--bg); }
 .input-wrap { position: relative; display: flex; align-items: center; }
 .input-wrap svg { position: absolute; left: 12px; color: var(--muted); pointer-events: none; }
 .input-wrap input { padding-left: 36px; }
@@ -389,7 +389,10 @@ a.btn { text-decoration: none; }
 
 /* ---------------------------------------------------------------- tag chips that never wrap */
 .tags-cell { min-width: 150px; }
-.tags-cell .chips { flex-wrap: nowrap; overflow: visible; }
+.tags-cell .chips { flex-wrap: nowrap; overflow: visible; min-width: 0; }
+.tags-cell .chip { flex-shrink: 0; }
+.state-cell { line-height: 1.25; }
+.kept { display: block; margin-top: 1px; font-size: 11.5px; }
 .chip-rest { position: relative; display: inline-flex; }
 .chip-pop { position: absolute; left: 0; bottom: calc(100% + 6px); display: none; flex-wrap: wrap; gap: 4px; width: max-content; max-width: 280px; padding: 7px; background: var(--bg); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-lg); z-index: 25; }
 .chip-rest:hover .chip-pop, .chip-rest:focus-within .chip-pop { display: flex; }
@@ -403,15 +406,39 @@ a.btn { text-decoration: none; }
 .counts-sep { color: var(--border-strong); }
 
 /* Databases table: one fixed row height, tags on a single line */
-table.data.dbs { table-layout: auto; }
+@media (min-width: 761px) {
+  table.data.dbs { table-layout: fixed; }
+  table.data.dbs th, table.data.dbs td { padding: 0 12px; overflow: hidden; }
+  table.data.dbs th:nth-child(1) { width: 46px; padding-left: 8px; padding-right: 0; }
+  table.data.dbs th:nth-child(2) { width: 20%; }
+  table.data.dbs th:nth-child(3) { width: 28%; }
+  table.data.dbs th:nth-child(4) { width: 120px; }
+  table.data.dbs th:nth-child(5) { width: 12%; }
+  table.data.dbs th:nth-child(6) { width: 14%; }
+  table.data.dbs th:nth-child(7) { width: 13%; }
+}
 table.data.dbs tbody td { height: 58px; padding-top: 0; padding-bottom: 0; }
 table.data.dbs tbody tr { height: 58px; }
-.name-cell { white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.name-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 760px) {
   table.data.dbs tbody td, table.data.dbs tbody tr { height: auto; }
   .tags-cell .chips { flex-wrap: wrap; justify-content: flex-end; }
 }
-.field-seg { gap: 6px; }
+.field-seg { gap: 6px; flex: 0 0 auto !important; }
 .field-seg .seg { height: 40px; }
 .field-seg .seg button { height: 38px; }
 .card > .hbars { flex: 1; justify-content: space-evenly; }
+.toolbar .field.grow { flex: 1 1 260px; max-width: 420px; }
+
+/* Database detail */
+.header-facts { display: flex; align-items: center; gap: 12px; }
+.facts-tight { gap: 10px 16px; margin-top: 2px; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart-title { font-size: 12.5px; font-weight: 600; letter-spacing: 0.02em; margin: 0 0 6px; }
+.chart-pair { display: grid; grid-template-columns: 1fr; gap: 20px; }
+@media (min-width: 980px) { .chart-pair { grid-template-columns: 1fr 1fr; } }
+.btn-danger { border-color: var(--border-strong); }
+.btn-danger:hover:not(:disabled) { background: var(--text); color: var(--on-text); border-color: var(--text); }
+.empty h2 { font-size: 16px; }
+.facts-fill { flex: 1; align-content: space-between; }
+#tags .inline-form .field.grow { max-width: 420px; }
