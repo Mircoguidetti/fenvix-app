@@ -22,17 +22,6 @@ function ThemeToggle() {
   );
 }
 
-/* PLACEHOLDER: sign-in. There is no auth yet. When it exists, replace this block with the
-   signed-in user menu (and gate the routes in App.tsx). Nothing here collects credentials. */
-function SignInPlaceholder() {
-  return (
-    <div className="signin-placeholder" aria-label="Sign-in placeholder">
-      <span className="mono small">Placeholder</span>
-      <span>Sign-in goes here</span>
-    </div>
-  );
-}
-
 function SideNav({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav aria-label="Main" className="nav">
@@ -75,9 +64,6 @@ export function Shell({ children }: { children: ReactNode }) {
           <span className="workspace-name">Sample workspace</span>
         </div>
         <SideNav />
-        <div className="sidebar-bottom">
-          <SignInPlaceholder />
-        </div>
       </aside>
 
       {open && <div className="scrim" onClick={() => setOpen(false)} aria-hidden="true" />}
@@ -89,9 +75,6 @@ export function Shell({ children }: { children: ReactNode }) {
           </button>
         </div>
         <SideNav onNavigate={() => setOpen(false)} />
-        <div className="sidebar-bottom">
-          <SignInPlaceholder />
-        </div>
       </aside>
 
       <div className="content">

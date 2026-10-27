@@ -76,14 +76,6 @@ export function SettingsPage() {
           </form>
         )}
       </Card>
-
-      <Card id="account" title="Account" description="Sign-in is not built yet.">
-        {/* PLACEHOLDER: sign-in and account details. Replace with the real account section once auth exists. */}
-        <div className="signin-placeholder block">
-          <span className="mono small">Placeholder</span>
-          <span>Sign-in and account details will appear here.</span>
-        </div>
-      </Card>
     </>
   );
 }

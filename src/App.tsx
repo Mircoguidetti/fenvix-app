@@ -17,7 +17,6 @@ function NotFound() {
 }
 
 // HashRouter: the static output works on any file host with no rewrite rules.
-// PLACEHOLDER: sign-in. When auth exists, gate these routes here.
 export default function App() {
   return (
     <HashRouter>

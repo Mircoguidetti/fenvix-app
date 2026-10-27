@@ -5,7 +5,6 @@ import { client, type UsageRange } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
 import { CopyButton } from "../components/CopyButton";
 import { StateBadge } from "../components/StateBadge";
-import { PlannedTag } from "../components/Tags";
 import { UsageChart, type Metric } from "../components/UsageChart";
 import { useAsync } from "../lib/useAsync";
 import { formatCount, formatDate, formatDateTime, formatRelative, formatStorage } from "../lib/format";
@@ -107,8 +106,8 @@ export function DatabaseDetailPage() {
       </Card>
 
       <div className="grid-2">
-        <Card id="forks" title="Forks" tag={<PlannedTag />} description="Create an instant copy of this database for a branch, a test or an agent." />
-        <Card id="restore" title="Restore" tag={<PlannedTag />} description="Roll this database back to an earlier point in time." />
+        <Card id="forks" title="Forks" description="Create an instant copy of this database for a branch, a test or an agent." />
+        <Card id="restore" title="Restore" description="Roll this database back to an earlier point in time." />
       </div>
     </>
   );

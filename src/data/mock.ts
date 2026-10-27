@@ -47,7 +47,7 @@ const databases: Database[] = SEEDS.map((s) => {
     createdAt: ago(s.ageDays * DAY),
     region: s.region,
     host,
-    connectionString: `postgresql://app_user:<password>@${host}:5432/${s.name.replace(/-/g, "_")}?sslmode=require`,
+    connectionString: `mongodb://app_user:<password>@${host}:27017/${s.name.replace(/-/g, "_")}?tls=true`,
   };
 });
 
