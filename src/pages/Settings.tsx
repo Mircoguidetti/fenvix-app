@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { client, type Settings } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
 import { useAsync } from "../lib/useAsync";
+import { useSession } from "../session/SessionProvider";
+import { useToast } from "../components/Toast";
 import { useTheme, type ThemeChoice } from "../lib/theme";
 
 const THEMES: { value: ThemeChoice; label: string }[] = [
@@ -13,6 +15,8 @@ const THEMES: { value: ThemeChoice; label: string }[] = [
 export function SettingsPage() {
   const loaded = useAsync(() => client.getSettings(), []);
   const { choice, setChoice } = useTheme();
+  const { user, signOut } = useSession();
+  const toast = useToast();
   const [form, setForm] = useState<Settings | null>(null);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +79,24 @@ export function SettingsPage() {
             </div>
           </form>
         )}
+      </Card>
+
+      <Card id="account" title="Account">
+        <dl className="facts">
+          <div>
+            <dt>Name</dt>
+            <dd>{user?.name}</dd>
+          </div>
+          <div>
+            <dt>Email</dt>
+            <dd>{user?.email}</dd>
+          </div>
+        </dl>
+        <div className="row-actions">
+          <button type="button" className="btn" onClick={async () => (await signOut(), toast("Signed out"))}>
+            Sign out
+          </button>
+        </div>
       </Card>
     </>
   );

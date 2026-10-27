@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { ChartColumn, CreditCard, Database, KeyRound, Menu, Moon, Settings, Sun, X } from "lucide-react";
 import { Logo } from "./Logo";
+import { UserMenu } from "./UserMenu";
 import { SampleLabel } from "./Tags";
 import { useTheme } from "../lib/theme";
 
@@ -65,6 +66,9 @@ export function Shell({ children }: { children: ReactNode }) {
           <span className="workspace-name">Sample workspace</span>
         </div>
         <SideNav />
+        <div className="sidebar-bottom">
+          <UserMenu />
+        </div>
       </aside>
 
       {open && <div className="scrim" onClick={() => setOpen(false)} aria-hidden="true" />}
@@ -76,6 +80,9 @@ export function Shell({ children }: { children: ReactNode }) {
           </button>
         </div>
         <SideNav onNavigate={() => setOpen(false)} />
+        <div className="sidebar-bottom">
+          <UserMenu />
+        </div>
       </aside>
 
       <div className="content">
