@@ -43,7 +43,7 @@ Secrets are marked **secret**. Nothing here has a default for a secret, and no s
 | `SUPABASE_ANON_KEY` | required | the project's public `anon` key, used only to call Supabase Auth. Not a secret. **Not** the `service_role` key |
 | `DOWNLOAD_SIGNING_KEY` | required, **secret** | at least 32 characters; signs 15-minute download links. `openssl rand -hex 32` |
 | `ENGINE_DRIVER` | required | only `fake` exists today |
-| `API_PUBLIC_URL` | empty | public base including `/v1`, for example `https://api.fenvix.cloud/v1` (OAuth callback and download links). `https` in production |
+| `API_PUBLIC_URL` | required | public base including `/v1`, for example `https://api.fenvix.cloud/v1` (OAuth callback, cookie path and download links). `https` in production |
 | `DASHBOARD_ORIGINS` | empty | comma list, for example `https://app.fenvix.cloud`. CORS with credentials, `returnTo` check, state-change origin check. Required in production |
 | `BASE_DOMAIN` | empty | the domain databases are reached under |
 | `HOST_TEMPLATE` | `<name>.<region>.db.<BASE_DOMAIN>` | `<name>`, `<region>`, `<workspace>`, `<BASE_DOMAIN>`; empty parts and doubled dots are dropped (with the empty default the host is `name.region.db`) |

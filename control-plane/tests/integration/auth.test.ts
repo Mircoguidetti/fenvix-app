@@ -72,7 +72,7 @@ describe("session JWT (Supabase, verified against the JWKS) and API keys", () =>
     assert.equal(json(await h.as(u).get("/api-keys")).items[0].lastUsedAt, null);
     const created = await h.as(key).post("/databases", { name: "by-key-01", region: "eu-central-1" });
     assert.equal(created.statusCode, 201, created.body);
-    const seen = await h.admin.query("select workspace_id from public.databases where name = 'by-key-01'");
+    const seen = await h.admin.query("select workspace_id from public.databases where id = $1", [json(created).id]);
     assert.equal(seen.rows[0].workspace_id, u.workspaceId);
     assert.ok(json(await h.as(u).get("/api-keys")).items.some((k: { lastUsedAt: string | null }) => k.lastUsedAt !== null));
   });

@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 
 const base = {
   CONTROL_PLANE_DATABASE_URL: "postgresql://x@localhost/db", SUPABASE_URL: "https://p.supabase.invalid", SUPABASE_ANON_KEY: "anon",
-  DOWNLOAD_SIGNING_KEY: "k".repeat(32), ENGINE_DRIVER: "fake",
+  DOWNLOAD_SIGNING_KEY: "k".repeat(32), ENGINE_DRIVER: "fake", API_PUBLIC_URL: "http://localhost:3000/v1",
 };
 
 test("defaults: empty base domain, one region, the documented host template", () => {
@@ -35,6 +35,8 @@ test("missing or wrong settings fail with a readable message, never with a value
   assert.throws(() => loadConfig({ ...base, CONTROL_PLANE_DATABASE_URL: undefined }), /CONTROL_PLANE_DATABASE_URL is required/);
   assert.throws(() => loadConfig({ ...base, DOWNLOAD_SIGNING_KEY: "short" }), /at least 32/);
   assert.throws(() => loadConfig({ ...base, ENGINE_DRIVER: undefined }), /ENGINE_DRIVER is required/);
+  assert.throws(() => loadConfig({ ...base, API_PUBLIC_URL: undefined }), /API_PUBLIC_URL is required/);
+  assert.throws(() => loadConfig({ ...base, API_PUBLIC_URL: "api.example.com" }), /full URL/);
   assert.throws(() => loadConfig({ ...base, DASHBOARD_ORIGINS: "https://app.test/" }), /no trailing slash/);
   assert.throws(() => loadConfig({ ...base, NODE_ENV: "production", API_PUBLIC_URL: "http://x" }), /https/);
   assert.throws(() => loadConfig({ ...base, PORT: "abc" }), /PORT/);

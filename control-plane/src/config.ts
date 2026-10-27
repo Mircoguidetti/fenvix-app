@@ -76,7 +76,8 @@ export function loadConfig(env: Env = process.env): Config {
     try { u = new URL(o); } catch { throw new Error(`DASHBOARD_ORIGINS: "${o}" is not a URL`); }
     if (u.origin !== o) throw new Error(`DASHBOARD_ORIGINS: write "${u.origin}" (no path, no trailing slash)`);
   }
-  const apiPublicUrl = (env.API_PUBLIC_URL ?? "").replace(/\/+$/, "");
+  const apiPublicUrl = required(env, "API_PUBLIC_URL").replace(/\/+$/, "");
+  try { new URL(apiPublicUrl); } catch { throw new Error("API_PUBLIC_URL must be a full URL such as https://api.example.com/v1"); }
   const supabaseUrl = required(env, "SUPABASE_URL").replace(/\/+$/, "");
   const cfg: Config = {
     port: int(env, "PORT", 3000, 1),
