@@ -1,7 +1,11 @@
+import { backend } from "../lib/env";
 import type { DataClient } from "./client";
-import { mockClient } from "./mock";
+import { supabaseClient } from "./supabase";
 
-/** The single place that picks the data source. Swap `mockClient` for a real API client later. */
-export const client: DataClient = mockClient;
+/**
+ * The single place that picks the data source. VITE_DATA_BACKEND=mock uses the mock, which is
+ * loaded on demand: a Supabase build never downloads it or builds its fake fleet.
+ */
+export const client: DataClient = backend === "mock" ? (await import("./mock")).mockClient : supabaseClient;
 export type { DataClient } from "./client";
 export * from "./types";

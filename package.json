@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "screenshots": "node scripts/screenshots.mjs",
     "checks": "node scripts/checks.mjs",
-    "check": "node scripts/run.mjs"
+    "check": "node scripts/run.mjs",
+    "test:unit": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test tests/unit/*.test.ts",
+    "test:rls": "bash supabase/tests/run-local.sh"
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.2.0",

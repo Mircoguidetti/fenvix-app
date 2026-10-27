@@ -13,8 +13,8 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
-/** Every database answers on this host. */
-export const DB_HOST = "db.fenvix.cloud";
+export { DB_HOST, connectionStringFor } from "./connection";
+import { connectionStringFor } from "./connection";
 export const WORKSPACE = "Northwind Cloud";
 export const REGIONS = ["eu-west", "us-east", "us-west", "ap-south"];
 
@@ -49,11 +49,6 @@ const SEEDS: Seed[] = [
   { id: "db_0011", name: "research-notes", state: "asleep", storageMb: 2210, requests24h: 530, lastActiveMs: 8 * HOUR, ageDays: 75, region: "ap-south", tags: ["customer:northwind", "env:dev"] },
   { id: "db_0012", name: "bench-run-12", state: "asleep", storageMb: 20480, requests24h: 12, lastActiveMs: 26 * HOUR, ageDays: 5, region: "us-east", tags: ["customer:northwind", "env:dev"] },
 ];
-
-export function connectionStringFor(name: string): { host: string; connectionString: string } {
-  const host = `${name}.${DB_HOST}`;
-  return { host, connectionString: `mongodb://app_user:<password>@${host}:27017/${name.replace(/-/g, "_")}?tls=true` };
-}
 
 function makeDatabase(s: Seed): Database {
   return {
@@ -186,9 +181,8 @@ function checkTags(tags: string[]): string[] {
   return next;
 }
 
-export function blobUrl(content: string, type: string): string {
-  return URL.createObjectURL(new Blob([content], { type }));
-}
+export { blobUrl } from "./files";
+import { blobUrl, usageCsv, usageCsvName } from "./files";
 
 /** Like parseTags, but a bare "key" is allowed (removes the key). */
 function parseTagsOrKeys(tags: string[]): string[] {
@@ -268,8 +262,6 @@ function sortUsage(rows: UsageRow[], sort: UsageSort, dir: "asc" | "desc"): Usag
   const sign = dir === "asc" ? 1 : -1;
   return [...rows].sort((a, b) => sign * (sort === "name" ? a.name.localeCompare(b.name) : a[sort] - b[sort]) || a.name.localeCompare(b.name));
 }
-
-const csvCell = (v: string | number) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
 
 function monthTotals(month: string) {
   return usageRows({ month, by: "database" }).totals;
@@ -598,10 +590,7 @@ export const mockClient: DataClient = {
   async exportUsageReport(q) {
     const { rows } = usageRows(q);
     const sorted = sortUsage(rows, q.sort ?? "requests", q.dir ?? "desc");
-    const head = q.by === "database" ? "database,tags,storage_gb_avg,requests" : "tag,databases,storage_gb_avg,requests";
-    const lines = sorted.map((r) => (q.by === "database" ? [r.name, r.tags.join(" "), r.storageGb, r.requests] : [r.name, r.databases, r.storageGb, r.requests]).map(csvCell).join(","));
-    const filename = `fenvix-usage-${q.month}-${q.by === "database" ? "databases" : q.tagKey ? `by-${q.tagKey}` : "tags"}.csv`;
-    return wait<ExportResult>({ filename, mimeType: "text/csv", downloadUrl: blobUrl([head, ...lines].join("\n") + "\n", "text/csv") });
+    return wait<ExportResult>({ filename: usageCsvName(q.month, q.by, q.tagKey), mimeType: "text/csv", downloadUrl: blobUrl(usageCsv(sorted, q.by), "text/csv") });
   },
   getBilling: () => wait(getBillingOverview()),
   listInvoices(page = 1, pageSize = 12) {
