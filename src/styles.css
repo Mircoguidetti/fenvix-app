@@ -293,12 +293,8 @@ table.data tr[data-selected] { background: var(--surface-2); }
 .seg button { white-space: nowrap; }
 @media (max-width: 520px) { .toolbar .field:has(.seg), .toolbar .field:has(#u-month) { flex: 1 1 100%; } .seg { display: flex; } .seg button { flex: 1; } }
 
-/* Sign in and user menu */
-.signin-card { width: min(392px, 100%); display: flex; flex-direction: column; gap: 18px; }
+/* Account menu */
 .btn-block { width: 100%; }
-.divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
-.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
-.boot { padding: 24px; }
 .user-menu { position: relative; }
 .user-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; background: transparent; border: 1px solid transparent; border-radius: 10px; cursor: pointer; text-align: left; }
 .user-btn:hover, .user-btn[aria-expanded="true"] { background: var(--nav-hover); }
@@ -318,36 +314,18 @@ table.data tr[data-selected] { background: var(--surface-2); }
 a.btn { text-decoration: none; }
 
 /* ---------------------------------------------------------------- sign in */
-.signin-split { min-height: 100dvh; display: grid; grid-template-columns: 1fr; grid-template-rows: auto 1fr; background: var(--bg); }
-.signin-brand { background: var(--nav-bg); color: var(--nav-text); padding: 22px 24px 26px; display: flex; flex-direction: column; gap: 18px; }
-.signin-brand-top { display: flex; }
-.signin-pitch h2 { font-size: 28px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.06; }
-.signin-pitch p { margin-top: 10px; color: var(--nav-muted); font-size: 15px; max-width: 46ch; }
-.signin-art { display: none; }
-.fleet { width: 100%; max-width: 620px; height: auto; color: #ffffff; }
-.fleet .chip-off { color: #42424a; }
-.fleet .chip-on { color: #ffffff; }
-.fleet-lines { color: #5c5c66; }
-.fleet-word { fill: #ffffff; font-family: var(--font); font-size: 15px; font-weight: 600; letter-spacing: 0.16em; }
-.signin-form-side { display: grid; place-items: center; padding: 40px 24px 56px; max-width: none; }
-.signin-card h1 { font-size: 28px; }
-.signin-lead { margin-top: -10px; }
+.signin-page { min-height: 100dvh; max-width: none; background: var(--nav-bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; padding: 40px 20px; }
+.signin-mark { color: var(--nav-text); }
+.signin-card { width: min(420px, 100%); display: flex; flex-direction: column; gap: 18px; background: var(--bg); border-radius: 16px; padding: 32px; }
+.signin-card h1 { font-size: 26px; }
+.signin-lead { margin-top: -12px; }
 .signin-providers { display: flex; flex-direction: column; gap: 10px; }
 .signin-terms { line-height: 1.5; }
 .signin-terms a { text-underline-offset: 3px; }
 .btn-lg { height: 46px; font-size: 15px; }
-@media (max-width: 899px) {
-  .signin-pitch p { max-width: 32ch; }
-}
-@media (min-width: 900px) {
-  .signin-split { grid-template-columns: 1.08fr 1fr; grid-template-rows: 1fr; }
-  .signin-brand { padding: 40px; gap: 24px; }
-  .signin-pitch h2 { font-size: clamp(34px, 3.4vw, 48px); }
-  .signin-pitch p { font-size: 17px; }
-  .signin-art { display: grid; place-items: center; width: 100%; }
-  .signin-brand-body { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 44px; padding-bottom: 24px; }
-  .signin-form-side { padding: 40px; }
-}
+.divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
+.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+@media (max-width: 420px) { .signin-card { padding: 24px; } }
 
 /* ---------------------------------------------------------------- numbers and charts */
 .kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

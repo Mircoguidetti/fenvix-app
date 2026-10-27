@@ -68,11 +68,10 @@ const TESTS = {
   async "sign in and out"(page, vp) {
     await page.goto(BASE + "#/databases/db_0001");
     await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
-    await page.getByRole("heading", { name: "Databases that sleep." }).waitFor();
     assert(!(await page.locator(".shell").count()), "the dashboard is visible while signed out");
     const order = await page.evaluate(() => [...document.querySelectorAll(".signin-card button, .signin-card [type=submit]")].map((b) => b.textContent.trim()));
     assert(/GitHub/.test(order[0]) && /Google/.test(order[1]) && /sign-in link/.test(order[2]), `sign-in buttons out of order: ${order}`);
-    assert((await page.locator(".signin-brand svg.fleet").count()) === 1, "the fleet visual is missing");
+    assert((await page.locator(".signin-page .signin-card").count()) === 1, "the sign-in card is missing");
 
     await page.getByRole("button", { name: "Continue with GitHub" }).click();
     await page.getByRole("heading", { name: "orders-prod" }).waitFor(); // lands on the route that was asked for
