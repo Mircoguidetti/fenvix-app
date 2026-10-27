@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { Writable } from "node:stream";
+import type { LightMyRequestResponse as Res } from "fastify";
 import pg from "pg";
 import { exportJWK, generateKeyPair, SignJWT, type JWK, type CryptoKey } from "jose";
 import { buildApp, type App } from "../../src/app.ts";
@@ -67,6 +68,13 @@ export class Lines extends Writable {
   text(): string { return this.lines.join("\n"); }
 }
 
+export interface Client {
+  get(url: string, h?: Record<string, string>): Promise<Res>;
+  post(url: string, body?: unknown, h?: Record<string, string>): Promise<Res>;
+  put(url: string, body?: unknown, h?: Record<string, string>): Promise<Res>;
+  del(url: string, h?: Record<string, string>): Promise<Res>;
+}
+
 export interface Harness {
   app: App;
   cfg: Config;
@@ -83,7 +91,7 @@ export interface Harness {
   addMember(ws: string, name: string, role: "owner" | "admin" | "member"): Promise<Fixture>;
   apiKey(ws: string, name?: string): Promise<string>;
   /** inject() with a session cookie or API key. */
-  as(who: Fixture | string): { get(url: string, h?: Record<string, string>): ReturnType<App["fastify"]["inject"]>; post(url: string, body?: unknown, h?: Record<string, string>): ReturnType<App["fastify"]["inject"]>; put(url: string, body?: unknown, h?: Record<string, string>): ReturnType<App["fastify"]["inject"]>; del(url: string, h?: Record<string, string>): ReturnType<App["fastify"]["inject"]> };
+  as(who: Fixture | string): Client;
   close(): Promise<void>;
 }
 

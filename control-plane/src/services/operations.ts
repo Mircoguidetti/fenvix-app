@@ -273,8 +273,6 @@ function fromEngine(e: EngineError, what: string): Failure {
   }
 }
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
 /** Runs operations, one attempt at a time, safe to call again for the same operation. */
 export class OperationRunner {
   private readonly s: Services;
@@ -290,7 +288,9 @@ export class OperationRunner {
       this.s.log.error({ err: e instanceof Error ? e.message : String(e), operationId: row.id }, "operation run crashed");
     });
     this.track(p);
-    await Promise.race([p, sleep(waitMs)]);
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([p, new Promise<void>((r) => { timer = setTimeout(r, waitMs); })]);
+    clearTimeout(timer);
     return (await loadOperation(this.s, row.workspace_id, row.id)) ?? row;
   }
 
