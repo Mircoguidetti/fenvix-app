@@ -1,77 +1,123 @@
+import { Download } from "lucide-react";
 import { client } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
+import { useToast } from "../components/Toast";
 import { useAsync } from "../lib/useAsync";
-import { formatCount, formatMoney } from "../lib/format";
-import { Link } from "react-router-dom";
+import { download } from "../lib/download";
+import { formatDate, formatMoney } from "../lib/format";
+
+const monthLabel = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 
 export function BillingPage() {
-  const data = useAsync(() => client.getBilling(), []);
+  const toast = useToast();
+  const billing = useAsync(() => client.getBilling(), []);
+  const invoices = useAsync(() => client.listInvoices(), []);
+
+  async function getInvoice(id: string, number: string) {
+    try {
+      download(await client.downloadInvoice(id));
+      toast(`Downloaded invoice ${number}`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Download failed.");
+    }
+  }
 
   return (
     <>
-      <PageHeader title="Usage and billing" description="Usage per database and the total for the period. All amounts below are fake and are not a price list." />
-      {data.status === "loading" && <Message>Loading usage</Message>}
-      {data.status === "error" && <Message role="alert">{data.message}</Message>}
-      {data.status === "ready" && (
+      <PageHeader title="Billing" description="What you pay FENVIX: your plan, this month's cost so far, invoices and payment method." />
+      {billing.status === "loading" && <Message>Loading billing</Message>}
+      {billing.status === "error" && <Message role="alert">{billing.message}</Message>}
+      {billing.status === "ready" && (
         <>
-          <div className="stats">
-            <div className="stat card">
-              <span className="muted">Total (sample)</span>
-              <strong className="mono stat-value">{formatMoney(data.data.total, data.data.currency)}</strong>
-              <span className="muted small">{data.data.periodLabel}</span>
-            </div>
-            <div className="stat card">
-              <span className="muted">Requests</span>
-              <strong className="mono stat-value">{formatCount(data.data.lines.reduce((s, l) => s + l.requests, 0))}</strong>
-              <span className="muted small">All databases</span>
-            </div>
-            <div className="stat card">
-              <span className="muted">Awake hours</span>
-              <strong className="mono stat-value">{formatCount(data.data.lines.reduce((s, l) => s + l.awakeHours, 0))}</strong>
-              <span className="muted small">All databases</span>
+          <div className="grid-2 billing-top">
+            <Card id="mtd" title="Month to date" description={billing.data.monthToDate.periodLabel}>
+              <strong className="mono stat-value">{formatMoney(billing.data.monthToDate.total, billing.data.currency)}</strong>
+              <div className="table-card flush">
+                <table className="data responsive">
+                  <caption className="sr-only">Cost breakdown this month</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Item</th>
+                      <th scope="col">Quantity</th>
+                      <th scope="col">Rate</th>
+                      <th scope="col" className="num">Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {billing.data.monthToDate.lines.map((l) => (
+                      <tr key={l.label}>
+                        <td data-label="Item">{l.label}</td>
+                        <td data-label="Quantity" className="mono">{l.quantity}</td>
+                        <td data-label="Rate" className="muted">{l.rate}</td>
+                        <td data-label="Cost" className="num mono">{formatMoney(l.cost, billing.data.currency)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <th scope="row" data-label="Total">Total</th>
+                      <td className="hide-narrow" />
+                      <td className="hide-narrow" />
+                      <td data-label="Cost" className="num mono">{formatMoney(billing.data.monthToDate.total, billing.data.currency)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </Card>
+            <div className="stack wide">
+              <Card id="plan" title="Current plan">
+                <strong className="plan-name">{billing.data.plan.name}</strong>
+                <p className="muted">{billing.data.plan.description}</p>
+              </Card>
+              <Card id="payment" title="Payment method">
+                <p>
+                  <span className="mono">{billing.data.paymentMethod.brand} ending {billing.data.paymentMethod.last4}</span>
+                </p>
+                <p className="muted small">Expires {billing.data.paymentMethod.expires}</p>
+              </Card>
             </div>
           </div>
-
-          <Card id="per-db" title="Per database">
-            <div className="table-card flush">
-              <table className="data responsive">
-                <caption className="sr-only">Usage and sample amount per database</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">Database</th>
-                    <th scope="col" className="num">Requests</th>
-                    <th scope="col" className="num">Awake hours</th>
-                    <th scope="col" className="num">Storage (GB-hours)</th>
-                    <th scope="col" className="num">Amount (sample)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...data.data.lines].sort((a, b) => b.amount - a.amount).map((l) => (
-                    <tr key={l.databaseId}>
-                      <td data-label="Database">
-                        <Link to={`/databases/${l.databaseId}`} className="row-link mono">{l.name}</Link>
-                      </td>
-                      <td data-label="Requests" className="num mono">{formatCount(l.requests)}</td>
-                      <td data-label="Awake hours" className="num mono">{formatCount(l.awakeHours)}</td>
-                      <td data-label="Storage (GB-hours)" className="num mono">{formatCount(l.storageGbHours)}</td>
-                      <td data-label="Amount (sample)" className="num mono">{formatMoney(l.amount, data.data.currency)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <th scope="row" data-label="Total">Total</th>
-                    <td data-label="Requests" className="num mono">{formatCount(data.data.lines.reduce((s, l) => s + l.requests, 0))}</td>
-                    <td data-label="Awake hours" className="num mono">{formatCount(data.data.lines.reduce((s, l) => s + l.awakeHours, 0))}</td>
-                    <td data-label="Storage (GB-hours)" className="num mono">{formatCount(data.data.lines.reduce((s, l) => s + l.storageGbHours, 0))}</td>
-                    <td data-label="Amount (sample)" className="num mono">{formatMoney(data.data.total, data.data.currency)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </Card>
         </>
       )}
+
+      <Card id="invoices" title="Invoices">
+        {invoices.status === "loading" && <Message>Loading invoices</Message>}
+        {invoices.status === "error" && <Message role="alert">{invoices.message}</Message>}
+        {invoices.status === "ready" && (
+          <div className="table-card flush">
+            <table className="data responsive">
+              <caption className="sr-only">Invoices</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Invoice</th>
+                  <th scope="col">Month</th>
+                  <th scope="col">Issued</th>
+                  <th scope="col">Status</th>
+                  <th scope="col" className="num">Amount</th>
+                  <th scope="col"><span className="sr-only">Download</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoices.data.items.map((i) => (
+                  <tr key={i.id}>
+                    <td data-label="Invoice" className="mono">{i.number}</td>
+                    <td data-label="Month">{monthLabel(i.month)}</td>
+                    <td data-label="Issued" className="muted">{formatDate(i.issuedAt)}</td>
+                    <td data-label="Status">{i.status === "paid" ? "Paid" : "Open"}</td>
+                    <td data-label="Amount" className="num mono">{formatMoney(i.amount, i.currency)}</td>
+                    <td className="actions-cell">
+                      <button type="button" className="btn btn-sm" onClick={() => getInvoice(i.id, i.number)} aria-label={`Download invoice ${i.number}`}>
+                        <Download size={15} aria-hidden="true" />
+                        Download
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
     </>
   );
 }

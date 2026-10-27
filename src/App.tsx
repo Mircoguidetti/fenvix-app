@@ -5,6 +5,7 @@ import { PageHeader } from "./components/PageHeader";
 import { DatabasesPage } from "./pages/Databases";
 import { CreateDatabasePage } from "./pages/CreateDatabase";
 import { DatabaseDetailPage } from "./pages/DatabaseDetail";
+import { UsagePage } from "./pages/Usage";
 import { BillingPage } from "./pages/Billing";
 import { ApiKeysPage } from "./pages/ApiKeys";
 import { SettingsPage } from "./pages/Settings";
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="/" element={<DatabasesPage />} />
           <Route path="/databases/new" element={<CreateDatabasePage />} />
           <Route path="/databases/:id" element={<DatabaseDetailPage />} />
+          <Route path="/usage" element={<UsagePage />} />
           <Route path="/billing" element={<BillingPage />} />
           <Route path="/api-keys" element={<ApiKeysPage />} />
           <Route path="/settings" element={<SettingsPage />} />

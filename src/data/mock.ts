@@ -1,6 +1,7 @@
 // All mock data lives in this file. Every number and name here is fake.
 import type { DataClient } from "./client";
-import type { ApiKey, BillingSummary, BulkResult, Database, ExportResult, DatabaseFilter, DatabaseGroup, DatabaseSort, DbState, GroupedDatabases, Page, Settings, TagCount, UsagePoint, UsageRange } from "./types";
+import type { ApiKey, BillingOverview, BulkResult, Database, ExportResult, Invoice, UsageQuery, UsageReport, UsageRow, UsageSort, DatabaseFilter, DatabaseGroup, DatabaseSort, DbState, GroupedDatabases, Page, Settings, TagCount, UsagePoint, UsageRange } from "./types";
+import { simplePdf } from "./pdf";
 import { matchesTagFilter, mergeTags, parseTag, sortTags, splitTag } from "../lib/tags";
 
 const NOW = new Date("2026-10-26T12:00:00Z");
@@ -208,17 +209,86 @@ function usageFor(db: Database, range: UsageRange): UsagePoint[] {
   });
 }
 
-const billing: BillingSummary = (() => {
-  const lines = databases.slice(0, 12).map((d) => {
-    const requests = Math.round(d.requests24h * 26 * 0.8);
-    const awakeHours = d.state === "awake" ? 120 + (d.requests24h % 90) : 6 + (d.requests24h % 25);
-    const storageGbHours = Math.round((d.storageMb / 1024) * 24 * 26);
-    const amount = Math.round((requests / 1e6) * 100 + awakeHours * 0.37 + storageGbHours * 0.0021 * 10) / 100;
-    return { databaseId: d.id, name: d.name, requests, awakeHours, storageGbHours, amount };
-  });
-  const total = Math.round(lines.reduce((sum, l) => sum + l.amount, 0) * 100) / 100;
-  return { periodLabel: "Sample period: Oct 1 to Oct 26, 2026", currency: "USD", lines, total };
-})();
+const USAGE_MONTHS = ["2026-10", "2026-09", "2026-08", "2026-07", "2026-06", "2026-05"];
+const STORAGE_RATE = 0.25; // per GB-month
+const REQUEST_RATE = 0.4; // per million requests
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Usage of one database in a month. The current month is counted up to "now". */
+function monthlyUsage(d: Database, month: string): { requests: number; storageGb: number } {
+  const [y, m] = month.split("-").map(Number);
+  const start = Date.UTC(y, m - 1, 1);
+  const end = Math.min(Date.UTC(y, m, 1), NOW.getTime());
+  const created = new Date(d.createdAt).getTime();
+  if (end <= created || end <= start) return { requests: 0, storageGb: 0 };
+  const active = Math.min(1, (end - Math.max(start, created)) / (end - start));
+  const days = (end - start) / DAY;
+  const jitter = 0.7 + 0.6 * (hash(d.id + month) / 100000);
+  const trend = 1 - 0.04 * (USAGE_MONTHS.indexOf(month) < 0 ? 0 : USAGE_MONTHS.indexOf(month));
+  return { requests: Math.round(d.requests24h * days * active * jitter), storageGb: round2((d.storageMb / 1024) * active * trend) };
+}
+
+function usageRows(q: UsageQuery): { rows: UsageRow[]; totals: UsageReport["totals"] } {
+  const per = databases.map((d) => ({ d, u: monthlyUsage(d, q.month) }));
+  const totals = { databases: per.length, storageGb: round2(per.reduce((a, x) => a + x.u.storageGb, 0)), requests: per.reduce((a, x) => a + x.u.requests, 0) };
+  if (q.by === "database") {
+    return { rows: per.map(({ d, u }) => ({ id: d.id, name: d.name, tags: d.tags, databases: 1, storageGb: u.storageGb, requests: u.requests })), totals };
+  }
+  const groups = new Map<string, UsageRow>();
+  for (const { d, u } of per) {
+    const labels = q.tagKey ? [d.tags.find((t) => splitTag(t).key === q.tagKey) ?? `${q.tagKey}:(none)`] : d.tags;
+    for (const label of labels) {
+      const g = groups.get(label) ?? { id: label, name: label, tags: [], databases: 0, storageGb: 0, requests: 0 };
+      g.databases++;
+      g.storageGb = round2(g.storageGb + u.storageGb);
+      g.requests += u.requests;
+      groups.set(label, g);
+    }
+  }
+  return { rows: [...groups.values()], totals };
+}
+
+function sortUsage(rows: UsageRow[], sort: UsageSort, dir: "asc" | "desc"): UsageRow[] {
+  const sign = dir === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => sign * (sort === "name" ? a.name.localeCompare(b.name) : a[sort] - b[sort]) || a.name.localeCompare(b.name));
+}
+
+const csvCell = (v: string | number) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+
+function monthTotals(month: string) {
+  return usageRows({ month, by: "database" }).totals;
+}
+
+function costs(t: { storageGb: number; requests: number }, fraction = 1) {
+  return { storage: round2(t.storageGb * STORAGE_RATE * fraction), requests: round2((t.requests / 1e6) * REQUEST_RATE) };
+}
+
+const INVOICES: Invoice[] = USAGE_MONTHS.slice(1).map((month) => {
+  const c = costs(monthTotals(month));
+  const [y, m] = month.split("-").map(Number);
+  return { id: `inv_${month}`, number: `FNX-${month}`, month, issuedAt: new Date(Date.UTC(y, m, 1)).toISOString(), amount: round2(c.storage + c.requests), currency: "USD", status: "paid" as const };
+});
+
+function getBillingOverview(): BillingOverview {
+  const t = monthTotals("2026-10");
+  const fraction = NOW.getUTCDate() / 31;
+  const c = costs(t, fraction);
+  return {
+    currency: "USD",
+    plan: { name: "Pay as you go", description: "No base fee. You pay for the storage and requests of your databases, billed monthly." },
+    monthToDate: {
+      periodLabel: "October 1 to 26, 2026",
+      lines: [
+        { label: "Storage", quantity: `${formatNumber(round2(t.storageGb * fraction))} GB-months`, rate: `$${STORAGE_RATE.toFixed(2)} per GB-month`, cost: c.storage },
+        { label: "Requests", quantity: `${formatNumber(t.requests)} requests`, rate: `$${REQUEST_RATE.toFixed(2)} per million`, cost: c.requests },
+      ],
+      total: round2(c.storage + c.requests),
+    },
+    paymentMethod: { brand: "Visa", last4: "4242", expires: "08/2028" },
+  };
+}
+
+const formatNumber = (n: number) => new Intl.NumberFormat("en-US").format(n);
 
 let apiKeys: ApiKey[] = [
   { id: "key_1", name: "Production backend", hint: "a91f", createdAt: ago(90 * DAY), lastUsedAt: ago(4 * MIN), revokedAt: null },
@@ -334,7 +404,32 @@ export const mockClient: DataClient = {
     const db = databases.find((d) => d.id === id);
     return wait(db ? usageFor(db, range) : []);
   },
-  getBilling: () => wait(billing),
+  listUsageMonths: () => wait([...USAGE_MONTHS]),
+  async getUsageReport(q) {
+    if (!USAGE_MONTHS.includes(q.month)) throw new Error("No usage report for this month.");
+    const { rows, totals } = usageRows(q);
+    const { sort = "requests", dir = "desc", page = 1, pageSize = 50 } = q;
+    const sorted = sortUsage(rows, sort, dir);
+    return wait<UsageReport>({ month: q.month, items: sorted.slice((page - 1) * pageSize, page * pageSize), total: sorted.length, page, pageSize, totals });
+  },
+  async exportUsageReport(q) {
+    const { rows } = usageRows(q);
+    const sorted = sortUsage(rows, q.sort ?? "requests", q.dir ?? "desc");
+    const head = q.by === "database" ? "database,tags,storage_gb_avg,requests" : "tag,databases,storage_gb_avg,requests";
+    const lines = sorted.map((r) => (q.by === "database" ? [r.name, r.tags.join(" "), r.storageGb, r.requests] : [r.name, r.databases, r.storageGb, r.requests]).map(csvCell).join(","));
+    const filename = `fenvix-usage-${q.month}-${q.by === "database" ? "databases" : q.tagKey ? `by-${q.tagKey}` : "tags"}.csv`;
+    return wait<ExportResult>({ filename, mimeType: "text/csv", downloadUrl: blobUrl([head, ...lines].join("\n") + "\n", "text/csv") });
+  },
+  getBilling: () => wait(getBillingOverview()),
+  listInvoices(page = 1, pageSize = 12) {
+    return wait<Page<Invoice>>({ items: INVOICES.slice((page - 1) * pageSize, page * pageSize), total: INVOICES.length, page, pageSize });
+  },
+  async downloadInvoice(id) {
+    const inv = INVOICES.find((i) => i.id === id);
+    if (!inv) throw new Error("Invoice not found");
+    const pdf = simplePdf(["FENVIX (sample invoice)", "", `Invoice ${inv.number}`, `Month: ${inv.month}`, `Issued: ${inv.issuedAt.slice(0, 10)}`, `Amount: ${inv.currency} ${inv.amount.toFixed(2)}`, `Status: ${inv.status}`, "", "This is sample data, not a real invoice."]);
+    return wait<ExportResult>({ filename: `${inv.number}.pdf`, mimeType: "application/pdf", downloadUrl: blobUrl(pdf, "application/pdf") });
+  },
   listApiKeys: () => wait(apiKeys.map((k) => ({ ...k }))),
   async createApiKey(name) {
     const secret = `sample_${randomHex(32)}`;

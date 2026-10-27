@@ -100,21 +100,70 @@ export interface UsagePoint {
   storageMb: number;
 }
 
-export interface BillingLine {
-  databaseId: string;
-  name: string;
-  requests: number;
-  awakeHours: number;
-  storageGbHours: number;
-  /** Fake amount, for layout only. */
-  amount: number;
+export type UsageSort = "name" | "databases" | "storageGb" | "requests";
+
+export interface UsageQuery {
+  /** Month as "YYYY-MM". */
+  month: string;
+  /** One row per database, or one row per tag value. */
+  by: "database" | "tag";
+  /** With by "tag": the tag key to total up. Leave out to list every key:value tag. */
+  tagKey?: string;
+  sort?: UsageSort;
+  dir?: "asc" | "desc";
+  page?: number;
+  pageSize?: number;
 }
 
-export interface BillingSummary {
-  periodLabel: string;
+export interface UsageRow {
+  /** Database id, or the tag ("customer:acme-labs"). */
+  id: string;
+  name: string;
+  /** Tags of the database (by "database" only). */
+  tags: string[];
+  /** Databases counted in this row. */
+  databases: number;
+  /** Average storage over the month, in GB. */
+  storageGb: number;
+  requests: number;
+}
+
+export interface UsageTotals {
+  databases: number;
+  storageGb: number;
+  requests: number;
+}
+
+export interface UsageReport extends Page<UsageRow> {
+  month: string;
+  /** Over every database, not just this page. A database with several tags counts once. */
+  totals: UsageTotals;
+}
+
+export interface BillingLine {
+  label: string;
+  /** Quantity with its unit, for example "1,204 GB-months". */
+  quantity: string;
+  rate: string;
+  cost: number;
+}
+
+export interface BillingOverview {
   currency: string;
-  lines: BillingLine[];
-  total: number;
+  plan: { name: string; description: string };
+  monthToDate: { periodLabel: string; lines: BillingLine[]; total: number };
+  paymentMethod: { brand: string; last4: string; expires: string };
+}
+
+export interface Invoice {
+  id: string;
+  number: string;
+  /** Month the invoice covers, "YYYY-MM". */
+  month: string;
+  issuedAt: string;
+  amount: number;
+  currency: string;
+  status: "paid" | "open";
 }
 
 export interface ApiKey {

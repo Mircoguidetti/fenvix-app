@@ -1,4 +1,4 @@
-import type { ApiKey, BillingSummary, BulkResult, CreatedApiKey, Database, ExportResult, NewDatabase, DatabaseFilter, DatabaseQuery, GroupedDatabases, Page, Settings, TagCount, UsagePoint, UsageRange } from "./types";
+import type { ApiKey, BillingOverview, BulkResult, CreatedApiKey, Database, ExportResult, NewDatabase, DatabaseFilter, DatabaseQuery, GroupedDatabases, Invoice, Page, Settings, TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport } from "./types";
 
 /**
  * Everything the dashboard needs from a backend. The screens only talk to this interface.
@@ -39,7 +39,17 @@ export interface DataClient {
   /** Removes tags from several databases. "key:value" removes that value, a bare "key" removes the key. */
   removeTags(ids: string[], tags: string[]): Promise<BulkResult>;
   getUsage(databaseId: string, range: UsageRange): Promise<UsagePoint[]>;
-  getBilling(): Promise<BillingSummary>;
+  /** Months that have a usage report, newest first, as "YYYY-MM". */
+  listUsageMonths(): Promise<string[]>;
+  /** Storage and requests for a month, per database or per tag, sorted and paged. */
+  getUsageReport(query: UsageQuery): Promise<UsageReport>;
+  /** The same report as a CSV file, all rows, ignoring paging. */
+  exportUsageReport(query: UsageQuery): Promise<ExportResult>;
+  /** What the customer pays FENVIX: plan, month-to-date cost and payment method. */
+  getBilling(): Promise<BillingOverview>;
+  listInvoices(page?: number, pageSize?: number): Promise<Page<Invoice>>;
+  /** A PDF of one invoice. */
+  downloadInvoice(id: string): Promise<ExportResult>;
   listApiKeys(): Promise<ApiKey[]>;
   createApiKey(name: string): Promise<CreatedApiKey>;
   revokeApiKey(id: string): Promise<ApiKey>;

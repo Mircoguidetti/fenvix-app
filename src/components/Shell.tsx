@@ -1,13 +1,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { CreditCard, Database, KeyRound, Menu, Moon, Settings, Sun, X } from "lucide-react";
+import { ChartColumn, CreditCard, Database, KeyRound, Menu, Moon, Settings, Sun, X } from "lucide-react";
 import { Logo } from "./Logo";
 import { SampleLabel } from "./Tags";
 import { useTheme } from "../lib/theme";
 
 const NAV = [
   { to: "/", label: "Databases", icon: Database, end: true },
-  { to: "/billing", label: "Usage and billing", icon: CreditCard, end: false },
+  { to: "/usage", label: "Usage", icon: ChartColumn, end: false },
+  { to: "/billing", label: "Billing", icon: CreditCard, end: false },
   { to: "/api-keys", label: "API keys", icon: KeyRound, end: false },
   { to: "/settings", label: "Settings", icon: Settings, end: false },
 ];

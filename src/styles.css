@@ -285,3 +285,12 @@ table.data tr[data-selected] { background: var(--surface-2); }
 .tag-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .tag-input { width: min(280px, 100%); font-family: var(--mono); }
 @media (min-width: 761px) { table.dbs td[data-label="Name"] { white-space: nowrap; } }
+
+/* Usage and billing */
+.label { font-size: 13px; font-weight: 500; }
+.plan-name { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+.billing-top { grid-template-columns: 1fr; }
+@media (min-width: 900px) { .grid-2.billing-top, .grid-2.billing-top:last-of-type { grid-template-columns: 3fr 2fr; } }
+@media (max-width: 760px) { .hide-narrow { display: none !important; } }
+.seg button { white-space: nowrap; }
+@media (max-width: 520px) { .toolbar .field:has(.seg), .toolbar .field:has(#u-month) { flex: 1 1 100%; } .seg { display: flex; } .seg button { flex: 1; } }
