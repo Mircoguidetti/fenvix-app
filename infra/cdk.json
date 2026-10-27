@@ -1,0 +1,23 @@
+{
+  "app": "npx ts-node --prefer-ts-exts bin/fenvix.ts",
+  "watch": { "include": ["**"], "exclude": ["node_modules", "cdk.out", "test"] },
+  "notices": false,
+  "versionReporting": false,
+  "context": {
+    "account": "865859654353",
+    "regions": "eu-central-1",
+    "env": "prod",
+    "instanceType": "t3.medium",
+    "volumeGb": "20",
+    "retentionDays": "30",
+    "budgetAmount": "100",
+    "adminPort": "27018",
+    "controlPlanePort": "443",
+    "engineUrl": "https://example.invalid/REPLACE-ME/fenvix-engine-{arch}",
+    "engineSha256": "",
+    "controlPlaneImage": "example.invalid/REPLACE-ME/fenvix-control-plane:REPLACE-ME",
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/aws-s3:createDefaultLoggingPolicy": true
+  }
+}

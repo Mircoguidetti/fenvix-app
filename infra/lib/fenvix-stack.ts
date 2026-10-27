@@ -1,0 +1,293 @@
+import { CfnOutput, Duration, RemovalPolicy, Stack, StackProps, Tags } from 'aws-cdk-lib';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as budgets from 'aws-cdk-lib/aws-budgets';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cw_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import { Construct } from 'constructs';
+import { FenvixConfig, PROJECT_TAG } from './config';
+import { buildUserData, ssmPrefix } from './user-data';
+
+export interface FenvixStackProps extends StackProps {
+  config: FenvixConfig;
+  /** Region this stack deploys to (also in props.env). */
+  region: string;
+  /** Only the primary region creates DNS records and the certificate. */
+  createDns: boolean;
+  /** Extra principals (ARNs) allowed to touch bucket data, e.g. a break-glass admin role. The account root is always allowed. */
+  bucketAdminPrincipalArns?: string[];
+}
+
+/** Secrets the founder creates by hand as SecureString in SSM. Names are the contract with the services. */
+export function requiredSecretNames(envName: string): string[] {
+  const p = ssmPrefix(envName);
+  return [`${p}/engine/admin-token`, `${p}/control-plane/session-secret`];
+}
+
+const BUCKET_OBJECT_ACTIONS = [
+  's3:GetObject',
+  's3:GetObjectVersion',
+  's3:PutObject',
+  's3:DeleteObject',
+  's3:AbortMultipartUpload',
+];
+const BUCKET_LIST_ACTIONS = ['s3:ListBucket', 's3:ListBucketVersions', 's3:ListBucketMultipartUploads', 's3:GetBucketLocation'];
+
+export class FenvixStack extends Stack {
+  /** Pinned so synth never performs an AWS availability-zone lookup (we have no credentials at synth time). */
+  override get availabilityZones(): string[] {
+    return [`${this.region}a`];
+  }
+
+  constructor(scope: Construct, id: string, props: FenvixStackProps) {
+    super(scope, id, props);
+    const c = props.config;
+    const region = props.region;
+    const name = `fenvix-${c.envName}`;
+
+    Tags.of(this).add('project', PROJECT_TAG);
+    Tags.of(this).add('env', c.envName);
+
+    // ---- Network: one public subnet, no NAT, no SSH ---------------------------------------------
+    const vpc = new ec2.Vpc(this, 'Vpc', {
+      ipAddresses: ec2.IpAddresses.cidr('10.40.0.0/24'),
+      availabilityZones: [`${region}a`],
+      natGateways: 0,
+      subnetConfiguration: [{ name: 'public', subnetType: ec2.SubnetType.PUBLIC, cidrMask: 26, mapPublicIpOnLaunch: true }],
+      // The default implementation is a Lambda custom resource, which needs a CDK bootstrap bucket.
+      restrictDefaultSecurityGroup: false,
+      gatewayEndpoints: { S3: { service: ec2.GatewayVpcEndpointAwsService.S3 } },
+    });
+
+    const sg = new ec2.SecurityGroup(this, 'EngineSg', {
+      vpc,
+      description: 'FENVIX engine node: MongoDB wire (TLS) and control-plane HTTPS from the internet; admin port from this group only',
+      allowAllOutbound: true,
+    });
+    sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(27017), 'MongoDB wire protocol; the engine requires TLS');
+    sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(c.controlPlanePort), 'Control-plane HTTPS');
+    sg.connections.allowInternally(ec2.Port.tcp(c.adminPort), 'Engine admin port: members of this security group only');
+
+    // ---- Data bucket ------------------------------------------------------------------------------
+    const bucket = new s3.Bucket(this, 'DataBucket', {
+      bucketName: `${name}-data-${this.account}-${region}`,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      versioned: true,
+      lifecycleRules: [
+        {
+          id: 'expire-old-versions',
+          noncurrentVersionExpiration: Duration.days(c.retentionDays),
+          abortIncompleteMultipartUploadAfter: Duration.days(7),
+          expiredObjectDeleteMarker: true,
+        },
+      ],
+      // Customer data: never deleted by a stack delete. README explains how to empty and remove it by hand.
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+
+    // ---- Engine role: own bucket + own SSM path, nothing else ----------------------------------------
+    const paramArn = (path: string) => this.formatArn({ service: 'ssm', resource: 'parameter', resourceName: path.replace(/^\//, '') });
+    const prefix = ssmPrefix(c.envName);
+    const role = new iam.Role(this, 'EngineRole', {
+      roleName: `${name}-engine-${region}`,
+      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+      description: 'FENVIX engine node',
+    });
+    role.addToPolicy(
+      new iam.PolicyStatement({ sid: 'DataObjects', actions: BUCKET_OBJECT_ACTIONS, resources: [bucket.arnForObjects('*')] }),
+    );
+    role.addToPolicy(new iam.PolicyStatement({ sid: 'DataBucket', actions: BUCKET_LIST_ACTIONS, resources: [bucket.bucketArn] }));
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ReadOwnConfig',
+        actions: ['ssm:GetParameter', 'ssm:GetParameters', 'ssm:GetParametersByPath'],
+        resources: [paramArn(prefix), paramArn(`${prefix}/*`)],
+      }),
+    );
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'DecryptSecureStringsViaSsmOnly',
+        actions: ['kms:Decrypt'],
+        resources: [this.formatArn({ service: 'kms', resource: 'key', resourceName: '*' })],
+        conditions: { StringEquals: { 'kms:ViaService': `ssm.${region}.amazonaws.com` } },
+      }),
+    );
+    // Session Manager (replaces SSH). These APIs do not support resource-level permissions.
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'SessionManager',
+        actions: [
+          'ssm:UpdateInstanceInformation',
+          'ssmmessages:CreateControlChannel',
+          'ssmmessages:CreateDataChannel',
+          'ssmmessages:OpenControlChannel',
+          'ssmmessages:OpenDataChannel',
+          'ec2messages:AcknowledgeMessage',
+          'ec2messages:DeleteMessage',
+          'ec2messages:FailMessage',
+          'ec2messages:GetEndpoint',
+          'ec2messages:GetMessages',
+          'ec2messages:SendReply',
+        ],
+        resources: ['*'],
+      }),
+    );
+
+    // Bucket policy: only the engine role (plus the account root and any named admins) may touch data.
+    const allowed = [role.roleArn, new iam.AccountRootPrincipal().arn, ...(props.bucketAdminPrincipalArns ?? [])];
+    bucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'EngineRoleOnly',
+        effect: iam.Effect.ALLOW,
+        principals: [new iam.ArnPrincipal(role.roleArn)],
+        actions: [...BUCKET_OBJECT_ACTIONS, ...BUCKET_LIST_ACTIONS],
+        resources: [bucket.bucketArn, bucket.arnForObjects('*')],
+      }),
+    );
+    bucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'DenyEveryoneElse',
+        effect: iam.Effect.DENY,
+        principals: [new iam.AnyPrincipal()],
+        actions: [...BUCKET_OBJECT_ACTIONS, 's3:DeleteObjectVersion', ...BUCKET_LIST_ACTIONS],
+        resources: [bucket.bucketArn, bucket.arnForObjects('*')],
+        conditions: { ArnNotEquals: { 'aws:PrincipalArn': allowed } },
+      }),
+    );
+
+    // ---- DNS and certificate (only when BASE_DOMAIN is set) -----------------------------------------
+    let certificateArn: string | undefined;
+    let zone: route53.IHostedZone | undefined;
+    if (c.baseDomain && props.createDns) {
+      zone = c.hostedZoneId
+        ? route53.HostedZone.fromHostedZoneAttributes(this, 'Zone', { hostedZoneId: c.hostedZoneId, zoneName: c.baseDomain })
+        : new route53.PublicHostedZone(this, 'Zone', { zoneName: c.baseDomain });
+      const cert = new acm.Certificate(this, 'Certificate', {
+        domainName: `*.db.${c.baseDomain}`,
+        subjectAlternativeNames: [`console.${c.baseDomain}`],
+        validation: acm.CertificateValidation.fromDns(zone),
+      });
+      // Public ACM certificates can only leave ACM when export is enabled (paid option).
+      (cert.node.defaultChild as acm.CfnCertificate).certificateExport = 'ENABLED';
+      certificateArn = cert.certificateArn;
+    }
+
+    // ---- Engine node -------------------------------------------------------------------------------
+    const instanceType = new ec2.InstanceType(c.instanceType);
+    const userData = ec2.UserData.forLinux();
+    userData.addCommands(
+      ...buildUserData({
+        config: c,
+        region,
+        bucketName: bucket.bucketName,
+        requiredParameters: requiredSecretNames(c.envName),
+        certificateArn,
+      }),
+    );
+    const instance = new ec2.Instance(this, 'EngineInstance', {
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      instanceType,
+      machineImage: ec2.MachineImage.latestAmazonLinux2023({
+        cpuType: instanceType.architecture === ec2.InstanceArchitecture.ARM_64 ? ec2.AmazonLinuxCpuType.ARM_64 : ec2.AmazonLinuxCpuType.X86_64,
+      }),
+      role,
+      securityGroup: sg,
+      userData,
+      userDataCausesReplacement: true,
+      httpTokens: ec2.HttpTokens.REQUIRED,
+      detailedMonitoring: true,
+      associatePublicIpAddress: true,
+      blockDevices: [
+        {
+          deviceName: '/dev/xvda',
+          volume: ec2.BlockDeviceVolume.ebs(c.volumeGb, { volumeType: ec2.EbsDeviceVolumeType.GP3, encrypted: true, deleteOnTermination: true }),
+        },
+      ],
+    });
+
+    const eip = new ec2.CfnEIP(this, 'EngineIp', { domain: 'vpc', instanceId: instance.instanceId });
+
+    // Automatic recovery from host failure (the services themselves restart via systemd Restart=always).
+    new cloudwatch.Alarm(this, 'RecoverAlarm', {
+      alarmName: `${name}-recover-${region}`,
+      metric: new cloudwatch.Metric({
+        namespace: 'AWS/EC2',
+        metricName: 'StatusCheckFailed_System',
+        dimensionsMap: { InstanceId: instance.instanceId },
+        statistic: 'Maximum',
+        period: Duration.minutes(1),
+      }),
+      threshold: 0,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      evaluationPeriods: 3,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }).addAlarmAction(new cw_actions.Ec2Action(cw_actions.Ec2InstanceAction.RECOVER));
+
+    if (zone && c.baseDomain) {
+      const target = route53.RecordTarget.fromValues(eip.ref);
+      new route53.ARecord(this, 'DbWildcard', { zone, recordName: `*.db.${c.baseDomain}`, target });
+      new route53.ARecord(this, 'Console', { zone, recordName: `console.${c.baseDomain}`, target });
+    }
+
+    // ---- Cost guard -------------------------------------------------------------------------------
+    const budgetName = `${name}-${region}`;
+    const budget = new budgets.CfnBudget(this, 'Budget', {
+      budget: {
+        budgetName,
+        budgetType: 'COST',
+        timeUnit: 'MONTHLY',
+        budgetLimit: { amount: c.budgetAmountUsd, unit: 'USD' },
+        // Region filter, not a tag filter: a tag filter reads zero until the tag is activated as a cost allocation tag.
+        costFilters: { Region: [region] },
+      },
+      notificationsWithSubscribers: [50, 80, 100].map((threshold) => ({
+        notification: { notificationType: 'ACTUAL', comparisonOperator: 'GREATER_THAN', threshold, thresholdType: 'PERCENTAGE' },
+        subscribers: [{ subscriptionType: 'EMAIL', address: c.budgetEmail }],
+      })),
+    });
+
+    const actionRole = new iam.Role(this, 'BudgetActionRole', {
+      roleName: `${name}-budget-stop-${region}`,
+      assumedBy: new iam.ServicePrincipal('budgets.amazonaws.com', {
+        conditions: { StringEquals: { 'aws:SourceAccount': this.account } },
+      }),
+      description: 'Lets AWS Budgets stop the FENVIX engine instance at 100% of budget',
+    });
+    actionRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:StopInstances'],
+        resources: [this.formatArn({ service: 'ec2', resource: 'instance', resourceName: instance.instanceId })],
+      }),
+    );
+    actionRole.addToPolicy(new iam.PolicyStatement({ actions: ['ec2:DescribeInstanceStatus'], resources: ['*'] }));
+    actionRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['ssm:StartAutomationExecution'],
+        resources: [this.formatArn({ service: 'ssm', resource: 'automation-definition', resourceName: 'AWS-StopEC2Instance:*' })],
+      }),
+    );
+    const stopAction = new budgets.CfnBudgetsAction(this, 'StopEngineAt100', {
+      budgetName,
+      actionType: 'RUN_SSM_DOCUMENTS',
+      actionThreshold: { type: 'PERCENTAGE', value: 100 },
+      notificationType: 'ACTUAL',
+      approvalModel: 'AUTOMATIC',
+      executionRoleArn: actionRole.roleArn,
+      subscribers: [{ type: 'EMAIL', address: c.budgetEmail }],
+      definition: { ssmActionDefinition: { subtype: 'STOP_EC2_INSTANCES', region, instanceIds: [instance.instanceId] } },
+    });
+    stopAction.node.addDependency(budget, actionRole);
+
+    // ---- Outputs ----------------------------------------------------------------------------------
+    new CfnOutput(this, 'BucketName', { value: bucket.bucketName });
+    new CfnOutput(this, 'InstanceId', { value: instance.instanceId, description: 'Connect with: aws ssm start-session --target <id>' });
+    new CfnOutput(this, 'PublicIp', { value: eip.ref });
+    new CfnOutput(this, 'SecretsPath', { value: `${prefix}/` , description: 'Create the SecureString parameters under this path (README.md)' });
+  }
+}
