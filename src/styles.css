@@ -313,3 +313,6 @@ table.data tr[data-selected] { background: var(--surface-2); }
 .user-panel .btn { margin-top: 8px; }
 .user-full { font-weight: 600; overflow-wrap: anywhere; }
 .user-email { overflow-wrap: anywhere; }
+.select-all-mobile { display: none; }
+@media (max-width: 760px) { .select-all-mobile { display: flex; align-items: center; gap: 4px; padding: 2px 10px; border-bottom: 1px solid var(--border); font-size: 13.5px; } }
+a.btn { text-decoration: none; }
