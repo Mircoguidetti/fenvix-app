@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Download, GitFork, History, Trash2 } from "lucide-react";
 import { client, type UsageRange } from "../data";
@@ -36,10 +36,13 @@ function DatabaseDetail({ id }: { id: string }) {
   const [field, setField] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [keepLocal, setKeepLocal] = useState<boolean | null>(null);
   const db = useAsync(() => client.getDatabase(id), [id]);
   const [range, setRange] = useState<UsageRange>("7d");
   const [metric, setMetric] = useState<Metric>("requests");
   const usage = useAsync(() => client.getUsage(id, range), [id, range]);
+  const loadedKeep = db.status === "ready" ? db.data?.keepAwake : undefined;
+  useEffect(() => setKeepLocal(null), [loadedKeep]);
 
   const back = (
     <Link to="/" className="back-link">
@@ -54,6 +57,7 @@ function DatabaseDetail({ id }: { id: string }) {
 
   const d = db.data;
   const now = client.now();
+  const keepAwake = keepLocal ?? d.keepAwake;
 
   function open(next: Dialog) {
     setError(null);
@@ -103,9 +107,15 @@ function DatabaseDetail({ id }: { id: string }) {
     }
   }
   async function toggleKeepAwake(on: boolean) {
-    await client.setKeepAwake([d.id], on);
-    toast(on ? `${d.name} will stay awake` : `${d.name} can sleep when idle`);
-    db.reload();
+    setKeepLocal(on);
+    try {
+      await client.setKeepAwake([d.id], on);
+      toast(on ? `${d.name} will stay awake` : `${d.name} can sleep when idle`);
+      db.reload();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not change keep awake.");
+      setKeepLocal(null);
+    }
   }
 
   return (
@@ -149,7 +159,7 @@ function DatabaseDetail({ id }: { id: string }) {
             </div>
             <div>
               <dt>Keep awake</dt>
-              <dd>{d.keepAwake ? "On" : "Off"}</dd>
+              <dd>{keepAwake ? "On" : "Off"}</dd>
             </div>
             {d.restoredTo && (
               <div>
@@ -193,7 +203,7 @@ function DatabaseDetail({ id }: { id: string }) {
 
       <Card id="actions" title="Actions">
         <label className="check">
-          <input type="checkbox" checked={d.keepAwake} onChange={(e) => toggleKeepAwake(e.target.checked)} />
+          <input type="checkbox" checked={keepAwake} onChange={(e) => toggleKeepAwake(e.target.checked)} />
           Keep awake
         </label>
         <p className="muted small">A database that is kept awake never sleeps, so its first request is never slow.</p>
