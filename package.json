@@ -9,7 +9,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
     "typecheck": "tsc --noEmit",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "checks": "node scripts/checks.mjs",
+    "check": "node scripts/run.mjs"
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.2.0",
