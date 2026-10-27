@@ -80,13 +80,15 @@ export function Shell({ children }: { children: ReactNode }) {
       </a>
 
       <aside className="sidebar" aria-label="Sidebar">
-        <div className="sidebar-top">
-          <Logo />
-        </div>
-        <Workspace />
-        <SideNav />
-        <div className="sidebar-bottom">
-          <UserMenu />
+        <div className="sidebar-inner">
+          <div className="sidebar-top">
+            <Logo />
+          </div>
+          <Workspace />
+          <SideNav />
+          <div className="sidebar-bottom">
+            <UserMenu />
+          </div>
         </div>
       </aside>
 
