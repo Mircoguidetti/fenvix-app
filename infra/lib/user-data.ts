@@ -17,22 +17,22 @@ export function ssmPrefix(envName: string): string {
 
 // Turns every SecureString under one SSM path into KEY=value lines.
 // systemd format (quoted, escaped) for the engine, raw format for `docker --env-file`.
-const FETCH_CONFIG = String.raw`#!/usr/bin/env python3
+export const FETCH_CONFIG = String.raw`#!/usr/bin/env python3
 import json, subprocess, sys, os
-region, prefix, out_systemd, out_docker, strip, *required = sys.argv[1:]
+region, prefix, out_systemd, out_docker, group, env_prefix, *required = sys.argv[1:]
 def fetch(path):
     r = subprocess.run(["aws", "ssm", "get-parameters-by-path", "--region", region, "--path", path,
                         "--with-decryption", "--recursive", "--output", "json"], capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit("fenvix-fetch-config: cannot read " + path + ": " + r.stderr.strip())
     return json.loads(r.stdout)["Parameters"]
-params = fetch(prefix + "/" + strip)
+params = fetch(prefix + "/" + group)
 found = {p["Name"] for p in params}
 missing = [n for n in required if n not in found]
 if missing:
     sys.exit("fenvix-fetch-config: missing SSM parameters (create them as SecureString in the console): " + ", ".join(missing))
 def key(p):
-    return p["Name"].rsplit("/", 1)[1].upper().replace("-", "_")
+    return env_prefix + p["Name"].rsplit("/", 1)[1].upper().replace("-", "_")
 sysd, dock = [], []
 for p in params:
     v = p["Value"]
@@ -116,7 +116,7 @@ export function buildUserData(i: UserDataInput): string[] {
         'User=fenvix',
         'EnvironmentFile=/etc/fenvix/engine.static.env',
         'EnvironmentFile=/etc/fenvix/engine.env',
-        `ExecStartPre=+/usr/local/bin/fenvix-fetch-config ${i.region} ${prefix} /etc/fenvix/engine.env /dev/null engine ${required('engine')}`,
+        `ExecStartPre=+/usr/local/bin/fenvix-fetch-config ${i.region} ${prefix} /etc/fenvix/engine.env /dev/null engine FENVIX_ ${required('engine')}`,
         'ExecStart=/opt/fenvix/bin/fenvix-engine',
         'Restart=always',
         'RestartSec=5',
@@ -137,7 +137,7 @@ export function buildUserData(i: UserDataInput): string[] {
         'After=docker.service network-online.target',
         'Requires=docker.service',
         '[Service]',
-        `ExecStartPre=+/usr/local/bin/fenvix-fetch-config ${i.region} ${prefix} /dev/null /etc/fenvix/control-plane.env control-plane ${required('control-plane')}`,
+        `ExecStartPre=+/usr/local/bin/fenvix-fetch-config ${i.region} ${prefix} /dev/null /etc/fenvix/control-plane.env control-plane "" ${required('control-plane')}`,
         `ExecStartPre=/usr/bin/docker pull ${c.controlPlaneImage}`,
         '-ExecStartPre=/usr/bin/docker rm -f fenvix-control-plane',
         `ExecStart=/usr/bin/docker run --rm --name fenvix-control-plane --env-file /etc/fenvix/control-plane.static.env --env-file /etc/fenvix/control-plane.env -p ${c.controlPlanePort}:8443 ${c.controlPlaneImage}`,
