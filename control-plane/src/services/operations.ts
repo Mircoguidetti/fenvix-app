@@ -351,6 +351,12 @@ export class OperationRunner {
     if (!op) return; // finished, or another runner holds it
 
     const log = s.log.child({ operationId: op.id, kind: op.kind, attempt: op.attempts, requestId: op.request_id });
+    // The operation already failed, but the engine still had to be put back (it could not be reached then).
+    const pending = op.params.pendingFailure as { code: ErrorCode; message: string; field?: string } | undefined;
+    if (pending) {
+      await this.finishFailed(op, new Failure(new ApiError(pending.code, pending.message, pending.field)), log);
+      return;
+    }
     try {
       const result = await this.execute(op);
       await s.db.tx(workspaceId, async (c) => {
@@ -370,12 +376,59 @@ export class OperationRunner {
       }
       const failure = e instanceof Failure ? e : e instanceof EngineError ? fromEngine(e, "The database") : new Failure(internal("The operation could not be completed. Try again."));
       log.error({ err: e instanceof Error ? e.message : String(e), code: failure.api.code }, "operation failed");
-      await s.db.tx(workspaceId, async (c) => {
-        await this.compensate(c, op);
-        const err = { code: failure.api.code, message: failure.api.message, ...(failure.api.field ? { field: failure.api.field } : {}) };
-        await c.query("update public.operations set status = 'failed', error = $3, locked_until = null, updated_at = now(), finished_at = now() where workspace_id = $1 and id = $2", [workspaceId, id, JSON.stringify(err)]);
-        await writeAudit(c, { workspaceId, actor: { type: op.actor_type, id: op.actor_id }, requestId: op.request_id }, { action: `database.${op.kind}.failed`, outcome: "failed", targetType: "database", targetId: op.database_id ?? undefined, metadata: { operationId: op.id, code: failure.api.code } });
-      });
+      await this.finishFailed(op, failure, log);
+    }
+  }
+
+  /**
+   * A failure for good: first the engine is put back (what a create or fork made is erased together with its user; the
+   * users of databases an erase gave back are made again), then Postgres. If the engine cannot be reached for that,
+   * nothing is marked failed yet: the operation is queued again with its failure kept, and the next attempt only
+   * retries the clean-up. So Postgres never says "failed" while the engine still holds what the operation made.
+   */
+  private async finishFailed(op: OperationRow, failure: Failure, log: { warn: (o: object, m: string) => void; error: (o: object, m: string) => void }): Promise<void> {
+    const s = this.s;
+    const { workspace_id: workspaceId, id } = op;
+    const err = { code: failure.api.code, message: failure.api.message, ...(failure.api.field ? { field: failure.api.field } : {}) };
+    try {
+      await this.cleanupEngine(op);
+    } catch (e) {
+      log.warn({ err: e instanceof Error ? e.message : String(e) }, "engine clean-up after a failed operation will be retried");
+      await s.db.tx(workspaceId, (c) => c.query(
+        `update public.operations set status = 'queued', params = params || jsonb_build_object('pendingFailure', $3::jsonb),
+                retry_at = now() + make_interval(secs => $4), locked_until = null, updated_at = now()
+          where workspace_id = $1 and id = $2`,
+        [workspaceId, id, JSON.stringify(err), backoffSeconds(op.attempts)],
+      ));
+      return;
+    }
+    await s.db.tx(workspaceId, async (c) => {
+      await this.compensate(c, op);
+      await c.query("update public.operations set status = 'failed', error = $3, locked_until = null, updated_at = now(), finished_at = now() where workspace_id = $1 and id = $2", [workspaceId, id, JSON.stringify(err)]);
+      await writeAudit(c, { workspaceId, actor: { type: op.actor_type, id: op.actor_id }, requestId: op.request_id }, { action: `database.${op.kind}.failed`, outcome: "failed", targetType: "database", targetId: op.database_id ?? undefined, metadata: { operationId: op.id, code: failure.api.code } });
+    });
+  }
+
+  /** The region of a database from its Postgres row (or, with one region, that one). */
+  private async regionOf(workspaceId: string, id: string): Promise<string | null> {
+    const r = await this.s.db.tx(workspaceId, async (c) => (await c.query("select region from public.databases where workspace_id = $1 and id = $2", [workspaceId, id])).rows[0] as { region: string } | undefined);
+    return r?.region ?? (this.s.cfg.regions.length === 1 ? this.s.cfg.regions[0]! : null);
+  }
+
+  /** The engine side of `compensate`. Throws when the engine cannot be reached (the caller retries later). */
+  private async cleanupEngine(op: OperationRow): Promise<void> {
+    const s = this.s;
+    const ws = op.workspace_id;
+    if ((op.kind === "create" || op.kind === "fork") && op.database_id) {
+      const still = await s.db.tx(ws, async (c) => (await c.query("select region from public.databases where workspace_id = $1 and id = $2 and engine_state = 'provisioning'", [ws, op.database_id])).rows[0] as { region: string } | undefined);
+      if (!still) return; // nothing of this operation is left to undo
+      // The user first: from then on nobody can write to it. Then the database, which is ours (its name is made from our id).
+      await s.users.drop(op.database_id, still.region);
+      await s.engine.eraseDatabase({ id: op.database_id, idempotencyKey: `${op.id}:cleanup` });
+    } else if (op.kind === "erase") {
+      const back = await s.db.tx(ws, async (c) => (await c.query("select id, region from public.databases where workspace_id = $1 and id = any($2::uuid[]) and engine_state = 'erasing'", [ws, op.params.ids as string[]])).rows as { id: string; region: string }[]);
+      // These databases stay: their users (dropped before the engine erase was refused) are made again.
+      for (const r of back) await s.users.ensure(String(r.id), String(r.region));
     }
   }
 
@@ -409,19 +462,27 @@ export class OperationRunner {
     });
 
     switch (op.kind) {
+      // The database, then its own engine user, then Postgres. Each step is repeatable, so a retry after any failure
+      // finishes the job; a failure for good erases what was made (finishFailed).
       case "create": {
         const p = op.params as { name: string; region: string };
         const eng = await wrap(() => s.engine.createDatabase({ id: op.database_id!, workspaceId: ws, name: p.name, region: p.region, idempotencyKey: op.id }), "The database");
+        await wrap(() => s.users.ensure(op.database_id!, p.region), "The database");
         return { ...(await finishProvisioning(eng)) };
       }
       case "fork": {
+        // The fork gets a user of its own; the source's user has no right on it (its role names the source only).
         const p = op.params as { sourceId: string; name: string };
         const eng = await wrap(() => s.engine.forkDatabase({ sourceId: p.sourceId, id: op.database_id!, workspaceId: ws, name: p.name, idempotencyKey: op.id }), "The source database");
+        await wrap(() => s.users.ensure(op.database_id!, eng.region), "The database");
         return { ...(await finishProvisioning(eng)) };
       }
       case "restore": {
         const at = (op.params as { at: string }).at;
-        await wrap(() => s.engine.restoreDatabase({ id: op.database_id!, at, idempotencyKey: op.id }), "The database");
+        const restored = await wrap(() => s.engine.restoreDatabase({ id: op.database_id!, at, idempotencyKey: op.id }), "The database");
+        // Users are not inside the database, so a restore leaves its user as it was. Repaired here anyway (best effort:
+        // retrying the operation would apply the restore again; the user sweep makes a missing user later).
+        await s.users.ensure(op.database_id!, restored.region).catch((e) => s.log.warn({ databaseId: op.database_id, kind: e instanceof EngineError ? e.kind : "unknown" }, "could not check the database's engine user after a restore"));
         return { ...(await s.db.tx(ws, async (c) => {
           await c.query("update public.databases set restored_to = $3, last_active_at = now(), engine_state = 'ready' where workspace_id = $1 and id = $2 and engine_state = 'restoring'", [ws, op.database_id, at]);
           const db = await readDatabase(s, c, ws, op.database_id!);
@@ -437,6 +498,10 @@ export class OperationRunner {
       case "erase": {
         const ids = (op.params as { ids: string[] }).ids;
         for (const id of ids) {
+          // The user first, so nobody can write while (or after) the data goes. If the engine then refuses the erase
+          // for good, finishFailed makes the user again for the databases that stay.
+          const region = await this.regionOf(ws, id);
+          if (region) await wrap(() => s.users.drop(id, region), "The database");
           await wrap(() => s.engine.eraseDatabase({ id, idempotencyKey: `${op.id}:${id}` }), "The database");
           await s.db.tx(ws, async (c) => {
             await c.query("delete from public.databases where workspace_id = $1 and id = $2 and engine_state = 'erasing'", [ws, id]);

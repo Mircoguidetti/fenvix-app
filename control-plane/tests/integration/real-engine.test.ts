@@ -90,14 +90,15 @@ describe("a database through its whole life, on the real driver", () => {
     assert.deepEqual(sim.dbs.get(engineName(a.id))!.docs, ["before-1", "before-2"]);
   });
 
-  test("restore before the oldest backup is the customer's 400, in the engine's words", async () => {
+  test("restore before the oldest backup is the customer's 400, in our words (never the engine's)", async () => {
     const key = engineName(a.id);
     const d = sim.dbs.get(key)!;
     d.points = [{ atMs: Date.now() - 50, docs: [...d.docs], collections: { ...d.collections } }]; // the engine's oldest restore point is only just now
     await h.admin.query("update public.databases set created_at = now() - interval '1 hour' where id = $1", [a.id]);
     const res = await h.as(u).post(`/databases/${a.id}/restore`, { at: new Date(Date.now() - 300).toISOString() });
     assert.equal(res.statusCode, 400, res.body);
-    assert.match(json(res).error.message, /earliest restorable/);
+    assert.match(json(res).error.message, /earliest restorable point of this database \(\d{4}-/);
+    assert.doesNotMatch(json(res).error.message, /is before the earliest restorable time/, "the engine's own sentence is not passed on");
     assert.equal((await h.admin.query("select engine_state from public.databases where id = $1", [a.id])).rows[0].engine_state, "ready");
   });
 

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
-import { type Document, EJSON } from "bson";
+import { BSONRegExp, type Document, EJSON } from "bson";
 import type { Caller, Services } from "../context.ts";
 import { type ApiError, conflict, forbidden, notFound, unavailable, validation } from "../errors.ts";
 import { DataError, type DataTarget, dataTarget } from "../engine/data.ts";
@@ -121,6 +121,14 @@ async function engineCall<T>(x: ExplorerCtx, t: DataTarget, op: DataOp, work: ()
 
 const opts = (x: ExplorerCtx) => ({ maxTimeMS: x.s.cfg.data.commandTimeoutMs });
 
+/** Whether a (validated) filter matches with a regular expression anywhere: `$regex`, or a BSON regex value. */
+export function hasRegex(v: unknown, depth = 0): boolean {
+  if (depth > 16 || v === null || typeof v !== "object") return false;
+  if (v instanceof BSONRegExp || v instanceof RegExp) return true;
+  if (Array.isArray(v)) return v.some((x) => hasRegex(x, depth + 1));
+  return Object.entries(v as Record<string, unknown>).some(([k, x]) => k === "$regex" || hasRegex(x, depth + 1));
+}
+
 function item(doc: Document, partial: boolean) {
   // A view can return documents without an _id: shown, but they cannot be opened, saved or deleted from here.
   if (doc._id === undefined) return { id: "", version: null, partial: true, document: toCanonical(doc) as Document };
@@ -169,8 +177,10 @@ export async function findDocuments(x: ExplorerCtx, databaseId: unknown, collect
   const skip = (page - 1) * pageSize;
   if (skip > cfg.maxSkip) throw validation(`Pages go up to ${cfg.maxSkip} documents deep. Narrow the filter or change the sort instead.`, "page");
   const t = await resolveTarget(x.s, x.caller, databaseId);
+  // A pattern can cost the engine CPU until it stops, so a filter with one gets the shorter regex time limit.
+  const maxTimeMS = hasRegex(filter) ? cfg.regexTimeoutMs : cfg.commandTimeoutMs;
   const r = await engineCall(x, t, "find", () => x.s.data.find(t, collection, {
-    ...opts(x), filter, sort, projection, skip, limit: pageSize + 1, maxBytes: cfg.maxResponseBytes,
+    maxTimeMS, filter, sort, projection, skip, limit: pageSize + 1, maxBytes: cfg.maxResponseBytes,
   }), (r) => r.docs.length);
   const hasMore = r.docs.length > pageSize || r.stoppedEarly;
   const docs = r.docs.slice(0, pageSize);

@@ -10,6 +10,8 @@ import { type EngineClient, EngineError } from "./engine/types.ts";
 import type { DataClient } from "./engine/data.ts";
 import { FakeDataClient } from "./engine/data-fake.ts";
 import { MongoDataClient } from "./engine/data-mongo.ts";
+import { type EngineUsers, FakeEngineUsers, MongoEngineUsers, NoEngineUsers } from "./engine/users.ts";
+import { reconcileEngineUsers } from "./services/engine-users.ts";
 import { ApiError, internal, notFound } from "./errors.ts";
 import { JwtVerifier } from "./auth/jwt.ts";
 import { type AuthGateway } from "./auth/gateway.ts";
@@ -28,6 +30,8 @@ export interface AppOptions {
   engine: EngineClient;
   /** The Data Explorer's client; defaults to what cfg.data says (the official driver, the in-memory fake, or none). */
   data?: DataClient;
+  /** Per-database engine users; defaults to what cfg.engineUsers says (the engine, the in-memory fake, or none). */
+  users?: EngineUsers;
   gateway: AuthGateway;
   /** Defaults to a pool on cfg.databaseUrl. */
   db?: Db;
@@ -52,9 +56,17 @@ const REQ_ID = /^[A-Za-z0-9._-]{8,64}$/;
 export const logPath = (url: string) => url.split("?")[0]!.replace(/^(\/v1\/databases\/[^/]+\/data)\/.*$/, "$1/[redacted]");
 
 function defaultDataClient(cfg: Config): DataClient {
-  if (cfg.data.driver === "mongo") return new MongoDataClient(cfg.data);
+  // Only the master key goes to the Data Explorer, never the provisioner (cfg.engineUsers.provisioner).
+  if (cfg.data.driver === "mongo") return new MongoDataClient(cfg.data, cfg.engineUsers ? { current: cfg.engineUsers.current, previous: cfg.engineUsers.previous } : null);
   // "off" also gets the fake so the interface is always there; the routes answer 503 before using it.
   return new FakeDataClient();
+}
+
+function defaultUsers(cfg: Config): EngineUsers {
+  if (cfg.engineUsers) return new MongoEngineUsers(cfg.data, cfg.engineUsers);
+  if (cfg.engineDriver === "fake") return new FakeEngineUsers();
+  // ENGINE_DRIVER=real without the Data Explorer (or local development without authentication): no users to manage.
+  return new NoEngineUsers();
 }
 
 export async function buildApp(opts: AppOptions): Promise<App> {
@@ -87,7 +99,8 @@ export async function buildApp(opts: AppOptions): Promise<App> {
   fastify.addHook("onRoute", (r) => { for (const m of [r.method].flat()) if (m !== "HEAD" && m !== "OPTIONS") routes.push(`${m} ${r.url}`); });
 
   const data = opts.data ?? defaultDataClient(cfg);
-  const s: Services = { cfg, db, engine: opts.engine, data, log: fastify.log };
+  const users = opts.users ?? defaultUsers(cfg);
+  const s: Services = { cfg, db, engine: opts.engine, data, users, log: fastify.log };
   const runner = new OperationRunner(s);
   const deps: Deps = {
     s,
@@ -166,6 +179,7 @@ export async function buildApp(opts: AppOptions): Promise<App> {
   }, { prefix: "/v1" });
 
   let usageTimer: NodeJS.Timeout | undefined;
+  let usersTimer: NodeJS.Timeout | undefined;
   return {
     fastify,
     deps,
@@ -182,12 +196,24 @@ export async function buildApp(opts: AppOptions): Promise<App> {
         }, cfg.usageSyncSeconds * 1000);
         usageTimer.unref();
       }
+      const sweep = cfg.engineUsers?.sweepSeconds ?? 0;
+      if (sweep > 0) {
+        let busy = false;
+        usersTimer = setInterval(() => {
+          if (busy) return;
+          busy = true;
+          reconcileEngineUsers(s).catch((e) => fastify.log.error({ err: e instanceof Error ? e.message : String(e) }, "engine user sweep failed")).finally(() => { busy = false; });
+        }, sweep * 1000);
+        usersTimer.unref();
+      }
     },
     async close() {
       if (usageTimer) clearInterval(usageTimer);
+      if (usersTimer) clearInterval(usersTimer);
       await runner.stop();
       await fastify.close();
       if (!opts.data) await data.close();
+      if (!opts.users) await users.close();
       if (!opts.db) await db.close();
     },
   };

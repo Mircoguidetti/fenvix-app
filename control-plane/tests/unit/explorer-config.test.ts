@@ -31,9 +31,14 @@ test("mongo: credentials and TLS are required unless the local-only flag is set"
   const ep = { DATA_ENGINE_ENDPOINTS: "engine.internal:27018" };
   assert.throws(() => dataSettings(ep, "development", "real", REGIONS), /DATA_ENGINE_USERNAME/);
   assert.throws(() => dataSettings({ ...ep, DATA_ENGINE_USERNAME: "cp", DATA_ENGINE_PASSWORD: PASSWORD, DATA_ENGINE_TLS: "false" }, "development", "real", REGIONS), /INSECURE_LOCAL/);
-  const ok = dataSettings({ ...ep, DATA_ENGINE_USERNAME: "cp", DATA_ENGINE_PASSWORD: PASSWORD }, "production", "real", REGIONS);
+  // One shared credential for every database: development only. Production needs per-database users (ENGINE_USER_KEY).
+  assert.throws(() => dataSettings({ ...ep, DATA_ENGINE_USERNAME: "cp", DATA_ENGINE_PASSWORD: PASSWORD }, "production", "real", REGIONS), /refused in production/);
+  const ok = dataSettings({ ...ep, DATA_ENGINE_USERNAME: "cp", DATA_ENGINE_PASSWORD: PASSWORD }, "development", "real", REGIONS);
   assert.equal(ok.driver, "mongo");
   assert.equal(ok.tls, true);
+  const perDb = dataSettings({ ...ep, ENGINE_USER_KEY: `v1:${"k".repeat(40)}` }, "production", "real", REGIONS);
+  assert.equal(perDb.perDatabaseUsers, true);
+  assert.equal(perDb.username, undefined);
   const local = dataSettings({ ...ep, DATA_ENGINE_INSECURE_LOCAL: "true", DATA_ENGINE_TLS: "false" }, "development", "fake", REGIONS);
   assert.equal(local.tls, false);
   assert.equal(local.username, undefined);
@@ -65,7 +70,7 @@ test("password from a file; username and password go together; limits cannot exc
 });
 
 test("driver options: TLS on, SCRAM in `auth` (never in the URL), small pool with idle limits, no retries", () => {
-  const s = dataSettings({ DATA_ENGINE_ENDPOINTS: "e:27018", DATA_ENGINE_USERNAME: "cp", DATA_ENGINE_PASSWORD: PASSWORD }, "production", "real", REGIONS);
+  const s = dataSettings({ DATA_ENGINE_ENDPOINTS: "e:27018", DATA_ENGINE_USERNAME: "cp", DATA_ENGINE_PASSWORD: PASSWORD }, "development", "real", REGIONS);
   const c = new MongoDataClient(s);
   const o = c.options();
   assert.equal(o.tls, true);

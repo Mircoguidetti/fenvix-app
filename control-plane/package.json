@@ -13,7 +13,8 @@
     "test:unit": "node --test --test-reporter=spec tests/unit/*.test.ts",
     "test:integration": "node --test --test-reporter=spec --test-concurrency=1 tests/integration/*.test.ts",
     "test": "npm run typecheck && npm run test:unit && npm run test:integration",
-    "db:prepare": "bash scripts/prepare-test-db.sh"
+    "db:prepare": "bash scripts/prepare-test-db.sh",
+    "test:engine-real": "node --test --test-reporter=spec --test-concurrency=1 tests/engine-real/*.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

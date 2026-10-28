@@ -1,36 +1,53 @@
 import { BSON } from "bson";
 import { type Document, MongoClient, type MongoClientOptions, MongoServerError } from "mongodb";
 import type { DataSettings } from "../config.ts";
+import { type EngineCredential, type EngineUserKey, engineCredential } from "./credentials.ts";
 import { type CallOptions, type CollectionInfo, type DataClient, DataError, type DataTarget, type FindOptions, targetDbName } from "./data.ts";
 import { READ_OPTIONS } from "./data-fake.ts";
 
 /** Extra time the client waits after the engine's own maxTimeMS before giving up on a command. */
 const CLIENT_GRACE_MS = 2000;
 
+/** The master key versions the Data Explorer derives per-database passwords with. Never the provisioner. */
+export interface DataUserKeys { current: EngineUserKey; previous: EngineUserKey | null }
+
+interface Entry { client: MongoClient; lastUsed: number; inFlight: number; region: string; db: string; version: string }
+
 /**
  * The Data Explorer's connection to the engine's MongoDB listener, through the official driver.
  *
- * One client per region, created on first use and closed again after `clientIdleCloseMs` without a request, so an idle
- * control plane holds no connection (not even the driver's monitoring) to the engine. Inside a client the pool has at
- * most `poolMax` connections, each closed after `poolIdleMs` unused. A connection is to the engine, not to a database:
- * the engine wakes and keeps awake a database only for commands that name it, so an open idle connection keeps
+ * With per-database users (`perDatabaseUsers`, the production setting) there is one driver client per database, and it
+ * authenticates as that database's own engine user (`cp_<hex>` on `db_<hex>`, password derived from the master key;
+ * credentials.ts). The engine itself then refuses anything outside that database, whatever this code asks for. Without
+ * them (local development, or the old shared credential) there is one client per region.
+ *
+ * A client is created on first use and closed after `clientIdleCloseMs` without a request, so an idle control plane holds
+ * no connection (not even the driver's monitoring) to the engine; at most `maxClients` are open, the least recently used
+ * idle one is closed first. Inside a client the pool has at most `poolMax` connections, each closed after `poolIdleMs`
+ * unused. The engine wakes and keeps awake a database only for commands that name it, so an open idle connection keeps
  * nothing awake (docs/data-explorer-security.md, "Sleeping databases").
  *
- * Every command goes through `db()`, which names the database only from the `DataTarget` (targetDbName).
+ * Every command goes through `run()`, which names the database only from the `DataTarget` (targetDbName), and takes the
+ * credential from the same target.
  */
 export class MongoDataClient implements DataClient {
   private readonly cfg: DataSettings;
-  private readonly clients = new Map<string, { client: MongoClient; lastUsed: number; inFlight: number }>();
+  private readonly keys: DataUserKeys | null;
+  private readonly clients = new Map<string, Entry>();
+  /** Database id -> the key version that worked last (during a rotation some users still have the previous one). */
+  private readonly versionOf = new Map<string, string>();
   private readonly timer: NodeJS.Timeout;
 
-  constructor(cfg: DataSettings) {
+  constructor(cfg: DataSettings, keys: DataUserKeys | null = null) {
+    if (cfg.perDatabaseUsers && !keys) throw new Error("per-database users need the master key");
     this.cfg = cfg;
+    this.keys = cfg.perDatabaseUsers ? keys : null;
     this.timer = setInterval(() => void this.closeIdle(), Math.min(10_000, cfg.clientIdleCloseMs));
     this.timer.unref();
   }
 
   /** Driver options. Credentials go in `auth`, never in a URL that could end up in a message. */
-  options(): MongoClientOptions {
+  options(cred?: EngineCredential): MongoClientOptions {
     const c = this.cfg;
     return {
       directConnection: true,
@@ -49,28 +66,66 @@ export class MongoDataClient implements DataClient {
       tls: c.tls,
       ...(c.tls && c.tlsCaFile ? { tlsCAFile: c.tlsCaFile } : {}),
       ...(c.tls && c.tlsServerName ? { servername: c.tlsServerName } : {}),
-      ...(c.username ? { auth: { username: c.username, password: c.password }, authMechanism: c.authMechanism, authSource: c.authSource } : {}),
+      ...(cred
+        ? { auth: { username: cred.username, password: cred.password }, authMechanism: "SCRAM-SHA-256" as const, authSource: cred.authSource }
+        : c.username ? { auth: { username: c.username, password: c.password }, authMechanism: c.authMechanism, authSource: c.authSource } : {}),
       // READ_OPTIONS (types kept as BSON) are set on find/findOne only: on the client they would also turn the
       // engine's own answers (error codes, matched/deleted counts) into Int32 objects.
     };
   }
 
-  private entry(region: string) {
-    const addr = this.cfg.endpoints[region];
+  /** The credentials to try for a database, the one that worked last first. Empty without per-database users. */
+  private credentials(t: DataTarget): EngineCredential[] {
+    if (!this.keys) return [];
+    const all = [this.keys.current, ...(this.keys.previous ? [this.keys.previous] : [])].map((k) => engineCredential(k, t.id));
+    const known = this.versionOf.get(t.id);
+    return known ? [...all.filter((c) => c.version === known), ...all.filter((c) => c.version !== known)] : all;
+  }
+
+  private async entry(t: DataTarget, cred: EngineCredential | undefined): Promise<Entry> {
+    const addr = this.cfg.endpoints[t.region];
     if (!addr) throw new DataError("unavailable", "no-endpoint");
-    let e = this.clients.get(region);
+    const key = cred ? `${t.region}|${cred.authSource}|${cred.version}` : t.region;
+    let e = this.clients.get(key);
     if (!e) {
-      e = { client: new MongoClient(`mongodb://${addr}/`, this.options()), lastUsed: Date.now(), inFlight: 0 };
+      if (this.clients.size >= this.cfg.maxClients) await this.closeLeastRecentlyUsed();
+      e = { client: new MongoClient(`mongodb://${addr}/`, this.options(cred)), lastUsed: Date.now(), inFlight: 0, region: t.region, db: cred?.authSource ?? "", version: cred?.version ?? "" };
       // A pool error must not crash the process, and its message (which can carry the address) is not logged.
       e.client.on("error", () => {});
-      this.clients.set(region, e);
+      this.clients.set(key, e);
     }
     return e;
   }
 
-  /** The one place a database is chosen: always the target's own `db_<id>`. */
+  private async closeLeastRecentlyUsed(): Promise<void> {
+    let oldest: [string, Entry] | undefined;
+    for (const kv of this.clients) if (kv[1].inFlight === 0 && (!oldest || kv[1].lastUsed < oldest[1].lastUsed)) oldest = kv;
+    // Every client is busy: refuse rather than open connections without bound.
+    if (!oldest) throw new DataError("unavailable", "clients");
+    this.clients.delete(oldest[0]);
+    await oldest[1].client.close().catch(() => {});
+  }
+
+  /** The one place a database is chosen: always the target's own `db_<id>`, as the target's own engine user. */
   private async run<T>(t: DataTarget, work: (db: ReturnType<MongoClient["db"]>) => Promise<T>, timeoutMs: number): Promise<T> {
-    const e = this.entry(t.region);
+    const creds = this.credentials(t);
+    const attempts: (EngineCredential | undefined)[] = creds.length ? creds : [undefined];
+    for (let i = 0; ; i++) {
+      try {
+        const r = await this.once(t, attempts[i], work, timeoutMs);
+        if (attempts[i]) this.versionOf.set(t.id, attempts[i]!.version);
+        return r;
+      } catch (err) {
+        // Authentication failed with this key version: during a rotation the user may still have the other one.
+        const mapped = mapError(err);
+        if (mapped.code === 18 && i + 1 < attempts.length) continue;
+        throw mapped;
+      }
+    }
+  }
+
+  private async once<T>(t: DataTarget, cred: EngineCredential | undefined, work: (db: ReturnType<MongoClient["db"]>) => Promise<T>, timeoutMs: number): Promise<T> {
+    const e = await this.entry(t, cred);
     e.inFlight++;
     e.lastUsed = Date.now();
     let timer: NodeJS.Timeout | undefined;
@@ -78,8 +133,6 @@ export class MongoDataClient implements DataClient {
       const db = e.client.db(targetDbName(t));
       const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new DataError("timeout", "client")), timeoutMs + CLIENT_GRACE_MS); });
       return await Promise.race([work(db), deadline]);
-    } catch (err) {
-      throw mapError(err);
     } finally {
       clearTimeout(timer);
       e.inFlight--;
@@ -153,16 +206,19 @@ export class MongoDataClient implements DataClient {
 
   /** Closes clients nobody used for `clientIdleCloseMs`. */
   async closeIdle(now = Date.now()): Promise<void> {
-    for (const [region, e] of this.clients) {
+    for (const [key, e] of this.clients) {
       if (e.inFlight === 0 && now - e.lastUsed >= this.cfg.clientIdleCloseMs) {
-        this.clients.delete(region);
+        this.clients.delete(key);
         await e.client.close().catch(() => {});
       }
     }
   }
 
   /** Regions with an open client (tests). */
-  openRegions(): string[] { return [...this.clients.keys()]; }
+  openRegions(): string[] { return [...new Set([...this.clients.values()].map((e) => e.region))]; }
+
+  /** Open clients: region, database and key version, never a credential (tests). */
+  openClients(): { region: string; db: string; version: string }[] { return [...this.clients.values()].map((e) => ({ region: e.region, db: e.db, version: e.version })); }
 
   async close(): Promise<void> {
     clearInterval(this.timer);

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { type Catalogue, type Limits, loadJson, parseCatalogue, parseLimits } from "./limits.ts";
+import { type EngineUserKey, parseEngineUserKey, sameSecret } from "./engine/credentials.ts";
 
 /** Where and how to reach the engine's admin interface. Every value comes from the environment. */
 export interface EngineSettings {
@@ -53,6 +54,15 @@ export interface DataSettings {
   connectTimeoutMs: number;
   /** maxTimeMS of each command on the engine; the client gives up a little later. */
   commandTimeoutMs: number;
+  /** maxTimeMS of a find whose filter has a $regex (a bad pattern costs engine CPU until it stops). */
+  regexTimeoutMs: number;
+  /**
+   * true: every database is reached as its own engine user (`cp_<hex>`, password derived from ENGINE_USER_KEY); there
+   * is no shared credential. false: the shared DATA_ENGINE_USERNAME (or none, local development only).
+   */
+  perDatabaseUsers: boolean;
+  /** Per-database users need one driver client per database: at most this many are kept open. */
+  maxClients: number;
   defaultPageSize: number;
   maxPageSize: number;
   maxSkip: number;
@@ -62,6 +72,22 @@ export interface DataSettings {
   maxResponseBytes: number;
   ratePerMinute: number;
   writeRatePerMinute: number;
+}
+
+/**
+ * Per-database engine users (docs/data-explorer-security.md). The master key derives each database's password; the
+ * provisioner is the engine user that creates and drops those users on the MongoDB listener. They are separate
+ * secrets from each other and from the admin token, and the Data Explorer never receives the provisioner.
+ */
+export interface EngineUserSettings {
+  /** ENGINE_USER_KEY: the key new passwords are made with. Secret. */
+  current: EngineUserKey;
+  /** ENGINE_USER_KEY_PREVIOUS: during a rotation, the key some users still have. Secret. */
+  previous: EngineUserKey | null;
+  /** The engine's administrative user for createUser / dropUser / updateUser / usersInfo. Secret. */
+  provisioner: { username: string; password: string; authSource: string };
+  /** How often the users on the engine are compared with Postgres (orphans dropped, missing ones made). 0: never. */
+  sweepSeconds: number;
 }
 
 export interface Config {
@@ -93,6 +119,8 @@ export interface Config {
   /** Set when ENGINE_DRIVER=real. */
   engine: EngineSettings | null;
   data: DataSettings;
+  /** Set when ENGINE_USER_KEY is. Required with ENGINE_DRIVER=real when the Data Explorer is on. */
+  engineUsers: EngineUserSettings | null;
   operationWaitMs: number;
   operationSweepSeconds: number;
   usageSyncSeconds: number;
@@ -232,12 +260,17 @@ export function dataSettings(env: Env, nodeEnv: string, engineDriver: string, re
   const username = env.DATA_ENGINE_USERNAME?.trim() || undefined;
   const password = (env.DATA_ENGINE_PASSWORD ?? fileText(env, "DATA_ENGINE_PASSWORD_FILE") ?? "").replace(/\r?\n$/, "") || undefined;
   if (!!username !== !!password) throw new Error("DATA_ENGINE_USERNAME and DATA_ENGINE_PASSWORD (or DATA_ENGINE_PASSWORD_FILE) go together");
+  const perDatabaseUsers = !!(env.ENGINE_USER_KEY || env.ENGINE_USER_KEY_FILE);
+  if (perDatabaseUsers && username) {
+    throw new Error("DATA_ENGINE_USERNAME cannot be set together with ENGINE_USER_KEY: with per-database users the Data Explorer has no shared credential");
+  }
   const tlsRaw = env.DATA_ENGINE_TLS ?? "true";
   if (tlsRaw !== "true" && tlsRaw !== "false") throw new Error('DATA_ENGINE_TLS must be "true" or "false"');
   const tls = tlsRaw === "true";
   if (driver === "mongo") {
     if (!tls && !insecureLocal) throw new Error("DATA_ENGINE_TLS=false needs DATA_ENGINE_INSECURE_LOCAL=true (local development only)");
-    if (!username && !insecureLocal) throw new Error("DATA_ENGINE_USERNAME and DATA_ENGINE_PASSWORD are required for the Data Explorer (SCRAM); only DATA_ENGINE_INSECURE_LOCAL=true allows none");
+    if (!username && !perDatabaseUsers && !insecureLocal) throw new Error("ENGINE_USER_KEY (one engine user per database) is required for the Data Explorer (SCRAM); DATA_ENGINE_USERNAME (one shared credential) is accepted outside production only, and only DATA_ENGINE_INSECURE_LOCAL=true allows none");
+    if (username && !perDatabaseUsers && nodeEnv === "production") throw new Error("DATA_ENGINE_USERNAME (one credential for every database) is refused in production: set ENGINE_USER_KEY so each database is reached as its own engine user");
   }
   const mech = env.DATA_ENGINE_AUTH_MECHANISM ?? "SCRAM-SHA-256";
   if (mech !== "SCRAM-SHA-256" && mech !== "SCRAM-SHA-1") throw new Error('DATA_ENGINE_AUTH_MECHANISM must be "SCRAM-SHA-256" or "SCRAM-SHA-1"');
@@ -250,7 +283,9 @@ export function dataSettings(env: Env, nodeEnv: string, engineDriver: string, re
   const defaultPageSize = bounded(env, "DATA_DEFAULT_PAGE_SIZE", 25, 1, maxPageSize);
   const commandTimeoutMs = bounded(env, "DATA_COMMAND_TIMEOUT_MS", 10_000, 100, 60_000);
   return {
-    driver, endpoints, username, password, authMechanism: mech, authSource, tls, tlsCaFile,
+    driver, endpoints, username, password, authMechanism: mech, authSource, tls, tlsCaFile, perDatabaseUsers,
+    regexTimeoutMs: Math.min(bounded(env, "DATA_REGEX_TIMEOUT_MS", 2000, 100, 60_000), commandTimeoutMs),
+    maxClients: bounded(env, "DATA_ENGINE_MAX_CLIENTS", 100, 1, 10_000),
     tlsServerName: env.DATA_ENGINE_TLS_SERVER_NAME || undefined,
     insecureLocal,
     poolMax: bounded(env, "DATA_ENGINE_POOL_MAX", 5, 1, 50),
@@ -266,6 +301,41 @@ export function dataSettings(env: Env, nodeEnv: string, engineDriver: string, re
     ratePerMinute: bounded(env, "DATA_RATE_LIMIT_PER_MINUTE", 120, 1, 100_000),
     writeRatePerMinute: bounded(env, "DATA_WRITE_RATE_LIMIT_PER_MINUTE", 30, 1, 100_000),
   };
+}
+
+function secretText(env: Env, name: string): string | undefined {
+  const v = env[name] ?? fileText(env, `${name}_FILE`);
+  return v === undefined || v === "" ? undefined : v.replace(/\r?\n$/, "");
+}
+
+/**
+ * Per-database engine users: the master key (current and, during a rotation, previous) and the provisioner. Null
+ * when ENGINE_USER_KEY is not set.
+ */
+export function engineUserSettings(env: Env, data: DataSettings, adminToken: string | undefined): EngineUserSettings | null {
+  const raw = secretText(env, "ENGINE_USER_KEY");
+  if (raw === undefined) {
+    if (secretText(env, "ENGINE_USER_KEY_PREVIOUS") !== undefined) throw new Error("ENGINE_USER_KEY_PREVIOUS needs ENGINE_USER_KEY");
+    return null;
+  }
+  const current = parseEngineUserKey(raw, "ENGINE_USER_KEY");
+  const prevRaw = secretText(env, "ENGINE_USER_KEY_PREVIOUS");
+  const previous = prevRaw === undefined ? null : parseEngineUserKey(prevRaw, "ENGINE_USER_KEY_PREVIOUS");
+  if (previous && previous.version === current.version) throw new Error("ENGINE_USER_KEY_PREVIOUS must have another version than ENGINE_USER_KEY");
+  if (previous && sameSecret(previous.secret, current.secret)) throw new Error("ENGINE_USER_KEY_PREVIOUS must be another secret than ENGINE_USER_KEY");
+  if (data.driver !== "mongo") throw new Error("ENGINE_USER_KEY needs DATA_ENGINE_ENDPOINTS: the users are made on the engine's MongoDB listener");
+  const username = env.ENGINE_PROVISIONER_USERNAME?.trim();
+  const password = secretText(env, "ENGINE_PROVISIONER_PASSWORD");
+  if (!username || !password) throw new Error("ENGINE_PROVISIONER_USERNAME and ENGINE_PROVISIONER_PASSWORD (or ENGINE_PROVISIONER_PASSWORD_FILE) are required with ENGINE_USER_KEY: the engine user that creates and drops the per-database users");
+  if (/^cp_/.test(username)) throw new Error("ENGINE_PROVISIONER_USERNAME must not start with cp_ (that prefix is for per-database users)");
+  const authSource = env.ENGINE_PROVISIONER_AUTH_SOURCE || "admin";
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(authSource)) throw new Error("ENGINE_PROVISIONER_AUTH_SOURCE is not a valid database name");
+  // One secret, one purpose: a leak of one must not open the others.
+  const secrets = [current.secret, ...(previous ? [previous.secret] : [])];
+  const others = [Buffer.from(password, "utf8"), ...(adminToken ? [Buffer.from(adminToken, "utf8")] : [])];
+  for (const a of secrets) for (const b of others) if (sameSecret(a, b)) throw new Error("ENGINE_USER_KEY must be its own secret: not the admin token and not the provisioner's password");
+  if (adminToken && password === adminToken) throw new Error("ENGINE_PROVISIONER_PASSWORD must be its own secret, not the admin token");
+  return { current, previous, provisioner: { username, password, authSource }, sweepSeconds: int(env, "ENGINE_USER_SWEEP_SECONDS", 3600) };
 }
 
 export const DEFAULT_HOST_TEMPLATE = "<name>.<region>.db.<BASE_DOMAIN>";
@@ -312,6 +382,7 @@ export function loadConfig(env: Env = process.env): Config {
     engineDriver: required(env, "ENGINE_DRIVER"),
     engine: null,
     data: dataSettings(env, nodeEnv, required(env, "ENGINE_DRIVER"), regions),
+    engineUsers: null,
     operationWaitMs: int(env, "OPERATION_WAIT_MS", 20000),
     operationSweepSeconds: int(env, "OPERATION_SWEEP_SECONDS", 15),
     usageSyncSeconds: int(env, "USAGE_SYNC_SECONDS", 0),
@@ -332,6 +403,10 @@ export function loadConfig(env: Env = process.env): Config {
     if (!cfg.baseDomain) throw new Error("BASE_DOMAIN is required with ENGINE_DRIVER=real: hostnames must be complete");
     if (!cfg.hostTemplate.includes("<workspace>")) throw new Error("HOST_TEMPLATE must contain <workspace> with ENGINE_DRIVER=real: the same database name can exist in two workspaces, and the hostname must tell them apart");
     if (cfg.connectionDbName !== "engine") throw new Error("CONNECTION_DB_NAME must be \"engine\" with ENGINE_DRIVER=real: the engine has one namespace for all workspaces, so connection strings must carry the engine's own database name");
+  }
+  cfg.engineUsers = engineUserSettings(env, cfg.data, cfg.engine?.token);
+  if (cfg.engineDriver === "real" && cfg.data.driver === "mongo" && !cfg.engineUsers && !cfg.data.insecureLocal) {
+    throw new Error("ENGINE_USER_KEY is required with ENGINE_DRIVER=real and the Data Explorer on: every database gets its own engine user");
   }
   if (cfg.downloadSigningKey.length < 32) throw new Error("DOWNLOAD_SIGNING_KEY must be at least 32 characters");
   if (cfg.nodeEnv === "production") {

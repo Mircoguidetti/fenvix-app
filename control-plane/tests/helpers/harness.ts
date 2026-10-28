@@ -11,6 +11,7 @@ import { FakeEngine } from "../../src/engine/fake.ts";
 import { FakeDataClient } from "../../src/engine/data-fake.ts";
 import type { DataClient } from "../../src/engine/data.ts";
 import type { EngineClient } from "../../src/engine/types.ts";
+import type { EngineUsers } from "../../src/engine/users.ts";
 import { FakeGateway } from "./fake-gateway.ts";
 import { Db } from "../../src/db.ts";
 
@@ -103,7 +104,7 @@ export interface Harness {
 const dropActiveOperations = (admin: pg.Pool) =>
   admin.query("update public.operations set status = 'failed', finished_at = now(), error = '{\"code\":\"internal\",\"message\":\"test cleanup\"}' where status in ('queued', 'running')");
 
-export async function startHarness(over: Record<string, string | undefined> = {}, opts: { engine?: FakeEngine; gateway?: FakeGateway; /** Use this engine client instead of the fake (the fake in `Harness.engine` is then unused). */ engineFactory?: (cfg: Config) => EngineClient; /** Data Explorer client instead of the fake, built from the config. */ dataFactory?: (cfg: Config) => DataClient } = {}): Promise<Harness> {
+export async function startHarness(over: Record<string, string | undefined> = {}, opts: { engine?: FakeEngine; gateway?: FakeGateway; /** Use this engine client instead of the fake (the fake in `Harness.engine` is then unused). */ engineFactory?: (cfg: Config) => EngineClient; /** Data Explorer client instead of the fake, built from the config. */ dataFactory?: (cfg: Config) => DataClient; /** Per-database engine users instead of the default for the config. */ usersFactory?: (cfg: Config) => EngineUsers } = {}): Promise<Harness> {
   const adminUrl = process.env.TEST_DATABASE_URL ?? ADMIN_URL;
   const admin = new pg.Pool({ connectionString: adminUrl, max: 4 });
   // The sweeper looks across workspaces, so leftovers of an earlier test must not be picked up by this one.
@@ -139,6 +140,7 @@ export async function startHarness(over: Record<string, string | undefined> = {}
   const appDb = new Db(cpUrl, 6);
   const app = await buildApp({
     cfg, engine: opts.engineFactory ? opts.engineFactory(cfg) : engine, gateway, logStream: logs, data: opts.dataFactory ? opts.dataFactory(cfg) : data,
+    ...(opts.usersFactory ? { users: opts.usersFactory(cfg) } : {}),
     db: appDb,
     verifier: new JwtVerifier(cfg.supabaseUrl, cfg.supabaseJwksUrl),
   });

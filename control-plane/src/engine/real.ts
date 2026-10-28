@@ -113,8 +113,10 @@ export class RealEngine implements EngineClient {
       return e("conflict", "The database engine could not do this right now.");
     }
     if (s === 400) {
-      // Only a restore time out of range is the customer's to fix; everything else is a bug of ours and is not shown as advice.
-      return what === "restore" && engineMessage ? e("invalid", engineMessage) : e("invalid", "The database engine refused the request.");
+      // Only a restore time out of range is the customer's to fix (restoreDatabase words it); everything else is a bug of
+      // ours and is not shown as advice. The engine's own sentence is never passed on: it is kept in `detail` only.
+      if (what === "restore") return e("invalid", /future/i.test(engineMessage) ? "Choose a time in the past." : "That time is before the earliest restorable point of this database. Choose a later time.");
+      return e("invalid", "The database engine refused the request.");
     }
     if (s === 413 || s === 416) return e("invalid", "The database engine refused the request.");
     return e("unavailable", `The database engine failed (${s || "no status"}).`);
@@ -219,6 +221,13 @@ export class RealEngine implements EngineClient {
     const res = await this.http.call(region, "POST", `/v1/databases/${key}/restore`, { to: req.at });
     // 500 `restore_retried`: the first run failed and the engine's own retry finished it. The data is at the point.
     const finished = res.status === 500 && errorCode(res) === "restore_retried";
+    if (res.status === 400) {
+      // Too early: say from when it can be restored, read from the engine's restore points (a time, not the engine's words).
+      const err = this.failure(res, "restore");
+      const earliest = /earliest/.test(err.message) ? await this.earliestPoint(region, key) : null;
+      if (earliest) throw Object.assign(new EngineError("invalid", `That time is before the earliest restorable point of this database (${new Date(earliest).toISOString()}). Choose a later time.`), { engineStatus: 400, engineCode: errorCode(res) });
+      throw err;
+    }
     const done = finished ? { restored_to: req.at } : this.ok(res, "restore");
     const db = this.describe(this.ok(await this.http.call(region, "GET", `/v1/databases/${key}`), "get"), { id: req.id, region });
     db.restoredTo = typeof done.restored_to === "string" ? done.restored_to : req.at;

@@ -328,7 +328,7 @@ describe("real adapter", () => {
     try { assert.equal(await kindOf(engine.listDatabases(WS)), "invalid"); assert.equal(sim.seen.length, 0); } finally { await done(); }
   });
 
-  test("restore: needs history; goes back to a point; refuses times outside it with the engine's words", async () => {
+  test("restore: needs history; goes back to a point; refuses times outside it in our words", async () => {
     try {
       const a = mk(); await engine.createDatabase(a);
       // retention was never switched on (no ENGINE_RETENTION_WINDOW_SECS): the engine has nothing to go back to
@@ -355,7 +355,7 @@ describe("real adapter", () => {
       const early = await c.engine.restoreDatabase({ id: a.id, at: new Date(Date.now() - 86_400_000).toISOString(), idempotencyKey: "r2" }).catch((x) => x);
       assert.ok(early instanceof EngineError && early.kind === "invalid" && /earliest restorable/.test(early.message), String(early.message));
       const future = await c.engine.restoreDatabase({ id: a.id, at: new Date(Date.now() + 3_600_000).toISOString(), idempotencyKey: "r3" }).catch((x) => x);
-      assert.ok(future instanceof EngineError && future.kind === "invalid");
+      assert.ok(future instanceof EngineError && future.kind === "invalid" && future.message === "Choose a time in the past.", String(future.message));
       // the engine's own retry finished it: that is a restore that worked
       c.sim.failNext(/\/restore$/, 500, "restore_retried");
       assert.equal((await c.engine.restoreDatabase({ id: a.id, at, idempotencyKey: "r4" })).restoredTo, at);
