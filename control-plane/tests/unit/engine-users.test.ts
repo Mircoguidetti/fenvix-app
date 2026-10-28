@@ -7,6 +7,7 @@ import {
 } from "../../src/engine/credentials.ts";
 import { MongoDataClient } from "../../src/engine/data-mongo.ts";
 import { hasRegex } from "../../src/services/explorer.ts";
+import { olderVersion } from "../../src/services/engine-users.ts";
 import { BSONRegExp } from "bson";
 
 const ID = "0123abcd-4567-489a-bcde-f0123456789a";
@@ -109,4 +110,12 @@ test("regex filters get their own, shorter time limit (DATA_REGEX_TIMEOUT_MS, de
   assert.equal(hasRegex({ a: { $regex: "x" } }), true);
   assert.equal(hasRegex({ $or: [{ a: 1 }, { b: { $not: new BSONRegExp("x", "i") } }] }), true);
   assert.equal(hasRegex({ a: "$regex", b: { $in: ["x"] } }), false);
+});
+
+test("the sweep only moves users forward: an instance still on v1 leaves v2 users alone", () => {
+  assert.equal(olderVersion("v1", "v2"), true);
+  assert.equal(olderVersion(null, "v1"), true);
+  assert.equal(olderVersion("v2", "v2"), false);
+  assert.equal(olderVersion("v2", "v1"), false);
+  assert.equal(olderVersion("v9", "v10"), true, "numbers, not text");
 });

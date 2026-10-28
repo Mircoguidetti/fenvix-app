@@ -28,10 +28,13 @@ tests/unit, tests/integration, tests/helpers
 
 ```bash
 cd control-plane && npm ci
-# a scratch Postgres 15+ (never Supabase): apply the stand-ins and the four migrations
+# a scratch Postgres 15+ (never Supabase): apply the stand-ins and the five migrations
 TEST_DATABASE_URL=postgresql://postgres@localhost:5432/cp_scratch bash scripts/prepare-test-db.sh
 npm test                       # typecheck, unit tests, integration tests (needs TEST_DATABASE_URL)
 SEEDED_DATABASE_URL=... node --test tests/integration/seeded.test.ts   # optional: the 3,000 database seed
+# optional: the whole service against REAL engine processes (the suite starts and stops them itself)
+ENGINE_E2E_BIN=<test5 control-ops or fused build>/mongo-server ENGINE_E2E_AUTH_BIN=<test5 compat-gaps build>/mongo-server \
+  TEST_DATABASE_URL=... npm run test:engine-real
 ```
 
 `npm start` runs `node src/server.ts` (Node 22.18 or newer runs TypeScript directly, no build). It needs the environment below. The integration tests create their own users and workspaces with random ids, and connect as `fenvix_control_plane` exactly like production, so they exercise the real grants and policies. They set that role's password to a random value on the scratch database only.
@@ -72,12 +75,18 @@ Secrets are marked **secret**. Nothing here has a default for a secret, and no s
 | `RATE_LIMIT_PER_MINUTE`, `RATE_LIMIT_ANON_PER_MINUTE` | `600`, `30` | per workspace; per address for sign-in, failed authentication, downloads |
 | `DB_POOL_MAX`, `DB_STATEMENT_TIMEOUT_MS` | `10`, `30000` | |
 | `DATA_ENGINE_ENDPOINTS` | empty | Data Explorer: the engine's MongoDB listener per region, `region=host:port` or one `host:port` (no `mongodb://`, no user, no options). Empty: the in-memory fake with `ENGINE_DRIVER=fake`, otherwise the Data Explorer answers 503 "not set up" |
-| `DATA_ENGINE_USERNAME`, `DATA_ENGINE_PASSWORD` or `DATA_ENGINE_PASSWORD_FILE` | **required with endpoints, secret** | SCRAM credentials of the control plane on the engine |
+| `ENGINE_USER_KEY` or `ENGINE_USER_KEY_FILE` | **required with `real` and endpoints, secret** | `v<N>:<at least 32 characters>`: master key from which each database's engine password is derived (HMAC-SHA256, never stored). See `docs/data-explorer-security.md`, section 6 |
+| `ENGINE_USER_KEY_PREVIOUS` or `_FILE` | empty, **secret** | only while rotating the master key: the previous `v<N>:<secret>` |
+| `ENGINE_PROVISIONER_USERNAME`, `ENGINE_PROVISIONER_PASSWORD` or `_FILE`, `ENGINE_PROVISIONER_AUTH_SOURCE` | **required with `ENGINE_USER_KEY`, secret**; `admin` | the engine user that creates and drops the per-database users (user management only, no data). Never given to the Data Explorer |
+| `ENGINE_USER_SWEEP_SECONDS` | `3600` | how often engine users are compared with Postgres (orphans dropped, missing made, key rotation applied); `0` off |
+| `DATA_ENGINE_USERNAME`, `DATA_ENGINE_PASSWORD` or `DATA_ENGINE_PASSWORD_FILE` | empty, secret | **development only**: one shared SCRAM credential instead of per-database users. Refused together with `ENGINE_USER_KEY` and refused in production |
 | `DATA_ENGINE_AUTH_MECHANISM`, `DATA_ENGINE_AUTH_SOURCE` | `SCRAM-SHA-256`, `admin` | |
 | `DATA_ENGINE_TLS`, `DATA_ENGINE_TLS_CA_FILE`, `DATA_ENGINE_TLS_SERVER_NAME` | `true`, empty, empty | TLS to the engine; `false` needs `DATA_ENGINE_INSECURE_LOCAL` |
 | `DATA_ENGINE_INSECURE_LOCAL` | `false` | `true` allows no TLS and no credentials, for a local engine only. **Refused with `NODE_ENV=production`** |
 | `DATA_ENGINE_POOL_MAX`, `DATA_ENGINE_POOL_IDLE_MS`, `DATA_ENGINE_CLIENT_IDLE_CLOSE_MS`, `DATA_ENGINE_CONNECT_TIMEOUT_MS` | `5`, `30000`, `60000`, `5000` | connection pool to the engine; the whole client closes after the idle time |
 | `DATA_COMMAND_TIMEOUT_MS` | `10000` | `maxTimeMS` of each Data Explorer command (the client gives up 2 s later) |
+| `DATA_REGEX_TIMEOUT_MS` | `2000` | `maxTimeMS` of a Data Explorer filter with a `$regex` (never above `DATA_COMMAND_TIMEOUT_MS`) |
+| `DATA_ENGINE_MAX_CLIENTS` | `100` | driver clients kept open at once (one per database with per-database users) |
 | `DATA_DEFAULT_PAGE_SIZE`, `DATA_MAX_PAGE_SIZE`, `DATA_MAX_SKIP` | `25`, `100` (ceiling), `10000` | |
 | `DATA_MAX_DOCUMENT_BYTES`, `DATA_MAX_RESPONSE_BYTES` | `196608` (ceiling 204800), `4194304` | |
 | `DATA_RATE_LIMIT_PER_MINUTE`, `DATA_WRITE_RATE_LIMIT_PER_MINUTE` | `120`, `30` | Data Explorer requests per person and per API key (on top of the workspace limit) |
@@ -109,7 +118,7 @@ Secrets are marked **secret**. Nothing here has a default for a secret, and no s
 
 ## Switching to the real engine
 
-Not before the open questions in [`docs/engine-adapter.md`](docs/engine-adapter.md) are answered (above all: the engine's MongoDB listener has no authentication or TLS today). Then, in the AWS console as for the other secrets: add the SecureString parameter `/fenvix/prod/control-plane/engine-admin-token` with the same value as `/fenvix/prod/engine/admin-token` (it reaches the container as `ENGINE_ADMIN_TOKEN`), and set `ENGINE_DRIVER=real`, `ENGINE_ADMIN_ENDPOINTS`, `CONNECTION_PORT`, `CONNECTION_DB_NAME=engine`, `BASE_DOMAIN`, `HOST_TEMPLATE=<name>-<workspace>.<region>.db.<BASE_DOMAIN>`, and `ENGINE_RETENTION_WINDOW_SECS`. The service refuses to start with the real driver if any of these is missing or wrong, and says which. Then run the round trip at the end of `docs/engine-adapter.md`.
+Not before the engine release has both the admin interface and authentication + TLS (the fused branch), and the changes in [`docs/engine-alignment.md`](docs/engine-alignment.md) are made in `infra/` and the engine. Then make the engine's provisioner once (`docs/data-explorer-security.md`, "Making the provisioner"), add the SecureString parameters `/fenvix/prod/control-plane/engine-user-key` (`v1:<random>`) and `/fenvix/prod/control-plane/engine-provisioner-password`, and, in the AWS console as for the other secrets: add the SecureString parameter `/fenvix/prod/control-plane/engine-admin-token` with the same value as `/fenvix/prod/engine/admin-token` (it reaches the container as `ENGINE_ADMIN_TOKEN`), and set `ENGINE_DRIVER=real`, `ENGINE_ADMIN_ENDPOINTS`, `CONNECTION_PORT`, `CONNECTION_DB_NAME=engine`, `BASE_DOMAIN`, `HOST_TEMPLATE=<name>-<workspace>.<region>.db.<BASE_DOMAIN>`, and `ENGINE_RETENTION_WINDOW_SECS`. The service refuses to start with the real driver if any of these is missing or wrong, and says which. Then run the round trip at the end of `docs/engine-adapter.md`.
 
 ## Limits worth knowing
 

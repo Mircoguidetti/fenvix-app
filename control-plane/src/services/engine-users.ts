@@ -14,6 +14,13 @@ import { EngineError } from "../engine/types.ts";
  * before the row (erase), so a user seen here whose row is missing really is an orphan, and a `ready` row whose user was
  * not seen really has none (an erase marks the row `erasing` before it drops the user).
  */
+/** `v3` is newer than `v2`; a user without a recorded version is older than any. */
+export function olderVersion(have: string | null, current: string): boolean {
+  if (have === null) return true;
+  const n = (v: string) => Number(v.slice(1));
+  return n(have) < n(current);
+}
+
 export async function reconcileEngineUsers(s: Services): Promise<{ dropped: number; created: number; rotated: number; failed: number }> {
   let dropped = 0;
   let created = 0;
@@ -40,7 +47,8 @@ export async function reconcileEngineUsers(s: Services): Promise<{ dropped: numb
       const id = String(r.id);
       if (r.engine_state !== "ready" && r.engine_state !== "restoring") continue;
       const missing = !withUser.has(id);
-      if (!missing && versionOf.get(id) === current) continue;
+      // Only ever forward: an instance not yet restarted with the new key must not move users back to the old one.
+      if (!missing && !olderVersion(versionOf.get(id) ?? null, current)) continue;
       try {
         await s.users.ensure(id, region);
         if (missing) created++; else rotated++;
