@@ -139,4 +139,5 @@ Il saltato dell'integrazione è il test dei 3.000 database (serve `SEEDED_DATABA
 Branch **`db-users`** (push su `origin/db-users`), da `origin/e2e-engine` @ `0fde489`. Nessun merge in `main`.
 
 * `97f9759` control-plane: customer database users (initial user, /databases/:id/users, erase/fork/sweep handling, migration 0007)
-* FINAL_COMMIT
+* `f0131a1` dashboard: Users tab, show-once passwords, initial credentials on create and fork; docs and report
+* l'ultimo commit del branch: numeri finali di questo report
