@@ -161,13 +161,13 @@
       "Resource": "arn:aws:budgets::865859654353:budget/fenvix-*"
     },
     {
-      "Sid": "OptionalDnsCreateZoneOnlyWhenBaseDomainIsSet",
+      "Sid": "DnsCreateZone",
       "Effect": "Allow",
       "Action": ["route53:CreateHostedZone"],
       "Resource": "*"
     },
     {
-      "Sid": "OptionalDnsManageZonesOnlyWhenBaseDomainIsSet",
+      "Sid": "DnsManageZones",
       "Effect": "Allow",
       "Action": [
         "route53:GetHostedZone", "route53:DeleteHostedZone", "route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets",
@@ -176,14 +176,14 @@
       "Resource": ["arn:aws:route53:::hostedzone/*", "arn:aws:route53:::change/*"]
     },
     {
-      "Sid": "OptionalCertificateRequestOnlyWhenBaseDomainIsSet",
+      "Sid": "CertificateRequest",
       "Effect": "Allow",
       "Action": ["acm:RequestCertificate"],
       "Resource": "*",
       "Condition": { "StringEquals": { "aws:RequestedRegion": ["eu-central-1"], "aws:RequestTag/project": "fenvix" } }
     },
     {
-      "Sid": "OptionalCertificateManageOnlyWhenBaseDomainIsSet",
+      "Sid": "CertificateManage",
       "Effect": "Allow",
       "Action": ["acm:DescribeCertificate", "acm:DeleteCertificate", "acm:AddTagsToCertificate", "acm:ListTagsForCertificate"],
       "Resource": "arn:aws:acm:eu-central-1:865859654353:certificate/*"

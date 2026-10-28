@@ -20,7 +20,7 @@ export function applySuppressions(stack: Stack): void {
     {
       id: 'AwsSolutions-EC23',
       reason:
-        'By design: customers connect to 27017 from anywhere (the engine enforces TLS) and to the control-plane HTTPS port. The admin port is never in an internet-facing rule (asserted in test/infra.test.ts).',
+        'By design: customers connect to the MongoDB port (27018) from anywhere (the engine requires TLS) and to the control-plane HTTPS port. The engine admin port is in no rule at all and listens on the Docker bridge only (asserted in test/infra.test.ts).',
     },
   ], true);
 

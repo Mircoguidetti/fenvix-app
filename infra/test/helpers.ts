@@ -18,6 +18,10 @@ export const BASE_CONTEXT: Record<string, string> = {
   engineUrl: 'https://releases.example.com/fenvix-engine-{arch}',
   engineSha256: '',
   controlPlaneImage: 'ghcr.io/example/fenvix-control-plane:1.0.0',
+  proxyImage: 'public.ecr.aws/docker/library/caddy:2.8.4',
+  baseDomain: 'example.com',
+  dashboardOrigins: 'https://app.example.com',
+  engineRetentionWindowSecs: '604800',
 };
 
 /** Builds the app exactly as bin/fenvix.ts does, but from an explicit context (never reads the real environment). */

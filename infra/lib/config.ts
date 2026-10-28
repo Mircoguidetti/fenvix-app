@@ -28,10 +28,19 @@ export interface FenvixConfig {
   engineSha256?: string;
   /** Control-plane container image reference. */
   controlPlaneImage: string;
-  /** Set to create DNS + certificate resources. Leave unset for none. */
-  baseDomain?: string;
-  /** Use an existing Route 53 hosted zone instead of creating one (only with baseDomain). */
+  /** TLS terminator in front of the control plane (it serves plain HTTP). Public image, pulled without a login. */
+  proxyImage: string;
+  /**
+   * The domain. Required: the engine only serves TLS from a certificate file, and the certificate is issued for
+   * `*.<region>.db.<baseDomain>` (database hosts) and `console.<baseDomain>` (the control-plane API).
+   */
+  baseDomain: string;
+  /** Use an existing Route 53 hosted zone instead of creating one. Required with more than one region. */
   hostedZoneId?: string;
+  /** Browser origins of the dashboard allowed by the control plane (CORS), e.g. https://app.example.com. */
+  dashboardOrigins: string[];
+  /** Restore-point window (seconds) the control plane sets on every new database; 0 keeps none. */
+  engineRetentionWindowSecs: number;
 }
 
 export type Lookup = (key: string) => string | undefined;
@@ -100,12 +109,23 @@ export function loadConfig(get: Lookup): FenvixConfig {
   if ([mongoPort, controlPlanePort].includes(adminPort)) throw new Error('adminPort must differ from mongoPort and controlPlanePort');
   if (controlPlanePort === mongoPort) throw new Error('controlPlanePort must differ from mongoPort');
 
-  const baseDomain = val('baseDomain')?.toLowerCase();
-  if (baseDomain !== undefined && !/^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(baseDomain)) {
+  const baseDomain = need('baseDomain').toLowerCase();
+  if (!/^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(baseDomain)) {
     throw new Error(`BASE_DOMAIN "${baseDomain}" is not a domain name like example.com`);
   }
   const hostedZoneId = val('hostedZoneId');
   if (hostedZoneId !== undefined && !/^Z[A-Z0-9]+$/.test(hostedZoneId)) throw new Error('hostedZoneId looks wrong (expected Z...)');
+  // Every region needs its own certificate and DNS record in the zone, so a second region must find an existing zone.
+  if (regions.length > 1 && hostedZoneId === undefined) {
+    throw new Error('More than one region needs hostedZoneId (an existing Route 53 zone of BASE_DOMAIN) so every region can add its own records.');
+  }
+
+  const dashboardOrigins = need('dashboardOrigins').split(',').map((o) => o.trim()).filter(Boolean);
+  for (const o of dashboardOrigins) {
+    if (!/^https:\/\/[a-z0-9.-]+(:\d{1,5})?$/.test(o)) throw new Error(`dashboardOrigins: "${o}" must be an https:// origin without path or trailing slash`);
+  }
+  const proxyImage = need('proxyImage');
+  if (!/^[A-Za-z0-9._\-/:@]+$/.test(proxyImage)) throw new Error('proxyImage is not a valid image reference');
   const engineSha256 = val('engineSha256')?.toLowerCase();
   if (engineSha256 !== undefined && !/^[0-9a-f]{64}$/.test(engineSha256)) throw new Error('engineSha256 must be 64 hex characters');
 
@@ -132,7 +152,10 @@ export function loadConfig(get: Lookup): FenvixConfig {
     engineUrl,
     engineSha256,
     controlPlaneImage,
+    proxyImage,
     baseDomain,
     hostedZoneId,
+    dashboardOrigins,
+    engineRetentionWindowSecs: int('engineRetentionWindowSecs', need('engineRetentionWindowSecs'), 0, 31_536_000),
   };
 }

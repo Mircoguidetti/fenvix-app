@@ -1,4 +1,5 @@
 import { Match } from 'aws-cdk-lib/assertions';
+import { requiredSecretNames } from '../lib/parameters';
 import { allStatements, buildApp, synth } from './helpers';
 
 const resourcesOf = (json: any, type: string): [string, any][] =>
@@ -65,7 +66,6 @@ describe('S3 data bucket', () => {
 
 describe('network and security group', () => {
   const { json } = synth();
-  const sgId = resourcesOf(json, 'AWS::EC2::SecurityGroup')[0][0];
   const inline = resourcesOf(json, 'AWS::EC2::SecurityGroup')[0][1].Properties.SecurityGroupIngress ?? [];
   const separate = resourcesOf(json, 'AWS::EC2::SecurityGroupIngress').map(([, r]) => r.Properties);
   const rules: any[] = [...inline, ...separate];
@@ -79,18 +79,16 @@ describe('network and security group', () => {
     for (const r of rules.filter(internet)) expect(r.IpProtocol).toBe('tcp');
   });
 
-  test('the admin port (8443) is in no internet-facing rule, even as part of a range', () => {
-    for (const r of rules.filter(internet)) expect(covers(r, 8443)).toBe(false);
-    for (const r of rules.filter((x) => x.CidrIp !== undefined || x.CidrIpv6 !== undefined || x.SourcePrefixListId !== undefined)) {
-      expect(covers(r, 8443)).toBe(false);
-    }
+  test('the admin port (8443) is in no rule at all: it listens on the Docker bridge of the host only', () => {
+    for (const r of rules) expect({ rule: r, covers: covers(r, 8443) }).toEqual({ rule: r, covers: false });
+    expect(rules).toHaveLength(2);
   });
 
-  test('the admin port is reachable only from the same security group', () => {
-    const admin = rules.filter((r) => covers(r, 8443));
-    expect(admin).toHaveLength(1);
-    expect(JSON.stringify(admin[0].SourceSecurityGroupId)).toContain(sgId);
-    expect(admin[0].GroupId ? JSON.stringify(admin[0].GroupId) : sgId).toContain(sgId);
+  test('only TCP, and no self-referencing or other security-group source', () => {
+    for (const r of rules) {
+      expect(r.IpProtocol).toBe('tcp');
+      expect(r.SourceSecurityGroupId).toBeUndefined();
+    }
   });
 
   test('no SSH (22) rule and no key pair', () => {
@@ -106,18 +104,19 @@ describe('network and security group', () => {
       ...resourcesOf(j, 'AWS::EC2::SecurityGroupIngress').map(([, r]) => r.Properties),
     ];
     expect(rs.filter(internet).map((r) => r.FromPort).sort((a: number, b: number) => a - b)).toEqual([443, 28000]);
-    expect(JSON.stringify(one(j, 'AWS::EC2::Instance').Properties.UserData)).toContain('FENVIX_LISTEN=0.0.0.0:28000');
-    expect(JSON.stringify(one(synth().json, 'AWS::EC2::Instance').Properties.UserData)).toContain('FENVIX_ADMIN_LISTEN=0.0.0.0:8443');
+    expect(JSON.stringify(one(j, 'AWS::EC2::Instance').Properties.UserData)).toContain('--listen=0.0.0.0:28000');
+    expect(JSON.stringify(one(j, 'AWS::EC2::Instance').Properties.UserData)).toContain('CONNECTION_PORT=28000');
+    expect(JSON.stringify(one(synth().json, 'AWS::EC2::Instance').Properties.UserData)).toContain('--admin-listen=172.17.0.1:8443');
   });
 
-  test('admin port follows the parameter', () => {
+  test('a different admin port is still in no rule, and the engine binds it on the bridge', () => {
     const j = synth({ adminPort: '31000' }).json;
     const rs: any[] = [
       ...(resourcesOf(j, 'AWS::EC2::SecurityGroup')[0][1].Properties.SecurityGroupIngress ?? []),
       ...resourcesOf(j, 'AWS::EC2::SecurityGroupIngress').map(([, r]) => r.Properties),
     ];
-    expect(rs.filter(internet).some((r) => covers(r, 31000))).toBe(false);
-    expect(rs.some((r) => covers(r, 31000) && r.SourceSecurityGroupId)).toBe(true);
+    for (const r of rs) expect(covers(r, 31000)).toBe(false);
+    expect(JSON.stringify(one(j, 'AWS::EC2::Instance').Properties.UserData)).toContain('--admin-listen=172.17.0.1:31000');
   });
 
   test('one public subnet, an internet gateway and no NAT gateway', () => {
@@ -178,24 +177,31 @@ describe('engine node', () => {
     expect(ud).toContain('fenvix-engine.service');
     expect(ud).toContain('fenvix-control-plane.service');
     expect(ud).toContain('Restart=always');
-    expect(ud).toContain('systemctl enable --now fenvix-engine.service fenvix-control-plane.service');
+    expect(ud).toContain('systemctl enable --now fenvix-engine.service fenvix-cert-refresh.timer fenvix-control-plane.service fenvix-proxy.service');
     expect(ud).toContain('releases.example.com/fenvix-engine-{arch}');
     expect(ud).toContain('ghcr.io/example/fenvix-control-plane:1.0.0');
   });
 
-  test('user-data refuses to run with the shipped placeholders and uses a self-signed cert without a domain', () => {
+  test('user-data refuses to run with the shipped placeholders; the engine gets flags, not FENVIX_* variables', () => {
     const ud = userData();
     expect(ud).toContain('REPLACE-ME');
-    expect(ud).toContain('FENVIX_TLS_MODE=self-signed');
-    expect(ud).not.toContain('FENVIX_BASE_DOMAIN');
+    expect(ud).not.toContain('FENVIX_TLS_MODE');
+    expect(ud).not.toContain('self-signed');
+    expect(ud).toContain('--tls-mode=requireTLS --tls-certificate-key-file=/etc/fenvix/tls/engine.pem --store=s3 --bucket=');
   });
 
   test('user-data lists the SecureString parameter names it requires and carries no secret values', () => {
     const ud = userData();
-    expect(ud).toContain('/fenvix/prod/engine/admin-token');
-    expect(ud).toContain('/fenvix/prod/control-plane/session-secret');
+    for (const n of requiredSecretNames('prod')) expect(ud).toContain(n);
+    expect(ud).not.toContain('session-secret');
     expect(ud).not.toMatch(/AKIA[0-9A-Z]{16}/);
     expect(ud).not.toMatch(/-----BEGIN/);
+  });
+
+  test('the engine is passed the bucket and the exportable certificate of its own stack', () => {
+    const ud = userData();
+    expect(ud).toMatch(/--bucket=","?\{"Ref":"DataBucket[A-Za-z0-9]+"\}/);
+    expect(ud).toMatch(/CERT_ARN='","?\{"Ref":"Certificate[A-Za-z0-9]+"\}/);
   });
 
   test('sha256 pin is passed to the instance when set', () => {
@@ -267,6 +273,19 @@ describe('IAM', () => {
     expect(JSON.stringify(stop.statement.Resource)).toContain('EngineInstance');
   });
 
+  test('the engine role may export only its own certificate, and nothing else of ACM', () => {
+    const acmStatements = identity.filter((s) => asArray(s.statement.Action).some((a: string) => a.startsWith('acm:')));
+    expect(acmStatements).toHaveLength(1);
+    expect(asArray(acmStatements[0].statement.Action)).toEqual(['acm:ExportCertificate']);
+    expect(acmStatements[0].statement.Resource).toEqual({ Ref: expect.stringMatching(/^Certificate/) });
+  });
+
+  test('S3: the engine role gets object get/put/delete, multipart abort and list on its bucket, nothing on old versions', () => {
+    const s3 = identity.filter((s) => s.owner.startsWith('EngineRole') && asArray(s.statement.Action).some((a: string) => a.startsWith('s3:')));
+    const actions = s3.flatMap((s) => asArray(s.statement.Action)).sort();
+    expect(actions).toEqual(['s3:AbortMultipartUpload', 's3:DeleteObject', 's3:GetObject', 's3:ListBucket', 's3:PutObject']);
+  });
+
   test('kms:Decrypt is limited to calls made through SSM', () => {
     const k = identity.find((s) => asArray(s.statement.Action).includes('kms:Decrypt'))!;
     expect(k.statement.Condition).toEqual({ StringEquals: { 'kms:ViaService': 'ssm.eu-central-1.amazonaws.com' } });
@@ -332,27 +351,33 @@ describe('cost guard', () => {
 });
 
 describe('DNS and certificates', () => {
-  const dnsTypes = (json: any) =>
-    Object.values<any>(json.Resources).map((r) => r.Type).filter((t) => t.startsWith('AWS::Route53::') || t.startsWith('AWS::CertificateManager::'));
-
-  test('nothing is created when BASE_DOMAIN is unset or empty', () => {
-    expect(dnsTypes(synth().json)).toEqual([]);
-    expect(dnsTypes(synth({ baseDomain: '' }).json)).toEqual([]);
-    expect(dnsTypes(synth({ baseDomain: '   ' }).json)).toEqual([]);
+  test('BASE_DOMAIN is required: the engine serves TLS only from a certificate of the domain', () => {
+    expect(() => synth({ baseDomain: '' })).toThrow(/baseDomain.*BASE_DOMAIN/);
+    expect(() => synth({ baseDomain: '   ' })).toThrow(/BASE_DOMAIN/);
   });
 
-  test('with BASE_DOMAIN: hosted zone, DNS-validated certificate for *.db and console, records to the node IP', () => {
+  test('certificate *.<region>.db.<domain> (+ console in the first region), exportable, DNS-validated; records to the node IP', () => {
     const { template, json } = synth({ baseDomain: 'Example.com' });
     template.resourceCountIs('AWS::Route53::HostedZone', 1);
     template.hasResourceProperties('AWS::Route53::HostedZone', { Name: 'example.com.' });
+    template.resourceCountIs('AWS::CertificateManager::Certificate', 1);
     template.hasResourceProperties('AWS::CertificateManager::Certificate', {
-      DomainName: '*.db.example.com',
+      DomainName: '*.eu-central-1.db.example.com',
       SubjectAlternativeNames: ['console.example.com'],
       ValidationMethod: 'DNS',
+      CertificateExport: 'ENABLED',
     });
-    template.hasResourceProperties('AWS::Route53::RecordSet', { Name: '*.db.example.com.', Type: 'A' });
+    template.hasResourceProperties('AWS::Route53::RecordSet', { Name: '*.eu-central-1.db.example.com.', Type: 'A' });
     template.hasResourceProperties('AWS::Route53::RecordSet', { Name: 'console.example.com.', Type: 'A' });
-    expect(JSON.stringify(json)).toContain('FENVIX_BASE_DOMAIN=example.com');
+    const names = resourcesOf(json, 'AWS::Route53::RecordSet').map(([, r]) => r.Properties.Name);
+    expect(names).not.toContain('*.db.example.com.');
+  });
+
+  test('the certificate covers a database host of the real format, and *.db.<domain> would not', () => {
+    const host = 'orders-1a2b3c4d.eu-central-1.db.example.com';
+    const covered = (wildcard: string) => wildcard.startsWith('*.') && host.split('.').slice(1).join('.') === wildcard.slice(2);
+    expect(covered('*.eu-central-1.db.example.com')).toBe(true);
+    expect(covered('*.db.example.com')).toBe(false);
   });
 
   test('an existing hosted zone id is referenced instead of creating a zone', () => {
@@ -363,22 +388,35 @@ describe('DNS and certificates', () => {
     });
   });
 
-  test('only the first region creates DNS', () => {
-    const { stacks } = buildApp({ baseDomain: 'example.com', regions: 'eu-central-1,us-east-1' });
+  test('two regions: an existing zone is required; each region its own certificate and record, console and control plane in the first only', () => {
+    expect(() => buildApp({ regions: 'eu-central-1,us-east-1' })).toThrow(/hostedZoneId/);
+    const { stacks } = buildApp({ regions: 'eu-central-1,us-east-1', hostedZoneId: 'Z0123456789ABC' });
     const { Template } = require('aws-cdk-lib/assertions');
-    Template.fromStack(stacks[0]).resourceCountIs('AWS::Route53::HostedZone', 1);
-    Template.fromStack(stacks[1]).resourceCountIs('AWS::Route53::HostedZone', 0);
-    Template.fromStack(stacks[1]).resourceCountIs('AWS::CertificateManager::Certificate', 0);
+    const [a, b] = stacks.map((s) => Template.fromStack(s));
+    for (const t of [a, b]) t.resourceCountIs('AWS::Route53::HostedZone', 0);
+    a.hasResourceProperties('AWS::CertificateManager::Certificate', { DomainName: '*.eu-central-1.db.example.com', SubjectAlternativeNames: ['console.example.com'] });
+    b.hasResourceProperties('AWS::CertificateManager::Certificate', { DomainName: '*.us-east-1.db.example.com', SubjectAlternativeNames: Match.absent() });
+    const bNames = resourcesOf(b.toJSON(), 'AWS::Route53::RecordSet').map(([, r]) => r.Properties.Name);
+    expect(bNames).toEqual(['*.us-east-1.db.example.com.']);
+    const ud = (t: any) => JSON.stringify(one(t.toJSON(), 'AWS::EC2::Instance').Properties.UserData);
+    expect(ud(a)).toContain('fenvix-control-plane.service');
+    expect(ud(b)).not.toContain('fenvix-control-plane.service');
   });
 
   test('a malformed domain is rejected', () => {
     expect(() => synth({ baseDomain: 'not a domain' })).toThrow(/BASE_DOMAIN/);
   });
+
+  test('dashboard origins must be https origins', () => {
+    expect(() => synth({ dashboardOrigins: '' })).toThrow(/dashboardOrigins/);
+    expect(() => synth({ dashboardOrigins: 'http://app.example.com' })).toThrow(/dashboardOrigins/);
+    expect(() => synth({ dashboardOrigins: 'https://app.example.com/' })).toThrow(/dashboardOrigins/);
+  });
 });
 
 describe('regions', () => {
   test('one config line adds a region: two stacks, separate names, region-specific values', () => {
-    const { stacks } = buildApp({ regions: 'eu-central-1,us-east-1,eu-west-2' });
+    const { stacks } = buildApp({ regions: 'eu-central-1,us-east-1,eu-west-2', hostedZoneId: 'Z0123456789ABC' });
     expect(stacks.map((s) => s.stackName)).toEqual(['fenvix-prod-eu-central-1', 'fenvix-prod-us-east-1', 'fenvix-prod-eu-west-2']);
     const { Template } = require('aws-cdk-lib/assertions');
     const names = stacks.map((s) => {

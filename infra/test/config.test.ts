@@ -9,6 +9,18 @@ describe('settings lookup', () => {
     expect(envVarName('engineSha256')).toBe('FENVIX_ENGINE_SHA256');
     expect(envVarName('controlPlaneImage')).toBe('FENVIX_CONTROL_PLANE_IMAGE');
     expect(envVarName('hostedZoneId')).toBe('FENVIX_HOSTED_ZONE_ID');
+    expect(envVarName('dashboardOrigins')).toBe('FENVIX_DASHBOARD_ORIGINS');
+    expect(envVarName('proxyImage')).toBe('FENVIX_PROXY_IMAGE');
+    expect(envVarName('engineRetentionWindowSecs')).toBe('FENVIX_ENGINE_RETENTION_WINDOW_SECS');
+    expect(envVarName('mongoPort')).toBe('FENVIX_MONGO_PORT');
+  });
+
+  test('cdk.json ships no domain and no dashboard origin: synth stops and names the setting', () => {
+    const cdk = require('../cdk.json').context as Record<string, string>;
+    expect(cdk.baseDomain).toBe('');
+    expect(cdk.dashboardOrigins).toBe('');
+    expect(() => loadConfig(makeLookup((k) => ({ ...cdk, budgetEmail: 'a@b.co' })[k], {}))).toThrow(/Missing setting "baseDomain".*BASE_DOMAIN/);
+    expect(() => loadConfig(makeLookup((k) => ({ ...cdk, budgetEmail: 'a@b.co' })[k], { BASE_DOMAIN: 'example.com' }))).toThrow(/FENVIX_DASHBOARD_ORIGINS/);
   });
 
   test('environment beats context; an empty variable does not', () => {
