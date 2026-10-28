@@ -24,6 +24,46 @@ export interface EngineSettings {
   retentionIntervalSecs: number | null;
 }
 
+/**
+ * How the Data Explorer reaches the engine's MongoDB listener (not the admin interface). Every value comes from the
+ * environment; the credentials are never logged, never put in an error and never sent to a browser.
+ */
+export interface DataSettings {
+  /** `mongo`: the official driver against `endpoints`; `fake`: in memory (only with ENGINE_DRIVER=fake); `off`: not set up. */
+  driver: "mongo" | "fake" | "off";
+  /** host:port of the engine's MongoDB listener per region. */
+  endpoints: Record<string, string>;
+  username: string | undefined;
+  /** Secret. */
+  password: string | undefined;
+  authMechanism: "SCRAM-SHA-256" | "SCRAM-SHA-1";
+  authSource: string;
+  tls: boolean;
+  /** PEM file of the CA that signs the engine's certificate (path; the driver reads it). */
+  tlsCaFile: string | undefined;
+  /** Name to check the engine's certificate against when it differs from the host. */
+  tlsServerName: string | undefined;
+  /** Development only: allows no TLS and no credentials. Refused with NODE_ENV=production. */
+  insecureLocal: boolean;
+  poolMax: number;
+  /** A connection unused this long is closed by the driver. */
+  poolIdleMs: number;
+  /** The whole client (and its monitoring connections) is closed after this long without a Data Explorer request. */
+  clientIdleCloseMs: number;
+  connectTimeoutMs: number;
+  /** maxTimeMS of each command on the engine; the client gives up a little later. */
+  commandTimeoutMs: number;
+  defaultPageSize: number;
+  maxPageSize: number;
+  maxSkip: number;
+  /** BSON size of a document a browser may insert or save. */
+  maxDocumentBytes: number;
+  /** Total size of the documents in one answer; a page stops early when it is reached. */
+  maxResponseBytes: number;
+  ratePerMinute: number;
+  writeRatePerMinute: number;
+}
+
 export interface Config {
   port: number;
   host: string;
@@ -52,6 +92,7 @@ export interface Config {
   engineDriver: string;
   /** Set when ENGINE_DRIVER=real. */
   engine: EngineSettings | null;
+  data: DataSettings;
   operationWaitMs: number;
   operationSweepSeconds: number;
   usageSyncSeconds: number;
@@ -147,6 +188,86 @@ function engineSettings(env: Env, regions: string[], nodeEnv: string): EngineSet
   };
 }
 
+/** Hard ceilings the environment cannot raise. */
+export const DATA_HARD_MAX_PAGE_SIZE = 100;
+/** Below Fastify's request body limit (256 KiB), which also covers the JSON around the document. */
+export const DATA_HARD_MAX_DOCUMENT_BYTES = 200 * 1024;
+
+function bounded(env: Env, name: string, fallback: number, min: number, max: number): number {
+  const n = int(env, name, fallback, min);
+  if (n > max) throw new Error(`${name} must be at most ${max}`);
+  return n;
+}
+
+/**
+ * Data Explorer settings. Safe defaults: TLS on, SCRAM-SHA-256, credentials required. Turning either off needs
+ * DATA_ENGINE_INSECURE_LOCAL=true, which refuses to start in production.
+ */
+export function dataSettings(env: Env, nodeEnv: string, engineDriver: string, regions: string[]): DataSettings {
+  const insecureLocal = env.DATA_ENGINE_INSECURE_LOCAL === "true";
+  if (insecureLocal && nodeEnv === "production") throw new Error("DATA_ENGINE_INSECURE_LOCAL=true is for local development only and is refused with NODE_ENV=production");
+  const raw = list(env, "DATA_ENGINE_ENDPOINTS", []);
+  const endpoints: Record<string, string> = {};
+  for (const entry of raw) {
+    const eq = entry.indexOf("=");
+    const region = eq > 0 ? entry.slice(0, eq).trim() : (regions.length === 1 ? regions[0]! : "");
+    const addr = eq > 0 ? entry.slice(eq + 1).trim() : entry;
+    if (!region) throw new Error(`DATA_ENGINE_ENDPOINTS: "${entry}" needs a region (region=host:port) because REGIONS lists more than one`);
+    if (!regions.includes(region)) throw new Error(`DATA_ENGINE_ENDPOINTS: "${region}" is not in REGIONS`);
+    if (endpoints[region]) throw new Error(`DATA_ENGINE_ENDPOINTS: region ${region} is listed twice`);
+    // host:port only: no scheme, no credentials, no options. Credentials and TLS have their own settings.
+    if (!/^[A-Za-z0-9.-]{1,253}:\d{1,5}$/.test(addr) && !/^\[[0-9A-Fa-f:.]{2,45}\]:\d{1,5}$/.test(addr)) {
+      throw new Error(`DATA_ENGINE_ENDPOINTS: ${region}: write host:port (no mongodb://, no user, no options)`);
+    }
+    const port = Number(addr.slice(addr.lastIndexOf(":") + 1));
+    if (port < 1 || port > 65535) throw new Error(`DATA_ENGINE_ENDPOINTS: ${region}: the port is out of range`);
+    endpoints[region] = addr;
+  }
+  const driver: DataSettings["driver"] = raw.length > 0 ? "mongo" : engineDriver === "fake" ? "fake" : "off";
+  if (driver === "mongo") {
+    const missing = regions.filter((r) => !endpoints[r]);
+    if (missing.length) throw new Error(`DATA_ENGINE_ENDPOINTS: no address for region ${missing.join(", ")}`);
+  }
+
+  const username = env.DATA_ENGINE_USERNAME?.trim() || undefined;
+  const password = (env.DATA_ENGINE_PASSWORD ?? fileText(env, "DATA_ENGINE_PASSWORD_FILE") ?? "").replace(/\r?\n$/, "") || undefined;
+  if (!!username !== !!password) throw new Error("DATA_ENGINE_USERNAME and DATA_ENGINE_PASSWORD (or DATA_ENGINE_PASSWORD_FILE) go together");
+  const tlsRaw = env.DATA_ENGINE_TLS ?? "true";
+  if (tlsRaw !== "true" && tlsRaw !== "false") throw new Error('DATA_ENGINE_TLS must be "true" or "false"');
+  const tls = tlsRaw === "true";
+  if (driver === "mongo") {
+    if (!tls && !insecureLocal) throw new Error("DATA_ENGINE_TLS=false needs DATA_ENGINE_INSECURE_LOCAL=true (local development only)");
+    if (!username && !insecureLocal) throw new Error("DATA_ENGINE_USERNAME and DATA_ENGINE_PASSWORD are required for the Data Explorer (SCRAM); only DATA_ENGINE_INSECURE_LOCAL=true allows none");
+  }
+  const mech = env.DATA_ENGINE_AUTH_MECHANISM ?? "SCRAM-SHA-256";
+  if (mech !== "SCRAM-SHA-256" && mech !== "SCRAM-SHA-1") throw new Error('DATA_ENGINE_AUTH_MECHANISM must be "SCRAM-SHA-256" or "SCRAM-SHA-1"');
+  const authSource = env.DATA_ENGINE_AUTH_SOURCE || "admin";
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(authSource)) throw new Error("DATA_ENGINE_AUTH_SOURCE is not a valid database name");
+  const tlsCaFile = env.DATA_ENGINE_TLS_CA_FILE || undefined;
+  if (tlsCaFile) fileText(env, "DATA_ENGINE_TLS_CA_FILE");
+
+  const maxPageSize = bounded(env, "DATA_MAX_PAGE_SIZE", DATA_HARD_MAX_PAGE_SIZE, 1, DATA_HARD_MAX_PAGE_SIZE);
+  const defaultPageSize = bounded(env, "DATA_DEFAULT_PAGE_SIZE", 25, 1, maxPageSize);
+  const commandTimeoutMs = bounded(env, "DATA_COMMAND_TIMEOUT_MS", 10_000, 100, 60_000);
+  return {
+    driver, endpoints, username, password, authMechanism: mech, authSource, tls, tlsCaFile,
+    tlsServerName: env.DATA_ENGINE_TLS_SERVER_NAME || undefined,
+    insecureLocal,
+    poolMax: bounded(env, "DATA_ENGINE_POOL_MAX", 5, 1, 50),
+    poolIdleMs: bounded(env, "DATA_ENGINE_POOL_IDLE_MS", 30_000, 1000, 600_000),
+    clientIdleCloseMs: bounded(env, "DATA_ENGINE_CLIENT_IDLE_CLOSE_MS", 60_000, 1000, 3_600_000),
+    connectTimeoutMs: bounded(env, "DATA_ENGINE_CONNECT_TIMEOUT_MS", 5000, 100, 60_000),
+    commandTimeoutMs,
+    defaultPageSize,
+    maxPageSize,
+    maxSkip: bounded(env, "DATA_MAX_SKIP", 10_000, 0, 100_000),
+    maxDocumentBytes: bounded(env, "DATA_MAX_DOCUMENT_BYTES", 192 * 1024, 1024, DATA_HARD_MAX_DOCUMENT_BYTES),
+    maxResponseBytes: bounded(env, "DATA_MAX_RESPONSE_BYTES", 4 * 1024 * 1024, 64 * 1024, 16 * 1024 * 1024),
+    ratePerMinute: bounded(env, "DATA_RATE_LIMIT_PER_MINUTE", 120, 1, 100_000),
+    writeRatePerMinute: bounded(env, "DATA_WRITE_RATE_LIMIT_PER_MINUTE", 30, 1, 100_000),
+  };
+}
+
 export const DEFAULT_HOST_TEMPLATE = "<name>.<region>.db.<BASE_DOMAIN>";
 
 function connectionDbName(env: Env): "name" | "engine" {
@@ -190,6 +311,7 @@ export function loadConfig(env: Env = process.env): Config {
     downloadSigningKey: required(env, "DOWNLOAD_SIGNING_KEY"),
     engineDriver: required(env, "ENGINE_DRIVER"),
     engine: null,
+    data: dataSettings(env, nodeEnv, required(env, "ENGINE_DRIVER"), regions),
     operationWaitMs: int(env, "OPERATION_WAIT_MS", 20000),
     operationSweepSeconds: int(env, "OPERATION_SWEEP_SECONDS", 15),
     usageSyncSeconds: int(env, "USAGE_SYNC_SECONDS", 0),

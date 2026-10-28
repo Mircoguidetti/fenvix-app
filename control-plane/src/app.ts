@@ -7,6 +7,9 @@ import type { Config } from "./config.ts";
 import type { Services } from "./context.ts";
 import { Db } from "./db.ts";
 import { type EngineClient, EngineError } from "./engine/types.ts";
+import type { DataClient } from "./engine/data.ts";
+import { FakeDataClient } from "./engine/data-fake.ts";
+import { MongoDataClient } from "./engine/data-mongo.ts";
 import { ApiError, internal, notFound } from "./errors.ts";
 import { JwtVerifier } from "./auth/jwt.ts";
 import { type AuthGateway } from "./auth/gateway.ts";
@@ -18,10 +21,13 @@ import { buildUsageCsv, syncAllUsage } from "./services/usage.ts";
 import { verifyDownload } from "./downloads.ts";
 import { dataRoutes } from "./routes/data.ts";
 import { sessionRoutes } from "./routes/session.ts";
+import { explorerRoutes } from "./routes/explorer.ts";
 
 export interface AppOptions {
   cfg: Config;
   engine: EngineClient;
+  /** The Data Explorer's client; defaults to what cfg.data says (the official driver, the in-memory fake, or none). */
+  data?: DataClient;
   gateway: AuthGateway;
   /** Defaults to a pool on cfg.databaseUrl. */
   db?: Db;
@@ -41,6 +47,15 @@ export interface App {
 }
 
 const REQ_ID = /^[A-Za-z0-9._-]{8,64}$/;
+
+/** The path as logged: no query string, and nothing after `/data/` (collection names and document ids stay out of logs). */
+export const logPath = (url: string) => url.split("?")[0]!.replace(/^(\/v1\/databases\/[^/]+\/data)\/.*$/, "$1/[redacted]");
+
+function defaultDataClient(cfg: Config): DataClient {
+  if (cfg.data.driver === "mongo") return new MongoDataClient(cfg.data);
+  // "off" also gets the fake so the interface is always there; the routes answer 503 before using it.
+  return new FakeDataClient();
+}
 
 export async function buildApp(opts: AppOptions): Promise<App> {
   const { cfg } = opts;
@@ -62,7 +77,7 @@ export async function buildApp(opts: AppOptions): Promise<App> {
       // Never log credentials, and log the path without its query string (it can hold a sign-in code).
       redact: { paths: ["req.headers.authorization", "req.headers.cookie", "res.headers[\"set-cookie\"]"], censor: "[redacted]" },
       serializers: {
-        req: (r) => ({ method: r.method, path: String(r.url).split("?")[0] }),
+        req: (r) => ({ method: r.method, path: logPath(String(r.url)) }),
         res: (r) => ({ statusCode: r.statusCode }),
       },
     },
@@ -71,7 +86,8 @@ export async function buildApp(opts: AppOptions): Promise<App> {
   const routes: string[] = [];
   fastify.addHook("onRoute", (r) => { for (const m of [r.method].flat()) if (m !== "HEAD" && m !== "OPTIONS") routes.push(`${m} ${r.url}`); });
 
-  const s: Services = { cfg, db, engine: opts.engine, log: fastify.log };
+  const data = opts.data ?? defaultDataClient(cfg);
+  const s: Services = { cfg, db, engine: opts.engine, data, log: fastify.log };
   const runner = new OperationRunner(s);
   const deps: Deps = {
     s,
@@ -146,6 +162,7 @@ export async function buildApp(opts: AppOptions): Promise<App> {
   await fastify.register(async (v1) => {
     sessionRoutes(v1, deps);
     dataRoutes(v1, deps);
+    await v1.register(async (sub) => explorerRoutes(sub, deps));
   }, { prefix: "/v1" });
 
   let usageTimer: NodeJS.Timeout | undefined;
@@ -170,6 +187,7 @@ export async function buildApp(opts: AppOptions): Promise<App> {
       if (usageTimer) clearInterval(usageTimer);
       await runner.stop();
       await fastify.close();
+      if (!opts.data) await data.close();
       if (!opts.db) await db.close();
     },
   };

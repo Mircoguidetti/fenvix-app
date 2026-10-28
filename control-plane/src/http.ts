@@ -147,7 +147,7 @@ function send(reply: FastifyReply, r: { status: number; body: unknown; headers?:
 
 export interface RouteHelpers {
   read(url: string, access: Access, handler: (ctx: Ctx) => Promise<unknown>): void;
-  write(method: "POST" | "PUT", url: string, opts: Access & { idem?: "standard" | "no-replay" | "skip" }, handler: (ctx: Ctx) => Promise<Outcome>): void;
+  write(method: "POST" | "PUT" | "DELETE", url: string, opts: Access & { idem?: "standard" | "no-replay" | "skip" }, handler: (ctx: Ctx) => Promise<Outcome>): void;
 }
 
 export function routeHelpers(app: FastifyInstance, d: Deps): RouteHelpers {

@@ -5,7 +5,9 @@ export type ErrorCode =
   | "not_found"
   | "conflict"
   | "rate_limited"
-  | "internal";
+  | "internal"
+  /** A dependency (the engine's database listener) did not answer in time, or is waking up. Retry later. */
+  | "unavailable";
 
 const STATUS: Record<ErrorCode, number> = {
   validation_failed: 400,
@@ -15,6 +17,7 @@ const STATUS: Record<ErrorCode, number> = {
   conflict: 409,
   rate_limited: 429,
   internal: 500,
+  unavailable: 503,
 };
 
 /** An error with a contract code. `message` is written for people and shown in the dashboard as is. */
@@ -44,4 +47,5 @@ export const notFound = (message = "Not found.") => new ApiError("not_found", me
 export const conflict = (message: string, field?: string) => new ApiError("conflict", message, field);
 export const forbidden = (message = "You are not allowed to do this.") => new ApiError("forbidden", message);
 export const unauthenticated = (message = "Sign in to continue.") => new ApiError("unauthenticated", message);
+export const unavailable = (message: string, retryAfterSeconds = 2) => new ApiError("unavailable", message, undefined, { "Retry-After": String(retryAfterSeconds) });
 export const internal = (message = "Something went wrong on our side. Try again in a moment.") => new ApiError("internal", message);

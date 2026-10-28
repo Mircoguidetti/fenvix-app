@@ -8,6 +8,8 @@ import { buildApp, type App } from "../../src/app.ts";
 import { loadConfig, type Config } from "../../src/config.ts";
 import { JwtVerifier } from "../../src/auth/jwt.ts";
 import { FakeEngine } from "../../src/engine/fake.ts";
+import { FakeDataClient } from "../../src/engine/data-fake.ts";
+import type { DataClient } from "../../src/engine/data.ts";
 import type { EngineClient } from "../../src/engine/types.ts";
 import { FakeGateway } from "./fake-gateway.ts";
 import { Db } from "../../src/db.ts";
@@ -80,6 +82,8 @@ export interface Harness {
   app: App;
   cfg: Config;
   engine: FakeEngine;
+  /** The Data Explorer's in-memory MongoDB listener (unused when `dataClient` was given). */
+  data: FakeDataClient;
   gateway: FakeGateway;
   signer: Signer;
   admin: pg.Pool;
@@ -90,7 +94,7 @@ export interface Harness {
   user(name?: string): Promise<Fixture>;
   /** Adds an existing user to another workspace with a role. */
   addMember(ws: string, name: string, role: "owner" | "admin" | "member"): Promise<Fixture>;
-  apiKey(ws: string, name?: string): Promise<string>;
+  apiKey(ws: string, name?: string, dataAccess?: "read" | "read_write"): Promise<string>;
   /** inject() with a session cookie or API key. */
   as(who: Fixture | string): Client;
   close(): Promise<void>;
@@ -99,7 +103,7 @@ export interface Harness {
 const dropActiveOperations = (admin: pg.Pool) =>
   admin.query("update public.operations set status = 'failed', finished_at = now(), error = '{\"code\":\"internal\",\"message\":\"test cleanup\"}' where status in ('queued', 'running')");
 
-export async function startHarness(over: Record<string, string | undefined> = {}, opts: { engine?: FakeEngine; gateway?: FakeGateway; /** Use this engine client instead of the fake (the fake in `Harness.engine` is then unused). */ engineFactory?: (cfg: Config) => EngineClient } = {}): Promise<Harness> {
+export async function startHarness(over: Record<string, string | undefined> = {}, opts: { engine?: FakeEngine; gateway?: FakeGateway; /** Use this engine client instead of the fake (the fake in `Harness.engine` is then unused). */ engineFactory?: (cfg: Config) => EngineClient; /** Data Explorer client instead of the fake, built from the config. */ dataFactory?: (cfg: Config) => DataClient } = {}): Promise<Harness> {
   const adminUrl = process.env.TEST_DATABASE_URL ?? ADMIN_URL;
   const admin = new pg.Pool({ connectionString: adminUrl, max: 4 });
   // The sweeper looks across workspaces, so leftovers of an earlier test must not be picked up by this one.
@@ -131,9 +135,10 @@ export async function startHarness(over: Record<string, string | undefined> = {}
   const engine = opts.engine ?? new FakeEngine();
   const gateway = opts.gateway ?? new FakeGateway(signer);
   const logs = new Lines();
+  const data = new FakeDataClient();
   const appDb = new Db(cpUrl, 6);
   const app = await buildApp({
-    cfg, engine: opts.engineFactory ? opts.engineFactory(cfg) : engine, gateway, logStream: logs,
+    cfg, engine: opts.engineFactory ? opts.engineFactory(cfg) : engine, gateway, logStream: logs, data: opts.dataFactory ? opts.dataFactory(cfg) : data,
     db: appDb,
     verifier: new JwtVerifier(cfg.supabaseUrl, cfg.supabaseJwksUrl),
   });
@@ -144,7 +149,7 @@ export async function startHarness(over: Record<string, string | undefined> = {}
   });
 
   const h: Harness = {
-    app, cfg, engine, gateway, signer, admin, logs, cpUrl, cpPassword,
+    app, cfg, engine, data, gateway, signer, admin, logs, cpUrl, cpPassword,
     async user(name = "Test User") {
       const id = randomUUID();
       const email = `${id.slice(0, 8)}@example.invalid`;
@@ -162,9 +167,9 @@ export async function startHarness(over: Record<string, string | undefined> = {}
       await admin.query("insert into public.workspace_members (workspace_id, user_id, role) values ($1, $2, $3)", [ws, id, role]);
       return make(id, email, name, ws);
     },
-    async apiKey(ws, name = "test key") {
+    async apiKey(ws, name = "test key", dataAccess = "read") {
       const secret = `fnx_${randomBytes(32).toString("hex")}`;
-      await admin.query("insert into public.api_keys (workspace_id, name, key_hash, last4) values ($1, $2, $3, $4)", [ws, name, createHash("sha256").update(secret).digest("hex"), secret.slice(-4)]);
+      await admin.query("insert into public.api_keys (workspace_id, name, key_hash, last4, data_access) values ($1, $2, $3, $4, $5)", [ws, name, createHash("sha256").update(secret).digest("hex"), secret.slice(-4), dataAccess]);
       return secret;
     },
     as(who) {
@@ -183,6 +188,7 @@ export async function startHarness(over: Record<string, string | undefined> = {}
     async close() {
       await app.close();
       await dropActiveOperations(admin);
+      await data.close();
       await appDb.close();
       await signer.stop();
       await admin.end();

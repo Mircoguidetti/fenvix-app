@@ -31,5 +31,14 @@ test("every route the service has beyond the contract is one we documented as an
   const known = new Set(endpoints.map((e) => `${e.method} /v1${e.path.replace(/\{(\w+)\}/g, ":$1")}`));
   known.add("GET /v1/session/providers/:provider/callback"); // described in the text of section 3, not as its own heading
   const extra = h.app.routes.filter((r) => !known.has(r)).sort();
-  assert.deepEqual(extra.filter((r) => !/^GET \/(healthz|readyz)$/.test(r)), ["GET /v1/downloads/:token", "GET /v1/operations", "GET /v1/operations/:id"]);
+  assert.deepEqual(extra.filter((r) => !/^GET \/(healthz|readyz)$/.test(r)), [
+    // The Data Explorer (docs/api-extensions.md, "Data Explorer").
+    "DELETE /v1/databases/:id/data/collections/:collection/documents/:docId",
+    "GET /v1/databases/:id/data/collections",
+    "GET /v1/databases/:id/data/collections/:collection/documents",
+    "GET /v1/databases/:id/data/collections/:collection/documents/:docId",
+    "GET /v1/downloads/:token", "GET /v1/operations", "GET /v1/operations/:id",
+    "POST /v1/databases/:id/data/collections/:collection/documents",
+    "PUT /v1/databases/:id/data/collections/:collection/documents/:docId",
+  ]);
 });

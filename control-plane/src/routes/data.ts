@@ -167,9 +167,12 @@ export function dataRoutes(app: FastifyInstance, d: Deps): void {
   read("/api-keys", { apiKey: false, role: "admin" }, async ({ caller }) => account.listApiKeys(s, caller));
 
   write("POST", "/api-keys", { apiKey: false, role: "admin", idem: "no-replay" }, async ({ caller, body }) => {
-    const name = asObject(body).name;
+    const b = asObject(body);
+    const name = b.name;
     if (typeof name !== "string") throw validation(`Use 1 to ${L.maxApiKeyNameLength} characters for the name.`, "name");
-    return { status: 201, body: await account.createApiKey(s, caller, name) };
+    // Data Explorer: what the key may do with documents. Read only unless asked for.
+    const dataAccess = b.dataAccess === undefined ? "read" : parseEnum(b.dataAccess, ["read", "readWrite"] as const, "dataAccess");
+    return { status: 201, body: await account.createApiKey(s, caller, name, dataAccess) };
   });
 
   write("POST", "/api-keys/:id/revoke", { apiKey: false, role: "admin" }, async ({ caller, params }) => ({ status: 200, body: await account.revokeApiKey(s, caller, String(params.id)) }));

@@ -111,8 +111,12 @@ export async function buildInvoicePdf(s: Services, workspaceId: string, id: stri
 
 // ---------------------------------------------------------------- API keys
 
-interface KeyRow { id: string; name: string; last4: string; created_at: Date; last_used_at: Date | null; revoked_at: Date | null }
-const toKey = (r: KeyRow) => ({ id: r.id, name: r.name, hint: r.last4, createdAt: iso(r.created_at)!, lastUsedAt: iso(r.last_used_at), revokedAt: iso(r.revoked_at) });
+interface KeyRow { id: string; name: string; last4: string; created_at: Date; last_used_at: Date | null; revoked_at: Date | null; data_access?: string }
+const toKey = (r: KeyRow) => ({
+  id: r.id, name: r.name, hint: r.last4, createdAt: iso(r.created_at)!, lastUsedAt: iso(r.last_used_at), revokedAt: iso(r.revoked_at),
+  // Data Explorer (migration 0004): "read" unless the key was made with readWrite.
+  dataAccess: r.data_access === "read_write" ? "readWrite" as const : "read" as const,
+});
 
 export const hashKey = (secret: string) => createHash("sha256").update(secret).digest("hex");
 
@@ -122,7 +126,7 @@ export async function listApiKeys(s: Services, caller: Caller) {
   }));
 }
 
-export async function createApiKey(s: Services, caller: Caller, name: string) {
+export async function createApiKey(s: Services, caller: Caller, name: string, dataAccess: "read" | "readWrite" = "read") {
   const clean = name.trim();
   if (clean.length < 1 || clean.length > s.cfg.limits.maxApiKeyNameLength) {
     throw validation(`Use 1 to ${s.cfg.limits.maxApiKeyNameLength} characters for the name.`, "name");
@@ -130,10 +134,13 @@ export async function createApiKey(s: Services, caller: Caller, name: string) {
   // 32 random bytes as hex with the prefix people expect; only the hash and the last four characters are stored.
   const secret = `fnx_${randomBytes(32).toString("hex")}`;
   const key = await s.db.tx(caller.workspaceId, async (c) => {
-    const row = (await c.query(
-      "insert into public.api_keys (workspace_id, name, key_hash, last4) values ($1, $2, $3, $4) returning *",
-      [caller.workspaceId, clean, hashKey(secret), secret.slice(-4)])).rows[0] as KeyRow;
-    await writeAudit(c, auditWho(caller), { action: "api_key.create", targetType: "api_key", targetId: row.id, metadata: { name: clean } });
+    // The column exists from migration 0004 on; a read key leaves it to its default so this works before 0004 too.
+    const row = (await (dataAccess === "readWrite"
+      ? c.query("insert into public.api_keys (workspace_id, name, key_hash, last4, data_access) values ($1, $2, $3, $4, 'read_write') returning *",
+        [caller.workspaceId, clean, hashKey(secret), secret.slice(-4)])
+      : c.query("insert into public.api_keys (workspace_id, name, key_hash, last4) values ($1, $2, $3, $4) returning *",
+        [caller.workspaceId, clean, hashKey(secret), secret.slice(-4)]))).rows[0] as KeyRow;
+    await writeAudit(c, auditWho(caller), { action: "api_key.create", targetType: "api_key", targetId: row.id, metadata: { name: clean, dataAccess } });
     return toKey(row);
   });
   return { key, secret };
