@@ -8,9 +8,9 @@ import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
-import { challengeRecords, consoleChallengeTarget, zoneName } from './acme';
+import { challengeRecords, apiChallengeTarget, zoneName } from './acme';
 import { FenvixConfig, PROJECT_TAG } from './config';
-import { consoleHost } from './control-plane-env';
+import { apiHost } from './control-plane-env';
 import { requiredSecretNames, ssmPrefix } from './parameters';
 import { buildUserData } from './user-data';
 
@@ -21,7 +21,7 @@ export interface FenvixStackProps extends StackProps {
   /** Region this stack deploys to (also in props.env). */
   region: string;
   /**
-   * The first region of the list: it creates the hosted zone (unless hostedZoneId is given), the console record, and
+   * The first region of the list: it creates the hosted zone (unless hostedZoneId is given), the api.<domain> record, and
    * runs the control plane. Every region has its own certificate (Let's Encrypt, on the server) and `*.<region>.db.<domain>` record.
    */
   createDns: boolean;
@@ -173,7 +173,7 @@ export class FenvixStack extends Stack {
     // ---- DNS zone, certificate store and the DNS-01 permission ----------------------------------------------
     // Database hosts are <name>-<workspace>.<region>.db.<domain>: two labels before "db", which *.db.<domain> does not
     // cover. Each region's server gets a Let's Encrypt certificate for *.<region>.db.<domain> (and, where the control
-    // plane runs, console.<domain>) with certbot and a DNS-01 challenge in this zone (lib/acme.ts, lib/scripts/).
+    // plane runs, api.<domain>) with certbot and a DNS-01 challenge in this zone (lib/acme.ts, lib/scripts/).
     const zone: route53.IHostedZone = c.hostedZoneId
       ? route53.HostedZone.fromHostedZoneAttributes(this, 'Zone', { hostedZoneId: c.hostedZoneId, zoneName: zoneName(c) })
       : new route53.PublicHostedZone(this, 'Zone', { zoneName: zoneName(c) });
@@ -284,8 +284,8 @@ export class FenvixStack extends Stack {
 
     const target = route53.RecordTarget.fromValues(eip.ref);
     new route53.ARecord(this, 'DbWildcard', { zone, recordName: dbWildcard, target });
-    // With dnsZone=db, console.<domain> is not in the Route 53 zone: it is made by hand at the domain's DNS (outputs below).
-    if (props.createDns && c.dnsZone === 'domain') new route53.ARecord(this, 'Console', { zone, recordName: consoleHost(c), target });
+    // With dnsZone=db, api.<domain> is not in the Route 53 zone: it is made by hand at the domain's DNS (outputs below).
+    if (props.createDns && c.dnsZone === 'domain') new route53.ARecord(this, 'Api', { zone, recordName: apiHost(c), target });
 
     // ---- Cost guard -------------------------------------------------------------------------------
     const budgetName = `${name}-${region}`;
@@ -343,14 +343,14 @@ export class FenvixStack extends Stack {
     new CfnOutput(this, 'SecretsPath', { value: `${prefix}/`, description: 'Create the SecureString parameters under this path (README.md)' });
     new CfnOutput(this, 'DatabaseHosts', { value: dbWildcard, description: 'Database hostnames of this region' });
     new CfnOutput(this, 'TlsSecret', { value: tlsStore.secretArn, description: "Where the server keeps its Let's Encrypt certificate" });
-    if (props.createDns) new CfnOutput(this, 'ControlPlaneUrl', { value: `https://${consoleHost(c)}/v1` });
+    if (props.createDns) new CfnOutput(this, 'ControlPlaneUrl', { value: `https://${apiHost(c)}/v1` });
     if (props.createDns && c.dnsZone === 'db') {
-      new CfnOutput(this, 'ConsoleRecordToCreate', {
-        value: Fn.join('', [`${consoleHost(c)} A `, eip.ref]),
+      new CfnOutput(this, 'ApiRecordToCreate', {
+        value: Fn.join('', [`${apiHost(c)} A `, eip.ref]),
         description: 'Create this record by hand where your domain DNS is (README.md, "The domain and DNS"); DNS only, not proxied',
       });
-      new CfnOutput(this, 'ConsoleChallengeRecordToCreate', {
-        value: `_acme-challenge.${consoleHost(c)} CNAME ${consoleChallengeTarget(c)}`,
+      new CfnOutput(this, 'ApiChallengeRecordToCreate', {
+        value: `_acme-challenge.${apiHost(c)} CNAME ${apiChallengeTarget(c)}`,
         description: 'Create this record by hand where your domain DNS is (README.md, "The domain and DNS"); DNS only, not proxied',
       });
     }

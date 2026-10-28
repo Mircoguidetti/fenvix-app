@@ -24,7 +24,7 @@ export const BASE_CONTEXT: Record<string, string> = {
   dnsZone: 'domain',
   acmeEmail: 'certs@example.com',
   acmeStaging: 'false',
-  dashboardOrigins: 'https://app.example.com',
+  dashboardOrigins: 'https://console.fenvix.dev',
   engineRetentionWindowSecs: '604800',
 };
 

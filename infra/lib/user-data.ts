@@ -6,7 +6,7 @@ import { FenvixConfig } from './config';
 import {
   CONTROL_PLANE_CONTAINER,
   CONTROL_PLANE_INTERNAL_PORT,
-  consoleHost,
+  apiHost,
   controlPlaneEnvironment,
 } from './control-plane-env';
 import { DOCKER_BRIDGE_IP, PATHS, engineArgs, engineEnvironment } from './engine-command';
@@ -25,7 +25,7 @@ export interface UserDataInput {
   tlsSecretArn: string;
   /** Route 53 zone the DNS-01 challenge records go to. May be a CDK token. */
   hostedZoneId: string;
-  /** The control plane and its TLS terminator run in the first region only (DNS for console.<domain> points there). */
+  /** The control plane and its TLS terminator run in the first region only (DNS for api.<domain> points there). */
   runControlPlane: boolean;
 }
 
@@ -156,7 +156,7 @@ export function bootScript(i: UserDataInput): string[] {
             '\tadmin off',
             '\tauto_https off',
             '}',
-            `https://${consoleHost(c)}:443 {`,
+            `https://${apiHost(c)}:443 {`,
             '\ttls /certs/fullchain.pem /certs/key.pem',
             `\treverse_proxy ${CONTROL_PLANE_CONTAINER}:${CONTROL_PLANE_INTERNAL_PORT}`,
             '}',
@@ -245,7 +245,7 @@ export function bootScript(i: UserDataInput): string[] {
     'python3.11 -m venv /opt/fenvix/certbot',
     '/opt/fenvix/certbot/bin/pip install --quiet --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /opt/fenvix/certbot-requirements.txt',
     '/opt/fenvix/certbot/bin/certbot --version',
-    ...heredoc('/etc/fenvix/tls.env', tlsEnv({ config: c, region: i.region, withConsole: i.runControlPlane, restartUnits }).join('\n'), '0600'),
+    ...heredoc('/etc/fenvix/tls.env', tlsEnv({ config: c, region: i.region, withApi: i.runControlPlane, restartUnits }).join('\n'), '0600'),
     `printf "TLS_SECRET_ID='%s'\\nACME_ZONE_ID='%s'\\n" "$FENVIX_TLS_SECRET_ID" "$FENVIX_DNS_ZONE_ID" >> /etc/fenvix/tls.env`,
     '',
     ...heredoc('/usr/local/bin/fenvix-fetch-config', FETCH_CONFIG, '0755'),

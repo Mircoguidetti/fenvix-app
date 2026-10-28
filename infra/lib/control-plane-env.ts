@@ -12,9 +12,12 @@ export interface ControlPlaneEnvInput {
   region: string;
 }
 
-/** Public host of the control-plane API (DNS record and certificate name). */
-export function consoleHost(c: FenvixConfig): string {
-  return `console.${c.baseDomain}`;
+/**
+ * Public host of the control-plane API (DNS record, certificate name, Caddy site, API_PUBLIC_URL). Not console.<domain>:
+ * that name is the dashboard on Vercel, outside this stack, and only appears here as a dashboardOrigins entry.
+ */
+export function apiHost(c: FenvixConfig): string {
+  return `api.${c.baseDomain}`;
 }
 
 /** Name the control plane checks the engine's certificate against (covered by `*.<region>.db.<domain>`). */
@@ -35,7 +38,7 @@ export function controlPlaneEnvironment(i: ControlPlaneEnvInput): [string, strin
     ['HOST', '0.0.0.0'],
     ['PORT', String(CONTROL_PLANE_INTERNAL_PORT)],
     ['REGIONS', i.region],
-    ['API_PUBLIC_URL', `https://${consoleHost(c)}/v1`],
+    ['API_PUBLIC_URL', `https://${apiHost(c)}/v1`],
     ['DASHBOARD_ORIGINS', c.dashboardOrigins.join(',')],
     // Only the TLS terminator on the same host reaches the container; it sets X-Forwarded-For to the client address.
     ['TRUST_PROXY', 'true'],

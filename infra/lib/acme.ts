@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { FenvixConfig } from './config';
-import { consoleHost } from './control-plane-env';
+import { apiHost } from './control-plane-env';
 
 /**
  * Let's Encrypt on the server: certbot (pinned, installed from PyPI with --require-hashes into a venv on the host)
@@ -31,11 +31,11 @@ export function zoneName(c: FenvixConfig): string {
 }
 
 /**
- * With dnsZone=db the zone is db.<domain> and console.<domain> lives at the domain's own DNS provider. Its challenge
+ * With dnsZone=db the zone is db.<domain> and api.<domain> lives at the domain's own DNS provider. Its challenge
  * name is then delegated with a CNAME made there by hand (README.md) to this name in the Route 53 zone.
  */
-export function consoleChallengeTarget(c: FenvixConfig): string {
-  return `_acme-challenge-console.db.${c.baseDomain}`;
+export function apiChallengeTarget(c: FenvixConfig): string {
+  return `_acme-challenge-api.db.${c.baseDomain}`;
 }
 
 export interface ChallengeRecord {
@@ -48,19 +48,19 @@ export interface ChallengeRecord {
 }
 
 /**
- * The names of a region's certificate and the only TXT records its server may write. The console name is in the
+ * The names of a region's certificate and the only TXT records its server may write. The API name (api.<domain>) is in the
  * certificate of the region that runs the control plane only (the other regions have no use for it, and their role
  * then cannot touch its challenge record).
  */
-export function challengeRecords(c: FenvixConfig, region: string, withConsole: boolean): ChallengeRecord[] {
+export function challengeRecords(c: FenvixConfig, region: string, withApi: boolean): ChallengeRecord[] {
   const db = `${region}.db.${c.baseDomain}`;
   const out: ChallengeRecord[] = [{ certName: `*.${db}`, certbotDomain: db, record: `_acme-challenge.${db}` }];
-  if (withConsole) {
-    const host = consoleHost(c);
+  if (withApi) {
+    const host = apiHost(c);
     out.push({
       certName: host,
       certbotDomain: host,
-      record: c.dnsZone === 'db' ? consoleChallengeTarget(c) : `_acme-challenge.${host}`,
+      record: c.dnsZone === 'db' ? apiChallengeTarget(c) : `_acme-challenge.${host}`,
     });
   }
   return out;
@@ -69,7 +69,7 @@ export function challengeRecords(c: FenvixConfig, region: string, withConsole: b
 export interface TlsEnvInput {
   config: FenvixConfig;
   region: string;
-  withConsole: boolean;
+  withApi: boolean;
   /** Units restarted when a new certificate is installed. */
   restartUnits: string[];
 }
@@ -79,7 +79,7 @@ export interface TlsEnvInput {
  * Every value is checked by loadConfig to hold no quote, so single quotes are safe.
  */
 export function tlsEnv(i: TlsEnvInput): string[] {
-  const recs = challengeRecords(i.config, i.region, i.withConsole);
+  const recs = challengeRecords(i.config, i.region, i.withApi);
   return [
     `ACME_SERVER='${acmeServer(i.config)}'`,
     `ACME_EMAIL='${i.config.acmeEmail}'`,

@@ -25,8 +25,8 @@ describe('control-plane container environment', () => {
       HOST_TEMPLATE: '<name>-<workspace>.<region>.db.<BASE_DOMAIN>',
       BASE_DOMAIN: 'example.com',
       REGIONS: 'eu-central-1',
-      API_PUBLIC_URL: 'https://console.example.com/v1',
-      DASHBOARD_ORIGINS: 'https://app.example.com',
+      API_PUBLIC_URL: 'https://api.example.com/v1',
+      DASHBOARD_ORIGINS: 'https://console.fenvix.dev',
       TRUST_PROXY: 'true',
       ENGINE_PROVISIONER_USERNAME: 'fenvix_provisioner',
       ENGINE_RETENTION_WINDOW_SECS: '604800',
@@ -66,11 +66,20 @@ describe('control-plane container environment', () => {
     const dir = mkdtempSync(join(tmpdir(), 'fenvix-cp-'));
     const runner = join(dir, 'run.mjs');
     writeFileSync(runner, `const { loadConfig } = await import(process.argv[2]);
-try { const c = loadConfig(JSON.parse(process.argv[3])); console.log(JSON.stringify({ ok: true, driver: c.engineDriver, data: c.data.driver, users: !!c.engineUsers, engine: !!c.engine })); }
+try { const c = loadConfig(JSON.parse(process.argv[3])); console.log(JSON.stringify({ ok: true, driver: c.engineDriver, data: c.data.driver, users: !!c.engineUsers, engine: !!c.engine, origins: c.dashboardOrigins, api: c.apiPublicUrl })); }
 catch (e) { console.log(JSON.stringify({ ok: false, error: e.message })); }\n`);
     const r = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', runner, cpConfig, JSON.stringify({ ...env, ...fake })], { encoding: 'utf8' });
     expect(r.stderr).toBe('');
-    expect(JSON.parse(r.stdout)).toEqual({ ok: true, driver: 'real', data: 'mongo', users: true, engine: true });
+    expect(JSON.parse(r.stdout)).toEqual({
+      ok: true,
+      driver: 'real',
+      data: 'mongo',
+      users: true,
+      engine: true,
+      // CORS allows exactly the dashboard (console.<domain>), and the API is api.<domain>: never the same origin.
+      origins: ['https://console.fenvix.dev'],
+      api: 'https://api.example.com/v1',
+    });
     // And it refuses when a required secret is missing (the boot script stops earlier, but the service agrees).
     const { ENGINE_USER_KEY: _drop, ...without } = fake;
     const r2 = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', runner, cpConfig, JSON.stringify({ ...env, ...without })], { encoding: 'utf8' });

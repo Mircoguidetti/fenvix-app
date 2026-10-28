@@ -32,12 +32,12 @@ export interface FenvixConfig {
   proxyImage: string;
   /**
    * The domain. Required: the engine only serves TLS from a certificate file, and the certificate is issued for
-   * `*.<region>.db.<baseDomain>` (database hosts) and `console.<baseDomain>` (the control-plane API).
+   * `*.<region>.db.<baseDomain>` (database hosts) and `api.<baseDomain>` (the control-plane API).
    */
   baseDomain: string;
   /**
    * Which name the Route 53 zone has. `db`: the zone is `db.<baseDomain>` (only that subdomain is delegated to Route 53;
-   * the rest of the domain stays where it is, and console.<baseDomain> is made by hand there). `domain`: the zone is
+   * the rest of the domain stays where it is, and api.<baseDomain> is made by hand there). `domain`: the zone is
    * `<baseDomain>` itself (the whole domain is delegated to Route 53). README.md, "The domain and DNS".
    */
   dnsZone: DnsZone;
@@ -47,7 +47,10 @@ export interface FenvixConfig {
   acmeEmail: string;
   /** Use the Let's Encrypt staging environment (certificates NOT trusted by drivers or browsers; for a first trial). */
   acmeStaging: boolean;
-  /** Browser origins of the dashboard allowed by the control plane (CORS), e.g. https://app.example.com. */
+  /**
+   * Browser origins of the dashboard allowed by the control plane (CORS), e.g. https://console.fenvix.dev. Required, no
+   * default. Never the API's own origin (https://api.<baseDomain>) nor a database host (*.db.<baseDomain>).
+   */
   dashboardOrigins: string[];
   /** Restore-point window (seconds) the control plane sets on every new database; 0 keeps none. */
   engineRetentionWindowSecs: number;
@@ -144,7 +147,13 @@ export function loadConfig(get: Lookup): FenvixConfig {
   const dashboardOrigins = need('dashboardOrigins').split(',').map((o) => o.trim()).filter(Boolean);
   for (const o of dashboardOrigins) {
     if (!/^https:\/\/[a-z0-9.-]+(:\d{1,5})?$/.test(o)) throw new Error(`dashboardOrigins: "${o}" must be an https:// origin without path or trailing slash`);
+    // The dashboard (console.<domain>, Vercel) and the API (api.<domain>, this stack) are different origins: allowing
+    // the API's own origin, or a database host, would only widen CORS to hosts that are not the dashboard.
+    const host = o.slice('https://'.length).replace(/:\d+$/, '');
+    if (host === `api.${baseDomain}`) throw new Error(`dashboardOrigins: "${o}" is the API's own origin, not the dashboard's`);
+    if (host === `db.${baseDomain}` || host.endsWith(`.db.${baseDomain}`)) throw new Error(`dashboardOrigins: "${o}" is a database host, not the dashboard`);
   }
+  if (dashboardOrigins.length === 0) throw new Error('dashboardOrigins: give at least one origin, e.g. https://console.fenvix.dev');
   const proxyImage = need('proxyImage');
   if (!/^[A-Za-z0-9._\-/:@]+$/.test(proxyImage)) throw new Error('proxyImage is not a valid image reference');
   const engineSha256 = val('engineSha256')?.toLowerCase();

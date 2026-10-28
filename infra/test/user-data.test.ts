@@ -156,14 +156,14 @@ describe('user-data script', () => {
     expect(unit).not.toMatch(/^-ExecStartPre/m);
   });
 
-  test('the TLS terminator publishes the control-plane port and serves console.<domain> with the same certificate files', () => {
+  test('the TLS terminator publishes the control-plane port and serves api.<domain> with the same certificate files', () => {
     const unit = written('/etc/systemd/system/fenvix-proxy.service');
     const run = unit.split('\n').find((l) => l.startsWith('ExecStart='))!;
     expect(run).toContain('-p 443:443');
     expect(run).toContain('-v /etc/fenvix/tls:/certs:ro');
     expect(unit).toContain('ExecStartPre=+/usr/local/bin/fenvix-tls');
     const caddy = written('/etc/fenvix/proxy/Caddyfile');
-    expect(caddy).toContain('https://console.example.com:443 {');
+    expect(caddy).toContain('https://api.example.com:443 {');
     expect(caddy).toContain('tls /certs/fullchain.pem /certs/key.pem');
     expect(caddy).toContain('reverse_proxy fenvix-control-plane:3000');
     expect(caddy).toContain('admin off');
@@ -197,8 +197,8 @@ describe('user-data script', () => {
     const env = written('/etc/fenvix/tls.env');
     expect(env).toContain(`ACME_SERVER='${ACME_DIRECTORY.production}'`);
     expect(env).toContain("ACME_EMAIL='certs@example.com'");
-    expect(env).toContain("ACME_DOMAINS='*.eu-central-1.db.example.com console.example.com'");
-    expect(env).toContain("ACME_RECORDS='eu-central-1.db.example.com=_acme-challenge.eu-central-1.db.example.com console.example.com=_acme-challenge.console.example.com'");
+    expect(env).toContain("ACME_DOMAINS='*.eu-central-1.db.example.com api.example.com'");
+    expect(env).toContain("ACME_RECORDS='eu-central-1.db.example.com=_acme-challenge.eu-central-1.db.example.com api.example.com=_acme-challenge.api.example.com'");
     expect(env).toContain("RESTART_UNITS='fenvix-engine.service fenvix-proxy.service'");
     expect(lines).toContain('chmod 0600 /etc/fenvix/tls.env');
   });
@@ -218,7 +218,7 @@ describe('user-data script', () => {
     expect(otherText).not.toContain('fenvix-proxy.service');
     const env = written('/etc/fenvix/tls.env', other);
     expect(env).toContain("ACME_DOMAINS='*.eu-central-1.db.example.com'");
-    expect(env).not.toContain('console');
+    expect(env).not.toContain('api.example.com');
     expect(env).toContain("RESTART_UNITS='fenvix-engine.service'");
   });
 

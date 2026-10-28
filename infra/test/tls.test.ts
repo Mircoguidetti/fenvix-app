@@ -26,7 +26,7 @@ const conf = join(root, 'tls.env');
 const outputs: string[] = [];
 
 function writeConf(over: { server?: string; domains?: string } = {}): void {
-  const lines = tlsEnv({ config, region: 'eu-central-1', withConsole: true, restartUnits: ['fenvix-engine.service', 'fenvix-proxy.service'] }).map((l) => {
+  const lines = tlsEnv({ config, region: 'eu-central-1', withApi: true, restartUnits: ['fenvix-engine.service', 'fenvix-proxy.service'] }).map((l) => {
     if (over.server && l.startsWith('ACME_SERVER=')) return `ACME_SERVER='${over.server}'`;
     if (over.domains && l.startsWith('ACME_DOMAINS=')) return `ACME_DOMAINS='${over.domains}'`;
     return l;
@@ -134,7 +134,7 @@ describe('fenvix-tls (real script, fake certbot / Secrets Manager / systemctl)',
     const call = readFileSync(join(work, 'certbot-calls'), 'utf8');
     expect(call).toContain(`--server ${ACME_DIRECTORY.production}`);
     expect(call).toContain('-m certs@example.com --server');
-    expect(call).toContain('-d *.eu-central-1.db.example.com -d console.example.com');
+    expect(call).toContain('-d *.eu-central-1.db.example.com -d api.example.com');
     expect(call).toContain('--manual --preferred-challenges dns');
     expect(call).toContain(`--manual-auth-hook ${join(root, 'fenvix-acme-dns-hook')} present`);
     expect(call).toContain('--force-renewal');
@@ -262,7 +262,7 @@ describe('fenvix-tls (real script, fake certbot / Secrets Manager / systemctl)',
   t('a different name list (config changed) means a new certificate', () => {
     expect(run().stdout).toContain('nothing to do');
     const calls = count('certbot-calls');
-    writeConf({ domains: '*.eu-central-1.db.example.com console.example.com extra.example.com' });
+    writeConf({ domains: '*.eu-central-1.db.example.com api.example.com extra.example.com' });
     const r = run();
     expect(r.status).toBe(0);
     expect(count('certbot-calls')).toBe(calls + 1);
@@ -331,22 +331,22 @@ describe('fenvix-acme-dns-hook (real script, fake aws)', () => {
   });
 
   t('cleanup: DELETE of the same record; a failed cleanup is not an error', () => {
-    expect(hook('console.example.com', 'xyz', 'cleanup').status).toBe(0);
-    expect(lastBatch().Changes[0]).toMatchObject({ Action: 'DELETE', ResourceRecordSet: { Name: '_acme-challenge.console.example.com', Type: 'TXT' } });
+    expect(hook('api.example.com', 'xyz', 'cleanup').status).toBe(0);
+    expect(lastBatch().Changes[0]).toMatchObject({ Action: 'DELETE', ResourceRecordSet: { Name: '_acme-challenge.api.example.com', Type: 'TXT' } });
     flag('r53-fail', true);
-    const r = hook('console.example.com', 'xyz', 'cleanup');
+    const r = hook('api.example.com', 'xyz', 'cleanup');
     expect(r.status).toBe(0);
     expect(r.stderr).toContain('could not remove');
-    expect(hook('console.example.com', 'xyz', 'present').status).not.toBe(0);
+    expect(hook('api.example.com', 'xyz', 'present').status).not.toBe(0);
     flag('r53-fail', false);
   });
 
-  t('dnsZone=db: the console challenge goes to the CNAME target inside db.<domain>', () => {
+  t('dnsZone=db: the api challenge goes to the CNAME target inside db.<domain>', () => {
     const dbConf = join(root, 'tls-db.env');
     const c = loadConfig((k) => ({ ...BASE_CONTEXT, dnsZone: 'db' })[k]);
-    writeFileSync(dbConf, [...tlsEnv({ config: c, region: 'eu-central-1', withConsole: true, restartUnits: [] }), "ACME_ZONE_ID='Z0DB'"].join('\n') + '\n');
-    expect(hook('console.example.com', 'v1', 'present', dbConf).status).toBe(0);
-    expect(lastBatch().Changes[0].ResourceRecordSet.Name).toBe('_acme-challenge-console.db.example.com');
+    writeFileSync(dbConf, [...tlsEnv({ config: c, region: 'eu-central-1', withApi: true, restartUnits: [] }), "ACME_ZONE_ID='Z0DB'"].join('\n') + '\n');
+    expect(hook('api.example.com', 'v1', 'present', dbConf).status).toBe(0);
+    expect(lastBatch().Changes[0].ResourceRecordSet.Name).toBe('_acme-challenge-api.db.example.com');
   });
 
   t('refuses a name that is not ours and a validation value that is not base64url, without calling AWS', () => {
@@ -354,7 +354,7 @@ describe('fenvix-acme-dns-hook (real script, fake aws)', () => {
     const r = hook('evil.example.org', 'abc', 'present');
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("no challenge record configured for 'evil.example.org'");
-    expect(hook('console.example.com', 'a"},{"Action":"DELETE', 'present').status).toBe(1);
+    expect(hook('api.example.com', 'a"},{"Action":"DELETE', 'present').status).toBe(1);
     expect(count('aws-calls')).toBe(calls);
   });
 });

@@ -305,7 +305,7 @@ describe('IAM', () => {
     expect(change.Resource).toEqual({ 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':route53:::hostedzone/', { Ref: expect.stringMatching(/^Zone/) }]] });
     expect(change.Condition).toEqual({
       'ForAllValues:StringEquals': {
-        'route53:ChangeResourceRecordSetsNormalizedRecordNames': ['_acme-challenge.eu-central-1.db.example.com', '_acme-challenge.console.example.com'],
+        'route53:ChangeResourceRecordSetsNormalizedRecordNames': ['_acme-challenge.eu-central-1.db.example.com', '_acme-challenge.api.example.com'],
         'route53:ChangeResourceRecordSetsRecordTypes': ['TXT'],
         'route53:ChangeResourceRecordSetsActions': ['UPSERT', 'DELETE'],
       },
@@ -441,26 +441,26 @@ describe('DNS and certificates', () => {
     expect(lb.filter((l, n) => l !== la[n])).toEqual(["ACME_SERVER='https://acme-staging-v02.api.letsencrypt.org/directory'"]);
   });
 
-  test('dnsZone=domain: zone <domain>, A records *.<region>.db and console to the node IP', () => {
+  test('dnsZone=domain: zone <domain>, A records *.<region>.db and api to the node IP', () => {
     const { template, json } = synth({ baseDomain: 'Example.com', dnsZone: 'domain' });
     template.resourceCountIs('AWS::Route53::HostedZone', 1);
     template.hasResourceProperties('AWS::Route53::HostedZone', { Name: 'example.com.' });
     template.hasResourceProperties('AWS::Route53::RecordSet', { Name: '*.eu-central-1.db.example.com.', Type: 'A' });
-    template.hasResourceProperties('AWS::Route53::RecordSet', { Name: 'console.example.com.', Type: 'A' });
+    template.hasResourceProperties('AWS::Route53::RecordSet', { Name: 'api.example.com.', Type: 'A' });
     const names = resourcesOf(json, 'AWS::Route53::RecordSet').map(([, r]) => r.Properties.Name);
     expect(names).not.toContain('*.db.example.com.');
   });
 
-  test('dnsZone=db (the default): zone db.<domain>, the database record only; the console records are outputs to create by hand', () => {
+  test('dnsZone=db (the default): zone db.<domain>, the database record only; the api records are outputs to create by hand', () => {
     const { template, json } = synth({ dnsZone: 'db' });
     template.hasResourceProperties('AWS::Route53::HostedZone', { Name: 'db.example.com.' });
     expect(resourcesOf(json, 'AWS::Route53::RecordSet').map(([, r]) => r.Properties.Name)).toEqual(['*.eu-central-1.db.example.com.']);
-    expect(json.Outputs.ConsoleChallengeRecordToCreate.Value).toBe('_acme-challenge.console.example.com CNAME _acme-challenge-console.db.example.com');
-    expect(JSON.stringify(json.Outputs.ConsoleRecordToCreate.Value)).toContain('console.example.com A ');
+    expect(json.Outputs.ApiChallengeRecordToCreate.Value).toBe('_acme-challenge.api.example.com CNAME _acme-challenge-api.db.example.com');
+    expect(JSON.stringify(json.Outputs.ApiRecordToCreate.Value)).toContain('api.example.com A ');
     const change = allStatements(json).find((s) => asArray(s.statement.Action).includes('route53:ChangeResourceRecordSets'))!.statement;
     expect(change.Condition['ForAllValues:StringEquals']['route53:ChangeResourceRecordSetsNormalizedRecordNames']).toEqual([
       '_acme-challenge.eu-central-1.db.example.com',
-      '_acme-challenge-console.db.example.com',
+      '_acme-challenge-api.db.example.com',
     ]);
     expect(loadConfig((k) => ({ ...BASE_CONTEXT, dnsZone: undefined as any })[k]).dnsZone).toBe('db');
     expect(require('../cdk.json').context.dnsZone).toBe('db');
@@ -480,7 +480,7 @@ describe('DNS and certificates', () => {
     const covered = (wildcard: string) => wildcard.startsWith('*.') && host.split('.').slice(1).join('.') === wildcard.slice(2);
     expect(covered('*.eu-central-1.db.example.com')).toBe(true);
     expect(covered('*.db.example.com')).toBe(false);
-    expect(userDataText(synth().json).boot).toContain("ACME_DOMAINS='*.eu-central-1.db.example.com console.example.com'");
+    expect(userDataText(synth().json).boot).toContain("ACME_DOMAINS='*.eu-central-1.db.example.com api.example.com'");
   });
 
   test('an existing hosted zone id is referenced instead of creating a zone', () => {
@@ -489,7 +489,7 @@ describe('DNS and certificates', () => {
     template.hasResourceProperties('AWS::Route53::RecordSet', { HostedZoneId: 'Z0123456789ABC' });
   });
 
-  test('two regions: an existing zone is required; each region its own certificate names, record and challenge permission; console and control plane in the first only', () => {
+  test('two regions: an existing zone is required; each region its own certificate names, record and challenge permission; api and control plane in the first only', () => {
     expect(() => buildApp({ regions: 'eu-central-1,us-east-1' })).toThrow(/hostedZoneId/);
     const { stacks } = buildApp({ regions: 'eu-central-1,us-east-1', hostedZoneId: 'Z0123456789ABC' });
     const { Template } = require('aws-cdk-lib/assertions');
@@ -501,7 +501,7 @@ describe('DNS and certificates', () => {
       allStatements(t.toJSON()).find((s) => asArray(s.statement.Action).includes('route53:ChangeResourceRecordSets'))!.statement.Condition['ForAllValues:StringEquals'][
         'route53:ChangeResourceRecordSetsNormalizedRecordNames'
       ];
-    expect(names(a)).toEqual(['_acme-challenge.eu-central-1.db.example.com', '_acme-challenge.console.example.com']);
+    expect(names(a)).toEqual(['_acme-challenge.eu-central-1.db.example.com', '_acme-challenge.api.example.com']);
     expect(names(b)).toEqual(['_acme-challenge.us-east-1.db.example.com']);
     const ud = (t: any) => userDataText(t.toJSON()).boot;
     expect(ud(a)).toContain('fenvix-control-plane.service');
@@ -515,8 +515,8 @@ describe('DNS and certificates', () => {
 
   test('dashboard origins must be https origins', () => {
     expect(() => synth({ dashboardOrigins: '' })).toThrow(/dashboardOrigins/);
-    expect(() => synth({ dashboardOrigins: 'http://app.example.com' })).toThrow(/dashboardOrigins/);
-    expect(() => synth({ dashboardOrigins: 'https://app.example.com/' })).toThrow(/dashboardOrigins/);
+    expect(() => synth({ dashboardOrigins: 'http://console.fenvix.dev' })).toThrow(/dashboardOrigins/);
+    expect(() => synth({ dashboardOrigins: 'https://console.fenvix.dev/' })).toThrow(/dashboardOrigins/);
   });
 });
 
