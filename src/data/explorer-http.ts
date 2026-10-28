@@ -16,7 +16,8 @@ async function token(): Promise<string> {
   return t;
 }
 
-async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
+/** One request to the control plane. Also used for database users (users-http.ts). */
+export async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
   if (!apiUrl) throw new ExplorerError("not_configured", "The data explorer is not set up for this dashboard yet (VITE_API_URL).", 0);
   let res: Response;
   try {

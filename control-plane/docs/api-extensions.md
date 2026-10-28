@@ -56,3 +56,29 @@ Changes to existing behaviour, all additive:
 
 * `POST /api-keys` accepts `"dataAccess": "read" | "readWrite"` (default `read`), and every key in `GET /api-keys` and the create answer has `dataAccess`. Only `readWrite` keys can insert, save or delete documents. Needs migration `0004_data_explorer.sql`.
 * A new error code, `unavailable` (503, with `Retry-After`): the engine's MongoDB listener did not answer in time or is waking a database. Only the Data Explorer uses it.
+
+## Database users
+
+The customer's own database users ("Database Access"). Everything about them (roles, who may do what, limits, how a
+password is shown once, erase, fork, restore, audit, residual risk) is in [`database-users.md`](database-users.md).
+Four routes, not in the contract document; the contract test lists them as extensions:
+
+* `GET /databases/{id}/users` -> `{ items: [{ username, role, createdAt }], limit }`. Never a password; never the
+  control plane's own `cp_<hex>` user.
+* `POST /databases/{id}/users` `{ username, role? }` -> `201 { user, password, connectionString }`. `role` is
+  `"readWrite"` (default) or `"read"`; any other field is refused.
+* `POST /databases/{id}/users/{username}/reset-password` -> `200 { user, password, connectionString }`.
+* `DELETE /databases/{id}/users/{username}` -> `200 { username, deleted: true }`.
+
+The three changes are `Idempotency-Key` "no-replay": a repeat with the same key answers `409` and changes nothing.
+
+Changes to existing behaviour, all additive:
+
+* `POST /databases` and `POST /databases/{id}/fork` accept `appUser` (the initial user's name, default `"app"`). Their
+  answer (the `Database`, `201`/`200`) has `initialUser: { username, role, password, connectionString }`; `password`
+  and `connectionString` are set in the answer to the request that started the operation only, and are `null` in a
+  replay, in `GET /operations/{id}` and when the answer was a `202`.
+* `Database.connectionString` names the database's user (its initial user, or `<username>` when it was deleted) and
+  carries `authSource` and `authMechanism=SCRAM-SHA-256`: `mongodb://app:<password>@host:port/db?tls=true&authSource=db&authMechanism=SCRAM-SHA-256`.
+* `POST /api-keys` accepts `"userAccess": "none" | "manage"` (default `none`), and every key has `userAccess`. Only
+  `manage` keys can create, reset or delete database users. Needs migration `0007_database_users.sql`.

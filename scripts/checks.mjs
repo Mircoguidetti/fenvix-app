@@ -48,6 +48,9 @@ async function eventually(read, message) {
   throw new Error(message);
 }
 
+/** The cell of a database user's name (on a phone a cell's accessible name also holds its column label). */
+const userCell = (page, name) => page.locator("#users td .user-name").filter({ hasText: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) });
+
 /** Clicks a segmented-control tab and waits for it to actually be the chosen one. */
 async function clickTab(page, name) {
   const tab = page.getByRole("button", { name, exact: true });
@@ -189,17 +192,30 @@ const TESTS = {
     await page.getByLabel("Tags").fill("customer:checkco env:dev");
     await page.getByRole("button", { name: "Create database" }).click();
     await page.getByRole("link", { name: "Open database" }).waitFor();
-    const conn = await page.getByRole("textbox", { name: "Connection string" }).inputValue();
-    assert(conn.startsWith("mongodb://") && conn.includes("check-create-01.db.fenvix.cloud"), `connection string: ${conn}`);
-    await page.getByRole("button", { name: "Copy connection string" }).click();
-    await page.getByRole("button", { name: "Copy connection string" }).filter({ hasText: "Copied" }).waitFor();
+    const conn = await page.getByRole("textbox", { name: "Connection string", exact: true }).inputValue();
+    assert(conn.startsWith("mongodb://app:<password>@") && conn.includes("check-create-01.db.fenvix.cloud"), `connection string: ${conn}`);
+    await page.getByRole("button", { name: "Copy connection string", exact: true }).click();
+    await page.getByRole("button", { name: "Copy connection string", exact: true }).filter({ hasText: "Copied" }).waitFor();
     assert((await page.evaluate(() => navigator.clipboard.readText())) === conn, "clipboard does not hold the connection string");
     await toast(page, "Created database check-create-01");
+
+    // The first database user's password: shown once, here, with a warning and a copy button.
+    const password = (await page.getByTestId("once-password").innerText()).trim();
+    assert(/^[A-Za-z0-9]{40}$/.test(password), `initial password: ${password}`);
+    await page.getByText("This is the only time it is shown").waitFor();
+    await page.getByRole("button", { name: "Copy password" }).click();
+    assert((await page.evaluate(() => navigator.clipboard.readText())) === password, "clipboard does not hold the password");
+    const withPw = await page.getByRole("textbox", { name: "Connection string with this password" }).inputValue();
+    assert(withPw === conn.replace("<password>", password), `connection string with the password: ${withPw}`);
 
     await page.getByRole("link", { name: "Open database" }).click();
     await page.getByRole("heading", { name: "check-create-01" }).waitFor();
     await page.getByText("customer:checkco").first().waitFor();
     await page.getByText("us-east").first().waitFor();
+    assert(!(await page.content()).includes(password), "the password is still on the page after leaving the creation screen");
+    await page.getByRole("button", { name: "Users", exact: true }).click();
+    await userCell(page, "app").waitFor();
+    assert(!(await page.content()).includes(password), "the Users tab shows the password again");
 
     await go(page, "databases/new");
     await page.getByLabel("Name", { exact: true }).fill("check-create-01");
@@ -299,6 +315,11 @@ const TESTS = {
     await page.getByRole("dialog").getByRole("alert").getByText("already exists").waitFor();
     await page.getByLabel("Name of the copy").fill("check-fork-a");
     await page.getByRole("button", { name: "Fork and open" }).click();
+    // The fork's own first user: its password is shown once before the fork opens.
+    const shown = page.getByRole("dialog", { name: "Save the fork's database user" });
+    await shown.waitFor();
+    assert(/^[A-Za-z0-9]{40}$/.test((await shown.getByTestId("once-password").innerText()).trim()), "the fork's password is not shown");
+    await shown.getByRole("button", { name: "I have saved it" }).click();
     await page.getByRole("heading", { name: "check-fork-a" }).waitFor();
     await toast(page, "Forked agent-memory as check-fork-a");
     await page.getByText("customer:northwind").first().waitFor();
@@ -606,6 +627,88 @@ const TESTS = {
     await pickCollection(page, vp, "orders");
     await eventually(async () => (await page.locator(".doc").count()) === 8, "the woken database did not show its documents");
     assert(!(await page.getByText("Waking the database").count()), "the waking notice stayed");
+  },
+
+  async "database users: list, add, reset and delete; the password is shown once"(page) {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await signIn(page, "databases/db_0001?tab=users");
+    await page.getByRole("heading", { name: "Users", exact: true }).waitFor();
+    await userCell(page, "reporting").waitFor();
+    await page.getByText("3 of 20 users.").waitFor();
+    assert(!/[A-Za-z0-9]{40}/.test(await page.locator("#users table").innerText()), "the list shows something that looks like a password");
+
+    // A name the server would refuse is explained before anything is sent.
+    await page.getByRole("button", { name: "Add user" }).click();
+    const add = page.getByRole("dialog", { name: "Add a user" });
+    await add.getByLabel("User name").fill("Admin!");
+    await add.getByRole("button", { name: "Create user" }).click();
+    await add.getByRole("alert").getByText("lowercase letters").waitFor();
+    await add.getByLabel("User name").fill("check-reader");
+    await add.getByLabel("Access").selectOption("read");
+    await add.getByRole("button", { name: "Create user" }).click();
+
+    const once = page.getByRole("dialog", { name: "User check-reader created" });
+    await once.waitFor();
+    await once.getByText("This is the only time it is shown").waitFor();
+    const first = (await once.getByTestId("once-password").innerText()).trim();
+    assert(/^[A-Za-z0-9]{40}$/.test(first), `password: ${first}`);
+    await once.getByRole("button", { name: "Copy password" }).click();
+    assert((await page.evaluate(() => navigator.clipboard.readText())) === first, "clipboard does not hold the password");
+    assert((await once.getByRole("textbox", { name: "Connection string with this password" }).inputValue()).includes(`check-reader:${first}@`), "connection string with the password");
+    await once.getByRole("button", { name: "I have saved it" }).click();
+    await once.waitFor({ state: "hidden" });
+    await userCell(page, "check-reader").waitFor();
+    assert(!(await page.content()).includes(first), "the password is still in the page after the dialog closed");
+
+    // Reset: a confirmation, then a new password, once.
+    await page.getByRole("button", { name: "Reset password of check-reader" }).click();
+    const confirmReset = page.getByRole("dialog", { name: "Reset this password?" });
+    await confirmReset.getByRole("button", { name: "Reset password" }).click();
+    const again = page.getByRole("dialog", { name: "New password for check-reader" });
+    await again.waitFor();
+    const second = (await again.getByTestId("once-password").innerText()).trim();
+    assert(/^[A-Za-z0-9]{40}$/.test(second) && second !== first, "the reset did not give a new password");
+    await again.getByRole("button", { name: "I have saved it" }).click();
+    await again.waitFor({ state: "hidden" });
+
+    // Delete, with a confirmation that can be cancelled.
+    await page.getByRole("button", { name: "Delete user check-reader" }).click();
+    const confirmDelete = page.getByRole("dialog", { name: "Delete this user?" });
+    await confirmDelete.getByRole("button", { name: "Cancel" }).click();
+    await userCell(page, "check-reader").waitFor();
+    await page.getByRole("button", { name: "Delete user check-reader" }).click();
+    await confirmDelete.getByRole("button", { name: "Delete user" }).click();
+    await toast(page, "Deleted user check-reader");
+    await eventually(async () => (await userCell(page, "check-reader").count()) === 0, "the deleted user is still listed");
+    assert(!(await page.content()).includes(second), "a password is still in the page");
+  },
+
+  async "database users: names are shown as text, never as markup"(page) {
+    let alerted = false;
+    page.on("dialog", (d) => ((alerted = true), d.dismiss()));
+    await signIn(page, "databases/db_0001?tab=users");
+    await userCell(page, "reporting").waitFor();
+    const text = await page.locator("#users").innerText();
+    assert(text.includes("<script>window.__xss='user'</script>"), "the <script> in a user name is not shown as text");
+    assert((await page.locator("#users script, #users img, #users iframe").count()) === 0, "markup in a user name became an element");
+    await page.getByRole("button", { name: "Delete user <script>window.__xss='user'</script>" }).click();
+    const dlg = page.getByRole("dialog", { name: "Delete this user?" });
+    assert((await dlg.innerText()).includes("<script>"), "the dialog does not show the name as text");
+    assert((await page.locator("dialog script").count()) === 0, "markup became an element in the dialog");
+    await dlg.getByRole("button", { name: "Cancel" }).click();
+    await page.waitForTimeout(300);
+    assert(!alerted, "a user name opened a browser dialog");
+    assert((await page.evaluate(() => window.__xss)) === undefined, "code from a user name ran");
+  },
+
+  async "database users: empty and error states"(page) {
+    await signIn(page, "databases/db_0002?tab=users");
+    await page.getByRole("heading", { name: "No users yet" }).waitFor();
+    await page.getByRole("button", { name: "Add user" }).waitFor();
+    await go(page, "databases/db_0005?tab=users");
+    await page.getByRole("alert").getByText("The database engine did not answer").waitFor();
+    await page.getByRole("button", { name: "Try again" }).waitFor();
+    assert(await page.getByRole("button", { name: "Add user" }).isDisabled(), "Add user is enabled while the list could not load");
   },
 
   async "settings"(page) {

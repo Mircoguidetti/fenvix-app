@@ -14,6 +14,8 @@ const SCREENS = [
   ["database-detail", "databases/db_0001"],
   ["database-detail-asleep", "databases/db_0011"],
   ["create-database", "databases/new"],
+  ["database-users", "databases/db_0001?tab=users"],
+  ["database-users-empty", "databases/db_0002?tab=users"],
   ["usage", "usage"],
   ["usage-by-tag", "usage?by=tag&key=customer"],
   ["billing", "billing"],
@@ -105,6 +107,37 @@ for (const [vpName, viewport] of VIEWPORTS) {
     await page.keyboard.press("Escape");
     await page.getByRole("dialog").waitFor({ state: "hidden" });
   }
+
+  // Database users: the password shown once, after a user is made and after a database is created.
+  await go(page, "databases/db_0001?tab=users");
+  await settled(page);
+  await page.locator("#users td .user-name").filter({ hasText: /^reporting$/ }).waitFor();
+  await page.getByRole("button", { name: "Add user" }).click();
+  await page.getByRole("dialog", { name: "Add a user" }).waitFor();
+  await page.getByLabel("User name").fill("shot-user");
+  await check(`database-users-add ${vpName}`);
+  await shot("database-users-add-dialog", true);
+  await page.getByRole("button", { name: "Create user" }).click();
+  await page.getByRole("dialog", { name: "User shot-user created" }).waitFor();
+  await check(`database-users-password ${vpName}`);
+  await shot("database-users-password-dialog", true);
+  await page.getByRole("button", { name: "I have saved it" }).click();
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "Delete user shot-user" }).click();
+  await page.getByRole("dialog", { name: "Delete this user?" }).waitFor();
+  await check(`database-users-delete ${vpName}`);
+  await shot("database-users-delete-dialog", true);
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+
+  await go(page, "databases/new");
+  await settled(page);
+  await page.getByLabel("Name", { exact: true }).fill(`shot-created-${vpName}`);
+  await page.getByRole("button", { name: "Create database" }).click();
+  await page.getByRole("link", { name: "Open database" }).waitFor();
+  await page.locator(".toast").getByRole("button", { name: "Dismiss message" }).click();
+  await check(`database-created ${vpName}`);
+  await shot("database-created");
 
   await go(page, "api-keys");
   await settled(page);

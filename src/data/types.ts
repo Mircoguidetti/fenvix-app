@@ -21,12 +21,19 @@ export interface Database {
   forkedFrom: string | null;
   /** Point in time the data was last restored to, if ever. */
   restoredTo: string | null;
+  /**
+   * Only on the answer to a create or a fork: the first database user. Its password is shown this one time and is
+   * never sent again (null when it cannot be shown: reset it in the Users tab).
+   */
+  initialUser?: { username: string; role: string; password: string | null; connectionString: string | null } | null;
 }
 
 export interface NewDatabase {
   name: string;
   region: string;
   tags: string[];
+  /** Name of the first database user; "app" when left out. */
+  appUser?: string;
 }
 
 /** A file the browser can download. */

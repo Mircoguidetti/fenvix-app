@@ -12,7 +12,7 @@ config/plans.json    plans, plan limits, unit rates. Ships with NO price, NO rat
 src/config.ts        every setting, from environment variables
 src/app.ts           Fastify app: logging, CORS, error handler, request ids, downloads, route registration
 src/http.ts          authentication, rate limits, idempotency and operation answers around each route
-src/routes/          data.ts (sections 1 and 2), session.ts (section 3), explorer.ts (Data Explorer)
+src/routes/          data.ts (sections 1 and 2), session.ts (section 3), explorer.ts (Data Explorer), users.ts (database users)
 src/explorer/        rules.ts: what a browser may send to the Data Explorer (collection names, filters, documents, Extended JSON)
 src/services/        databases, operations (create/fork/restore/export/erase runner), usage, account (billing, keys, settings)
 src/engine/          EngineClient interface, the in-memory fake, and the real adapter (real.ts, admin-http.ts with the route allowlist, names.ts, zip.ts);
@@ -21,6 +21,8 @@ src/auth/            Supabase JWT verification (JWKS) and the Supabase Auth gate
 ../supabase/migrations/0002_control_plane.sql   restricted role, operations, idempotency and audit tables
 ../supabase/migrations/0003_close_dashboard_write_path.sql   closes the dashboard's direct write path (run at cutover)
 ../supabase/migrations/0004_data_explorer.sql   Data Explorer: audit log of document writes, API key data access
+../supabase/migrations/0005_engine_users.sql   the user sweep's view of databases (id, region, state)
+../supabase/migrations/0007_database_users.sql   database users: API key user access, the connection string's user name
 tests/unit, tests/integration, tests/helpers
 ```
 
@@ -28,7 +30,7 @@ tests/unit, tests/integration, tests/helpers
 
 ```bash
 cd control-plane && npm ci
-# a scratch Postgres 15+ (never Supabase): apply the stand-ins and the five migrations
+# a scratch Postgres 15+ (never Supabase): apply the stand-ins and the migrations (0001-0005, 0007)
 TEST_DATABASE_URL=postgresql://postgres@localhost:5432/cp_scratch bash scripts/prepare-test-db.sh
 npm test                       # typecheck, unit tests, integration tests (needs TEST_DATABASE_URL)
 SEEDED_DATABASE_URL=... node --test tests/integration/seeded.test.ts   # optional: the 3,000 database seed
@@ -119,6 +121,15 @@ Secrets are marked **secret**. Nothing here has a default for a secret, and no s
 ## Switching to the real engine
 
 Not before the engine release has both the admin interface and authentication + TLS (the fused branch), and the changes in [`docs/engine-alignment.md`](docs/engine-alignment.md) are made in `infra/` and the engine. Then make the engine's provisioner once (`docs/data-explorer-security.md`, "Making the provisioner"), add the SecureString parameters `/fenvix/prod/control-plane/engine-user-key` (`v1:<random>`) and `/fenvix/prod/control-plane/engine-provisioner-password`, and, in the AWS console as for the other secrets: add the SecureString parameter `/fenvix/prod/control-plane/engine-admin-token` with the same value as `/fenvix/prod/engine/admin-token` (it reaches the container as `ENGINE_ADMIN_TOKEN`), and set `ENGINE_DRIVER=real`, `ENGINE_ADMIN_ENDPOINTS`, `CONNECTION_PORT`, `CONNECTION_DB_NAME=engine`, `BASE_DOMAIN`, `HOST_TEMPLATE=<name>-<workspace>.<region>.db.<BASE_DOMAIN>`, and `ENGINE_RETENTION_WINDOW_SECS`. The service refuses to start with the real driver if any of these is missing or wrong, and says which. Then run the round trip at the end of `docs/engine-adapter.md`.
+
+## Database users
+
+Every database gets a user for the customer's application (`app` unless the create names another), with read and write
+on that database only; its password is shown once, in the answer to the create (or fork), and is kept by nobody but the
+engine (as a SCRAM hash). `/v1/databases/{id}/users` lists, creates, resets and deletes users. This version of the
+service needs migration `0007_database_users.sql` (after 0002 and 0004; safe to repeat): run it before deploying it.
+Everything (roles, permissions, API keys, limits, erase, fork, restore, audit, what is not done) is in
+[`docs/database-users.md`](docs/database-users.md).
 
 ## Limits worth knowing
 

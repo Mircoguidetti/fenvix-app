@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
+import { execFileSync } from "node:child_process";
 import { MongoClient } from "mongodb";
 import { engineUserName } from "../../src/engine/credentials.ts";
 import { engineName } from "../../src/engine/names.ts";
@@ -89,6 +90,22 @@ describe("engine-real: database users", { skip: SKIP }, () => {
     const plain = new MongoClient(local(d.initialUser.connectionString).replace("tls=true", "tls=false"), { serverSelectionTimeoutMS: 2000 });
     clients.push(plain);
     assert.notEqual(await code(plain.db().collection("orders").findOne({})), 0);
+  });
+
+  // A second official driver, when a Python with pymongo is given (ENGINE_E2E_PYTHON=<python>): the same string, as is.
+  test("the same connection string works with pymongo", { skip: process.env.ENGINE_E2E_PYTHON ? false : "set ENGINE_E2E_PYTHON to a python that has pymongo" }, async () => {
+    const d = await create("conn-pymongo-01");
+    const script = [
+      "import os, pymongo",
+      "c = pymongo.MongoClient(os.environ['CS'], tlsCAFile=os.environ['CA'], serverSelectionTimeoutMS=4000)",
+      "db = c.get_default_database()",
+      "db.items.insert_one({'_id': 'py-1', 'n': 1})",
+      "db.items.update_one({'_id': 'py-1'}, {'$inc': {'n': 1}})",
+      "print(db.name, db.items.find_one({'_id': 'py-1'})['n'], c.server_info().get('ok'))",
+    ].join("\n");
+    // The string travels in the environment of the child only, never on its command line.
+    const out = execFileSync(process.env.ENGINE_E2E_PYTHON!, ["-I", "-c", script], { env: { CS: local(d.initialUser.connectionString), CA: w.e.caFile, PATH: process.env.PATH ?? "" }, encoding: "utf8" });
+    assert.equal(out.trim(), `${engineName(d.id)} 2 1.0`);
   });
 
   test("a user made through the API (role read) can read and not write; listing never shows cp_ or a password", async () => {

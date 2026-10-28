@@ -10,6 +10,9 @@ import { TagEditor } from "../components/TagEditor";
 import { AreaSeriesChart, TimeBarsChart, WakeTimeline } from "../components/charts";
 import { useToast } from "../components/Toast";
 import { DataExplorer } from "../components/DataExplorer";
+import { DatabaseUsers } from "../components/DatabaseUsers";
+import { PasswordDialog } from "../components/PasswordOnce";
+import { connectionParts } from "../data/connection";
 import { useAsync } from "../lib/useAsync";
 import { download } from "../lib/download";
 import { formatCount, formatDate, formatDateTime, formatRelative, formatStorage } from "../lib/format";
@@ -37,7 +40,7 @@ function DatabaseDetail({ id }: { id: string }) {
   const toast = useToast();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") === "data" ? "data" : "overview";
+  const tab = params.get("tab") === "data" ? "data" : params.get("tab") === "users" ? "users" : "overview";
   const db = useAsync(() => client.getDatabase(id), [id]);
   const [range, setRange] = useState<UsageRange>("7d");
   const usage = useAsync(() => client.getUsage(id, range), [id, range]);
@@ -46,6 +49,8 @@ function DatabaseDetail({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [keepLocal, setKeepLocal] = useState<boolean | null>(null);
+  /** The fork's first user and its password, shown once before the fork is opened; never kept after. */
+  const [forked, setForked] = useState<{ id: string; username: string; password: string; connectionString: string | null } | null>(null);
   const loadedKeep = db.status === "ready" ? db.data?.keepAwake : undefined;
   useEffect(() => setKeepLocal(null), [loadedKeep]);
 
@@ -99,7 +104,9 @@ function DatabaseDetail({ id }: { id: string }) {
     run(async () => {
       const copy = await client.forkDatabase(d.id, field);
       toast(`Forked ${d.name} as ${copy.name}`);
-      navigate(`/databases/${copy.id}`);
+      const first = copy.initialUser;
+      if (first?.password) setForked({ id: copy.id, username: first.username, password: first.password, connectionString: first.connectionString });
+      else navigate(`/databases/${copy.id}`);
     });
   const restore = () =>
     run(async () => {
@@ -135,7 +142,8 @@ function DatabaseDetail({ id }: { id: string }) {
     }
   }
 
-  const port = d.host ? "27017" : "";
+  const conn = connectionParts(d.connectionString);
+  const connUser = /^mongodb:\/\/([^:@/]+):/.exec(d.connectionString)?.[1] ?? "";
 
   return (
     <>
@@ -157,20 +165,27 @@ function DatabaseDetail({ id }: { id: string }) {
         <button type="button" aria-pressed={tab === "data"} onClick={() => setParams({ tab: "data" }, { replace: true })}>
           Data
         </button>
+        <button type="button" aria-pressed={tab === "users"} onClick={() => setParams({ tab: "users" }, { replace: true })}>
+          Users
+        </button>
       </div>
 
       {tab === "data" && <DataExplorer db={d} />}
+      {tab === "users" && <DatabaseUsers db={d} />}
 
       {tab === "overview" && (
         <>
           <div className="grid-2 even">
-            <Card id="conn" title="Connection string" description="Point any MongoDB driver at this. The password is the one you set for the database user.">
+            <Card id="conn" title="Connection string" description="Point any MongoDB driver at this. Replace <password> with the user's password: it was shown once when the user was made. Lost it? Reset it in Users.">
               <label htmlFor="conn-string" className="sr-only">
                 Connection string
               </label>
               <textarea id="conn-string" className="code" readOnly rows={3} value={d.connectionString} onFocus={(e) => e.currentTarget.select()} />
               <div className="row-actions">
                 <CopyButton value={d.connectionString} what="connection string" />
+                <button type="button" className="btn" onClick={() => setParams({ tab: "users" }, { replace: true })}>
+                  Manage users
+                </button>
               </div>
               <dl className="facts facts-tight">
                 <div>
@@ -181,11 +196,17 @@ function DatabaseDetail({ id }: { id: string }) {
                 </div>
                 <div>
                   <dt>Port</dt>
-                  <dd className="mono">{port}</dd>
+                  <dd className="mono">{conn.port}</dd>
                 </div>
                 <div>
                   <dt>Database</dt>
-                  <dd className="mono ellipsis">{d.name.replace(/-/g, "_")}</dd>
+                  <dd className="mono ellipsis" title={conn.database}>
+                    {conn.database}
+                  </dd>
+                </div>
+                <div>
+                  <dt>User</dt>
+                  <dd className="mono ellipsis">{connUser === "<username>" ? "None yet" : connUser}</dd>
                 </div>
                 <div>
                   <dt>TLS</dt>
@@ -319,6 +340,16 @@ function DatabaseDetail({ id }: { id: string }) {
           </Card>
         </>
       )}
+
+      <PasswordDialog
+        title="Save the fork's database user"
+        secret={forked}
+        onClose={() => {
+          const id = forked?.id;
+          setForked(null);
+          if (id) navigate(`/databases/${id}`);
+        }}
+      />
 
       <ConfirmDialog open={dialog === "fork"} title="Fork this database" confirmLabel="Fork and open" busy={busy} onConfirm={fork} onCancel={() => setDialog(null)}>
         <p>Creates an instant copy of {d.name} with the same region and tags, then opens it.</p>

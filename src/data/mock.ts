@@ -15,6 +15,8 @@ const DAY = 24 * HOUR;
 
 export { DB_HOST, connectionStringFor } from "./connection";
 import { connectionStringFor } from "./connection";
+import { mockInitialUser } from "./users-mock";
+import { usernameProblem } from "./users";
 export const WORKSPACE = "Northwind Cloud";
 export const REGIONS = ["eu-west", "us-east", "us-west", "ap-south"];
 
@@ -518,13 +520,18 @@ export const mockClient: DataClient = {
   getUsageTrend: (month, tagKey) => wait(usageTrend(month, tagKey)),
   listPlans: () => wait(PLANS.map((p) => ({ ...p, features: [...p.features] }))),
   listRegions: () => wait([...REGIONS]),
-  async createDatabase({ name, region, tags }) {
+  async createDatabase({ name, region, tags, appUser }) {
     const clean = checkName(name);
     if (!REGIONS.includes(region)) throw new Error("Choose a region.");
     const next = checkTags(tags);
+    const user = appUser?.trim() || "app";
+    const problem = usernameProblem(user);
+    if (problem) throw new Error(problem);
     const db: Database = { ...blank(clean, region), tags: next };
+    db.connectionString = db.connectionString.replace("app:<password>", `${user}:<password>`);
     databases = [db, ...databases];
-    return wait(copy(db));
+    // Like the control plane: the first user's password is in this answer only, never on the stored database.
+    return wait({ ...copy(db), initialUser: mockInitialUser(db.id, clean, user) });
   },
   async forkDatabase(id, name) {
     const source = databases.find((d) => d.id === id);
@@ -532,7 +539,7 @@ export const mockClient: DataClient = {
     const clean = checkName(name);
     const db: Database = { ...blank(clean, source.region), tags: [...source.tags], storageMb: source.storageMb, forkedFrom: source.id };
     databases = [db, ...databases];
-    return wait(copy(db));
+    return wait({ ...copy(db), initialUser: mockInitialUser(db.id, clean) });
   },
   async restoreDatabase(id, at) {
     const source = databases.find((d) => d.id === id);

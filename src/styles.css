@@ -509,3 +509,15 @@ table.data.dbs tbody tr { height: 58px; }
 .dialog-wide { width: min(760px, calc(100vw - 32px)); }
 textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
 @media (max-width: 520px) { textarea.editor { min-height: 240px; } .doc-head .row-actions { gap: 6px; } }
+
+/* Database users: the table sits inside the card; the one-time password and its warning. */
+.table-card.flat { box-shadow: none; }
+.user-name { display: inline-block; overflow-wrap: anywhere; word-break: break-word; max-width: 320px; }
+.secret-once { max-width: none; }
+.secret-once .field { gap: 8px; }
+.once-warning { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 10px 12px; border: 1px solid var(--text); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13.5px; }
+.once-warning svg { flex: none; margin-top: 2px; }
+@media (max-width: 760px) {
+  .user-name { max-width: 55vw; min-width: 0; text-align: right; }
+  table.responsive td.actions-cell .row-actions { justify-content: flex-end; }
+}
