@@ -91,7 +91,7 @@ Compilati qui (`cargo build --release -p mongo-server`, cargo 1.97, ~6 min ciasc
 | Control plane typecheck | ok | ok |
 | Control plane unit | 108/108 | **116/116** (+8) |
 | Control plane integrazione | 264: 263 ok, 1 saltato | **295: 294 ok, 1 saltato, 0 falliti** (+31 `db-users`) |
-| `engine-real` (motore vero, `fusion-ops` + `compat-gaps`) | 39: 38 ok, 1 todo (esistenti, rieseguiti col codice nuovo) | **ENGINE_REAL_TOTAL** |
+| `engine-real` (motore vero, `fusion-ops` + `compat-gaps`) | 39: 38 ok, 1 todo (esistenti, rieseguiti col codice nuovo) | **54: 53 ok, 1 todo, 0 falliti** (39 esistenti + 14 `db-users` + 1 in `failures`; il todo è la lacuna `grantRole` del motore) |
 | Dashboard typecheck + build | ok | ok |
 | Dashboard unit | 20/20 (report e2e-engine) | 20/20 |
 | Dashboard Playwright (`npm run check`) | 40 (report e2e-engine) | **46/46** + screenshot, layout e axe senza problemi |
