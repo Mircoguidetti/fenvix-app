@@ -164,3 +164,67 @@ Commit sopra `d63ef74` sullo stesso branch `infra-align`, solo `infra/`. Nessuna
 ### 7.7 Commit
 `29ce019` (codice, test, README, policy) e il commit che aggiunge questa sezione e aggiorna `results-infra.md`, sopra `d63ef74`.
 
+
+## 8. Indirizzo dell'API: `api.<dominio>` al posto di `console.<dominio>`
+
+Partito da `origin/infra-align` @ `3a7c3f1` (verificato prima di toccare qualcosa). Modificata solo `infra/`. Nessuna attività AWS, nessuna chiamata a Let's Encrypt, nessun segreto reale. Rete usata: solo il registry npm (`npm ci`).
+
+Indirizzi decisi: `fenvix.dev` landing e documentazione (Vercel), `console.fenvix.dev` dashboard (Vercel), `api.fenvix.dev` API del control plane (questo stack), `<nome>-<ws>.<regione>.db.fenvix.dev` database.
+
+### 8.1 Cosa ho cambiato
+| Punto | Prima | Ora |
+|---|---|---|
+| Funzione dell'host | `consoleHost()` → `console.<dominio>` | `apiHost()` → `api.<dominio>` (`lib/control-plane-env.ts`), ogni uso aggiornato (`acme.ts`, `fenvix-stack.ts`, `user-data.ts`) |
+| SAN del certificato (prima regione) | `*.<regione>.db.<dominio>` + `console.<dominio>` | `*.<regione>.db.<dominio>` + `api.<dominio>` |
+| Record DNS (opzione A) | A `console.<dominio>` (id `Console`) | A `api.<dominio>` (id `Api`; cambia l'id logico, irrilevante perché non c'è nulla di deployato) |
+| Challenge DNS-01 e condizione IAM Route 53 | `_acme-challenge.console.<dominio>` (A) / `_acme-challenge-console.db.<dominio>` (B) | `_acme-challenge.api.<dominio>` (A) / `_acme-challenge-api.db.<dominio>` (B). Restano solo TXT, solo UPSERT/DELETE, solo la zona dello stack, `Null` obbligatorio |
+| CNAME opzione B | `_acme-challenge.console` → `_acme-challenge-console.db.<dominio>` | `_acme-challenge.api` → `_acme-challenge-api.db.<dominio>` |
+| Output | `ConsoleRecordToCreate`, `ConsoleChallengeRecordToCreate`, `ControlPlaneUrl=https://console.<dominio>/v1` | `ApiRecordToCreate`, `ApiChallengeRecordToCreate`, `ControlPlaneUrl=https://api.<dominio>/v1` |
+| Caddy | `https://console.<dominio>:443` | `https://api.<dominio>:443` |
+| Variabili del control plane | `API_PUBLIC_URL=https://console.<dominio>/v1` | `API_PUBLIC_URL=https://api.<dominio>/v1`; `DASHBOARD_ORIGINS` = `dashboardOrigins` come prima |
+| `dashboardOrigins` | obbligatorio, senza default, solo forma `https://host[:porta]` | sempre obbligatorio e senza default (`cdk.json` resta vuoto). In più rifiuta: l'origine dell'API stessa (`https://api.<dominio>`, anche con porta), qualunque host `db.<dominio>` / `*.db.<dominio>`, e una lista vuota dopo il taglio (es. `" , "`) |
+| Script (`lib/scripts/`), `deploy-policy.json`, `cdk.json` | non citano il nome | invariati (verificato con ricerca e con il test sul codice) |
+| README | `console.<dominio>`, esempi `fenvix.cloud`, dashboard `app.fenvix.cloud` | sezione nuova "Addresses"; tutte le sezioni su `api.<dominio>`; esempi su `fenvix.dev` e `https://console.fenvix.dev`; tabella dei record da creare a mano su Cloudflare (opzione B: 4 NS `db`, CNAME `_acme-challenge.api`, A `api` → `PublicIp`, entrambi "DNS only", CAA se già presenti); `VITE_API_URL` sul progetto Vercel della dashboard; regola sui cookie; smontaggio: cancellare `api` e `_acme-challenge.api`, non `console` |
+| `results-infra.md` | `console.<domain>` nella riga sullo stato attuale | `api.<domain>` con rimando a questa sezione |
+
+Il CORS: `DASHBOARD_ORIGINS` è ciò che `control-plane/src/config.ts` legge in `cfg.dashboardOrigins`, che `control-plane/src/app.ts` passa a `@fastify/cors` come `origin`. Il test esistente che carica il `loadConfig` vero del control plane ora controlla anche che le origini risultino esattamente `['https://console.fenvix.dev']` e l'API `https://api.example.com/v1` (eseguito, Node 22).
+
+### 8.2 Test
+- **Prima** (su `3a7c3f1`): 9 suite, **133 passati, 1 saltato**, 134 totali.
+- **Dopo**: 10 suite, **139 passati, 1 saltato**, 140 totali. Il saltato è lo stesso di prima: il controllo con il certbot vero (`FENVIX_TEST_CERTBOT` non impostato, certbot non installato qui).
+- Test esistenti aggiornati al nuovo nome (`infra`, `user-data`, `tls`, `control-plane-env`, `helpers`: `dashboardOrigins=https://console.fenvix.dev`).
+- Nuova suite `test/api-host.test.ts` (6 test): con `baseDomain=fenvix.dev`, `dashboardOrigins=https://console.fenvix.dev`, opzioni `db` e `domain`, nel template intero più lo user data decompresso `console.fenvix.dev` compare **solo** nella riga `DASHBOARD_ORIGINS`; con un'altra origine non compare affatto; output, record e condizioni IAM su `api`; `dashboardOrigins` rifiuta API e host dei database; ricerca nel codice di `infra/` (`lib/`, `bin/`, `cdk.json`, `deploy-policy.json`) di ogni forma che costruisce `console.<dominio>` (`console.${`, `'console.`, `_acme-challenge.console`/`-console`, i vecchi nomi di funzioni e output). Questo test ha trovato subito un caso vero: il mio messaggio d'errore conteneva `https://console.${baseDomain}`; l'ho tolto.
+- **Mutazioni** (una alla volta, suite `api-host`, `infra`, `user-data`, `tls`; file ripristinato con `git checkout` dopo ognuna, albero pulito verificato):
+
+| # | Mutazione | Test falliti |
+|---|---|---|
+| 1 | Policy Route 53: aggiunto `_acme-challenge.console.<dominio>` ai nomi ammessi | 8 |
+| 2 | Policy Route 53: aggiunto `api.<dominio>` (il record A: il server potrebbe dirottare l'API) | 4 |
+| 3 | Policy Route 53: tolta la condizione `Null` sui nomi | 1 |
+| 4 | Policy Route 53: tipi `TXT` + `A` | 1 |
+| 5 | Certificato: SAN `console.<dominio>` al posto di `api.<dominio>` | 7 |
+| 6 | Certificato: `console.<dominio>` aggiunto come nome in più | 6 |
+| 7 | `apiHost()` che restituisce `console.<dominio>` | 15 |
+| 8 | Solo Caddy su `console.<dominio>` (scritto in modo che compili) | 5 |
+| 9 | Tolto il rifiuto dell'origine dell'API in `dashboardOrigins` | 1 |
+
+  (Il primo tentativo della 8 non arrivava ai test: `tsc` la bloccava per un import inutilizzato. L'ho riscritta perché compilasse.)
+- `tsc --noEmit`: esito 0.
+- `cdk synth --quiet` con la CLI vera, `env -i` (nessuna variabile AWS, credenziali mai lette) e proxy verso `127.0.0.1:9`, `baseDomain=fenvix.dev`, `dashboardOrigins=https://console.fenvix.dev`, email segnaposto `@example.com`: esito 0 con `dnsZone=db` (template 39,8 KB) e con `dnsZone=domain` (39,6 KB), solo gli avvisi W3010 noti. Controllo del template (entrambi): nessuna risorsa ACM/`CertificateManager`, nessuna stringa `acm:`; ingressi solo `0.0.0.0/0` su 27018 e 443, la 8443 in nessuna regola (solo `--admin-listen=172.17.0.1:8443` e l'endpoint interno del control plane); user data 13,9 KB senza `BEGIN`, `PRIVATE KEY`, `AKIA`, `password=` (l'unica occorrenza di `admin-token=` è il nome del parametro nel controllo `--match`, come prima); `route53:ChangeResourceRecordSets` solo sulla zona dello stack con nomi `_acme-challenge.eu-central-1.db.fenvix.dev` + `_acme-challenge-api.db.fenvix.dev` (B) oppure `_acme-challenge.api.fenvix.dev` (A); record `*.eu-central-1.db.fenvix.dev` (B) più `api.fenvix.dev` (A); `API_PUBLIC_URL=https://api.fenvix.dev/v1`, `DASHBOARD_ORIGINS=https://console.fenvix.dev`, Caddy `https://api.fenvix.dev:443`; `console.fenvix.dev` assente fuori da `DASHBOARD_ORIGINS`.
+- cdk-nag: 0 risultati non giustificati nelle tre configurazioni del test (default, `db` + staging, due regioni). `lib/nag-suppressions.ts` non è cambiato.
+
+### 8.3 Decisioni che servono a te
+1. **`VITE_API_URL` con o senza `/v1`.** Mi hai scritto `https://api.<dominio>`, ma la dashboard (`.env.example`, `src/data/explorer-http.ts`) si aspetta l'URL **con** `/v1` (fa `fetch(apiUrl + path)`). Nel README ho scritto `VITE_API_URL=https://api.fenvix.dev/v1`. Va impostata nel progetto Vercel della dashboard (Settings, Environment Variables) e poi rifatto il deploy della dashboard: io non ho toccato nulla fuori da `infra/`.
+2. **Regola sui cookie** (nel README): niente `Domain=.fenvix.dev`; cookie solo host-only su `console.fenvix.dev`. Oggi la dashboard manda il token come `Authorization: Bearer` con `credentials: "omit"`; la regola serve a non cambiarlo per sbaglio. Non ho controllato come Supabase salva la sessione nel browser (fuori da `infra/`).
+3. **Il rifiuto in `dashboardOrigins`** di `https://api.<dominio>` e di `*.db.<dominio>` è un controllo nuovo che non mi avevi chiesto esplicitamente; se ti serve un'eccezione (non ne vedo), è una riga in `lib/config.ts`.
+4. Restano valide le decisioni aperte della sezione 7.4 (staging al primo deploy, `acmeEmail`, opzione DNS); la 7.4.5 ora si legge "`api.<dominio>` solo nella prima regione".
+
+### 8.4 Cosa NON ho potuto verificare (richiede AWS, Cloudflare o Vercel)
+- Che IAM vero accetti i nuovi nomi nelle condition key Route 53 e neghi gli altri: verificato solo il template.
+- Che Let's Encrypt segua il CNAME `_acme-challenge.api.fenvix.dev` → `_acme-challenge-api.db.fenvix.dev` su Cloudflare in modalità "DNS only", e i tempi di propagazione.
+- Un'emissione o un rinnovo reali per `api.fenvix.dev`.
+- Che la dashboard su `console.fenvix.dev` chiami davvero `https://api.fenvix.dev/v1` passando il CORS in un browser vero (verificato solo che il `loadConfig` del control plane riceve la lista giusta).
+- Tutto quanto elencato in 7.6 resta non verificato.
+
+### 8.5 Commit
+Su `infra-align`, sopra `3a7c3f1`: `57755e3` (codice, test, README, `results-infra.md`) e il commit che aggiunge questa sezione.
