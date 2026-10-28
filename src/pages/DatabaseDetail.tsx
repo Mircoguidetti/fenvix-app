@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Download, GitFork, History, Trash2 } from "lucide-react";
 import { client, type UsageRange } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
@@ -9,6 +9,7 @@ import { StateBadge } from "../components/StateBadge";
 import { TagEditor } from "../components/TagEditor";
 import { AreaSeriesChart, TimeBarsChart, WakeTimeline } from "../components/charts";
 import { useToast } from "../components/Toast";
+import { DataExplorer } from "../components/DataExplorer";
 import { useAsync } from "../lib/useAsync";
 import { download } from "../lib/download";
 import { formatCount, formatDate, formatDateTime, formatRelative, formatStorage } from "../lib/format";
@@ -35,6 +36,8 @@ export function DatabaseDetailPage() {
 function DatabaseDetail({ id }: { id: string }) {
   const toast = useToast();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") === "data" ? "data" : "overview";
   const db = useAsync(() => client.getDatabase(id), [id]);
   const [range, setRange] = useState<UsageRange>("7d");
   const usage = useAsync(() => client.getUsage(id, range), [id, range]);
@@ -147,160 +150,175 @@ function DatabaseDetail({ id }: { id: string }) {
         }
       />
 
-      <div className="grid-2 even">
-        <Card id="conn" title="Connection string" description="Point any MongoDB driver at this. The password is the one you set for the database user.">
-          <label htmlFor="conn-string" className="sr-only">
-            Connection string
-          </label>
-          <textarea id="conn-string" className="code" readOnly rows={3} value={d.connectionString} onFocus={(e) => e.currentTarget.select()} />
-          <div className="row-actions">
-            <CopyButton value={d.connectionString} what="connection string" />
-          </div>
-          <dl className="facts facts-tight">
-            <div>
-              <dt>Host</dt>
-              <dd className="mono ellipsis" title={d.host}>
-                {d.host}
-              </dd>
-            </div>
-            <div>
-              <dt>Port</dt>
-              <dd className="mono">{port}</dd>
-            </div>
-            <div>
-              <dt>Database</dt>
-              <dd className="mono ellipsis">{d.name.replace(/-/g, "_")}</dd>
-            </div>
-            <div>
-              <dt>TLS</dt>
-              <dd>Required</dd>
-            </div>
-          </dl>
-        </Card>
-
-        <Card id="status" title="Status" description="What this database is doing and what it holds.">
-          <dl className="facts facts-fill">
-            <div>
-              <dt>State</dt>
-              <dd>
-                <StateBadge state={d.state} />
-              </dd>
-            </div>
-            <div>
-              <dt>Keep awake</dt>
-              <dd>{keepAwake ? "On" : "Off"}</dd>
-            </div>
-            <div>
-              <dt>Storage</dt>
-              <dd className="mono">{formatStorage(d.storageMb)}</dd>
-            </div>
-            <div>
-              <dt>Requests (24 h)</dt>
-              <dd className="mono">{formatCount(d.requests24h)}</dd>
-            </div>
-            <div>
-              <dt>Last active</dt>
-              <dd title={formatDateTime(d.lastActiveAt)}>{formatRelative(d.lastActiveAt, now)}</dd>
-            </div>
-            <div>
-              <dt>Region</dt>
-              <dd className="mono">{d.region}</dd>
-            </div>
-            <div>
-              <dt>Created</dt>
-              <dd>{formatDate(d.createdAt)}</dd>
-            </div>
-            {d.forkedFrom && (
-              <div>
-                <dt>Forked from</dt>
-                <dd>
-                  <Link to={`/databases/${d.forkedFrom}`} className="row-link mono">
-                    {d.forkedFrom}
-                  </Link>
-                </dd>
-              </div>
-            )}
-            {d.restoredTo && (
-              <div>
-                <dt>Restored to</dt>
-                <dd>{formatDateTime(d.restoredTo)}</dd>
-              </div>
-            )}
-          </dl>
-        </Card>
+      <div className="seg detail-tabs" role="group" aria-label="Database sections">
+        <button type="button" aria-pressed={tab === "overview"} onClick={() => setParams({}, { replace: true })}>
+          Overview
+        </button>
+        <button type="button" aria-pressed={tab === "data"} onClick={() => setParams({ tab: "data" }, { replace: true })}>
+          Data
+        </button>
       </div>
 
-      <Card id="tags" title="Tags" description="Tags group and filter databases across the fleet, for example by customer or environment.">
-        <TagEditor db={d} onChanged={db.reload} />
-      </Card>
+      {tab === "data" && <DataExplorer db={d} />}
 
-      <Card
-        id="usage"
-        title="Activity"
-        description="Requests, storage and the hours this database was awake."
-        actions={
-          <div className="seg seg-sm" role="group" aria-label="Time range">
-            {RANGES.map((r) => (
-              <button key={r.value} type="button" aria-pressed={range === r.value} onClick={() => setRange(r.value)}>
-                {r.label}
+      {tab === "overview" && (
+        <>
+          <div className="grid-2 even">
+            <Card id="conn" title="Connection string" description="Point any MongoDB driver at this. The password is the one you set for the database user.">
+              <label htmlFor="conn-string" className="sr-only">
+                Connection string
+              </label>
+              <textarea id="conn-string" className="code" readOnly rows={3} value={d.connectionString} onFocus={(e) => e.currentTarget.select()} />
+              <div className="row-actions">
+                <CopyButton value={d.connectionString} what="connection string" />
+              </div>
+              <dl className="facts facts-tight">
+                <div>
+                  <dt>Host</dt>
+                  <dd className="mono ellipsis" title={d.host}>
+                    {d.host}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Port</dt>
+                  <dd className="mono">{port}</dd>
+                </div>
+                <div>
+                  <dt>Database</dt>
+                  <dd className="mono ellipsis">{d.name.replace(/-/g, "_")}</dd>
+                </div>
+                <div>
+                  <dt>TLS</dt>
+                  <dd>Required</dd>
+                </div>
+              </dl>
+            </Card>
+
+            <Card id="status" title="Status" description="What this database is doing and what it holds.">
+              <dl className="facts facts-fill">
+                <div>
+                  <dt>State</dt>
+                  <dd>
+                    <StateBadge state={d.state} />
+                  </dd>
+                </div>
+                <div>
+                  <dt>Keep awake</dt>
+                  <dd>{keepAwake ? "On" : "Off"}</dd>
+                </div>
+                <div>
+                  <dt>Storage</dt>
+                  <dd className="mono">{formatStorage(d.storageMb)}</dd>
+                </div>
+                <div>
+                  <dt>Requests (24 h)</dt>
+                  <dd className="mono">{formatCount(d.requests24h)}</dd>
+                </div>
+                <div>
+                  <dt>Last active</dt>
+                  <dd title={formatDateTime(d.lastActiveAt)}>{formatRelative(d.lastActiveAt, now)}</dd>
+                </div>
+                <div>
+                  <dt>Region</dt>
+                  <dd className="mono">{d.region}</dd>
+                </div>
+                <div>
+                  <dt>Created</dt>
+                  <dd>{formatDate(d.createdAt)}</dd>
+                </div>
+                {d.forkedFrom && (
+                  <div>
+                    <dt>Forked from</dt>
+                    <dd>
+                      <Link to={`/databases/${d.forkedFrom}`} className="row-link mono">
+                        {d.forkedFrom}
+                      </Link>
+                    </dd>
+                  </div>
+                )}
+                {d.restoredTo && (
+                  <div>
+                    <dt>Restored to</dt>
+                    <dd>{formatDateTime(d.restoredTo)}</dd>
+                  </div>
+                )}
+              </dl>
+            </Card>
+          </div>
+
+          <Card id="tags" title="Tags" description="Tags group and filter databases across the fleet, for example by customer or environment.">
+            <TagEditor db={d} onChanged={db.reload} />
+          </Card>
+
+          <Card
+            id="usage"
+            title="Activity"
+            description="Requests, storage and the hours this database was awake."
+            actions={
+              <div className="seg seg-sm" role="group" aria-label="Time range">
+                {RANGES.map((r) => (
+                  <button key={r.value} type="button" aria-pressed={range === r.value} onClick={() => setRange(r.value)}>
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+            }
+          >
+            {usage.status === "loading" && <Message>Loading activity</Message>}
+            {usage.status === "error" && <Message role="alert">{usage.message}</Message>}
+            {usage.status === "ready" && (
+              <div className="stack wide">
+                <div className="chart-pair">
+                  <section aria-labelledby="chart-requests">
+                    <h3 id="chart-requests" className="chart-title">
+                      Requests
+                    </h3>
+                    <TimeBarsChart points={usage.data.map((p) => ({ at: p.at, value: p.requests }))} range={range} valueLabel={(n) => `${formatCount(n)} requests`} bucketNoun={range === "7d" ? "six-hour window" : undefined} />
+                  </section>
+                  <section aria-labelledby="chart-storage">
+                    <h3 id="chart-storage" className="chart-title">
+                      Storage
+                    </h3>
+                    <AreaSeriesChart points={usage.data.map((p) => ({ at: p.at, value: p.storageMb }))} range={range} valueLabel={formatStorage} axisLabel={storageAxis(Math.max(...usage.data.map((p) => p.storageMb)))} />
+                  </section>
+                </div>
+                <section aria-labelledby="chart-timeline">
+                  <h3 id="chart-timeline" className="chart-title">
+                    Awake and asleep
+                  </h3>
+                  <WakeTimeline points={usage.data} range={range} />
+                </section>
+              </div>
+            )}
+          </Card>
+
+          <Card id="actions" title="Actions" description="Everything you can do to this database from here.">
+            <label className="check">
+              <input type="checkbox" checked={keepAwake} onChange={(e) => toggleKeepAwake(e.target.checked)} />
+              Keep awake
+            </label>
+            <p className="muted small">A database that is kept awake never sleeps, so its first request is never slow.</p>
+            <div className="row-actions">
+              <button type="button" className="btn" onClick={() => open("fork")}>
+                <GitFork size={16} aria-hidden="true" />
+                Fork
               </button>
-            ))}
-          </div>
-        }
-      >
-        {usage.status === "loading" && <Message>Loading activity</Message>}
-        {usage.status === "error" && <Message role="alert">{usage.message}</Message>}
-        {usage.status === "ready" && (
-          <div className="stack wide">
-            <div className="chart-pair">
-              <section aria-labelledby="chart-requests">
-                <h3 id="chart-requests" className="chart-title">
-                  Requests
-                </h3>
-                <TimeBarsChart points={usage.data.map((p) => ({ at: p.at, value: p.requests }))} range={range} valueLabel={(n) => `${formatCount(n)} requests`} bucketNoun={range === "7d" ? "six-hour window" : undefined} />
-              </section>
-              <section aria-labelledby="chart-storage">
-                <h3 id="chart-storage" className="chart-title">
-                  Storage
-                </h3>
-                <AreaSeriesChart points={usage.data.map((p) => ({ at: p.at, value: p.storageMb }))} range={range} valueLabel={formatStorage} axisLabel={storageAxis(Math.max(...usage.data.map((p) => p.storageMb)))} />
-              </section>
+              <button type="button" className="btn" onClick={() => open("restore")}>
+                <History size={16} aria-hidden="true" />
+                Restore to a point in time
+              </button>
+              <button type="button" className="btn" onClick={exportData}>
+                <Download size={16} aria-hidden="true" />
+                Export
+              </button>
+              <button type="button" className="btn btn-danger" onClick={() => open("erase")}>
+                <Trash2 size={16} aria-hidden="true" />
+                Erase
+              </button>
             </div>
-            <section aria-labelledby="chart-timeline">
-              <h3 id="chart-timeline" className="chart-title">
-                Awake and asleep
-              </h3>
-              <WakeTimeline points={usage.data} range={range} />
-            </section>
-          </div>
-        )}
-      </Card>
-
-      <Card id="actions" title="Actions" description="Everything you can do to this database from here.">
-        <label className="check">
-          <input type="checkbox" checked={keepAwake} onChange={(e) => toggleKeepAwake(e.target.checked)} />
-          Keep awake
-        </label>
-        <p className="muted small">A database that is kept awake never sleeps, so its first request is never slow.</p>
-        <div className="row-actions">
-          <button type="button" className="btn" onClick={() => open("fork")}>
-            <GitFork size={16} aria-hidden="true" />
-            Fork
-          </button>
-          <button type="button" className="btn" onClick={() => open("restore")}>
-            <History size={16} aria-hidden="true" />
-            Restore to a point in time
-          </button>
-          <button type="button" className="btn" onClick={exportData}>
-            <Download size={16} aria-hidden="true" />
-            Export
-          </button>
-          <button type="button" className="btn btn-danger" onClick={() => open("erase")}>
-            <Trash2 size={16} aria-hidden="true" />
-            Erase
-          </button>
-        </div>
-      </Card>
+          </Card>
+        </>
+      )}
 
       <ConfirmDialog open={dialog === "fork"} title="Fork this database" confirmLabel="Fork and open" busy={busy} onConfirm={fork} onCancel={() => setDialog(null)}>
         <p>Creates an instant copy of {d.name} with the same region and tags, then opens it.</p>

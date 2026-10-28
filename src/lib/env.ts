@@ -9,6 +9,12 @@ const raw = import.meta.env;
 /** "supabase" unless VITE_DATA_BACKEND says otherwise. The checks run against "mock". */
 export const backend: Backend = raw.VITE_DATA_BACKEND === "mock" ? "mock" : "supabase";
 
+/**
+ * The control-plane API, including /v1 (for example https://api.fenvix.cloud/v1). Only the Data Explorer uses it
+ * today; without it the Data tab says it is not set up. Not a secret.
+ */
+export const apiUrl: string = (raw.VITE_API_URL ?? "").trim().replace(/\/+$/, "");
+
 export const supabaseUrl: string = (raw.VITE_SUPABASE_URL ?? "").trim();
 export const supabaseAnonKey: string = (raw.VITE_SUPABASE_ANON_KEY ?? "").trim();
 

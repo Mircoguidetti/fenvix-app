@@ -55,6 +55,18 @@ async function clickTab(page, name) {
   await eventually(async () => (await tab.getAttribute("aria-pressed")) === "true", `the ${name} tab did not become active`);
 }
 
+/** Opens a collection in the Data tab: the list on a wide screen, the select on a phone. */
+async function pickCollection(page, vp, name) {
+  if (isMobile(vp)) {
+    await page.locator("#coll-select").waitFor();
+    await eventually(async () => (await page.locator(`#coll-select option[value="${name}"]`).count()) === 1, `no ${name} collection`);
+    await page.locator("#coll-select").selectOption(name);
+  } else {
+    await page.locator(".coll-btn", { hasText: name }).click();
+  }
+  await page.getByRole("heading", { name, exact: true }).waitFor();
+}
+
 const counted = async (page) => num((await page.locator(".counts-bar b").first().innerText()));
 const search = async (page, text) => {
   await page.getByLabel("Search by name").fill(text);
@@ -491,6 +503,109 @@ const TESTS = {
     await page.getByRole("button", { name: "Revoke key Check runner" }).click();
     await page.getByRole("button", { name: "Revoke key", exact: true }).click();
     await page.getByRole("row", { name: /Check runner/ }).getByText("Revoked").waitFor();
+  },
+
+  async "data explorer: browse, filter and page"(page, vp) {
+    await signIn(page, "databases/db_0001?tab=data");
+    await page.getByRole("heading", { name: "Collections" }).waitFor();
+    await pickCollection(page, vp, "orders");
+    await eventually(async () => (await page.locator(".doc").count()) === 25, "the first page does not hold 25 documents");
+    await page.getByRole("button", { name: "Next" }).click();
+    await page.getByText("Page 2", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Next" }).click();
+    await eventually(async () => (await page.locator(".doc").count()) === 7, "the last page does not hold the last 7 documents");
+    assert(await page.getByRole("button", { name: "Next" }).isDisabled(), "Next is enabled on the last page");
+
+    await page.getByLabel("Filter").fill('{"status": ');
+    await page.getByRole("button", { name: "Apply" }).click();
+    await page.getByRole("alert").getByText("The filter is not valid JSON").waitFor();
+    await page.getByLabel("Filter").fill('{"$where": "1"}');
+    await page.getByRole("button", { name: "Apply" }).click();
+    await page.getByRole("alert").getByText("$where is not allowed").waitFor();
+    await page.getByLabel("Filter").fill('{"status": "paid"}');
+    await page.getByRole("button", { name: "Apply" }).click();
+    await eventually(async () => (await page.locator(".doc").count()) === 15, "the filter did not narrow the list to the 15 paid orders");
+    assert(!(await page.getByRole("alert").count()), "the filter error stayed after a valid filter");
+
+    await page.locator(".doc").first().getByRole("button", { expanded: false }).first().click();
+    await page.locator(".json-tree").first().getByText(/^ISODate\("2026-09-/).waitFor();
+    await page.getByRole("button", { name: "Reset" }).click();
+    await eventually(async () => (await page.locator(".doc").count()) === 25, "Reset did not bring back every document");
+  },
+
+  async "data explorer: documents are shown as text, never as markup"(page, vp) {
+    let alerted = false;
+    page.on("dialog", (d) => ((alerted = true), d.dismiss()));
+    await signIn(page, "databases/db_0001?tab=data");
+    await page.getByRole("heading", { name: "Collections" }).waitFor();
+    await pickCollection(page, vp, "notes");
+    await eventually(async () => (await page.locator(".doc").count()) === 2, "the notes did not load");
+    for (const t of await page.locator(".doc-toggle").all()) await t.click();
+    await page.locator(".json-tree").first().waitFor();
+    const text = await page.locator(".explorer").innerText();
+    assert(text.includes("<script>window.__xss = 'script'</script>"), "the <script> in the document is not shown as text");
+    assert(text.includes("<img src=x onerror="), "the <img onerror> in the document is not shown as text");
+    assert((await page.locator(".explorer script, .explorer img, .explorer iframe, .explorer object").count()) === 0, "markup from a document became an element");
+    await page.getByRole("button", { name: /^Edit document/ }).first().click();
+    const editor = page.getByLabel("Document", { exact: true });
+    await editor.waitFor();
+    assert((await editor.inputValue()).includes("<script>"), "the editor does not hold the raw text");
+    assert((await page.locator("dialog script, dialog img").count()) === 0, "markup became an element in the editor");
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await page.waitForTimeout(300);
+    assert(!alerted, "a document opened a browser dialog");
+    assert((await page.evaluate(() => window.__xss)) === undefined, "code from a document ran");
+  },
+
+  async "data explorer: insert, edit, delete and someone else's change"(page, vp) {
+    await signIn(page, "databases/db_0001?tab=data");
+    await page.getByRole("heading", { name: "Collections" }).waitFor();
+    await pickCollection(page, vp, "customers");
+    await eventually(async () => (await page.locator(".doc").count()) === 1, "customers did not load");
+
+    await page.getByRole("button", { name: "Insert document" }).click();
+    const editor = page.getByLabel("Document", { exact: true });
+    await editor.fill('{"name": "Contoso"');
+    await page.getByRole("alert").getByText("The document is not valid JSON").waitFor();
+    assert(await page.getByRole("button", { name: "Save" }).isDisabled(), "Save is enabled with broken JSON");
+    await editor.fill('{"_id": "contoso", "name": "Contoso", "seats": {"$numberInt": "3"}}');
+    await page.getByRole("button", { name: "Save" }).click();
+    await toast(page, "Document inserted");
+    await eventually(async () => (await page.locator(".doc").count()) === 2, "the new document is not listed");
+
+    await page.getByRole("button", { name: 'Edit document "contoso"' }).click();
+    await editor.fill('{"_id": "contoso", "name": "Contoso Ltd", "seats": {"$numberInt": "4"}}');
+    await page.getByRole("button", { name: "Save" }).click();
+    await toast(page, "Document saved");
+    await page.locator(".doc", { hasText: "Contoso Ltd" }).waitFor();
+
+    // Someone else changes the document while it is open here: the save is refused, nothing is overwritten.
+    await page.getByRole("button", { name: 'Edit document "contoso"' }).click();
+    await editor.fill('{"_id": "contoso", "name": "Mine", "seats": {"$numberInt": "9"}}');
+    await page.evaluate(() => window.__fenvixExplorerMock.touch("db_0001", "customers", '"contoso"', "name", "Theirs"));
+    await page.getByRole("button", { name: "Save" }).click();
+    await page.getByRole("alert").getByText("Someone changed this document after you opened it").waitFor();
+    await page.getByRole("button", { name: "Load the latest version" }).click();
+    await eventually(async () => (await editor.inputValue()).includes("Theirs"), "the latest version was not loaded");
+    await page.getByRole("button", { name: "Cancel" }).click();
+
+    await page.getByRole("button", { name: 'Delete document "contoso"' }).click();
+    await page.getByRole("heading", { name: "Delete this document?" }).waitFor();
+    await page.getByRole("button", { name: "Cancel" }).click();
+    assert((await page.locator(".doc").count()) === 2, "Cancel deleted the document");
+    await page.getByRole("button", { name: 'Delete document "contoso"' }).click();
+    await page.getByRole("button", { name: "Delete document", exact: true }).click();
+    await toast(page, "Document deleted");
+    await eventually(async () => (await page.locator(".doc").count()) === 1, "the document is still listed");
+  },
+
+  async "data explorer: a sleeping database is woken"(page, vp) {
+    await signIn(page, "databases");
+    await go(page, "databases/db_0003?tab=data");
+    await page.getByRole("status").getByText("Waking the database").waitFor();
+    await pickCollection(page, vp, "orders");
+    await eventually(async () => (await page.locator(".doc").count()) === 8, "the woken database did not show its documents");
+    assert(!(await page.getByText("Waking the database").count()), "the waking notice stayed");
   },
 
   async "settings"(page) {

@@ -462,3 +462,50 @@ table.data.dbs tbody tr { height: 58px; }
 .card > .ticks { flex: 1; justify-content: space-between; }
 @media (max-width: 760px) { .counts-sep { display: none; } .counts-bar { gap: 6px 16px; } }
 .avatar-photo { object-fit: cover; border: 0; }
+
+/* ---------------------------------------------------------------- data explorer (Data tab of a database) */
+.detail-tabs { align-self: flex-start; }
+.explorer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (min-width: 980px) { .explorer { grid-template-columns: 260px minmax(0, 1fr); } .explorer .waking { grid-column: 1 / -1; } }
+.waking { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--text); border-radius: 10px; background: var(--bg); font-weight: 500; }
+@media (prefers-reduced-motion: no-preference) { .spin { animation: spin 1.2s linear infinite; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+.explorer-side { gap: 10px; }
+.explorer-side .card-head { align-items: center; }
+.explorer-side .icon-btn { width: 34px; height: 34px; }
+.coll-list { list-style: none; margin: 0; padding: 0; display: none; flex-direction: column; gap: 2px; max-height: 60vh; overflow-y: auto; }
+.coll-select { display: block; }
+@media (min-width: 980px) { .coll-list { display: flex; } .coll-select { display: none; } }
+.coll-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; }
+.coll-btn:hover:not(:disabled) { background: var(--surface-2); }
+.coll-btn[aria-current="true"], .coll-btn[aria-current="true"]:hover:not(:disabled) { background: var(--text); color: var(--on-text); font-weight: 600; }
+.coll-btn[aria-current="true"] .muted { color: var(--on-text); opacity: 0.75; }
+.coll-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.new-coll { display: flex; flex-direction: column; gap: 6px; }
+.new-coll label { font-size: 13px; font-weight: 500; }
+.empty.compact { padding: 20px 14px; gap: 8px; }
+.explorer-main { gap: 16px; }
+.query { display: flex; flex-direction: column; gap: 10px; }
+.query > .field { flex: none; }
+.query-more summary { cursor: pointer; font-size: 13.5px; font-weight: 500; width: fit-content; }
+.query-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+.query input.mono { font-size: 13px; }
+.query input[aria-invalid="true"] { border-color: var(--text); border-width: 2px; }
+.doc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.doc { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); min-width: 0; }
+.doc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 6px 4px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.doc-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 8px; border: 0; background: transparent; cursor: pointer; min-width: 0; flex: 1 1 200px; text-align: left; font-size: 13px; }
+.doc-toggle:hover { background: var(--surface-2); border-radius: 8px; }
+.doc-body { padding: 10px 12px; min-width: 0; }
+.doc-summary { font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 2px 14px; overflow-wrap: anywhere; }
+.kv .k, .node .k { color: var(--muted); }
+.json-tree { font-size: 12.5px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.node-children { padding-left: 16px; border-left: 1px solid var(--border); margin-left: 4px; }
+.node-toggle { display: inline; border: 0; padding: 0; background: transparent; cursor: pointer; text-align: left; font: inherit; }
+.node-toggle:hover { text-decoration: underline; }
+.t-string { color: var(--text); }
+.t-int32, .t-int64, .t-double, .t-decimal128, .t-number, .t-objectId, .t-date, .t-uuid { font-weight: 600; }
+.dialog-wide { width: min(760px, calc(100vw - 32px)); }
+textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+@media (max-width: 520px) { textarea.editor { min-height: 240px; } .doc-head .row-actions { gap: 6px; } }
