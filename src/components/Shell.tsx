@@ -6,6 +6,7 @@ import { Logo } from "./Logo";
 import { UserMenu } from "./UserMenu";
 import { useAsync } from "../lib/useAsync";
 import { useWorkspaceVersion } from "../lib/workspace";
+import { workspaceColor, workspaceInitial } from "../lib/avatar";
 
 const NAV = [
   { to: "/overview", label: "Overview", icon: LayoutDashboard, end: true },
@@ -19,28 +20,27 @@ const NAV_WORKSPACE = [
   { to: "/settings", label: "Settings", icon: Settings, end: false },
 ];
 
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
+/** The plan every workspace is on today; shown under the workspace name. */
+const PLAN = "Managed";
 
+/** The workspace this dashboard shows: a coloured avatar with its initial, its name and its plan. */
 function Workspace() {
   const version = useWorkspaceVersion();
   const settings = useAsync(() => client.getSettings(), [version]);
-  const name = settings.status === "ready" ? settings.data.workspaceName : "";
+  // The slot keeps its height while the name loads, so nothing jumps and no empty avatar is ever drawn.
+  if (settings.status !== "ready") return <div className="workspace-slot" data-state={settings.status} />;
+  const name = settings.data.workspaceName.trim() || "Workspace";
   return (
-    <div className="workspace">
-      <span className="avatar" aria-hidden="true">
-        {name ? initials(name) : ""}
-      </span>
-      <span className="workspace-name">
-        {name}
-        <span className="workspace-sub">Managed plan</span>
-      </span>
+    <div className="workspace-slot" data-state="ready">
+      <div className="workspace" role="group" aria-label={`Workspace: ${name}, ${PLAN} plan`} title={name}>
+        <span className="workspace-avatar" style={{ background: workspaceColor(name) }} aria-hidden="true">
+          {workspaceInitial(settings.data.workspaceName)}
+        </span>
+        <span className="workspace-text" aria-hidden="true">
+          <span className="workspace-name">{name}</span>
+          <span className="workspace-sub">{PLAN}</span>
+        </span>
+      </div>
     </div>
   );
 }

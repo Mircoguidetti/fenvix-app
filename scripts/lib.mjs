@@ -65,10 +65,8 @@ export async function signIn(page, route = "overview") {
 /** Waits until the shell and the page have their data. */
 export async function settled(page) {
   await page.waitForFunction(() => !document.body.innerText.match(/^Loading\b/m));
-  await page.waitForFunction(() => {
-    const el = document.querySelector(".workspace-name");
-    return !el || el.textContent.trim().length > 0;
-  });
+  // The workspace in the sidebar is drawn only once its name has loaded.
+  await page.waitForFunction(() => [...document.querySelectorAll(".workspace-slot")].every((el) => el.dataset.state !== "loading"));
   await page.evaluate(() => document.fonts.ready);
 }
 

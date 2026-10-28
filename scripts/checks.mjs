@@ -711,6 +711,88 @@ const TESTS = {
     assert(await page.getByRole("button", { name: "Add user" }).isDisabled(), "Add user is enabled while the list could not load");
   },
 
+  async "sidebar: brand and workspace"(page, vp) {
+    await signIn(page, "overview");
+    const nav = isMobile(vp) ? ".drawer" : ".sidebar";
+    const rename = async (name) => {
+      await go(page, "settings");
+      await settled(page);
+      await page.getByLabel("Workspace name").fill(name);
+      await page.getByRole("button", { name: "Save changes" }).click();
+      await toast(page, "Settings saved");
+      await go(page, "overview");
+      await settled(page);
+      await eventually(async () => (await page.locator(`${nav} .workspace-name`).textContent()) === name.trim(), `the sidebar does not show ${name}`);
+      if (isMobile(vp)) {
+        await page.getByRole("button", { name: "Open navigation" }).click();
+        await page.locator(".drawer .nav").waitFor();
+      }
+      // The accessible name holds the whole name and the plan.
+      await page.locator(nav).getByRole("group", { name: `Workspace: ${name.trim()}, Managed plan`, exact: true }).waitFor();
+      const box = page.locator(`${nav} .workspace`);
+      const read = await box.evaluate((el) => {
+        const avatar = el.querySelector(".workspace-avatar");
+        const label = el.querySelector(".workspace-name");
+        const empty = [...el.querySelectorAll("*")].filter((e) => !e.textContent.trim()).map((e) => e.className);
+        const focusable = el.querySelectorAll("a, button, input, select, textarea, [tabindex]").length;
+        const cs = getComputedStyle(el);
+        return {
+          initial: avatar?.textContent,
+          color: getComputedStyle(avatar).backgroundColor,
+          plan: el.querySelector(".workspace-sub")?.textContent,
+          title: el.getAttribute("title"),
+          clipped: label.scrollWidth > label.clientWidth,
+          ellipsis: getComputedStyle(label).textOverflow === "ellipsis" && getComputedStyle(label).whiteSpace === "nowrap",
+          inside: label.getBoundingClientRect().right <= el.getBoundingClientRect().right + 0.5,
+          empty,
+          focusable,
+          framed: cs.borderTopWidth !== "0px" || cs.backgroundColor !== "rgba(0, 0, 0, 0)",
+          brandInside: !!el.querySelector(".logo"),
+        };
+      });
+      if (isMobile(vp)) await page.getByRole("button", { name: "Close navigation" }).click();
+      return read;
+    };
+
+    // The brand sits on its own at the top, outside the workspace.
+    if (isMobile(vp)) await page.getByRole("button", { name: "Open navigation" }).click();
+    const brand = page.locator(`${nav} .sidebar-top .logo`);
+    await brand.waitFor();
+    assert((await brand.innerText()).trim() === "FENVIX", "the brand is missing at the top of the navigation");
+    if (isMobile(vp)) await page.getByRole("button", { name: "Close navigation" }).click();
+
+    const mine = await rename("My workspace");
+    assert(mine.initial === "M", `My workspace shows ${mine.initial}`);
+    assert(mine.plan === "Managed", `the plan reads ${mine.plan}`);
+    assert(mine.title === "My workspace", `the tooltip reads ${mine.title}`);
+    assert(!mine.clipped, "My workspace is cut off");
+    assert(!mine.empty.length, `empty elements in the workspace: ${mine.empty.join(", ")}`);
+    assert(!mine.focusable, "the workspace gained something to tab to");
+    assert(!mine.framed, "the workspace is still drawn in a box");
+    assert(!mine.brandInside, "the brand is inside the workspace");
+    assert(/^rgb\(\d+, \d+, \d+\)$/.test(mine.color), `the avatar has no colour: ${mine.color}`);
+
+    assert((await rename("🚀 Launch team")).initial === "🚀", "an emoji name does not show the emoji");
+    assert((await rename("élan studio")).initial === "É", "an accented name does not show É");
+    assert((await rename("My workspace")).color === mine.color, "the same name got a different colour");
+
+    const long = "Northwind Cloud Platform Engineering, EU West production";
+    const l = await rename(long);
+    assert(l.clipped && l.ellipsis, "a long name is not cut with an ellipsis");
+    assert(l.inside, "a long name runs out of its box");
+    assert(l.title === long, `the tooltip does not hold the whole name: ${l.title}`);
+
+    // Keyboard order is unchanged: skip link, then the first control of the navigation.
+    await page.reload(); // a fresh load, so focus starts at the top of the document
+    await page.locator(".shell").waitFor();
+    await settled(page);
+    await page.keyboard.press("Tab");
+    assert(await page.evaluate(() => document.activeElement?.classList.contains("skip-link")), "the first Tab does not reach the skip link");
+    await page.keyboard.press("Tab");
+    const second = await page.evaluate(() => document.activeElement?.textContent.trim() || document.activeElement?.getAttribute("aria-label"));
+    assert(second === (isMobile(vp) ? "Open navigation" : "Overview"), `the second Tab reaches ${second}`);
+  },
+
   async "settings"(page) {
     await signIn(page, "settings");
     await page.getByLabel("Workspace name").fill("Northwind Platform");

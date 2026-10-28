@@ -66,10 +66,14 @@ html:has(.shell), body:has(.shell) { height: 100%; overflow: hidden; }
 .sidebar { display: none; width: 252px; flex-shrink: 0; background: var(--nav-bg); color: var(--nav-text); }
 .sidebar-inner { height: 100%; display: flex; flex-direction: column; padding: 0 12px 14px; }
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; height: 64px; padding: 0 8px; }
-.workspace { display: flex; align-items: center; gap: 10px; border: 1px solid var(--nav-border); background: var(--nav-hover); border-radius: 10px; padding: 8px 10px; margin-bottom: 16px; }
+/* The workspace under the brand: no box, lined up with the navigation links below it. */
+.workspace-slot { min-height: 44px; margin-bottom: 14px; }
+.workspace { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 4px 10px; }
+.workspace-avatar { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0; color: #ffffff; font-size: 14px; font-weight: 600; line-height: 1; }
+.workspace-text { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.3; }
+.workspace-name { display: block; font-size: 13.5px; font-weight: 500; color: var(--nav-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-sub { display: block; font-size: 12px; color: var(--nav-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .avatar { display: grid; place-items: center; width: 28px; height: 28px; border: 1.5px solid currentColor; border-radius: 8px; font: 600 11px var(--mono); flex-shrink: 0; letter-spacing: 0.02em; }
-.workspace-name { font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-sub { display: block; font-size: 11.5px; color: var(--nav-muted); }
 .nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .nav-label { padding: 14px 10px 6px; font: 500 10.5px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--nav-muted); }
 .nav-link { display: flex; align-items: center; gap: 11px; height: 38px; padding: 0 10px; border-radius: 9px; color: var(--nav-muted); text-decoration: none; font-size: 14px; }
