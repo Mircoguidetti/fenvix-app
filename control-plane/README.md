@@ -12,12 +12,15 @@ config/plans.json    plans, plan limits, unit rates. Ships with NO price, NO rat
 src/config.ts        every setting, from environment variables
 src/app.ts           Fastify app: logging, CORS, error handler, request ids, downloads, route registration
 src/http.ts          authentication, rate limits, idempotency and operation answers around each route
-src/routes/          data.ts (sections 1 and 2), session.ts (section 3)
+src/routes/          data.ts (sections 1 and 2), session.ts (section 3), explorer.ts (Data Explorer)
+src/explorer/        rules.ts: what a browser may send to the Data Explorer (collection names, filters, documents, Extended JSON)
 src/services/        databases, operations (create/fork/restore/export/erase runner), usage, account (billing, keys, settings)
-src/engine/          EngineClient interface, the in-memory fake, and the real adapter (real.ts, admin-http.ts with the route allowlist, names.ts, zip.ts)
+src/engine/          EngineClient interface, the in-memory fake, and the real adapter (real.ts, admin-http.ts with the route allowlist, names.ts, zip.ts);
+                     data.ts (DataClient, the Data Explorer's MongoDB side), data-mongo.ts (official driver), data-fake.ts (in memory)
 src/auth/            Supabase JWT verification (JWKS) and the Supabase Auth gateway
 ../supabase/migrations/0002_control_plane.sql   restricted role, operations, idempotency and audit tables
 ../supabase/migrations/0003_close_dashboard_write_path.sql   closes the dashboard's direct write path (run at cutover)
+../supabase/migrations/0004_data_explorer.sql   Data Explorer: audit log of document writes, API key data access
 tests/unit, tests/integration, tests/helpers
 ```
 
@@ -25,7 +28,7 @@ tests/unit, tests/integration, tests/helpers
 
 ```bash
 cd control-plane && npm ci
-# a scratch Postgres 15+ (never Supabase): apply the stand-ins and the three migrations
+# a scratch Postgres 15+ (never Supabase): apply the stand-ins and the four migrations
 TEST_DATABASE_URL=postgresql://postgres@localhost:5432/cp_scratch bash scripts/prepare-test-db.sh
 npm test                       # typecheck, unit tests, integration tests (needs TEST_DATABASE_URL)
 SEEDED_DATABASE_URL=... node --test tests/integration/seeded.test.ts   # optional: the 3,000 database seed
@@ -68,6 +71,16 @@ Secrets are marked **secret**. Nothing here has a default for a secret, and no s
 | `HOURLY_RETENTION_DAYS`, `OPERATION_RETENTION_DAYS` | `8`, `90` | housekeeping |
 | `RATE_LIMIT_PER_MINUTE`, `RATE_LIMIT_ANON_PER_MINUTE` | `600`, `30` | per workspace; per address for sign-in, failed authentication, downloads |
 | `DB_POOL_MAX`, `DB_STATEMENT_TIMEOUT_MS` | `10`, `30000` | |
+| `DATA_ENGINE_ENDPOINTS` | empty | Data Explorer: the engine's MongoDB listener per region, `region=host:port` or one `host:port` (no `mongodb://`, no user, no options). Empty: the in-memory fake with `ENGINE_DRIVER=fake`, otherwise the Data Explorer answers 503 "not set up" |
+| `DATA_ENGINE_USERNAME`, `DATA_ENGINE_PASSWORD` or `DATA_ENGINE_PASSWORD_FILE` | **required with endpoints, secret** | SCRAM credentials of the control plane on the engine |
+| `DATA_ENGINE_AUTH_MECHANISM`, `DATA_ENGINE_AUTH_SOURCE` | `SCRAM-SHA-256`, `admin` | |
+| `DATA_ENGINE_TLS`, `DATA_ENGINE_TLS_CA_FILE`, `DATA_ENGINE_TLS_SERVER_NAME` | `true`, empty, empty | TLS to the engine; `false` needs `DATA_ENGINE_INSECURE_LOCAL` |
+| `DATA_ENGINE_INSECURE_LOCAL` | `false` | `true` allows no TLS and no credentials, for a local engine only. **Refused with `NODE_ENV=production`** |
+| `DATA_ENGINE_POOL_MAX`, `DATA_ENGINE_POOL_IDLE_MS`, `DATA_ENGINE_CLIENT_IDLE_CLOSE_MS`, `DATA_ENGINE_CONNECT_TIMEOUT_MS` | `5`, `30000`, `60000`, `5000` | connection pool to the engine; the whole client closes after the idle time |
+| `DATA_COMMAND_TIMEOUT_MS` | `10000` | `maxTimeMS` of each Data Explorer command (the client gives up 2 s later) |
+| `DATA_DEFAULT_PAGE_SIZE`, `DATA_MAX_PAGE_SIZE`, `DATA_MAX_SKIP` | `25`, `100` (ceiling), `10000` | |
+| `DATA_MAX_DOCUMENT_BYTES`, `DATA_MAX_RESPONSE_BYTES` | `196608` (ceiling 204800), `4194304` | |
+| `DATA_RATE_LIMIT_PER_MINUTE`, `DATA_WRITE_RATE_LIMIT_PER_MINUTE` | `120`, `30` | Data Explorer requests per person and per API key (on top of the workspace limit) |
 | `PORT`, `HOST`, `LOG_LEVEL`, `NODE_ENV` | `3000`, `0.0.0.0`, `info`, `development` | |
 
 ## How safety works

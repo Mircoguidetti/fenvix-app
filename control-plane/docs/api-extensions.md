@@ -47,3 +47,12 @@ Only `owner` exists today (the sign-up trigger makes each person an owner of the
 * `keep-awake` answers `500 internal` if the engine failed for some databases; the ones that succeeded are recorded, so the retry finishes the job.
 * Section 3: sign-in works through Supabase Auth's REST API (PKCE for providers, `token_hash` for email links); the browser only ever holds the `HttpOnly` cookies `fnx_session` and `fnx_refresh`. An expired session cookie is renewed with the refresh cookie on the next request. `returnTo` must be on one of `DASHBOARD_ORIGINS`.
 * Rate limits: `RATE_LIMIT_PER_MINUTE` per workspace (authenticated), `RATE_LIMIT_ANON_PER_MINUTE` per address (section 3, failed authentication, downloads), and the contract's 5 email links per address per hour. In memory per instance (see the README).
+
+## Data Explorer
+
+Six routes under `/v1/databases/{id}/data/collections` let a customer browse and edit the documents of one of their databases (collections with estimated counts; a page of documents with filter, sort and projection; one document; insert; save with `version`; delete with `version`). Documents are canonical Extended JSON. They are not in the contract document; the contract test lists them as extensions. Everything about them (allowed operators, limits, roles, audit, errors, sleeping databases, residual risk) is in [`data-explorer-security.md`](data-explorer-security.md).
+
+Changes to existing behaviour, all additive:
+
+* `POST /api-keys` accepts `"dataAccess": "read" | "readWrite"` (default `read`), and every key in `GET /api-keys` and the create answer has `dataAccess`. Only `readWrite` keys can insert, save or delete documents. Needs migration `0004_data_explorer.sql`.
+* A new error code, `unavailable` (503, with `Retry-After`): the engine's MongoDB listener did not answer in time or is waking a database. Only the Data Explorer uses it.
