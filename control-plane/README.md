@@ -1,6 +1,6 @@
 # FENVIX control plane
 
-The service between the dashboard and the engine. It implements `docs/control-plane-api.md` (the 37 endpoints of the contract, plus the callback of section 3) on Fastify, Node 22, TypeScript (strict). It reads and writes the dashboard's Postgres tables (Supabase) as a restricted role, and it talks to the engine through an `EngineClient` interface.
+The service between the dashboard and the engine. It implements `docs/control-plane-api.md` (the 40 endpoints of the contract, plus the callback of section 3) on Fastify, Node 22, TypeScript (strict). It reads and writes the dashboard's Postgres tables (Supabase) as a restricted role, and it talks to the engine through an `EngineClient` interface.
 
 **Status.** Everything below the engine is built and tested. The engine side is the in-memory fake only: the engine's admin interface (`control-ops` in `Mircoguidetti/test5`) does not exist on the remote, so there is no real adapter. `src/server.ts` refuses to start with any engine driver but `fake`. See [`docs/engine-adapter.md`](docs/engine-adapter.md) for the exact calls the adapter has to make and [`docs/api-extensions.md`](docs/api-extensions.md) for where the API adds to the contract. What was and was not run is in [`../results-control-plane.md`](../results-control-plane.md).
 

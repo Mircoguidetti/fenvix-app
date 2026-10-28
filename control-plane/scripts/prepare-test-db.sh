@@ -17,5 +17,6 @@ psql_run -f supabase/tests/local-stub.sql >/dev/null
 for i in 1 2; do
   psql_run -f supabase/migrations/0001_init.sql >/dev/null 2>&1
   psql_run -f supabase/migrations/0002_control_plane.sql >/dev/null 2>&1
+  psql_run -f supabase/migrations/0006_account_linking.sql >/dev/null 2>&1
 done
-echo "scratch database ready: 0001 and 0002 applied twice"
+echo "scratch database ready: 0001, 0002 and 0006 applied twice"

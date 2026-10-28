@@ -462,3 +462,11 @@ table.data.dbs tbody tr { height: 58px; }
 .card > .ticks { flex: 1; justify-content: space-between; }
 @media (max-width: 760px) { .counts-sep { display: none; } .counts-bar { gap: 6px 16px; } }
 .avatar-photo { object-fit: cover; border: 0; }
+
+/* Settings: sign-in methods */
+.identity-list { list-style: none; padding: 0; margin: 0; max-width: none; gap: 0; }
+.identity { justify-content: space-between; flex-wrap: nowrap; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.identity:last-child { border-bottom: 0; }
+.identity-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.identity-name svg { flex: none; }
+.grid-2 + .card { margin-top: 20px; }

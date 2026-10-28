@@ -27,7 +27,7 @@ const query = (text) => psql("-tA", "-c", text).stdout.trim();
 // ------------------------------------------------------------------ fresh database, build, servers
 console.log("preparing the scratch database …");
 psql("-c", "drop schema if exists public cascade; drop schema if exists auth cascade; drop schema if exists extensions cascade; create schema public;");
-for (const f of ["supabase/tests/local-stub.sql", "supabase/migrations/0001_init.sql", "supabase/seed.sql"]) {
+for (const f of ["supabase/tests/local-stub.sql", "supabase/migrations/0001_init.sql", "supabase/migrations/0006_account_linking.sql", "supabase/seed.sql"]) {
   if (f.endsWith("seed.sql")) psql("-c", "insert into auth.users (email, raw_user_meta_data) values ('mircoguidetti1994@gmail.com', '{\"full_name\":\"Mirco Guidetti\"}') on conflict do nothing");
   const r = psql("-f", f);
   if (r.status !== 0) { console.error(r.stderr); process.exit(1); }
@@ -346,9 +346,14 @@ step("a replayed or tampered code is refused with a message, not a blank page", 
   const text = await page.locator("[role=alert]").innerText();
   assert(/invalid flow state|flow state|code/i.test(text), `message was: ${text}`);
   assert(!page.url().includes("code="), "the bad code was left in the address bar");
-  await page.goto(APP + "?error=access_denied&error_description=Access+denied");
-  await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
-  assert(/access denied/i.test(await page.locator("[role=alert]").innerText()), "a provider error was not shown");
+  // Supabase's own words are never shown: they differ when the address already has an account.
+  for (const q of ["error=access_denied&error_code=provider_email_needs_verification&error_description=Unverified+email+with+github.+Verify+the+email+with+github+in+order+to+sign+in",
+                   "error=server_error&error_code=unexpected_failure&error_description=Error+creating+identity"]) {
+    await page.goto(APP + "?" + q);
+    await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
+    const shown = await page.locator("[role=alert]").innerText();
+    assert(/That sign-in did not work/.test(shown) && !/Unverified|identity/i.test(shown), `the refusal read: ${shown}`);
+  }
   await ctx.close();
 });
 

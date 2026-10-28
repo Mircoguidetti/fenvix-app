@@ -84,7 +84,7 @@ export function SignInPage() {
         {sentTo ? (
           <div className="callout" role="status">
             <p>
-              <strong>Check your inbox.</strong> We sent a sign-in link to {sentTo}. It opens this dashboard and works once.
+              <strong>Check your inbox.</strong> We sent a sign-in link to {sentTo}. It opens this dashboard and works once. If nothing arrives in a few minutes, check the address and ask for another.
             </p>
             <div className="row-actions">
               <button type="button" className="btn" onClick={() => (setSentTo(null), setEmail(""))}>

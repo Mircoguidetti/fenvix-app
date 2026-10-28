@@ -1,6 +1,6 @@
 # Where this service goes beyond `docs/control-plane-api.md`
 
-The contract is implemented as written (37 endpoints, checked by `tests/integration/contract.test.ts`, which parses the contract document and asserts every method and path is routed). These are the places where the service adds something or makes a choice the contract leaves open.
+The contract is implemented as written (40 endpoints, checked by `tests/integration/contract.test.ts`, which parses the contract document and asserts every method and path is routed). These are the places where the service adds something or makes a choice the contract leaves open.
 
 ## Long operations: 202 and polling
 

@@ -1,13 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { type Deps, SESSION_COOKIE, clearSessionCookies, hitAnon, sessionFromRequest, setSessionCookies } from "../http.ts";
-import { ApiError, unauthenticated, validation } from "../errors.ts";
-import { type Provider } from "../auth/gateway.ts";
+import { ApiError, conflict, forbidden, internal, notFound, unauthenticated, validation } from "../errors.ts";
+import { GatewayError, type Provider } from "../auth/gateway.ts";
 import { asObject, parseEmail } from "../validate.ts";
 
 const PROVIDERS: readonly string[] = ["github", "google"];
 const OAUTH_COOKIE = "fnx_oauth";
 const EXPIRED_LINK = "This sign-in link has expired. Request a new one.";
+const LAST_METHOD = "Link another way to sign in before removing this one.";
 
 const b64 = (b: Buffer) => b.toString("base64url");
 
@@ -34,41 +35,114 @@ export function sessionRoutes(app: FastifyInstance, d: Deps): void {
     return user(session.claims);
   });
 
+  const oauthCookiePath = () => `${new URL(s.cfg.apiPublicUrl || "http://localhost").pathname.replace(/\/$/, "")}/session/providers`;
+
+  /** Starts a provider round trip: a PKCE verifier in a short-lived cookie, the challenge to the provider. */
+  const startOAuth = (reply: FastifyReply, returnTo: string, mode: "sign_in" | "link") => {
+    const verifier = b64(randomBytes(48));
+    const challenge = b64(createHash("sha256").update(verifier).digest());
+    reply.setCookie(OAUTH_COOKIE, b64(Buffer.from(JSON.stringify({ v: verifier, r: returnTo, m: mode }))), { ...cookieBase, path: oauthCookiePath(), maxAge: 600 });
+    reply.header("Cache-Control", "no-store");
+    return challenge;
+  };
+
+  /** The signed-in caller, for the endpoints that change their own sign-in methods. */
+  const signedIn = async (req: FastifyRequest, reply: FastifyReply) => {
+    const session = await sessionFromRequest(d, req, reply);
+    if (!session) throw unauthenticated();
+    if (session.viaCookie && req.method !== "GET") {
+      // Cookies are sent by the browser on its own, so a change must come from the dashboard.
+      const origin = req.headers.origin;
+      if (origin !== undefined && !s.cfg.dashboardOrigins.includes(origin)) throw forbidden("This request did not come from the dashboard.");
+    }
+    reply.header("Cache-Control", "no-store");
+    return session;
+  };
+
   app.post("/session/providers/:provider", async (req, reply) => {
     hitAnon(d, req);
     const { provider } = req.params as { provider: string };
     if (!PROVIDERS.includes(provider)) throw validation("Choose github or google.", "provider");
     const returnTo = checkReturnTo(asObject(req.body).returnTo);
-
-    const verifier = b64(randomBytes(48));
-    const challenge = b64(createHash("sha256").update(verifier).digest());
-    reply.setCookie(OAUTH_COOKIE, b64(Buffer.from(JSON.stringify({ v: verifier, r: returnTo }))), {
-      ...cookieBase, path: `${new URL(s.cfg.apiPublicUrl || "http://localhost").pathname.replace(/\/$/, "")}/session/providers`, maxAge: 600,
-    });
-    reply.header("Cache-Control", "no-store");
+    const challenge = startOAuth(reply, returnTo, "sign_in");
     return {
       redirectUrl: d.gateway.authorizeUrl({ provider: provider as Provider, redirectTo: `${s.cfg.apiPublicUrl}/session/providers/${provider}/callback`, codeChallenge: challenge }),
     };
+  });
+
+  // ------------------------------------------------------------ ways to sign in (Settings)
+  //
+  // Linking is always explicit and always proves the other account: the person signs in to the
+  // provider while signed in here. Which account an address belongs to is never said: every
+  // refusal is the same message (supabase/migrations/0006_account_linking.sql has the rules).
+
+  app.get("/session/identities", async (req, reply) => {
+    hitAnon(d, req);
+    const session = await signedIn(req, reply);
+    const items = await d.gateway.identities(session.accessToken);
+    return { items: items.map((i) => ({ id: i.id, provider: i.provider, email: i.email })) };
+  });
+
+  app.post("/session/identities/:provider", async (req, reply) => {
+    hitAnon(d, req);
+    const { provider } = req.params as { provider: string };
+    if (!PROVIDERS.includes(provider)) throw validation("Choose github or google.", "provider");
+    const session = await signedIn(req, reply);
+    const returnTo = checkReturnTo(asObject(req.body).returnTo);
+    const challenge = startOAuth(reply, returnTo, "link");
+    try {
+      return {
+        redirectUrl: await d.gateway.linkUrl({
+          accessToken: session.accessToken, provider: provider as Provider, codeChallenge: challenge,
+          redirectTo: `${s.cfg.apiPublicUrl}/session/providers/${provider}/callback`,
+        }),
+      };
+    } catch (e) {
+      req.log.warn({ err: e instanceof Error ? e.message : String(e), code: (e as GatewayError).code }, "starting a link failed");
+      if (e instanceof GatewayError && e.code === "manual_linking_disabled") throw forbidden("Linking another way to sign in is not turned on for this service.");
+      throw internal();
+    }
+  });
+
+  app.delete("/session/identities/:id", async (req, reply) => {
+    hitAnon(d, req);
+    const { id } = req.params as { id: string };
+    const session = await signedIn(req, reply);
+    const items = await d.gateway.identities(session.accessToken);
+    if (!items.some((i) => i.id === id)) throw notFound("That way to sign in is not linked to your account.");
+    if (items.length < 2) throw conflict(LAST_METHOD);
+    try {
+      await d.gateway.unlinkIdentity({ accessToken: session.accessToken, identityId: id });
+    } catch (e) {
+      req.log.warn({ err: e instanceof Error ? e.message : String(e), code: (e as GatewayError).code }, "unlinking failed");
+      if (e instanceof GatewayError && e.code === "single_identity_not_deletable") throw conflict(LAST_METHOD);
+      if (e instanceof GatewayError && e.code === "email_conflict_identity_not_deletable") throw conflict("This way to sign in cannot be removed. Contact support.");
+      throw internal();
+    }
+    return reply.code(204).send();
   });
 
   app.get("/session/providers/:provider/callback", async (req, reply) => {
     hitAnon(d, req);
     const { provider } = req.params as { provider: string };
     const q = req.query as { code?: string; error?: string };
-    reply.clearCookie(OAUTH_COOKIE, { path: `${new URL(s.cfg.apiPublicUrl || "http://localhost").pathname.replace(/\/$/, "")}/session/providers`, domain: s.cfg.cookieDomain });
+    reply.clearCookie(OAUTH_COOKIE, { path: oauthCookiePath(), domain: s.cfg.cookieDomain });
     reply.header("Cache-Control", "no-store");
 
-    let saved: { v: string; r: string } | null = null;
+    let saved: { v: string; r: string; link: boolean } | null = null;
     try {
-      const parsed = JSON.parse(Buffer.from(req.cookies[OAUTH_COOKIE] ?? "", "base64url").toString("utf8")) as { v?: unknown; r?: unknown };
-      if (typeof parsed.v === "string" && typeof parsed.r === "string") saved = { v: parsed.v, r: checkReturnTo(parsed.r) };
+      const parsed = JSON.parse(Buffer.from(req.cookies[OAUTH_COOKIE] ?? "", "base64url").toString("utf8")) as { v?: unknown; r?: unknown; m?: unknown };
+      if (typeof parsed.v === "string" && typeof parsed.r === "string") saved = { v: parsed.v, r: checkReturnTo(parsed.r), link: parsed.m === "link" };
     } catch { /* no usable cookie */ }
 
     const fallback = s.cfg.dashboardOrigins[0];
+    // One outcome per kind of failure, whatever the reason: an unverified address, an address that
+    // belongs to another account and a cancelled consent all read the same, so nothing is revealed.
     const back = (target: string | undefined, failed: boolean) => {
       if (!target) throw validation("Sign-in could not be completed. Start again from the dashboard.");
       const u = new URL(target);
-      if (failed) u.searchParams.set("error", "sign_in_failed");
+      if (failed) u.searchParams.set("error", saved?.link ? "link_failed" : "sign_in_failed");
+      else if (saved?.link) u.searchParams.set("linked", provider);
       return reply.redirect(u.toString(), 302);
     };
 

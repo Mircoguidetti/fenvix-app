@@ -260,6 +260,79 @@ describe("section 3: sign-in", () => {
   });
 });
 
+describe("section 3: ways to sign in (link and unlink)", () => {
+  const as = (who: Fixture) => ({ cookie: `fnx_session=${who.token}`, origin: DASHBOARD });
+
+  test("all three need a session", async () => {
+    assert.equal((await inject("GET", "/session/identities")).statusCode, 401);
+    assert.equal((await inject("POST", "/session/identities/github", {}, { returnTo: `${DASHBOARD}/settings` })).statusCode, 401);
+    assert.equal((await inject("DELETE", "/session/identities/x")).statusCode, 401);
+  });
+
+  test("link GitHub: redirectUrl, the provider round trip, ?linked=github, and the list shows both", async () => {
+    const me = await h.user("Link Lee");
+    const before = json(await inject("GET", "/session/identities", as(me)));
+    assert.deepEqual(before.items.map((i: { provider: string }) => i.provider), ["email"]);
+
+    const start = await inject("POST", "/session/identities/github", as(me), { returnTo: `${DASHBOARD}/settings` });
+    assert.equal(start.statusCode, 200, start.body);
+    const { redirectUrl } = json(start);
+    assert.equal(new URL(redirectUrl).searchParams.get("redirect_to"), "https://api.fenvix.test/v1/session/providers/github/callback");
+    const code = h.gateway.approveLink(redirectUrl, "lee@work.example");
+    const back = await inject("GET", `/session/providers/github/callback?code=${code}`, { cookie: `fnx_oauth=${cookiesOf(start).fnx_oauth!.value}` });
+    assert.equal(back.headers.location, `${DASHBOARD}/settings?linked=github`);
+    assert.ok(cookiesOf(back).fnx_session, "the session is renewed");
+
+    const after = json(await inject("GET", "/session/identities", as(me)));
+    assert.deepEqual(after.items.map((i: { provider: string; email: string }) => [i.provider, i.email]), [["email", me.email], ["github", "lee@work.example"]]);
+  });
+
+  test("a refused link (unverified address, address of another account, cancelled) always reads ?error=link_failed", async () => {
+    const me = await h.user("Refused Ray");
+    const start = await inject("POST", "/session/identities/google", as(me), { returnTo: `${DASHBOARD}/settings` });
+    for (const q of ["error=server_error&error_code=unexpected_failure", "error=access_denied&error_code=provider_email_needs_verification", "error=access_denied", "code=wrong"]) {
+      const back = await inject("GET", `/session/providers/google/callback?${q}`, { cookie: `fnx_oauth=${cookiesOf(start).fnx_oauth!.value}` });
+      assert.equal(back.headers.location, `${DASHBOARD}/settings?error=link_failed`, q);
+    }
+  });
+
+  test("a sign-in that Supabase refuses for any reason always reads ?error=sign_in_failed", async () => {
+    const start = await inject("POST", "/session/providers/github", {}, { returnTo: `${DASHBOARD}/overview` });
+    for (const q of ["error=server_error&error_code=unexpected_failure&error_description=Database+error", "error=access_denied&error_code=provider_email_needs_verification&error_description=Unverified+email"]) {
+      const back = await inject("GET", `/session/providers/github/callback?${q}`, { cookie: `fnx_oauth=${cookiesOf(start).fnx_oauth!.value}` });
+      assert.equal(back.headers.location, `${DASHBOARD}/overview?error=sign_in_failed`, q);
+    }
+  });
+
+  test("unlink: 409 for the last way in, 404 for someone else's, 204 while another remains", async () => {
+    const me = await h.user("Unlink Uma");
+    const other = await h.user("Other Otto");
+    const [only] = json(await inject("GET", "/session/identities", as(me))).items as { id: string }[];
+    const last = await inject("DELETE", `/session/identities/${only!.id}`, as(me));
+    assert.equal(last.statusCode, 409);
+    assert.equal(err(last).message, "Link another way to sign in before removing this one.");
+
+    const otherId = (json(await inject("GET", "/session/identities", as(other))).items as { id: string }[])[0]!.id;
+    assert.equal((await inject("DELETE", `/session/identities/${otherId}`, as(me))).statusCode, 404);
+
+    const start = await inject("POST", "/session/identities/google", as(me), { returnTo: `${DASHBOARD}/settings` });
+    await inject("GET", `/session/providers/google/callback?code=${h.gateway.approveLink(json(start).redirectUrl, me.email)}`, { cookie: `fnx_oauth=${cookiesOf(start).fnx_oauth!.value}` });
+    assert.equal((await inject("DELETE", `/session/identities/${only!.id}`, as(me))).statusCode, 204);
+    assert.deepEqual((json(await inject("GET", "/session/identities", as(me))).items as { provider: string }[]).map((i) => i.provider), ["google"]);
+  });
+
+  test("link and unlink from another site are 403; linking turned off at Supabase is 403", async () => {
+    const me = await h.user("Origin Olga");
+    const evil = { cookie: `fnx_session=${me.token}`, origin: "https://evil.example" };
+    assert.equal((await inject("POST", "/session/identities/github", evil, { returnTo: `${DASHBOARD}/settings` })).statusCode, 403);
+    assert.equal((await inject("DELETE", "/session/identities/x", evil)).statusCode, 403);
+    h.gateway.manualLinkingDisabled = true;
+    const off = await inject("POST", "/session/identities/github", as(me), { returnTo: `${DASHBOARD}/settings` });
+    h.gateway.manualLinkingDisabled = false;
+    assert.equal(off.statusCode, 403);
+  });
+});
+
 describe("rate limiting", () => {
   test("429 rate_limited with Retry-After once a workspace goes over its limit; other workspaces are unaffected", async () => {
     const t = await startHarness({ RATE_LIMIT_PER_MINUTE: "5", RATE_LIMIT_ANON_PER_MINUTE: "5" });

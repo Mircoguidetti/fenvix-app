@@ -45,7 +45,9 @@ page says which one, instead of showing a blank page.
 ## Set up Supabase
 
 1. **Create the schema.** Supabase dashboard → SQL editor → New query. Paste
-   `supabase/migrations/0001_init.sql` and Run. It can be run again safely.
+   `supabase/migrations/0001_init.sql` and Run. It can be run again safely. Then, the same way,
+   `supabase/migrations/0006_account_linking.sql` (one account per verified address; read
+   `docs/account-linking.md` first).
 2. **Auth URLs.** Authentication → URL Configuration. Set *Site URL* to the production address and add
    every address the app is served from to *Redirect URLs*, each with a trailing slash: for example
    `https://app.fenvix.cloud/`, `http://localhost:5173/`, and for Vercel previews a wildcard such as
@@ -100,6 +102,8 @@ After a provider or email sign-in the user lands on `/overview`, not on the page
 | `npm run test:unit` | Query builders, row mapping, error messages, CSV, API-key hashing | Node 22 |
 | `npm run test:rls` | Runs the migration twice, `supabase/tests/rls.sql` (user A cannot read or write user B's rows), `supabase/tests/functions.sql` (every function, all-or-nothing changes) and the seed twice | A scratch Postgres 15+ |
 | `npm run test:e2e` | The built app with the real supabase-js, through sign-in, the hash-router redirect and every screen, against a local stand-in for Supabase | A scratch Postgres 15+ |
+| `bash supabase/tests/account-linking/run.sh` | The account linking rules against the **real** Supabase Auth server (GoTrue in Docker) with made-up GitHub / Google people, the merge script end to end, and the dashboard in a browser (`LAB_DATABASE_URL`, see `docs/account-linking.md`) | Docker, a scratch Postgres 15+ |
+| `node supabase/account-merge/test-merge.mjs` | The merge and undo scripts for duplicate accounts | A scratch Postgres 15+ |
 
 The last two take `TEST_DATABASE_URL`, the address of an **empty, disposable** Postgres database, for example:
 
@@ -122,5 +126,7 @@ and how the real GoTrue and PostgREST behave. That needs a real sign-in.
   `src/data/mock.ts` is the mock. `src/data/index.ts` picks one.
 - `src/session/` is the same for sign-in. `src/lib/env.ts` reads the environment.
 - `supabase/migrations/0001_init.sql`: tables, indexes, row level security, the sign-up trigger and every function.
+- `supabase/migrations/0006_account_linking.sql`: the account linking rules; `supabase/account-merge/`: finding
+  and merging accounts one person has twice (`docs/account-linking.md`).
 - `docs/control-plane-api.md` describes the HTTP API the engine team will implement, and how the Supabase
   backend maps onto it.

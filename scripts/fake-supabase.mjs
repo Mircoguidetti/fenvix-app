@@ -7,11 +7,15 @@
 //
 // It is NOT Supabase: it does not test Google, GitHub, email delivery, PostgREST, the JWT
 // signature check or the real anon key. Needs TEST_DATABASE_URL (see supabase/tests/run-local.sh).
+//
+// With REAL_AUTH_URL set (supabase/tests/account-linking/), /auth/v1/* is passed through to a
+// real Supabase Auth server instead of being faked; only the data part is still this file.
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { spawnSync } from "node:child_process";
 
 const PORT = Number(process.env.FAKE_SUPABASE_PORT ?? 54399);
+const REAL_AUTH = process.env.REAL_AUTH_URL ?? "";
 const DB = process.env.TEST_DATABASE_URL;
 if (!DB) throw new Error("Set TEST_DATABASE_URL to the scratch database.");
 
@@ -73,6 +77,20 @@ createServer((req, res) => {
   req.on("end", () => {
     const body = raw ? (() => { try { return JSON.parse(raw); } catch { return {}; } })() : {};
     const bearer = (req.headers.authorization ?? "").replace(/^Bearer /i, "");
+
+    if (REAL_AUTH && url.pathname.startsWith("/auth/v1/")) {
+      const headers = Object.fromEntries(["authorization", "apikey", "content-type", "x-client-info"].filter((h) => req.headers[h]).map((h) => [h, req.headers[h]]));
+      fetch(`${REAL_AUTH}${url.pathname.slice("/auth/v1".length)}${url.search}`, { method: req.method, headers, body: raw || undefined, redirect: "manual" }).then(
+        async (r) => {
+          const out = { ...corsFor(req), "content-type": r.headers.get("content-type") ?? "application/json" };
+          if (r.headers.get("location")) out.location = r.headers.get("location");
+          res.writeHead(r.status, out);
+          res.end(await r.text());
+        },
+        (e) => send(502, { msg: String(e) }),
+      );
+      return;
+    }
 
     if (url.pathname === "/auth/v1/authorize") {
       // The provider screen is skipped: the user is "signed in" and sent straight back with a code.

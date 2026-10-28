@@ -1,11 +1,107 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { client, type Settings } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { GitHubMark, GoogleMark } from "../components/marks";
 import { useAsync } from "../lib/useAsync";
+import { session, type AuthProvider, type LinkedIdentity } from "../session";
+import { providerLabel, takeLinkResult } from "../session/redirect";
 import { useSession } from "../session/SessionProvider";
 import { useToast } from "../components/Toast";
 import { workspaceChanged } from "../lib/workspace";
+
+const LINKABLE: AuthProvider[] = ["github", "google"];
+
+/** GitHub, Google and the email link: add one, or remove one while another remains. */
+function SignInMethods() {
+  const toast = useToast();
+  const [list, setList] = useState<LinkedIdentity[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [target, setTarget] = useState<LinkedIdentity | null>(null);
+
+  const load = useCallback(() => {
+    session.listIdentities().then(setList, (e: unknown) => setError(e instanceof Error ? e.message : "Could not load your sign-in methods."));
+  }, []);
+
+  useEffect(() => {
+    load();
+    // Back from the provider after "Link GitHub" / "Link Google".
+    const r = takeLinkResult();
+    if (r?.ok) toast(r.message);
+    else if (r) setError(r.message);
+  }, [load, toast]);
+
+  async function link(p: AuthProvider) {
+    setBusy(true);
+    setError(null);
+    try {
+      await session.linkProvider(p); // the real one leaves the page; the mock links at once
+      toast(`${providerLabel(p)} is linked. You can sign in with it from now on.`);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start linking. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unlink() {
+    if (!target) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await session.unlinkIdentity(target.id);
+      toast(`${providerLabel(target.provider)} removed`);
+      setTarget(null);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not remove it. Try again.");
+      setTarget(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const only = (list?.length ?? 0) < 2;
+  return (
+    <Card id="sign-in" title="Sign-in methods" description="Every way in opens this same account and workspace.">
+      {!list && !error && <Message>Loading sign-in methods</Message>}
+      {list && (
+        <ul className="stack identity-list">
+          {list.map((i) => (
+            <li key={i.id} className="row-actions identity">
+              <span className="identity-name">
+                {i.provider === "github" ? <GitHubMark /> : i.provider === "google" ? <GoogleMark /> : null}
+                <strong>{providerLabel(i.provider)}</strong>
+                {i.email && <span className="muted ellipsis"> {i.email}</span>}
+              </span>
+              <button type="button" className="btn btn-sm" disabled={busy || only} onClick={() => setTarget(i)} aria-label={`Remove ${providerLabel(i.provider)}`}>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {list && only && <p className="muted small">This is your only way to sign in, so it cannot be removed.</p>}
+      {list && (
+        <div className="row-actions">
+          {LINKABLE.filter((p) => !list.some((i) => i.provider === p)).map((p) => (
+            <button key={p} type="button" className="btn" disabled={busy} onClick={() => link(p)}>
+              {p === "github" ? <GitHubMark /> : <GoogleMark />}
+              Link {providerLabel(p)}
+            </button>
+          ))}
+        </div>
+      )}
+      {error && <p className="error" role="alert">{error}</p>}
+      <ConfirmDialog open={!!target} title={`Remove ${target ? providerLabel(target.provider) : ""}?`} confirmLabel="Remove" busy={busy} onConfirm={unlink} onCancel={() => setTarget(null)}>
+        <p>You will no longer be able to sign in with it. Your workspace and data are not affected.</p>
+      </ConfirmDialog>
+    </Card>
+  );
+}
 
 export function SettingsPage() {
   const loaded = useAsync(() => client.getSettings(), []);
@@ -101,6 +197,8 @@ export function SettingsPage() {
         </div>
       </Card>
       </div>
+
+      <SignInMethods />
     </>
   );
 }

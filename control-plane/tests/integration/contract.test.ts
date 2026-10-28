@@ -12,8 +12,8 @@ const doc = readFileSync(new URL("../../../docs/control-plane-api.md", import.me
 const endpoints = [...doc.matchAll(/^### `(\w+)` — `(GET|POST|PUT|DELETE) (\S+)`/gm)].map((m) => ({ name: m[1]!, method: m[2]!, path: m[3]! }));
 
 test("the contract lists the endpoints we expect (a guard against the parser finding nothing)", () => {
-  assert.equal(endpoints.length, 37, `found ${endpoints.length}`);
-  for (const n of ["listDatabases", "createDatabase", "eraseDatabases", "getUsageTrend", "completeEmailLink", "signOut", "setKeepAwake"]) {
+  assert.equal(endpoints.length, 40, `found ${endpoints.length}`);
+  for (const n of ["listDatabases", "createDatabase", "eraseDatabases", "getUsageTrend", "completeEmailLink", "signOut", "setKeepAwake", "listIdentities", "linkProvider", "unlinkIdentity"]) {
     assert.ok(endpoints.some((e) => e.name === n), n);
   }
 });

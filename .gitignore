@@ -6,4 +6,5 @@ dist
 !.env.example
 dist-e2e
 dist-e2e-noenv
+dist-lab
 e2e-failure.png

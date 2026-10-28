@@ -504,6 +504,22 @@ const TESTS = {
     await eventually(async () => (await page.locator(".workspace-name").first().textContent()).includes("Northwind Platform"), "the sidebar still shows the old workspace name");
     await page.getByRole("heading", { name: "Northwind Platform" }).waitFor();
   },
+
+  async "sign-in methods"(page) {
+    await signIn(page, "settings");
+    const card = page.locator("#sign-in");
+    await card.getByText("This is your only way to sign in, so it cannot be removed.").waitFor();
+    assert(await card.getByRole("button", { name: "Remove GitHub" }).isDisabled(), "the only way in can be removed");
+    await card.getByRole("button", { name: "Link Google" }).click();
+    await toast(page, "Google is linked. You can sign in with it from now on.");
+    await card.getByRole("button", { name: "Remove Google" }).waitFor();
+    assert(!(await card.getByRole("button", { name: "Link Google" }).count()), "Link Google is still offered");
+    await card.getByRole("button", { name: "Remove GitHub" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Remove", exact: true }).click();
+    await toast(page, "GitHub removed");
+    await card.getByRole("button", { name: "Link GitHub" }).waitFor();
+    assert(await card.getByRole("button", { name: "Remove Google" }).isDisabled(), "the last way in can be removed");
+  },
 };
 
 // ONLY=fleet runs just the tests whose name holds that text.

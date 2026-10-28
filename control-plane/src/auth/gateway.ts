@@ -8,11 +8,22 @@ export interface Tokens {
 
 export type Provider = "github" | "google";
 
+/** A way to sign in to one account: a provider account, or the email link ("email"). */
+export interface Identity {
+  id: string;
+  provider: string;
+  /** The address the provider gave, if any. */
+  email: string | null;
+}
+
 export class GatewayError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  /** Supabase Auth's error_code, e.g. single_identity_not_deletable. */
+  readonly code: string | undefined;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -26,6 +37,12 @@ export interface AuthGateway {
   verifyEmailToken(tokenHash: string): Promise<Tokens>;
   refresh(refreshToken: string): Promise<Tokens>;
   signOut(accessToken: string): Promise<void>;
+  /** The signed-in user's ways to sign in. */
+  identities(accessToken: string): Promise<Identity[]>;
+  /** The provider page that links another provider to the signed-in user. PKCE, like sign-in. */
+  linkUrl(a: { accessToken: string; provider: Provider; redirectTo: string; codeChallenge: string }): Promise<string>;
+  /** Removes one way to sign in. Supabase Auth refuses to remove the last one. */
+  unlinkIdentity(a: { accessToken: string; identityId: string }): Promise<void>;
 }
 
 /** Supabase Auth over its REST API, using only the project's public (anon) key. */
@@ -45,19 +62,19 @@ export class SupabaseGateway implements AuthGateway {
     return `${this.base}/authorize?${q}`;
   }
 
-  private async call(path: string, body: unknown, extraHeaders: Record<string, string> = {}): Promise<unknown> {
+  private async call(path: string, body: unknown, extraHeaders: Record<string, string> = {}, method = "POST"): Promise<unknown> {
     const res = await this.fetchFn(`${this.base}${path}`, {
-      method: "POST",
+      method,
       headers: { "content-type": "application/json", apikey: this.anonKey, ...extraHeaders },
-      body: JSON.stringify(body),
+      body: method === "GET" || method === "DELETE" ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(10_000),
     });
     const text = await res.text();
     let json: unknown = null;
     try { json = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
     if (!res.ok) {
-      const m = json as { msg?: string; message?: string; error_description?: string } | null;
-      throw new GatewayError(m?.msg ?? m?.message ?? m?.error_description ?? `Supabase Auth answered ${res.status}`, res.status);
+      const m = json as { msg?: string; message?: string; error_description?: string; error_code?: string } | null;
+      throw new GatewayError(m?.msg ?? m?.message ?? m?.error_description ?? `Supabase Auth answered ${res.status}`, res.status, m?.error_code);
     }
     return json;
   }
@@ -86,5 +103,29 @@ export class SupabaseGateway implements AuthGateway {
 
   async signOut(accessToken: string): Promise<void> {
     await this.call("/logout?scope=local", {}, { authorization: `Bearer ${accessToken}` });
+  }
+
+  async identities(accessToken: string): Promise<Identity[]> {
+    const u = (await this.call("/user", null, { authorization: `Bearer ${accessToken}` }, "GET")) as {
+      identities?: { identity_id?: string; id?: string; provider?: string; identity_data?: { email?: unknown } }[];
+    } | null;
+    return (u?.identities ?? []).map((i) => ({
+      id: String(i.identity_id ?? i.id ?? ""),
+      provider: String(i.provider ?? ""),
+      email: typeof i.identity_data?.email === "string" ? i.identity_data.email : null,
+    }));
+  }
+
+  async linkUrl(a: { accessToken: string; provider: Provider; redirectTo: string; codeChallenge: string }): Promise<string> {
+    const q = new URLSearchParams({
+      provider: a.provider, redirect_to: a.redirectTo, code_challenge: a.codeChallenge, code_challenge_method: "s256", skip_http_redirect: "true",
+    });
+    const r = (await this.call(`/user/identities/authorize?${q}`, null, { authorization: `Bearer ${a.accessToken}` }, "GET")) as { url?: string } | null;
+    if (!r?.url) throw new GatewayError("Supabase Auth returned no address to link", 502);
+    return r.url;
+  }
+
+  async unlinkIdentity(a: { accessToken: string; identityId: string }): Promise<void> {
+    await this.call(`/user/identities/${encodeURIComponent(a.identityId)}`, null, { authorization: `Bearer ${a.accessToken}` }, "DELETE");
   }
 }

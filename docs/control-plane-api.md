@@ -399,7 +399,9 @@ Response `200`: `SessionUser`, or `401 unauthenticated` when signed out (the cli
 
 `provider` is `github` or `google`. Body: `{ "returnTo": "https://app.fenvix.cloud/overview" }`.
 
-Response `200`: `{ "redirectUrl": "https://github.com/login/oauth/authorize?..." }`. The client navigates the browser to `redirectUrl`. The provider sends the user back to the API callback (`GET /session/providers/{provider}/callback`, handled by the server only), which sets the session cookie and redirects to `returnTo`. On return the dashboard calls `getSession`. A cancelled or failed sign-in redirects to `returnTo` with `?error=sign_in_failed`.
+Response `200`: `{ "redirectUrl": "https://github.com/login/oauth/authorize?..." }`. The client navigates the browser to `redirectUrl`. The provider sends the user back to the API callback (`GET /session/providers/{provider}/callback`, handled by the server only), which sets the session cookie and redirects to `returnTo`. On return the dashboard calls `getSession`. A cancelled or failed sign-in redirects to `returnTo` with `?error=sign_in_failed`, whatever the reason (a cancelled consent, an address the provider has not verified, an address that belongs to another account): the answer never says whether an account has an address.
+
+One person has one account per verified address, whichever way they sign in: a GitHub or Google account whose verified address is an account's address signs in to that account. An address the provider has not verified never reaches an existing account (see `docs/account-linking.md`).
 
 ### `requestEmailLink` — `POST /session/email-link`
 
@@ -414,6 +416,28 @@ The emailed link points at `https://app.fenvix.cloud/?token=<token>`. The dashbo
 ### `signOut` — `DELETE /session`
 
 Ends the session and clears the cookie. Response `204`. Signing out when already signed out is also `204`.
+
+### Ways to sign in (Settings)
+
+These three need a session. A person adds GitHub or Google to the account they are signed in to, and removes one as long as another remains.
+
+```ts
+interface LinkedIdentity { id: string; provider: "github" | "google" | "email" | string; email: string | null }
+```
+
+`provider` `email` is the emailed link to the account's address. `email` is the address the provider gave, if any.
+
+### `listIdentities` — `GET /session/identities`
+
+Response `200`: `{ "items": LinkedIdentity[] }`.
+
+### `linkProvider` — `POST /session/identities/{provider}`
+
+`provider` is `github` or `google`. Body: `{ "returnTo": "https://app.fenvix.cloud/settings" }`. Response `200`: `{ "redirectUrl": "..." }`, as for `signInWithProvider`: the person signs in to the provider, the API callback links that provider account to the signed-in account and redirects to `returnTo` with `?linked={provider}`, or with `?error=link_failed` when it was not linked. `link_failed` is the only failure answer, whatever the reason (the provider account already signs in to another account, its address is not verified and is not this account's address, its address belongs to another account, the consent was cancelled). `403` when linking is turned off.
+
+### `unlinkIdentity` — `DELETE /session/identities/{id}`
+
+Response `204`. `409 conflict` "Link another way to sign in before removing this one." when it is the only one. `404` when the id is not one of the caller's.
 
 
 ---

@@ -63,17 +63,18 @@ export function hitAnon(d: Deps, req: FastifyRequest): void {
 }
 
 /** The signed-in user of a request, from the session cookie (refreshed when it has expired) or a bearer token. */
-export async function sessionFromRequest(d: Deps, req: FastifyRequest, reply: FastifyReply): Promise<{ claims: SessionClaims; viaCookie: boolean } | null> {
+export async function sessionFromRequest(d: Deps, req: FastifyRequest, reply: FastifyReply): Promise<{ claims: SessionClaims; viaCookie: boolean; accessToken: string } | null> {
   const auth = req.headers.authorization;
   if (auth?.startsWith("Bearer ") && !auth.startsWith("Bearer fnx_")) {
-    const r = await d.verifier.verify(auth.slice(7).trim());
-    return r.ok ? { claims: r.claims, viaCookie: false } : null;
+    const token = auth.slice(7).trim();
+    const r = await d.verifier.verify(token);
+    return r.ok ? { claims: r.claims, viaCookie: false, accessToken: token } : null;
   }
   const access = req.cookies[SESSION_COOKIE];
   const refresh = req.cookies[REFRESH_COOKIE];
   if (access) {
     const r = await d.verifier.verify(access);
-    if (r.ok) return { claims: r.claims, viaCookie: true };
+    if (r.ok) return { claims: r.claims, viaCookie: true, accessToken: access };
     if (r.reason !== "expired") return null;
   }
   if (refresh) {
@@ -82,7 +83,7 @@ export async function sessionFromRequest(d: Deps, req: FastifyRequest, reply: Fa
       const r = await d.verifier.verify(t.accessToken);
       if (!r.ok) return null;
       setSessionCookies(d, reply, t);
-      return { claims: r.claims, viaCookie: true };
+      return { claims: r.claims, viaCookie: true, accessToken: t.accessToken };
     } catch (e) {
       req.log.info({ err: e instanceof Error ? e.message : String(e) }, "session refresh failed");
       clearSessionCookies(d, reply);
