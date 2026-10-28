@@ -1,5 +1,9 @@
 # FENVIX AWS infrastructure: results
 
+## Update: Let's Encrypt instead of exportable ACM (branch `infra-align`, after `d63ef74`)
+
+Details and test numbers: [`report-infra-align.md`](report-infra-align.md), section 7. In short: no ACM resource and no `acm:` permission any more; the server gets one Let's Encrypt certificate per region (lego 5.5.2, pinned by SHA-256, DNS-01 on Route 53), renews it under 30 days (timer twice a day), restarts the engine and Caddy only when it changed, and keeps it in the SecureString parameter `/fenvix-tls/<env>/acme-state` so a replaced server does not ask again. The engine role may write only TXT `_acme-challenge` records of its own names in the stack zone. New settings `acmeEmail` (required), `acmeStaging` (default false), `dnsZone` (`db` default, or `domain`). The boot scripts moved from the user data (it would have been 17 KB) to Standard SSM String parameters `/fenvix-boot/<env>/scripts-*` checked by SHA-256. Where the lines below speak of ACM, the export script or `fenvix-cert-refresh`, they are superseded.
+
 ## Update: branch `infra-align` (aligned with the real engine and control plane)
 
 Branch `infra-align` from `origin/e2e-engine` @ `0fde489`; only `infra/` changed. Nothing deployed, no AWS call. Full report of this work: [`report-infra-align.md`](report-infra-align.md). What changed against the sections below:

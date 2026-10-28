@@ -98,3 +98,175 @@ Il motore (binario finale) prenderà regione e credenziali dall'ambiente e dal r
 ## 6. Branch e commit
 
 Branch `infra-align` (da `origin/e2e-engine` @ `0fde489`), solo `infra/`, nessun merge, nessuna PR. Commit: `baae779` (codice, test, README) e il commit che aggiunge questo report e `results-infra.md` (hash finale nel messaggio in chat / `git log`).
+
+## 7. Seguito: Let's Encrypt al posto di ACM esportabile
+
+Partito da `origin/infra-align` @ `d63ef74`, commit aggiunti sopra sullo stesso branch. Toccata solo `infra/`. Nessuna attività AWS (nessun deploy, nessuna chiamata API, credenziali tolte dall'ambiente per ogni comando), nessuna chiamata a Let's Encrypt (neppure staging): i test usano un client ACME finto. Pebble non l'ho fatto girare: compilarlo richiede moduli Go da `proxy.golang.org`/`golang.org`, fuori dalla rete consentita. Uniche richieste esterne: GitHub (sorgente di lego v5.5.2, i due archivi linux e il file dei checksum della release) e il registry npm già usato.
+
+### 7.1 Cosa ho cambiato
+
+| File | Modifica |
+|---|---|
+| `lib/fenvix-stack.ts` | Tolti `acm.Certificate` (`CertificateExport: ENABLED`) e `acm:ExportCertificate`. Aggiunte le istruzioni Route 53 del ruolo (7.3), lettura/scrittura del parametro di stato TLS e `kms:Encrypt`/`GenerateDataKey` solo via SSM e solo per quel parametro (contesto di cifratura `PARAMETER_ARN`), i parametri String del bundle di avvio con lettura solo di quei nomi (7.5). Zona `db.<dominio>` o `<dominio>` secondo `dnsZone`; con `db` il record `console` non è nello stack e l'output `ManualDnsRecords` dice cosa creare a mano |
+| `lib/acme.ts` (nuovo) | Versione e SHA-256 di lego, endpoint produzione/staging, nomi del certificato e dei record `_acme-challenge`, nome del parametro di stato, lo script `fenvix-tls` |
+| `lib/user-data.ts` | Tolto `certRefreshScript` (export ACM). Download di lego con verifica SHA-256 per architettura; `fenvix-tls` come `ExecStartPre` del motore e di Caddy; `fenvix-tls.timer` due volte al giorno; `/etc/fenvix/tls` di `fenvix`, 0700; Caddy legge lo stesso `engine.pem` (cartella montata in sola lettura); script e unità spostati nel bundle di avvio |
+| `lib/config.ts` | `acmeEmail` obbligatorio senza default (validato, niente apici o caratteri di shell), `acmeStaging` (`true`/`false`, default `false`), `dnsZone` (`domain` o `db`) |
+| `lib/engine-command.ts` | Tolto `proxyCertDir`; commento del PEM aggiornato |
+| `lib/nag-suppressions.ts` | Motivazione IAM5 aggiornata; un solo `appliesTo` nuovo: `arn:aws:route53:::change/*` |
+| `cdk.json` | `dnsZone: "db"`, `acmeStaging: "false"`; `acmeEmail` assente apposta (il synth si ferma e chiede `FENVIX_ACME_EMAIL`) |
+| `deploy-policy.json` | 7.7 |
+| `test/*` | 7.8 |
+| `README.md` | "The domain" (opzioni A e B, record), "The certificate" (rinnovo, limiti, staging), Step 5/7/9/11, rinnovo, teardown |
+| `results-infra.md` | Nota in testa: le righe su ACM sono superate |
+
+Riferimenti ad ACM rimasti: nessuno nel codice, nel template, nella policy di deploy, nelle soppressioni. Restano solo nelle sezioni storiche di questo report e di `results-infra.md`, marcate come superate.
+
+### 7.2 Client ACME: lego 5.5.2
+
+Scelto **lego** (go-acme/lego) **v5.5.2** (23 settembre 2026). Un solo binario statico Go; nessun Python, pip o venv sull'host; provider Route 53 incluso, con le credenziali del ruolo dell'istanza dalla catena standard dell'SDK (IMDSv2). Download da `github.com/go-acme/lego/releases/download/v5.5.2/lego_v5.5.2_linux_{amd64,arm64}.tar.gz`, verificato con SHA-256 fissato nel codice: `2a35505…bef` (amd64) e `15b14ec…e8c` (arm64). Ho scaricato io i due archivi, calcolato gli hash e confrontati con `lego_5.5.2_checksums.txt` della release: coincidono. Se l'hash non corrisponde, l'avvio si ferma (`set -e`, `sha256sum -c`). Niente `curl | sh` (un test lo controlla). Non ho preso la v5.6.0 perché è uscita oggi.
+
+Perché non certbot: certbot + `certbot-dns-route53` in un venv portano boto3/botocore e una decina di dipendenze. Per installarle in modo verificabile servono un lockfile con l'hash di ogni pacchetto (`pip --require-hashes`) e la versione di Python di Amazon Linux. Con lego basta un hash per architettura.
+
+Ho letto il sorgente di v5.5.2 per usare i flag e le chiamate esatte. `lego run` ottiene o rinnova. Il provider Route 53 chiama `ListResourceRecordSets` (legge i valori TXT del nome della challenge), `ChangeResourceRecordSets` (`UPSERT`, poi `DELETE` o `UPSERT` alla pulizia), `GetChange` (attesa `INSYNC`), e `ListHostedZonesByName` **solo se `AWS_HOSTED_ZONE_ID` non è impostato**. Lo script lo imposta, quindi quella chiamata, l'unica che richiede `"*"`, non serve. lego segue i CNAME di `_acme-challenge` (serve all'opzione B per `console`).
+
+Flag usati: `--dns route53 --key-type ec256 --cert.name fenvix --renew-days 30 --ari-disable --no-random-sleep --force-cert-domains --log.format text`. ARI disattivato perché la regola dei 30 giorni sia quella decisa e testabile. Il ritardo casuale lo dà già il timer (`RandomizedDelaySec=1h`).
+
+### 7.3 IAM Route 53 (ruolo dell'istanza)
+
+```
+AcmeChallengeTxtOnly   route53:ChangeResourceRecordSets  su arn:...:route53:::hostedzone/<zona dello stack>
+  ForAllValues:StringEquals
+    route53:ChangeResourceRecordSetsRecordTypes          = [TXT]
+    route53:ChangeResourceRecordSetsNormalizedRecordNames = [_acme-challenge.<regione>.db.<dominio>, _acme-challenge.console.<dominio>]
+                                                            (con dnsZone=db: _acme-challenge.console.db.<dominio>)
+    route53:ChangeResourceRecordSetsActions              = [UPSERT, DELETE]
+AcmeChallengeRead      route53:ListResourceRecordSets    su la stessa zona
+AcmeChallengeWait      route53:GetChange                 su arn:aws:route53:::change/*
+```
+Nessun `Resource "*"` su Route 53: `GetChange` accetta l'ARN `change/*` (l'id della change non esiste prima della richiesta) e `ListHostedZonesByName` non serve (7.2). Il ruolo non può toccare record A, altri tipi, altri nomi o altre zone. Ogni regione può scrivere solo il proprio nome. `console` è solo nella regione del control plane.
+
+In più, rispetto alla richiesta, ho dato `ListResourceRecordSets` sulla zona, perché lego v5.5.2 lo chiama prima di ogni scrittura. Rivela i nomi e i valori dei record della zona (con l'opzione B solo `db.<dominio>`), non permette modifiche.
+
+**CNAME-delegation verso una zona dedicata: scartata come zona separata, adottata solo per `console` nell'opzione B.** Una zona dedicata solo alle challenge (ad esempio `acme.<dominio>`, con `_acme-challenge.X` CNAME verso di essa) servirebbe se il ruolo dovesse scrivere nella zona dei record veri senza condizioni. Qui le condizioni (tipo TXT, nomi esatti, azioni) limitano già la scrittura nella zona dello stack a quei nomi. Una zona in più costerebbe $0,50 al mese, CNAME fissi da tenere e un punto di rottura in più, senza ridurre il rischio residuo: chi scrive il TXT ottiene il certificato, ovunque stia il TXT. La uso invece dove serve davvero: con l'opzione B `console.<dominio>` sta nel DNS principale (Cloudflare/GoDaddy), dove il server non ha accesso. Un CNAME creato a mano `_acme-challenge.console.<dominio>` → `_acme-challenge.console.db.<dominio>` gli permette di dimostrare `console` scrivendo solo in Route 53.
+
+**Rischio residuo (dichiarato):** chi ottiene il ruolo dell'istanza, cioè chi ha il controllo dell'host (il limite di salti IMDS = 1 lo nega ai container), può emettere certificati validi per `*.<regione>.db.<dominio>` e `console.<dominio>` e leggere la chiave salvata in SSM. Può quindi impersonare i nostri nomi se riesce anche a deviare il traffico, cosa che il ruolo da solo non permette (niente record A). È lo stesso livello di chi ha l'host, che ha comunque la chiave in `/etc/fenvix/tls`. Un CAA con `accounturi` non aiuterebbe: l'account ACME sta sullo stesso host. Mitigazioni possibili, non fatte: un record CAA `0 issue "letsencrypt.org"` sulla zona (blocca le altre CA) e il monitoraggio Certificate Transparency (ad esempio crt.sh) per i nostri nomi.
+
+### 7.4 Persistenza fuori dall'istanza
+
+Scelta: **un parametro SSM SecureString, tier Advanced, `/fenvix-tls/<env>/acme-state`** per regione. Contiene `tar.gz` + base64 di account ACME (chiave e registrazione), certificato, chiave e un file `fenvix.meta` (endpoint ACME + nomi). Scritto dal server con `put-parameter --overwrite --value file://...`, così il valore non compare mai nella riga di comando. Il server ne ha `GetParameter`/`PutParameter` solo su quell'ARN; il servizio KMS si usa solo tramite SSM. È fuori da `/fenvix/<env>/`, che i servizi leggono a ogni avvio. Lo stack non lo crea (CloudFormation non crea SecureString), quindi `cdk destroy` non lo cancella (README, teardown).
+
+Dimensione: 2,0 KB nei test (certificati finti, più corti di quelli veri); con una catena Let's Encrypt reale e chiavi EC P-256 la stimo a 3–4 KB (stima, non misurata), vicina al limite Standard di 4 KB, quindi tier Advanced (8 KB). Lo script rifiuta di salvare oltre 8 KB, con un avviso.
+
+| Opzione | Costo | Perché no |
+|---|---|---|
+| **SSM Advanced SecureString** (scelta) | $0,05 al mese per parametro (≈ $0,60 all'anno per regione); chiamate API in throughput standard gratis | riusa SSM e la chiave `aws/ssm` come gli altri segreti, nessuna risorsa nuova |
+| Secrets Manager | $0,40 al mese per segreto + $0,05 ogni 10.000 chiamate | 8 volte il costo; risorsa nello stack con un valore iniziale e soppressione nag (rotazione) |
+| Oggetto S3 cifrato in un bucket separato | centesimi | un bucket in più, con policy, cifratura, blocco pubblico e log da giustificare; più permessi |
+
+Logica all'avvio (`fenvix-tls`, testata): se sul disco non c'è niente di utilizzabile, legge lo stato da SSM. Se è valido, è per gli stessi nomi e lo stesso endpoint e mancano più di 30 giorni alla scadenza, lo installa **senza contattare Let's Encrypt**. Se mancano meno di 30 giorni, rinnova con lo stesso account. Se manca o è per altri nomi o un altro endpoint (staging/produzione), emette. Se SSM non è leggibile (errore diverso da `ParameterNotFound`) e sul disco non c'è un certificato valido, si ferma **senza** chiedere a Let's Encrypt. Se l'emissione fallisce e non c'è un certificato valido, esce 1 con `FATAL: no valid certificate. The engine and the TLS terminator do not start without a certificate (...)`: il motore e Caddy non partono. Se fallisce un rinnovo mentre il certificato installato è ancora valido, lo tiene e avvisa. Se fallisce il salvataggio, avvisa e riprova al giro dopo (il servizio parte).
+
+Limite delle 5 validazioni fallite all'ora: systemd riavvia il motore ogni 5 s e ogni avvio esegue `fenvix-tls`. Senza freno, un DNS sbagliato farebbe decine di tentativi l'ora. Dopo un fallimento lo script non contatta Let's Encrypt per 20 minuti (al massimo 3 tentativi l'ora). Lo sblocco manuale è nel README. Limite dei 5 certificati identici a settimana: con lo stato salvato, un'istanza ricreata non emette.
+
+Mai stampati chiave, token o segreti: l'output di lego e dell'AWS CLI passa da un filtro che toglie le righe con `-----`/`PRIVATE` e sostituisce ogni sequenza di 32+ caratteri base64/base64url con `[redacted]` (tiene le ultime 15 righe, 300 caratteri ciascuna). Il test fa stampare al lego finto un token e un'intestazione di chiave e controlla che non escano; un altro test confronta ogni riga di ogni chiave generata con tutto l'output di tutte le esecuzioni.
+
+### 7.5 Limite di 16 KB dell'user data
+
+Con lo script nuovo l'user data sarebbe arrivato a **17,0 KB**. Non ho tolto controlli. Ho spostato script e unità (fetch-config, fenvix-tls, create-engine-users, unità tls, control plane, Caddy, env statico) in un **bundle di avvio**: uno script bash con gli stessi heredoc, compresso gzip+base64 e diviso in **parametri SSM String Standard** (gratuiti, massimo 4 KB l'uno) creati dallo stack, `/fenvix-boot/<env>/scripts-0..N` (oggi 2: 4.096 + 2.648 caratteri). L'user data (ora **3,9 KB**) li scarica, ricompone il bundle, verifica lo **SHA-256 fissato nell'user data** e solo allora lo esegue. Il ruolo ha `ssm:GetParameter` solo su quei nomi. Il bundle non contiene valori di CloudFormation (un controllo lo impone): id della zona e nome del bucket restano nell'user data, e l'unità del motore resta lì perché contiene il bucket. Un cambio del bundle cambia l'hash nell'user data, quindi l'istanza viene sostituita come prima.
+
+Perché non un asset CDK, come proposto nella richiesta: un asset richiede `cdk bootstrap`. Il bootstrap crea lo stack CDKToolkit con un bucket, un repository ECR e ruoli di deploy/esecuzione (quello di esecuzione di default con `AdministratorAccess`). Oggi lo stack usa `BootstraplessSynthesizer` e la policy di deploy è ristretta proprio per non averlo. Con i parametri String i requisiti restano: file fuori dall'user data, verifica SHA-256, lettura limitata a quegli oggetti. In più, niente bootstrap e niente costo. Documentato nel README (Step 7).
+
+### 7.6 DNS (README, "The domain")
+
+- **Opzione A** (`dnsZone=domain`): tutto il dominio su Route 53. Al registrar si mettono i 4 name server; prima vanno ricreati in Route 53 tutti i record esistenti (sito Vercel: i valori indicati da Vercel in Settings, Domains; `MX`, `TXT` SPF/DKIM/DMARC/verifiche, `CAA`). **Con Cloudflare Registrar non è possibile** (un dominio registrato lì deve usare il DNS di Cloudflare).
+- **Opzione B (raccomandata, default `dnsZone=db`)**: Route 53 ha solo `db.<dominio>`. Dove sta il DNS principale si creano a mano: 4 record `NS` `db` → name server di Route 53; `A` `console` → Elastic IP; `CNAME` `_acme-challenge.console` → `_acme-challenge.console.db.<dominio>` (su Cloudflare "DNS only"). Il sito Vercel e la posta non si toccano, funziona con Cloudflare Registrar, e i permessi del server restano dentro `db.<dominio>`. Lo stack stampa i valori (`NameServers`, `ManualDnsRecords`).
+
+### 7.7 `deploy-policy.json`
+
+1. **Tolta** `CertificateRequest` (`acm:RequestCertificate`, `Resource "*"`).
+2. **Tolta** `CertificateManage` (`acm:DescribeCertificate`, `acm:DeleteCertificate`, `acm:AddTagsToCertificate`, `acm:ListTagsForCertificate`).
+3. **Aggiunta** `BootScriptParametersOnly`: `ssm:PutParameter`, `ssm:DeleteParameter`, `ssm:GetParameter`, `ssm:GetParameters`, `ssm:AddTagsToResource`, `ssm:RemoveTagsFromResource`, `ssm:ListTagsForResource` solo su `arn:aws:ssm:eu-central-1:865859654353:parameter/fenvix-boot/*`, per i parametri del bundle creati da CloudFormation (i tag `project`/`env` arrivano dallo stack). Un test controlla che il ruolo di deploy non possa scrivere `/fenvix/<env>/` né `/fenvix-tls/`.
+
+Route 53 e IAM non richiedono altro: `DnsManageZones` copre già zona e record, e le policy nuove del ruolo dell'istanza sono `iam:PutRolePolicy` su `fenvix-*`, già presente. Il parametro di stato TLS lo crea il server, non il deploy. Nota: le due voci ACM tolte servirebbero solo per cancellare un certificato ACM di uno stack già deployato. Lo stack non è mai stato deployato, quindi non c'è niente da cancellare.
+
+### 7.8 Test
+
+- **Prima** (`d63ef74`): 8 suite, **101 test**, tutti passati.
+- **Dopo**: 9 suite, **128 test**, tutti passati (`npx jest`, variabili AWS tolte). `npx tsc --noEmit`: nessun errore.
+- Nuovo `test/tls.test.ts` (12 test): esegue **davvero** `fenvix-tls` con openssl vero, un `lego` finto (emette un certificato EC per i nomi ricevuti, valido N giorni, e registra argomenti e ambiente) e un `aws` finto (SSM su file; rifiuta un valore non passato come `file://`). Casi coperti:
+  - primo avvio: una richiesta con i flag esatti e `AWS_HOSTED_ZONE_ID`; PEM = catena + chiave in **0600**; la chiave corrisponde al certificato; cartella dati 0700; salvato in SSM; nessun riavvio;
+  - run del timer con certificato valido: nessuna richiesta, nessun salvataggio, nessun riavvio;
+  - istanza nuova: ripristino da SSM, nessuna richiesta, stessa impronta, stesso account;
+  - meno di 30 giorni: rinnovo, installazione, **un** riavvio di motore e Caddy; al run successivo niente;
+  - stato ripristinato vicino alla scadenza: rinnovo con l'account ripristinato;
+  - emissione fallita senza certificato: exit 1, messaggio chiaro, nessun PEM, token e chiave non stampati, nessun nuovo tentativo per 20 minuti;
+  - rinnovo fallito con certificato valido: tenuto, exit 0, nessun riavvio;
+  - SSM illeggibile: exit 1 senza contattare Let's Encrypt;
+  - salvataggio fallito: avviso, poi salvato al giro dopo;
+  - certificato staging salvato: ignorato da un server di produzione;
+  - regione senza control plane: riavvia solo il motore;
+  - nessuna riga di nessuna chiave in nessun output.
+- `infra.test.ts`:
+  - nessuna risorsa `CertificateManager`, nessun `acm:` nel template;
+  - policy Route 53 con risorsa, condizioni e azioni esatte, anche con `dnsZone=db` e zona esistente; nessun `"*"`;
+  - parametro di stato e KMS per contesto di cifratura;
+  - bundle in SSM uguale all'hash dell'user data; parametri String Standard ≤ 4 KB e dipendenza dell'istanza;
+  - **le righe di avvio eseguite davvero** contro i parametri del template: ricompongono il bundle e rifiutano un bundle modificato;
+  - user data < 16 KB;
+  - `acmeEmail` obbligatorio (anche: `cdk.json` non lo contiene);
+  - `acmeStaging` cambia solo l'endpoint (diff riga per riga del bundle e dell'user data);
+  - due regioni con nomi della challenge distinti.
+- `deploy-policy.test.ts`: nessun permesso ACM; scritture SSM solo su `/fenvix-boot/*`.
+- Il test sul download del bundle ha trovato un bug vero, corretto prima del commit: un `'\n'` diventato un a-capo letterale dentro `tr -d '...'` spezzava la riga e saltava la verifica SHA-256.
+
+**Controlli di mutazione** (modifica voluta, `jest` completo, ripristino con `git checkout`; alla fine il working tree era pulito):
+
+| Mutazione | Esito di `jest` (128 test) |
+|---|---|
+| `ChangeResourceRecordSets` su `Resource "*"` | 4 falliti (Resource "*", policy Route 53 esatta, azioni Route 53, caso `dnsZone=db`) |
+| un nome in più nella condizione (l'apex del dominio) | 3 falliti (policy esatta, caso `dnsZone=db`, due regioni) |
+| record `A` ammessi oltre a `TXT` | 1 fallito (policy esatta) |
+| `engine.pem` installato 0644 | 1 fallito (primo avvio: modo 0600) |
+| riavvio sempre, non solo a certificato cambiato | 3 falliti (run del timer senza cambi, rinnovo, ripetizione) |
+| richiesta a Let's Encrypt a ogni run (niente controllo dei 30 giorni) | 4 falliti (riuso, ripristino, rinnovo, salvataggio) |
+| output di lego/AWS stampato senza filtro | 1 fallito (token non stampato) |
+| servizio avviato senza TLS se l'emissione fallisce (`exit 0`) | 1 fallito (exit 1 e messaggio) |
+| certificato ACM esportabile + `acm:ExportCertificate` rimessi | 3 falliti (nessun ACM, record senza ACM, policy di deploy senza azione per il tipo) |
+| verifica SHA-256 di lego tolta | 1 fallito |
+| `acmeEmail` con un default | 2 falliti |
+
+Una prima variante, "condizione sui nomi tolta", faceva fallire solo la compilazione (import non più usato) e quindi non provava nulla. L'ho sostituita con la mutazione "un nome in più", che compila. Il primo giro è stato interrotto dal limite di tempo durante la prova ACM; ho ripristinato il file con `git checkout` e rifatto le ultime quattro prove.
+
+**`cdk synth`** con la CLI vera, variabili AWS tolte, `AWS_EC2_METADATA_DISABLED=true`, file di configurazione AWS vuoti, `HTTPS_PROXY`/`HTTP_PROXY` verso `127.0.0.1:9` (proxy morto): esito 0, template di 38,4 KB, solo l'avviso W3010 (AZ fissata, voluto). Nel template:
+- ingressi solo `0.0.0.0/0` su 27018 e 443; nessuna regola copre 8443;
+- nessuna risorsa ACM, nessun `acm:`;
+- user data 3,9 KB senza segreti: nessun `-----BEGIN`, nessuna chiave AWS; l'unica corrispondenza di "password" è il nome del parametro SSM letto a runtime dallo script dello Step 10;
+- IMDS `required`, hop 1;
+- bundle (2 parametri) con hash uguale a quello nell'user data;
+- ruolo dell'istanza = 5 azioni S3 sul bucket, lettura `/fenvix/prod/*`, `kms:Decrypt` via SSM, Session Manager, le 3 istruzioni Route 53 sopra, get/put di `/fenvix-tls/prod/acme-state`, `kms:Encrypt`/`GenerateDataKey` via SSM per quel parametro, lettura di `/fenvix-boot/prod/scripts-0` e `-1`.
+
+**cdk-nag**: 10 risultati grezzi, 0 non giustificati. L'unico nuovo è `IAM5` su `route53:::change/*`, giustificato.
+
+Verificato a parte con Go 1.24 (libreria standard): `tls.X509KeyPair` accetta lo stesso file catena + chiave sia come certificato sia come chiave. È la funzione che usa il caricatore di file di Caddy. Caddy in sé non l'ho eseguito.
+
+### 7.9 Decisioni che servono a te
+
+1. **Opzione DNS**: raccomando B (`dnsZone=db`, già il default). Se il dominio lo compri su Cloudflare Registrar, A non è possibile.
+2. **`acmeEmail`**: un indirizzo che leggi (`FENVIX_ACME_EMAIL`). Non ne ho messo nessuno.
+3. **Primo deploy con `acmeStaging=true`** (raccomandato), poi `false` e un secondo deploy. Costa una sostituzione dell'istanza; evita di consumare i limiti di produzione se il DNS non è ancora a posto.
+4. **CAA** `0 issue "letsencrypt.org"` sul dominio: facoltativo, non l'ho aggiunto. Con l'opzione B va messo dove sta il DNS principale e vale anche per i certificati che Vercel ottiene (Vercel usa Let's Encrypt, quindi è compatibile; da verificare se Vercel usa anche altre CA).
+5. Accettare il rischio residuo del 7.3 e `ListResourceRecordSets` sulla zona.
+
+### 7.10 Cosa NON ho potuto verificare (serve AWS o un dominio vero)
+
+- Emissione reale da Let's Encrypt (produzione e staging), con la propagazione DNS e la validazione DNS-01. lego non è mai stato eseguito contro un server ACME: i test usano un lego finto. Ho eseguito il binario vero solo per `--version` e `run --help`, per controllare i flag.
+- Il provider Route 53 di lego sull'istanza con le credenziali IMDSv2, e che le chiamate passino le condizioni IAM (in particolare i nomi normalizzati e il wildcard: per `*.<regione>.db` il nome scritto è `_acme-challenge.<regione>.db.<dominio>`, ricavato dal codice, non provato).
+- Il CNAME di `console` nell'opzione B seguito da lego e da Let's Encrypt.
+- `put-parameter --tier Advanced` del server e i permessi KMS: per la chiave gestita `aws/ssm` basta di norma la key policy; la mia istruzione con contesto `PARAMETER_ARN` è in più ma non è provata su SSM Advanced. Se il salvataggio fallisse, il servizio parte comunque e il log lo dice (Step 9).
+- Il rinnovo reale dopo 60 giorni e il timer systemd; il riavvio di motore e Caddy su Amazon Linux 2023; `flock` e `try-restart` lì.
+- La lettura del bundle da SSM all'avvio sull'istanza e la creazione dei parametri da CloudFormation con la policy di deploy (permessi SSM nuovi).
+- Caddy 2.8.4 con `tls /certs/engine.pem /certs/engine.pem` (verificato solo il comportamento di Go, 7.8).
+- La procedura DNS sui pannelli reali di Cloudflare e GoDaddy (scritta, non eseguita).
+
+### 7.11 Commit
+
+Branch `infra-align`, sopra `d63ef74`: `a263f23` (codice e test), poi il commit di questo report, del README e di `results-infra.md` (hash in `git log`). Nessun merge, nessuna pull request.
