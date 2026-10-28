@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Applies the Supabase stand-ins and the migrations (0001-0005, 0007) (twice: they must be safe to repeat) to an
+# Applies the Supabase stand-ins and the migrations (0001-0005, 0007, 0008) (twice: they must be safe to repeat) to an
 # EMPTY SCRATCH Postgres 15+ database. Refuses anything that looks like a hosted Supabase project.
 #
 #   TEST_DATABASE_URL=postgresql://postgres@localhost:5432/cp_scratch bash scripts/prepare-test-db.sh
@@ -21,5 +21,6 @@ for i in 1 2; do
   psql_run -f supabase/migrations/0004_data_explorer.sql >/dev/null 2>&1
   psql_run -f supabase/migrations/0005_engine_users.sql >/dev/null 2>&1
   psql_run -f supabase/migrations/0007_database_users.sql >/dev/null 2>&1
+  psql_run -f supabase/migrations/0008_organizations.sql >/dev/null 2>&1
 done
-echo "scratch database ready: 0001 to 0005 and 0007 applied twice (0006 is on another branch)"
+echo "scratch database ready: 0001 to 0005, 0007 and 0008 applied twice (0006 is on another branch)"

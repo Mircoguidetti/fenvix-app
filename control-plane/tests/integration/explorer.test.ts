@@ -282,11 +282,17 @@ describe("roles and API keys", () => {
     assert.deepEqual(json(await h.as(readKey).get(`${url()}/${enc(id)}`)).document.v, { $numberInt: "1" });
   });
 
-  test("a read-write key, the owner, an admin and a member can write", async () => {
-    for (const who of [writeKey, admin, member]) {
+  test("a read-write key, the owner and an admin can write; a member only reads, and the refusal is recorded", async () => {
+    for (const who of [writeKey, admin]) {
       const res = await h.as(who).post(url(), { document: { by: typeof who === "string" ? "key" : who.name } }, cookie);
       assert.equal(res.statusCode, 201, res.body);
     }
+    const before = (await auditRows(ws)).length;
+    const res = await h.as(member).post(url(), { document: { by: member.name } }, cookie);
+    assert.equal(res.statusCode, 403, res.body);
+    assert.equal((await h.as(member).get(url())).statusCode, 200, "a member still reads");
+    const rows = (await auditRows(ws)).slice(before);
+    assert.deepEqual(rows.map((r) => [r.operation, r.outcome, r.actor_type]), [["insert", "denied", "user"]]);
   });
 
   test("a revoked key can do nothing", async () => {

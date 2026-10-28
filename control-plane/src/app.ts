@@ -26,6 +26,7 @@ import { dataRoutes } from "./routes/data.ts";
 import { sessionRoutes } from "./routes/session.ts";
 import { explorerRoutes } from "./routes/explorer.ts";
 import { usersRoutes } from "./routes/users.ts";
+import { orgRoutes } from "./routes/orgs.ts";
 
 export interface AppOptions {
   cfg: Config;
@@ -118,7 +119,7 @@ export async function buildApp(opts: AppOptions): Promise<App> {
       origin: cfg.dashboardOrigins,
       credentials: true,
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-Request-Id"],
+      allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-Request-Id", "X-Fenvix-Workspace"],
       exposedHeaders: ["Retry-After", "X-Request-Id", "Location", "Operation-Id", "Idempotent-Replay"],
       maxAge: 600,
     });
@@ -179,6 +180,7 @@ export async function buildApp(opts: AppOptions): Promise<App> {
     dataRoutes(v1, deps);
     await v1.register(async (sub) => explorerRoutes(sub, deps));
     await v1.register(async (sub) => usersRoutes(sub, deps));
+    orgRoutes(v1, deps);
   }, { prefix: "/v1" });
 
   let usageTimer: NodeJS.Timeout | undefined;

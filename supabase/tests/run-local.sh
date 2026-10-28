@@ -21,14 +21,19 @@ fi
 
 psql_run() { psql "$url" -v ON_ERROR_STOP=1 -q "$@"; }
 
-echo "1/5 local stand-ins for Supabase";  psql_run -f supabase/tests/local-stub.sql >/dev/null
-echo "2/5 migration (twice: it must be safe to repeat)"; psql_run -f supabase/migrations/0001_init.sql >/dev/null 2>&1; psql_run -f supabase/migrations/0001_init.sql >/dev/null 2>&1
-echo "3/5 row level security";            psql_run -f supabase/tests/rls.sql 2>&1 | grep -E "RLS OK" >/dev/null && echo "     RLS OK"
-echo "4/5 functions";                     psql_run -f supabase/tests/functions.sql 2>&1 | grep -E "FUNCTIONS OK" >/dev/null && echo "     FUNCTIONS OK"
-echo "5/5 seed (twice: the second run must change nothing)"
+echo "1/6 local stand-ins for Supabase";  psql_run -f supabase/tests/local-stub.sql >/dev/null
+echo "2/6 migration (twice: it must be safe to repeat)"; psql_run -f supabase/migrations/0001_init.sql >/dev/null 2>&1; psql_run -f supabase/migrations/0001_init.sql >/dev/null 2>&1
+echo "3/6 row level security";            psql_run -f supabase/tests/rls.sql 2>&1 | grep -E "RLS OK" >/dev/null && echo "     RLS OK"
+echo "4/6 functions";                     psql_run -f supabase/tests/functions.sql 2>&1 | grep -E "FUNCTIONS OK" >/dev/null && echo "     FUNCTIONS OK"
+echo "5/6 organizations: 0002, 0004, 0005, 0007 and 0008 (each twice), then their row level security"
+for f in 0002_control_plane 0004_data_explorer 0005_engine_users 0007_database_users 0008_organizations; do
+  psql_run -f "supabase/migrations/$f.sql" >/dev/null 2>&1; psql_run -f "supabase/migrations/$f.sql" >/dev/null 2>&1
+done
+psql_run -f supabase/tests/orgs-rls.sql 2>&1 | grep -E "ORGS RLS OK" >/dev/null && echo "     ORGS RLS OK"
+echo "6/6 seed (twice: the second run must change nothing)"
 psql_run -c "insert into auth.users (email, raw_user_meta_data) values ('mircoguidetti1994@gmail.com', '{\"full_name\":\"Mirco Guidetti\"}') on conflict do nothing" >/dev/null
 psql_run -f supabase/seed.sql 2>&1 | grep -E "Seeded" || { echo "seed did not run" >&2; exit 1; }
 psql_run -f supabase/seed.sql 2>&1 | grep -E "Nothing was changed" >/dev/null && echo "     second run changed nothing"
 count=$(psql "$url" -tAc "select count(*) from public.databases")
 [[ "$count" == "3000" ]] || { echo "expected 3000 databases, found $count" >&2; exit 1; }
-echo "done: migration, RLS, functions and seed all pass"
+echo "done: migration, RLS, functions, organizations and seed all pass"

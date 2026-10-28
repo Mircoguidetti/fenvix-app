@@ -51,7 +51,8 @@ describe("every data endpoint needs a session or an API key", () => {
   test("a valid token of a user without a workspace is 403 forbidden", async () => {
     const id = "99999999-9999-4999-8999-999999999999";
     await h.admin.query("insert into auth.users (id, email) values ($1, 'lonely@example.invalid') on conflict do nothing", [id]);
-    await h.admin.query("delete from public.workspace_members where user_id = $1", [id]);
+    // The workspace made at sign-up goes with its only member (a workspace never loses its last owner otherwise).
+    await h.admin.query("delete from public.workspaces where id in (select workspace_id from public.workspace_members where user_id = $1)", [id]);
     const token = await h.signer.token({ id, email: "lonely@example.invalid" });
     const res = await inject("GET", "/databases", { cookie: `fnx_session=${token}` });
     assert.equal(res.statusCode, 403);
@@ -106,7 +107,8 @@ describe("session JWT (Supabase, verified against the JWKS) and API keys", () =>
     assert.equal((await h.as(member).get("/api-keys")).statusCode, 403);
     assert.equal((await h.as(member).put("/settings", { workspaceName: "x", idleMinutes: 5, emailNotices: true })).statusCode, 403);
     assert.equal((await h.as(member).get("/settings")).statusCode, 200, "members can read");
-    assert.equal((await h.as(member).post("/databases", { name: "member-made-01", region: "eu-central-1" })).statusCode, 201);
+    // A member only reads (docs/organizations.md): creating a database is refused too.
+    assert.equal((await h.as(member).post("/databases", { name: "member-made-01", region: "eu-central-1" })).statusCode, 403);
     const admin = await h.addMember(u.workspaceId, "Adam", "admin");
     assert.equal((await h.as(admin).get("/api-keys")).statusCode, 200);
   });

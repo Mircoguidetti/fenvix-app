@@ -45,5 +45,10 @@ test("every route the service has beyond the contract is one we documented as an
     "GET /v1/databases/:id/users",
     "POST /v1/databases/:id/users",
     "POST /v1/databases/:id/users/:username/reset-password",
+    // Organizations, members and invitations (docs/api-extensions.md, "Organizations").
+    "GET /v1/organizations", "POST /v1/organizations", "POST /v1/invitations/accept",
+    "GET /v1/organization", "PUT /v1/organization", "POST /v1/organization/leave",
+    "GET /v1/organization/members", "PUT /v1/organization/members/:userId", "DELETE /v1/organization/members/:userId",
+    "GET /v1/organization/invitations", "POST /v1/organization/invitations", "POST /v1/organization/invitations/:id/revoke",
   ].sort());
 });

@@ -261,7 +261,9 @@ describe("the database role itself cannot cross workspaces", () => {
       await refused("update public.api_keys set key_hash = repeat('0', 64)", [], /permission denied/);
       await refused("update public.workspace_settings set plan = 'free'", [], /permission denied/);
       await refused("select * from auth.users", [], /permission denied/);
-      await refused("select * from public.workspace_members", [], /permission denied/);
+      // Since 0008 it reads memberships, of the workspace it acts for only.
+      assert.deepEqual((await c.query("select distinct workspace_id from public.workspace_members")).rows.map((r) => r.workspace_id), [a.workspaceId]);
+      await refused("update public.workspace_members set user_id = $1", [b.userId], /permission denied/);
       await refused("select public.fenvix_list_databases()", [], /permission denied/);
       await refused("create table public.x (a int)", [], /permission denied/);
       await refused("set role service_role", [], /permission denied|must be member/);

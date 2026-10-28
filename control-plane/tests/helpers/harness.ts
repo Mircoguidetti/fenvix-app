@@ -155,7 +155,7 @@ export async function startHarness(over: Record<string, string | undefined> = {}
     async user(name = "Test User") {
       const id = randomUUID();
       const email = `${id.slice(0, 8)}@example.invalid`;
-      await admin.query("insert into auth.users (id, email, raw_user_meta_data) values ($1, $2, $3)", [id, email, JSON.stringify({ full_name: name })]);
+      await admin.query("insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) values ($1, $2, $3, now())", [id, email, JSON.stringify({ full_name: name })]);
       const ws = (await admin.query("select workspace_id from public.workspace_members where user_id = $1", [id])).rows[0].workspace_id as string;
       gateway.register({ id, email, name });
       return make(id, email, name, ws);
@@ -163,9 +163,10 @@ export async function startHarness(over: Record<string, string | undefined> = {}
     async addMember(ws, name, role) {
       const id = randomUUID();
       const email = `${id.slice(0, 8)}@example.invalid`;
-      await admin.query("insert into auth.users (id, email, raw_user_meta_data) values ($1, $2, $3)", [id, email, JSON.stringify({ full_name: name })]);
-      // the trigger gave them a workspace of their own; move them into the other one
-      await admin.query("delete from public.workspace_members where user_id = $1", [id]);
+      await admin.query("insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) values ($1, $2, $3, now())", [id, email, JSON.stringify({ full_name: name })]);
+      // the trigger gave them a workspace of their own; drop it (a workspace keeps its last owner otherwise) and move
+      // them into the other one
+      await admin.query("delete from public.workspaces where id in (select workspace_id from public.workspace_members where user_id = $1)", [id]);
       await admin.query("insert into public.workspace_members (workspace_id, user_id, role) values ($1, $2, $3)", [ws, id, role]);
       return make(id, email, name, ws);
     },

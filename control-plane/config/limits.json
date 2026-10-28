@@ -23,5 +23,13 @@
   "historyMonths": 12,
   "maxUsersPerDatabase": 20,
   "userListsPerMinute": 60,
-  "userChangesPerMinute": 10
+  "userChangesPerMinute": 10,
+  "organizationNameMinLength": 2,
+  "organizationNameMaxLength": 64,
+  "maxMembersPerOrganization": 50,
+  "invitationsPerOrganizationPerDay": 20,
+  "invitationTtlDays": 7,
+  "organizationsCreatedPerUserPerDay": 10,
+  "maxOrganizationsPerUser": 50,
+  "invitationAcceptsPerMinute": 10
 }

@@ -27,11 +27,12 @@ The contract only has `403 forbidden` ("signed in, but not allowed"). The rules 
 
 | Caller | Allowed |
 | --- | --- |
-| Workspace `owner` / `admin` (cookie session) | everything |
-| Workspace `member` | everything except erase, API keys and saving settings |
-| API key | everything except API keys and saving settings (a stolen key cannot mint more keys) |
+| Organization `owner` | everything, including admins and other owners |
+| Organization `admin` | everything except managing admins and owners (see [`organizations.md`](organizations.md)) |
+| Organization `member` | reading only: **every** `POST`, `PUT` and `DELETE` answers `403`, except creating an organization, accepting an invitation and leaving |
+| API key | everything except API keys, settings and organizations (a stolen key cannot mint more keys) |
 
-Only `owner` exists today (the sign-up trigger makes each person an owner of their own workspace); `workspace_members` can hold the others.
+The organization a request acts for is named by the header `X-Fenvix-Workspace` (see "Organizations" below).
 
 ## Downloads
 
@@ -82,3 +83,37 @@ Changes to existing behaviour, all additive:
   carries `authSource` and `authMechanism=SCRAM-SHA-256`: `mongodb://app:<password>@host:port/db?tls=true&authSource=db&authMechanism=SCRAM-SHA-256`.
 * `POST /api-keys` accepts `"userAccess": "none" | "manage"` (default `none`), and every key has `userAccess`. Only
   `manage` keys can create, reset or delete database users. Needs migration `0007_database_users.sql`.
+
+## Organizations
+
+Organizations (the `workspaces` table), members and invitations. Rules, roles, limits and the threat model are in
+[`organizations.md`](organizations.md). Needs migration `0008_organizations.sql`.
+
+The organization a request acts for: header `X-Fenvix-Workspace: <id>` on any route. The server checks on every
+request that the signed-in person is a member of it and takes the role from the membership. An organization that does
+not exist, is not theirs, or is not a valid id gives the same `404`. Without the header: their oldest membership, as
+before. An API key always acts for its own organization (naming another one is a `404`).
+
+The person (no organization needed; never an API key):
+
+* `GET /organizations` -> `{ items: [{ id, name, role, nameConfirmed }] }`, oldest membership first.
+* `POST /organizations` `{ name }` -> `201 { organization }`. The person is its owner; the name counts as confirmed.
+* `POST /invitations/accept` `{ token }` -> `200 { organization }`. Every refusal is the same `404`.
+
+The current organization (never an API key):
+
+* `GET /organization` -> `{ id, name, role, nameConfirmed, members, limits: { maxMembers, invitationsPerDay } }`.
+* `PUT /organization` `{ name }` -> renames and confirms the name. Owner or admin.
+* `POST /organization/leave` -> `200 {}`. Any role; `409` for the last owner.
+* `GET /organization/members` -> `{ items: [{ userId, name, email, role, joinedAt, you }], limit }`.
+* `PUT /organization/members/{userId}` `{ role }` -> `200 { userId, role }`. `DELETE` the same path removes them.
+* `GET /organization/invitations` -> pending ones `{ items: [{ id, email, role, createdAt, expiresAt }] }`. Owner or admin.
+* `POST /organization/invitations` `{ email, role? }` -> `201 { invitation, link }`. The link holds the token and is
+  in this answer only (`Idempotency-Key` "no-replay").
+* `POST /organization/invitations/{id}/revoke` -> `200 { invitation }`.
+
+Changes to existing behaviour:
+
+* A `member` can no longer create, fork, restore, export, erase, keep awake or tag databases, download invoices, or
+  change documents in the Data Explorer (`403`). Reading is unchanged.
+* `403` for a person with no organization now says to create one or accept an invitation.

@@ -44,12 +44,12 @@ export function explorerRoutes(app: FastifyInstance, d: Deps): void {
 
   // "no-replay": a retried insert with the same Idempotency-Key is refused instead of inserting twice, and the
   // idempotency record keeps only the status, never the document.
-  write("POST", `${BASE}/:collection/documents`, { idem: "no-replay" }, async (c) =>
+  write("POST", `${BASE}/:collection/documents`, { idem: "no-replay", role: "any" }, async (c) =>
     ({ status: 201, body: await ex.insertDocument(ctx(c, true), c.params.id, collection(c), c.body) }));
 
-  write("PUT", `${BASE}/:collection/documents/:docId`, { idem: "no-replay" }, async (c) =>
+  write("PUT", `${BASE}/:collection/documents/:docId`, { idem: "no-replay", role: "any" }, async (c) =>
     ({ status: 200, body: await ex.replaceDocument(ctx(c, true), c.params.id, collection(c), docId(c), c.body) }));
 
-  write("DELETE", `${BASE}/:collection/documents/:docId`, { idem: "no-replay" }, async (c) =>
+  write("DELETE", `${BASE}/:collection/documents/:docId`, { idem: "no-replay", role: "any" }, async (c) =>
     ({ status: 200, body: await ex.deleteDocument(ctx(c, true), c.params.id, collection(c), docId(c), c.q.version) }));
 }

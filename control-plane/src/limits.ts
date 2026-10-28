@@ -23,10 +23,24 @@ export interface Limits {
   userListsPerMinute: number;
   /** Creating, resetting and deleting users, per person and per API key, per minute. */
   userChangesPerMinute: number;
+  /** Organizations (docs/organizations.md): name length, members, invitations, how many a person may make and join. */
+  organizationNameMinLength: number;
+  organizationNameMaxLength: number;
+  maxMembersPerOrganization: number;
+  invitationsPerOrganizationPerDay: number;
+  invitationTtlDays: number;
+  organizationsCreatedPerUserPerDay: number;
+  maxOrganizationsPerUser: number;
+  /** Attempts to accept an invitation, per person, per minute (wrong tokens included). */
+  invitationAcceptsPerMinute: number;
 }
 
 /** Limits added after the first limits.json: a file without them gets these. */
-const LIMIT_DEFAULTS: Partial<Limits> = { maxUsersPerDatabase: 20, userListsPerMinute: 60, userChangesPerMinute: 10 };
+const LIMIT_DEFAULTS: Partial<Limits> = {
+  maxUsersPerDatabase: 20, userListsPerMinute: 60, userChangesPerMinute: 10,
+  organizationNameMinLength: 2, organizationNameMaxLength: 64, maxMembersPerOrganization: 50, invitationsPerOrganizationPerDay: 20,
+  invitationTtlDays: 7, organizationsCreatedPerUserPerDay: 10, maxOrganizationsPerUser: 50, invitationAcceptsPerMinute: 10,
+};
 
 export interface PlanLimits {
   maxDatabases: number | null;
@@ -92,6 +106,14 @@ export function parseLimits(raw: unknown, file = "limits"): Limits {
     maxUsersPerDatabase: num("maxUsersPerDatabase"),
     userListsPerMinute: num("userListsPerMinute"),
     userChangesPerMinute: num("userChangesPerMinute"),
+    organizationNameMinLength: num("organizationNameMinLength"),
+    organizationNameMaxLength: num("organizationNameMaxLength"),
+    maxMembersPerOrganization: num("maxMembersPerOrganization"),
+    invitationsPerOrganizationPerDay: num("invitationsPerOrganizationPerDay"),
+    invitationTtlDays: num("invitationTtlDays"),
+    organizationsCreatedPerUserPerDay: num("organizationsCreatedPerUserPerDay"),
+    maxOrganizationsPerUser: num("maxOrganizationsPerUser"),
+    invitationAcceptsPerMinute: num("invitationAcceptsPerMinute"),
   };
 }
 

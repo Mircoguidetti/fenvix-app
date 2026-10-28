@@ -51,15 +51,14 @@ export async function resolveTarget(s: Services, caller: Caller, id: unknown): P
 }
 
 /**
- * Inserting, saving and deleting documents. People: owner, admin and member (the roles that can already create, fork
- * and restore, which also change data). API keys: only keys whose `data_access` is `read_write` (migration 0004; keys
+ * Inserting, saving and deleting documents. People: owner and admin (a member only reads, docs/organizations.md). API keys: only keys whose `data_access` is `read_write` (migration 0004; keys
  * are `read` unless made otherwise). Refusals are audited.
  */
 export async function requireWrite(x: ExplorerCtx, databaseId: unknown, op: DataOp): Promise<void> {
   const { s, caller } = x;
   let ok: boolean;
   if (caller.actor.type === "user") {
-    ok = caller.role === "owner" || caller.role === "admin" || caller.role === "member";
+    ok = caller.role === "owner" || caller.role === "admin";
   } else {
     const r = await s.db.tx(caller.workspaceId, async (c) =>
       (await c.query("select data_access from public.api_keys where workspace_id = $1 and id = $2 and revoked_at is null", [caller.workspaceId, caller.actor.id])).rows[0] as { data_access: string } | undefined);
@@ -69,7 +68,7 @@ export async function requireWrite(x: ExplorerCtx, databaseId: unknown, op: Data
     await audit(x, { databaseId: isUuid(databaseId) ? databaseId.toLowerCase() : null, collection: null, operation: op, documentId: null, outcome: "denied" });
     throw forbidden(caller.actor.type === "api_key"
       ? "This API key can only read data. Create a key with data access readWrite to change documents."
-      : "Your role cannot change documents in this workspace.");
+      : "Your role in this organization is read only. Ask an owner or admin to change documents.");
   }
 }
 

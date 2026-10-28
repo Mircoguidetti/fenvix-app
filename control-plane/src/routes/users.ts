@@ -34,19 +34,19 @@ export function usersRoutes(app: FastifyInstance, d: Deps): void {
 
   read(BASE, {}, async (c) => du.listUsers(ctx(c, false), c.params.id));
 
-  write("POST", BASE, { idem: "no-replay" }, async (c) => {
+  write("POST", BASE, { idem: "no-replay", role: "any" }, async (c) => {
     const x = ctx(c, true);
     await du.requireManage(x, c.params.id, "create", (c.body as { username?: unknown } | null)?.username);
     return { status: 201, body: await du.createUser(x, c.params.id, c.body) };
   });
 
-  write("POST", `${BASE}/:username/reset-password`, { idem: "no-replay" }, async (c) => {
+  write("POST", `${BASE}/:username/reset-password`, { idem: "no-replay", role: "any" }, async (c) => {
     const x = ctx(c, true);
     await du.requireManage(x, c.params.id, "reset_password", c.params.username);
     return { status: 200, body: await du.resetPassword(x, c.params.id, c.params.username) };
   });
 
-  write("DELETE", `${BASE}/:username`, { idem: "no-replay" }, async (c) => {
+  write("DELETE", `${BASE}/:username`, { idem: "no-replay", role: "any" }, async (c) => {
     const x = ctx(c, true);
     await du.requireManage(x, c.params.id, "delete", c.params.username);
     return { status: 200, body: await du.deleteUser(x, c.params.id, c.params.username) };

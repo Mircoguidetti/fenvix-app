@@ -19,3 +19,5 @@ $$;
 create or replace function auth.role() returns text language sql stable as $$
   select coalesce(current_setting('request.jwt.claims', true)::jsonb ->> 'role', 'anon')
 $$;
+-- Supabase Auth sets this when the address is confirmed (a link was followed, or the provider vouched for it).
+alter table auth.users add column if not exists email_confirmed_at timestamptz;

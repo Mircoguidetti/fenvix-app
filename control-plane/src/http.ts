@@ -1,14 +1,14 @@
 import "@fastify/cookie";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Caller, Services } from "./context.ts";
-import { ApiError, forbidden, unauthenticated, validation } from "./errors.ts";
+import { ApiError, forbidden, notFound, unauthenticated, validation } from "./errors.ts";
 import { type JwtVerifier, type SessionClaims } from "./auth/jwt.ts";
 import { type AuthGateway, type Tokens } from "./auth/gateway.ts";
 import { resolveApiKey } from "./services/account.ts";
 import { RateLimiter } from "./ratelimit.ts";
 import * as idem from "./idempotency.ts";
 import { type OperationRow, type OperationRunner, loadOperation, operationError, viewOperation } from "./services/operations.ts";
-import { type Obj } from "./validate.ts";
+import { type Obj, isUuid } from "./validate.ts";
 
 export const SESSION_COOKIE = "fnx_session";
 export const REFRESH_COOKIE = "fnx_refresh";
@@ -22,8 +22,25 @@ export interface Deps {
   limiter: RateLimiter;
 }
 
+/**
+ * The organization (workspace) the dashboard acts for. The client chooses it; the server checks on every request that
+ * the caller is a member of it, and takes the role from the membership, never from the request.
+ */
+export const WORKSPACE_HEADER = "x-fenvix-workspace";
+/** One answer for an organization that does not exist, is not the caller's, or is not a valid id. */
+export const ORG_NOT_FOUND = "That organization does not exist, or you are not a member of it.";
+export const READ_ONLY = "Your role in this organization is read only. Ask an owner or admin to do this.";
+
+export interface Membership { workspaceId: string; name: string; role: "owner" | "admin" | "member"; nameConfirmed: boolean; joinedAt: Date }
+
+/** Every organization of a user, oldest membership first (migration 0008). */
+export async function membershipsOf(s: Services, userId: string): Promise<Membership[]> {
+  const rows = await s.db.system(async (c) => (await c.query("select * from public.fenvix_cp_memberships($1)", [userId])).rows);
+  return rows.map((r) => ({ workspaceId: String(r.workspace_id), name: String(r.name), role: r.role, nameConfirmed: Boolean(r.name_confirmed), joinedAt: r.joined_at }));
+}
+
 export interface Access {
-  /** "admin" means owner or admin of the workspace. */
+  /** "admin" means owner or admin of the workspace. Reads default to "any", changes to "admin". */
   role?: "any" | "admin";
   /** Whether an API key may call this. Keys cannot manage keys or settings. */
   apiKey?: boolean;
@@ -120,17 +137,59 @@ export async function authenticate(d: Deps, req: FastifyRequest, reply: FastifyR
       const origin = req.headers.origin;
       if (origin !== undefined && !s.cfg.dashboardOrigins.includes(origin)) throw forbidden("This request did not come from the dashboard.");
     }
-    const m = await s.db.system(async (c) => (await c.query("select * from public.fenvix_cp_workspace_for_user($1)", [session.claims.userId])).rows[0] as { workspace_id: string; role: "owner" | "admin" | "member" } | undefined);
-    if (!m) throw forbidden("Your account is not part of a workspace.");
-    caller = { workspaceId: m.workspace_id, actor: { type: "user", id: session.claims.userId }, role: m.role, requestId: req.id, ip: clientIp(req) };
+    const picked = req.headers[WORKSPACE_HEADER];
+    const all = await membershipsOf(s, session.claims.userId);
+    let m: Membership | undefined;
+    if (picked !== undefined) {
+      if (typeof picked !== "string" || !isUuid(picked)) throw notFound(ORG_NOT_FOUND);
+      m = all.find((x) => x.workspaceId === picked.toLowerCase());
+      if (!m) throw notFound(ORG_NOT_FOUND);
+    } else {
+      m = all[0];
+    }
+    if (!m) throw forbidden("Your account is not part of an organization. Create one or accept an invitation.");
+    caller = { workspaceId: m.workspaceId, actor: { type: "user", id: session.claims.userId }, role: m.role, requestId: req.id, ip: clientIp(req) };
   }
 
-  if (access.role === "admin" && caller.role === "member") throw forbidden("Only a workspace owner or admin can do this.");
+  if (caller.actor.type === "api_key") {
+    // A key belongs to one organization; naming another one is a mistake, not a way in.
+    const picked = req.headers[WORKSPACE_HEADER];
+    if (picked !== undefined && (typeof picked !== "string" || picked.toLowerCase() !== caller.workspaceId)) throw notFound(ORG_NOT_FOUND);
+  }
+
+  if (access.role === "admin" && caller.role === "member") throw forbidden(READ_ONLY);
   d.limiter.hit(`ws:${caller.workspaceId}`, s.cfg.rateLimitPerMinute);
   req.log = req.log.child({ workspaceId: caller.workspaceId, actor: caller.actor });
   // The built-in "request completed" line is written before this binding exists, so say who it was once.
   req.log.info("request authenticated");
   return caller;
+}
+
+/** A signed-in person, for the routes that are about their account rather than one organization. */
+export interface UserCaller { userId: string; email: string; requestId: string; ip: string }
+
+/**
+ * Authenticates a person (never an API key) without choosing an organization: listing and creating organizations and
+ * accepting an invitation work for someone who belongs to none. Same rate limits and origin check as authenticate().
+ */
+export async function authenticateUser(d: Deps, req: FastifyRequest, reply: FastifyReply): Promise<UserCaller> {
+  const { s } = d;
+  d.limiter.check(`anon:${clientIp(req)}`, s.cfg.rateLimitAnonPerMinute);
+  if (req.headers.authorization?.startsWith("Bearer fnx_")) throw forbidden("API keys cannot do this. Sign in to the dashboard.");
+  const session = await sessionFromRequest(d, req, reply);
+  if (!session) {
+    d.limiter.hit(`anon:${clientIp(req)}`, s.cfg.rateLimitAnonPerMinute);
+    throw unauthenticated();
+  }
+  if (session.viaCookie && req.method !== "GET" && req.method !== "HEAD") {
+    const origin = req.headers.origin;
+    if (origin !== undefined && !s.cfg.dashboardOrigins.includes(origin)) throw forbidden("This request did not come from the dashboard.");
+  }
+  d.limiter.hit(`user:${session.claims.userId}`, s.cfg.rateLimitPerMinute);
+  req.log = req.log.child({ actor: { type: "user", id: session.claims.userId } });
+  req.log.info("request authenticated");
+  reply.header("Cache-Control", "no-store");
+  return { userId: session.claims.userId, email: session.claims.email, requestId: req.id, ip: clientIp(req) };
 }
 
 const kindStatus = (op: OperationRow) => (op.kind === "create" || op.kind === "fork" ? 201 : 200);
@@ -168,7 +227,9 @@ export function routeHelpers(app: FastifyInstance, d: Deps): RouteHelpers {
       });
     },
 
-    write(method, url, opts, handler) {
+    write(method, url, given, handler) {
+      // Every change needs owner or admin unless the route says otherwise (and then checks the role itself).
+      const opts = { ...given, role: given.role ?? "admin" };
       const mode = opts.idem ?? "standard";
       app.route({
         method,
