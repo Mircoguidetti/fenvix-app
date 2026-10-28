@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useOrg } from "../session/OrgProvider";
 import { client, type ApiKey } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -8,6 +9,19 @@ import { useAsync } from "../lib/useAsync";
 import { formatDate, formatRelative } from "../lib/format";
 
 export function ApiKeysPage() {
+  const { canManage } = useOrg();
+  if (!canManage) {
+    return (
+      <>
+        <PageHeader title="API keys" description="Your code uses these keys to manage databases." />
+        <Message>Only an owner or admin of this organization can see and manage API keys.</Message>
+      </>
+    );
+  }
+  return <ApiKeysManager />;
+}
+
+function ApiKeysManager() {
   const keys = useAsync(() => client.listApiKeys(), []);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);

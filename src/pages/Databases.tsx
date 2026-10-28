@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useOrg } from "../session/OrgProvider";
 import { Link, useSearchParams } from "react-router-dom";
 import { ChevronDown, ChevronRight, Plus, Search, X } from "lucide-react";
 import { client, type DatabaseFilter, type DatabaseSort } from "../data";
@@ -28,6 +29,7 @@ const STATE_TABS: { id: string; label: string; state?: string; keep?: string }[]
 ];
 
 export function DatabasesPage() {
+  const { canManage } = useOrg();
   const [params, setParams] = useSearchParams();
   const search = params.get("q") ?? "";
   const stateParam = params.get("state");
@@ -135,10 +137,12 @@ export function DatabasesPage() {
         title="Databases"
         description="Every database sleeps when idle and wakes on its first request."
         actions={
-          <Link to="/databases/new" className="btn btn-primary">
-            <Plus size={16} aria-hidden="true" />
-            Create database
-          </Link>
+          canManage ? (
+            <Link to="/databases/new" className="btn btn-primary">
+              <Plus size={16} aria-hidden="true" />
+              Create database
+            </Link>
+          ) : undefined
         }
       />
 
@@ -252,7 +256,7 @@ export function DatabasesPage() {
         </div>
       )}
 
-      {selected.size > 0 && <BulkBar selected={[...selected]} matching={matching} onSelectAll={selectAllMatching} onClear={() => setSelected(new Set())} onDone={reloadAll} />}
+      {canManage && selected.size > 0 && <BulkBar selected={[...selected]} matching={matching} onSelectAll={selectAllMatching} onClear={() => setSelected(new Set())} onDone={reloadAll} />}
 
       {groupBy ? (
         <Grouped key={`${groupBy}`} groupBy={groupBy} filter={filter} filterKey={filterKey} version={version} selection={selection} setMatching={setMatching} update={update} tagFilters={tagFilters} />
@@ -264,6 +268,7 @@ export function DatabasesPage() {
 }
 
 function Flat({ filter, filterKey, version, sort, page, selection, setMatching, update, tagFilters }: { filter: DatabaseFilter; filterKey: string; version: number; sort: { key: DatabaseSort; dir: Dir }; page: number; selection: Selection; setMatching: (n: number) => void; update: (c: Record<string, string | string[] | null>, keepPage?: boolean) => void; tagFilters: string[] }) {
+  const { canManage } = useOrg();
   const data = useAsync(() => client.listDatabases({ ...filter, sort: sort.key, dir: sort.dir, page, pageSize: PAGE_SIZE }), [filterKey, sort.key, sort.dir, page, version]);
   useEffect(() => {
     if (data.status === "ready") setMatching(data.data.total);
@@ -284,14 +289,16 @@ function Flat({ filter, filterKey, version, sort, page, selection, setMatching, 
             <button type="button" className="btn" onClick={() => update({ q: null, state: null, keep: null, tag: null })}>
               Clear filters
             </button>
-            <Link to="/databases/new" className="btn btn-primary">
-              Create database
-            </Link>
+            {canManage && (
+              <Link to="/databases/new" className="btn btn-primary">
+                Create database
+              </Link>
+            )}
           </div>
         </div>
       ) : (
         <>
-          <DbTable items={items} selected={selection.selected} onToggle={selection.toggle} sort={sort} onSort={toggleSort} onPickTag={(t) => !tagFilters.includes(t) && update({ tag: [...tagFilters, t] })} caption="Databases" />
+          <DbTable items={items} selectable={canManage} selected={selection.selected} onToggle={selection.toggle} sort={sort} onSort={toggleSort} onPickTag={(t) => !tagFilters.includes(t) && update({ tag: [...tagFilters, t] })} caption="Databases" />
           <Pagination page={data.data.page} pageSize={data.data.pageSize} total={total} onPage={(p) => update({ page: p === 1 ? null : String(p) }, true)} />
         </>
       )}
@@ -355,6 +362,7 @@ function Grouped({ groupBy, filter, filterKey, version, selection, setMatching, 
 }
 
 function GroupBody({ groupTag, filter, version, selection, update, tagFilters, label }: { groupTag: string; filter: DatabaseFilter; version: number; selection: Selection; update: (c: Record<string, string | string[] | null>, keepPage?: boolean) => void; tagFilters: string[]; label: string }) {
+  const { canManage } = useOrg();
   const groupFilter = useMemo(() => ({ ...filter, tags: [...(filter.tags ?? []), groupTag] }), [filter, groupTag]);
   const [pages, setPages] = useState(1);
   const data = useAsync(() => client.listDatabases({ ...groupFilter, sort: "name", dir: "asc", page: 1, pageSize: GROUP_PAGE_SIZE * pages }), [groupFilter, pages, version]);
@@ -366,14 +374,16 @@ function GroupBody({ groupTag, filter, version, selection, update, tagFilters, l
   return (
     <div className="group-body">
       <div className="row-actions">
-        <button type="button" className="btn btn-sm" onClick={selectGroup}>
-          Select all {formatCount(total)} in {label}
-        </button>
+        {canManage && (
+          <button type="button" className="btn btn-sm" onClick={selectGroup}>
+            Select all {formatCount(total)} in {label}
+          </button>
+        )}
         <button type="button" className="btn btn-sm" onClick={() => update({ group: null, tag: [...tagFilters.filter((t) => splitTag(t).key !== splitTag(groupTag.replace(/^!/, "")).key), groupTag] })}>
           Show only {label}
         </button>
       </div>
-      <DbTable items={items} selected={selection.selected} onToggle={selection.toggle} caption={`Databases in ${label}`} />
+      <DbTable items={items} selectable={canManage} selected={selection.selected} onToggle={selection.toggle} caption={`Databases in ${label}`} />
       {items.length < total && (
         <button type="button" className="btn" onClick={() => setPages((p) => p + 1)}>
           Show more ({formatCount(total - items.length)} left)

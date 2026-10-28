@@ -1,4 +1,5 @@
 // In-memory Data Explorer for VITE_DATA_BACKEND=mock (the Playwright checks). Every name and value is made up.
+import { assertMockCanManage } from "./orgs-mock";
 import { type CollectionInfo, type DocumentItem, type DocumentPage, type DocumentQuery, type Ejson, type ExplorerClient, ExplorerError, isAllowedCollectionName } from "./explorer";
 
 type Doc = { [key: string]: Ejson };
@@ -125,6 +126,7 @@ export const mockExplorer: ExplorerClient = {
   },
 
   async insertDocument(db, c, document) {
+    assertMockCanManage();
     const coll = (await enter(db)).get(c) ?? [];
     (await enter(db)).set(c, coll);
     const doc: Doc = { _id: document._id ?? oid(Math.floor(Math.random() * 1e8)), ...document };
@@ -135,6 +137,7 @@ export const mockExplorer: ExplorerClient = {
   },
 
   async replaceDocument(db, c, id, document, version) {
+    assertMockCanManage();
     const coll = (await enter(db)).get(c) ?? [];
     const i = coll.findIndex((x) => JSON.stringify(x._id) === id);
     if (i < 0) throw new ExplorerError("not_found", "That document does not exist.", 404);
@@ -145,6 +148,7 @@ export const mockExplorer: ExplorerClient = {
   },
 
   async deleteDocument(db, c, id, version) {
+    assertMockCanManage();
     const coll = (await enter(db)).get(c) ?? [];
     const i = coll.findIndex((x) => JSON.stringify(x._id) === id);
     if (i < 0) throw new ExplorerError("not_found", "That document does not exist.", 404);

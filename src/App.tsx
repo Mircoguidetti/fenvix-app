@@ -12,6 +12,10 @@ import { UsagePage } from "./pages/Usage";
 import { BillingPage } from "./pages/Billing";
 import { ApiKeysPage } from "./pages/ApiKeys";
 import { SettingsPage } from "./pages/Settings";
+import { MembersPage } from "./pages/Members";
+import { OrgProvider, useOrg } from "./session/OrgProvider";
+import { InviteScreen, NameOrgScreen } from "./components/OrgScreens";
+import { usePendingInvite } from "./lib/invite";
 
 function NotFound() {
   return (
@@ -26,10 +30,34 @@ function NotFound() {
   );
 }
 
+/**
+ * Between sign-in and the dashboard: an invitation link first, then a person with no organization (create one), then
+ * an owner whose organization name was never chosen (name it). Someone who joined by invitation is not its owner and
+ * never sees the name screen. These screens only guide: every rule is the server's.
+ */
+function Gated() {
+  const org = useOrg();
+  const invite = usePendingInvite();
+  if (invite) return <InviteScreen token={invite} />;
+  if (org.status === "loading") return null;
+  if (org.status === "ready" && org.orgs.length === 0) return <NameOrgScreen mode="create" />;
+  if (org.current?.role === "owner" && !org.current.nameConfirmed) return <NameOrgScreen key={org.current.id} mode="confirm" />;
+  return <Dashboard key={org.current?.id ?? "default"} />;
+}
+
 function Routed() {
   const { status, user } = useSession();
   if (status === "loading") return null;
   if (!user) return <SignInPage />;
+  return (
+    <OrgProvider key={user.id}>
+      <Gated />
+    </OrgProvider>
+  );
+}
+
+/** Keyed by the organization: switching remounts every screen, so nothing of the previous one stays on show. */
+function Dashboard() {
   return (
     <Shell>
       <Routes>
@@ -42,6 +70,8 @@ function Routed() {
         <Route path="/billing" element={<BillingPage />} />
         <Route path="/api-keys" element={<ApiKeysPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings/members" element={<MembersPage />} />
+        <Route path="/invite" element={<Navigate to="/overview" replace />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </Shell>

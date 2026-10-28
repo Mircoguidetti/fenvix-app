@@ -10,6 +10,7 @@ export function ConfirmDialog({
   confirmDisabled,
   onConfirm,
   onCancel,
+  hideCancel,
 }: {
   open: boolean;
   title: string;
@@ -19,6 +20,8 @@ export function ConfirmDialog({
   confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** For a dialog that only informs: one button, which closes it. */
+  hideCancel?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -43,10 +46,12 @@ export function ConfirmDialog({
           <h2 id={titleId}>{title}</h2>
           <div className="dialog-body">{children}</div>
           <div className="dialog-actions">
-            <button type="button" className="btn" onClick={onCancel} autoFocus>
-              Cancel
-            </button>
-            <button type="submit" className="btn btn-primary" disabled={busy || confirmDisabled}>
+            {!hideCancel && (
+              <button type="button" className="btn" onClick={onCancel} autoFocus>
+                Cancel
+              </button>
+            )}
+            <button type="submit" className="btn btn-primary" disabled={busy || confirmDisabled} autoFocus={hideCancel}>
               {confirmLabel}
             </button>
           </div>

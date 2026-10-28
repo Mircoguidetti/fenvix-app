@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { useOrg } from "../session/OrgProvider";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { client, type Database } from "../data";
@@ -11,6 +12,21 @@ import { SecretOnce } from "../components/PasswordOnce";
 import { usernameProblem } from "../data/users";
 
 export function CreateDatabasePage() {
+  const { canManage } = useOrg();
+  if (!canManage) {
+    return (
+      <>
+        <PageHeader title="Create database" description="A new database starts asleep and wakes on its first request." />
+        <p className="message" role="status">
+          Only an owner or admin of this organization can create databases. <Link to="/databases" className="row-link">Back to databases</Link>
+        </p>
+      </>
+    );
+  }
+  return <CreateDatabaseForm />;
+}
+
+function CreateDatabaseForm() {
   const toast = useToast();
   const regions = useAsync(() => client.listRegions(), []);
   const [name, setName] = useState("");

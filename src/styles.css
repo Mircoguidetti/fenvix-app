@@ -525,3 +525,53 @@ textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflo
   .user-name { max-width: 55vw; min-width: 0; text-align: right; }
   table.responsive td.actions-cell .row-actions { justify-content: flex-end; }
 }
+
+/* Organizations: switcher, read-only note, settings sections, members. Black, white and grey like the rest. */
+.workspace-slot { position: relative; }
+.workspace-avatar { background: #000000; color: #ffffff; border: 1px solid #3a3a40; }
+.workspace-btn { width: 100%; min-height: 44px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: inherit; cursor: pointer; text-align: left; font: inherit; }
+.workspace-btn:hover, .workspace-btn[aria-expanded="true"] { background: var(--nav-hover); }
+.workspace-btn:focus-visible { outline-color: var(--nav-text); }
+.workspace-chevron { color: var(--nav-muted); flex-shrink: 0; }
+.org-panel { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 60; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); padding: 6px; display: flex; flex-direction: column; gap: 4px; max-height: min(420px, 70dvh); overflow-y: auto; }
+.org-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.org-actions { border-top: 1px solid var(--border); padding-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+.org-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; font: inherit; font-size: 13.5px; }
+.org-item:hover { background: var(--surface-2); }
+.org-item[aria-current="true"] { font-weight: 600; }
+.org-item .workspace-avatar { border-color: #000000; font-size: 12px; border-radius: 7px; }
+.org-item-text { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.3; }
+.org-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.org-item-role { font-size: 12px; color: var(--muted); font-weight: 400; }
+.readonly-note { border: 1px solid var(--border-strong); background: var(--surface); border-radius: 10px; padding: 10px 14px; font-size: 13.5px; }
+.break-anywhere { overflow-wrap: anywhere; }
+.settings-tabs { align-self: flex-start; width: fit-content; max-width: 100%; }
+.seg-link { display: inline-flex; align-items: center; height: 36px; padding: 0 16px; background: var(--bg); color: var(--text); text-decoration: none; border-right: 1px solid var(--border-strong); }
+.seg-link:last-child { border-right: 0; }
+.seg-link.active { background: var(--text); color: var(--on-text); font-weight: 600; }
+.seg-link:focus-visible { outline-offset: -3px; }
+.plain-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.plain-fieldset:disabled { opacity: 0.7; }
+.members-table { table-layout: fixed; width: 100%; }
+.members-table .cell-text { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.member-name .tag { flex-shrink: 0; }
+.select-sm { height: 34px; width: auto; min-width: 110px; }
+.members-table td.actions-cell { text-align: right; }
+.members-table td.actions-cell .row-actions { justify-content: flex-end; flex-wrap: nowrap; }
+@media (min-width: 761px) {
+  .members-table th.col-name { width: 28%; }
+  .members-table th.col-role { width: 150px; }
+  .members-table th.col-date { width: 140px; }
+  .members-table th.col-act1 { width: 130px; }
+  .members-table th.col-act2 { width: 220px; }
+}
+@media (max-width: 760px) {
+  .members-table .cell-text { white-space: normal; overflow-wrap: anywhere; text-align: right; }
+  .member-name { justify-content: flex-end; }
+  .members-table td.actions-cell .row-actions { flex-wrap: wrap; }
+}
+.gate-foot { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 14px; color: var(--nav-muted); font-size: 13.5px; max-width: min(420px, 100%); text-align: center; }
+.gate-who { overflow-wrap: anywhere; }
+.btn-link { background: transparent; border: 0; padding: 0; color: var(--nav-text); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font: inherit; }
+.btn-link:focus-visible { outline-color: var(--nav-text); }

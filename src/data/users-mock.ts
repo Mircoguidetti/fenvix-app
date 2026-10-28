@@ -1,4 +1,5 @@
 // In-memory database users for VITE_DATA_BACKEND=mock (the Playwright checks). Every name is made up.
+import { assertMockCanManage } from "./orgs-mock";
 import { ExplorerError } from "./explorer";
 import { connectionStringFor } from "./connection";
 import { type DbUser, type DbUserRole, type DbUserSecret, type UsersClient, usernameProblem } from "./users";
@@ -61,6 +62,7 @@ export const mockUsers: UsersClient = {
     return later({ items: [...items].sort((a, b) => a.username.localeCompare(b.username)), limit: LIMIT });
   },
   async createUser(db, username, role: DbUserRole) {
+    assertMockCanManage();
     const items = list(db);
     const problem = usernameProblem(username);
     if (problem) throw new ExplorerError("validation_failed", problem, 400, "username");
@@ -71,11 +73,13 @@ export const mockUsers: UsersClient = {
     return later(secret(db, user, dbName(db)));
   },
   async resetPassword(db, username) {
+    assertMockCanManage();
     const user = list(db).find((u) => u.username === username);
     if (!user) throw new ExplorerError("not_found", "That user does not exist.", 404);
     return later(secret(db, user, dbName(db)));
   },
   async deleteUser(db, username) {
+    assertMockCanManage();
     const items = list(db);
     const i = items.findIndex((u) => u.username === username);
     if (i < 0) throw new ExplorerError("not_found", "That user does not exist.", 404);

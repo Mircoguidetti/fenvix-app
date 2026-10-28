@@ -9,3 +9,6 @@ import { supabaseClient } from "./supabase";
 export const client: DataClient = backend === "mock" ? (await import("./mock")).mockClient : supabaseClient;
 export type { DataClient } from "./client";
 export * from "./types";
+
+// The Playwright checks call the mock "server" directly to show that it refuses what a member's screens hide.
+if (backend === "mock") Object.assign(window, { __fenvixMock: client });

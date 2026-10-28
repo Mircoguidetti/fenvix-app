@@ -39,6 +39,9 @@ function pending(value?: string | null): string | null {
   return value ?? null;
 }
 
+/** The signed-in mock user, for the other mocks (organizations). */
+export const mockCurrentUser = (): SessionUser | null => read();
+
 const titleCase = (s: string) => s.replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim();
 
 /** Stands in for the real providers until they are wired up. Nothing leaves the browser. */

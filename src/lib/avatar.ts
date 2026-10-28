@@ -1,10 +1,8 @@
-/** Initial and colour of a workspace avatar. Pure functions: no React, so the unit tests can run them. */
+/** Initial and colours of an organization avatar. Pure functions: no React, so the unit tests can run them. */
 
-/**
- * Backgrounds for an avatar with white text. Each one gives white text a contrast of at least 4.5:1
- * (WCAG AA); tests/unit/avatar.test.ts checks it.
- */
-export const AVATAR_COLORS = ["#3b5bdb", "#0b7285", "#237032", "#c2255c", "#6741d9", "#c92a2a", "#1864ab", "#862e9c"] as const;
+/** The avatar of an organization: a black square with a white initial, like the rest of the dashboard. */
+export const AVATAR_BG = "#000000";
+export const AVATAR_FG = "#ffffff";
 
 /** The first visible character of the name, upper-cased: a whole emoji or accented letter, never half of one. "W" for an empty name. */
 export function workspaceInitial(name: string): string {
@@ -20,16 +18,6 @@ function firstGrapheme(text: string): string {
     for (const { segment } of seg.segment(text)) return segment;
   }
   return Array.from(text)[0] ?? "";
-}
-
-/** Same name, same colour: a small FNV-1a hash of the trimmed name picks one of AVATAR_COLORS. */
-export function workspaceColor(name: string): string {
-  let h = 0x811c9dc5;
-  for (const ch of name.trim()) {
-    h ^= ch.codePointAt(0)!;
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
 /** Contrast ratio between two #rrggbb colours (WCAG 2.x). */

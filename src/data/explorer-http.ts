@@ -1,5 +1,6 @@
 import { apiUrl } from "../lib/env";
 import { getSupabase } from "../lib/supabaseClient";
+import { orgHeaders } from "../lib/org";
 import { type DocumentItem, type DocumentPage, type DocumentQuery, type Ejson, type ExplorerClient, ExplorerError } from "./explorer";
 
 /**
@@ -16,14 +17,14 @@ async function token(): Promise<string> {
   return t;
 }
 
-/** One request to the control plane. Also used for database users (users-http.ts). */
+/** One request to the control plane, for the organization chosen in the browser. Also used for database users and organizations. */
 export async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
   if (!apiUrl) throw new ExplorerError("not_configured", "The data explorer is not set up for this dashboard yet (VITE_API_URL).", 0);
   let res: Response;
   try {
     res = await fetch(`${apiUrl}${path}`, {
       method,
-      headers: { authorization: `Bearer ${await token()}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+      headers: { authorization: `Bearer ${await token()}`, ...orgHeaders(), ...(body === undefined ? {} : { "content-type": "application/json" }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       credentials: "omit",
       cache: "no-store",

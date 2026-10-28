@@ -113,8 +113,11 @@ const TESTS = {
     await page.getByLabel("Work email").fill("sam.rivera@northwind.cloud");
     await page.getByRole("button", { name: "Email me a sign-in link" }).click();
     await page.getByText("We sent a sign-in link to sam.rivera@northwind.cloud").waitFor();
-    // The emailed link lands back on the dashboard with a one-time token.
+    // The emailed link lands back on the dashboard with a one-time token. A new account names its organization first.
     await go(page, "?token=one-time");
+    await page.getByRole("heading", { name: "Name your organization" }).waitFor();
+    await page.getByLabel("Organization name").fill("Rivera Labs");
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.locator(".shell").waitFor();
     await openUserMenu(page, vp);
     await page.locator(".user-panel").getByText("Sam Rivera").waitFor();
@@ -717,9 +720,9 @@ const TESTS = {
     const rename = async (name) => {
       await go(page, "settings");
       await settled(page);
-      await page.getByLabel("Workspace name").fill(name);
-      await page.getByRole("button", { name: "Save changes" }).click();
-      await toast(page, "Settings saved");
+      await page.getByLabel("Organization name").fill(name);
+      await page.getByRole("button", { name: "Rename" }).click();
+      await toast(page, "Organization renamed");
       await go(page, "overview");
       await settled(page);
       await eventually(async () => (await page.locator(`${nav} .workspace-name`).textContent()) === name.trim(), `the sidebar does not show ${name}`);
@@ -727,26 +730,24 @@ const TESTS = {
         await page.getByRole("button", { name: "Open navigation" }).click();
         await page.locator(".drawer .nav").waitFor();
       }
-      // The accessible name holds the whole name and the plan.
-      await page.locator(nav).getByRole("group", { name: `Workspace: ${name.trim()}, Managed plan`, exact: true }).waitFor();
+      // The accessible name holds the whole name and the role, and says what the button does.
+      await page.locator(nav).getByRole("button", { name: `Organization: ${name.trim()}, Owner. Switch organization`, exact: true }).waitFor();
       const box = page.locator(`${nav} .workspace`);
       const read = await box.evaluate((el) => {
         const avatar = el.querySelector(".workspace-avatar");
         const label = el.querySelector(".workspace-name");
-        const empty = [...el.querySelectorAll("*")].filter((e) => !e.textContent.trim()).map((e) => e.className);
-        const focusable = el.querySelectorAll("a, button, input, select, textarea, [tabindex]").length;
-        const cs = getComputedStyle(el);
+        const empty = [...el.querySelectorAll("*")].filter((e) => !e.textContent.trim() && e.tagName !== "svg" && !e.closest("svg")).map((e) => e.className);
         return {
           initial: avatar?.textContent,
-          color: getComputedStyle(avatar).backgroundColor,
-          plan: el.querySelector(".workspace-sub")?.textContent,
+          bg: getComputedStyle(avatar).backgroundColor,
+          fg: getComputedStyle(avatar).color,
+          role: el.querySelector(".workspace-sub")?.textContent,
           title: el.getAttribute("title"),
           clipped: label.scrollWidth > label.clientWidth,
           ellipsis: getComputedStyle(label).textOverflow === "ellipsis" && getComputedStyle(label).whiteSpace === "nowrap",
           inside: label.getBoundingClientRect().right <= el.getBoundingClientRect().right + 0.5,
           empty,
-          focusable,
-          framed: cs.borderTopWidth !== "0px" || cs.backgroundColor !== "rgba(0, 0, 0, 0)",
+          tag: el.tagName,
           brandInside: !!el.querySelector(".logo"),
         };
       });
@@ -754,7 +755,7 @@ const TESTS = {
       return read;
     };
 
-    // The brand sits on its own at the top, outside the workspace.
+    // The brand sits on its own at the top, outside the organization.
     if (isMobile(vp)) await page.getByRole("button", { name: "Open navigation" }).click();
     const brand = page.locator(`${nav} .sidebar-top .logo`);
     await brand.waitFor();
@@ -763,18 +764,18 @@ const TESTS = {
 
     const mine = await rename("My workspace");
     assert(mine.initial === "M", `My workspace shows ${mine.initial}`);
-    assert(mine.plan === "Managed", `the plan reads ${mine.plan}`);
+    assert(mine.role === "Owner", `the role reads ${mine.role}`);
     assert(mine.title === "My workspace", `the tooltip reads ${mine.title}`);
     assert(!mine.clipped, "My workspace is cut off");
-    assert(!mine.empty.length, `empty elements in the workspace: ${mine.empty.join(", ")}`);
-    assert(!mine.focusable, "the workspace gained something to tab to");
-    assert(!mine.framed, "the workspace is still drawn in a box");
-    assert(!mine.brandInside, "the brand is inside the workspace");
-    assert(/^rgb\(\d+, \d+, \d+\)$/.test(mine.color), `the avatar has no colour: ${mine.color}`);
+    assert(!mine.empty.length, `empty elements in the organization box: ${mine.empty.join(", ")}`);
+    assert(mine.tag === "BUTTON", "the organization box is not a button");
+    assert(!mine.brandInside, "the brand is inside the organization box");
+    assert(mine.bg === "rgb(0, 0, 0)" && mine.fg === "rgb(255, 255, 255)", `the avatar is not black with a white initial: ${mine.bg} ${mine.fg}`);
 
     assert((await rename("🚀 Launch team")).initial === "🚀", "an emoji name does not show the emoji");
-    assert((await rename("élan studio")).initial === "É", "an accented name does not show É");
-    assert((await rename("My workspace")).color === mine.color, "the same name got a different colour");
+    const accented = await rename("élan studio");
+    assert(accented.initial === "É", "an accented name does not show É");
+    assert(accented.bg === mine.bg, "another name got another colour");
 
     const long = "Northwind Cloud Platform Engineering, EU West production";
     const l = await rename(long);
@@ -782,26 +783,29 @@ const TESTS = {
     assert(l.inside, "a long name runs out of its box");
     assert(l.title === long, `the tooltip does not hold the whole name: ${l.title}`);
 
-    // Keyboard order is unchanged: skip link, then the first control of the navigation.
+    // Keyboard order: skip link, then the organization switcher (desktop) or the menu button (phone).
     await page.reload(); // a fresh load, so focus starts at the top of the document
     await page.locator(".shell").waitFor();
     await settled(page);
     await page.keyboard.press("Tab");
     assert(await page.evaluate(() => document.activeElement?.classList.contains("skip-link")), "the first Tab does not reach the skip link");
     await page.keyboard.press("Tab");
-    const second = await page.evaluate(() => document.activeElement?.textContent.trim() || document.activeElement?.getAttribute("aria-label"));
-    assert(second === (isMobile(vp) ? "Open navigation" : "Overview"), `the second Tab reaches ${second}`);
+    const second = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") || document.activeElement?.textContent.trim());
+    assert(isMobile(vp) ? second === "Open navigation" : second.startsWith("Organization: "), `the second Tab reaches ${second}`);
   },
 
   async "settings"(page) {
     await signIn(page, "settings");
-    await page.getByLabel("Workspace name").fill("Northwind Platform");
+    await page.getByLabel("Organization name").fill("Northwind Platform");
+    await page.getByRole("button", { name: "Rename" }).click();
+    await page.getByText("Organization renamed").waitFor();
+    await page.getByLabel("Sleep after idle").selectOption("15");
     await page.getByRole("button", { name: "Save changes" }).click();
     await page.getByText("Settings saved").waitFor();
     await go(page, "overview");
     await settled(page);
     // The sidebar is a drawer on a phone, so read the text instead of waiting for it to be visible.
-    await eventually(async () => (await page.locator(".workspace-name").first().textContent()).includes("Northwind Platform"), "the sidebar still shows the old workspace name");
+    await eventually(async () => (await page.locator(".workspace-name").first().textContent()).includes("Northwind Platform"), "the sidebar still shows the old organization name");
     await page.getByRole("heading", { name: "Northwind Platform" }).waitFor();
   },
 };

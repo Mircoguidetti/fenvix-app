@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useOrg } from "../session/OrgProvider";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { explorer } from "../data/explorer-client";
 import { type CollectionInfo, type DocumentItem, type DocumentPage, type Ejson, ExplorerError } from "../data/explorer";
@@ -48,6 +49,7 @@ function newObjectId(): string {
 const message = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Try again.");
 
 export function DataExplorer({ db }: { db: Database }) {
+  const { canManage } = useOrg();
   const toast = useToast();
   const [wakingUp, setWakingUp] = useState(false);
   const [collections, setCollections] = useState<CollectionInfo[] | null>(null);
@@ -287,7 +289,7 @@ export function DataExplorer({ db }: { db: Database }) {
             <h2 id="documents-h">{current ? <span className="mono">{current}</span> : "Documents"}</h2>
             {currentInfo?.estimatedCount != null && <p className="muted card-desc">About {formatCount(currentInfo.estimatedCount)} documents</p>}
           </div>
-          {current && (
+          {current && canManage && (
             <button type="button" className="btn btn-sm" onClick={() => (setDialogError(null), setEditing({ mode: "insert" }))}>
               <Plus size={16} aria-hidden="true" />
               Insert document
@@ -345,7 +347,7 @@ export function DataExplorer({ db }: { db: Database }) {
         {current && result && result.items.length > 0 && (
           <ol className="doc-list" aria-busy={loadingDocs}>
             {result.items.map((item, i) => (
-              <DocumentRow key={item.id || `row-${i}`} item={item} onEdit={() => void openEditor(item)} onDelete={() => (setDialogError(null), setDeleting(item))} />
+              <DocumentRow key={item.id || `row-${i}`} item={item} readOnly={!canManage} onEdit={() => void openEditor(item)} onDelete={() => (setDialogError(null), setDeleting(item))} />
             ))}
           </ol>
         )}
@@ -430,7 +432,7 @@ function NewCollection({ onCreate }: { onCreate: (name: string) => void }) {
   );
 }
 
-function DocumentRow({ item, onEdit, onDelete }: { item: DocumentItem; onEdit: () => void; onDelete: () => void }) {
+function DocumentRow({ item, onEdit, onDelete, readOnly }: { item: DocumentItem; onEdit: () => void; onDelete: () => void; readOnly: boolean }) {
   const [open, setOpen] = useState(false);
   const bodyId = useId();
   return (
@@ -440,7 +442,7 @@ function DocumentRow({ item, onEdit, onDelete }: { item: DocumentItem; onEdit: (
           {open ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
           <span className="mono ellipsis">_id: {idSummary(item.id, 64)}</span>
         </button>
-        <div className="row-actions">
+        {!readOnly && <div className="row-actions">
           <button type="button" className="btn btn-sm" onClick={onEdit} disabled={item.tooLarge || !item.id} aria-label={`Edit document ${idSummary(item.id, 40)}`}>
             <Pencil size={14} aria-hidden="true" />
             <span className="hide-narrow">Edit</span>
@@ -449,7 +451,7 @@ function DocumentRow({ item, onEdit, onDelete }: { item: DocumentItem; onEdit: (
             <Trash2 size={14} aria-hidden="true" />
             <span className="hide-narrow">Delete</span>
           </button>
-        </div>
+        </div>}
       </div>
       {item.tooLarge ? (
         <p className="muted small doc-body">This document is too large to list ({formatCount(item.sizeBytes ?? 0)} characters).</p>

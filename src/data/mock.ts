@@ -1,4 +1,5 @@
 // All mock data lives in this file. Every number and name here is made up.
+import { assertMockCanManage, mockOrgName, mockRole } from "./orgs-mock";
 import type { DataClient } from "./client";
 import type {
   ApiKey, AwakePoint, BillingOverview, BulkResult, CostPoint, Database, DatabaseFilter, DatabaseGroup, DatabaseSort,
@@ -521,6 +522,7 @@ export const mockClient: DataClient = {
   listPlans: () => wait(PLANS.map((p) => ({ ...p, features: [...p.features] }))),
   listRegions: () => wait([...REGIONS]),
   async createDatabase({ name, region, tags, appUser }) {
+    assertMockCanManage();
     const clean = checkName(name);
     if (!REGIONS.includes(region)) throw new Error("Choose a region.");
     const next = checkTags(tags);
@@ -534,6 +536,7 @@ export const mockClient: DataClient = {
     return wait({ ...copy(db), initialUser: mockInitialUser(db.id, clean, user) });
   },
   async forkDatabase(id, name) {
+    assertMockCanManage();
     const source = databases.find((d) => d.id === id);
     if (!source) throw new Error("Database not found");
     const clean = checkName(name);
@@ -542,6 +545,7 @@ export const mockClient: DataClient = {
     return wait({ ...copy(db), initialUser: mockInitialUser(db.id, clean) });
   },
   async restoreDatabase(id, at) {
+    assertMockCanManage();
     const source = databases.find((d) => d.id === id);
     if (!source) throw new Error("Database not found");
     const t = new Date(at).getTime();
@@ -552,6 +556,7 @@ export const mockClient: DataClient = {
     return wait(copy(databases.find((d) => d.id === id)!));
   },
   async exportDatabases(ids) {
+    assertMockCanManage();
     const picked = databases.filter((d) => ids.includes(d.id));
     if (picked.length === 0) throw new Error("Nothing to export.");
     const body = { exportedAt: NOW.toISOString(), databases: picked.map((d) => ({ name: d.name, region: d.region, tags: d.tags, storageMb: d.storageMb, collections: [{ name: "orders", documents: 18204 }, { name: "users", documents: 412 }] })) };
@@ -559,25 +564,30 @@ export const mockClient: DataClient = {
     return wait<ExportResult>({ filename, mimeType: "application/json", downloadUrl: blobUrl(JSON.stringify(body, null, 2), "application/json") });
   },
   async eraseDatabases(ids) {
+    assertMockCanManage();
     const gone = new Set(ids);
     const before = databases.length;
     databases = databases.filter((d) => !gone.has(d.id));
     return wait({ affected: before - databases.length });
   },
   async setKeepAwake(ids, enabled) {
+    assertMockCanManage();
     return wait(mutate(ids, (d) => ({ ...d, keepAwake: enabled, state: enabled ? "awake" : d.state })));
   },
   async setTags(id, tags) {
+    assertMockCanManage();
     const next = checkTags(tags);
     if (!databases.some((d) => d.id === id)) throw new Error("Database not found");
     mutate([id], (d) => ({ ...d, tags: next }));
     return wait(copy(databases.find((d) => d.id === id)!));
   },
   async addTags(ids, tags) {
+    assertMockCanManage();
     const add = parseTags(tags);
     return wait(mutate(ids, (d) => ({ ...d, tags: mergeTags(d.tags, add) })));
   },
   async removeTags(ids, tags) {
+    assertMockCanManage();
     const drop = parseTagsOrKeys(tags);
     return wait(mutate(ids, (d) => ({ ...d, tags: d.tags.filter((t) => !drop.some((x) => matchesTagFilter([t], x))) })));
   },
@@ -604,28 +614,36 @@ export const mockClient: DataClient = {
     return wait<Page<Invoice>>({ items: INVOICES.slice((page - 1) * pageSize, page * pageSize), total: INVOICES.length, page, pageSize });
   },
   async downloadInvoice(id) {
+    assertMockCanManage();
     const inv = INVOICES.find((i) => i.id === id);
     if (!inv) throw new Error("Invoice not found");
     const pdf = simplePdf(["FENVIX", "", `Invoice ${inv.number}`, `Workspace: ${settings.workspaceName}`, `Month: ${inv.month}`, `Issued: ${inv.issuedAt.slice(0, 10)}`, `Amount: ${inv.currency} ${inv.amount.toFixed(2)}`, `Status: ${inv.status}`]);
     return wait<ExportResult>({ filename: `${inv.number}.pdf`, mimeType: "application/pdf", downloadUrl: blobUrl(pdf, "application/pdf") });
   },
-  listApiKeys: () => wait(apiKeys.map((k) => ({ ...k }))),
+  async listApiKeys() {
+    if (mockRole() === "member") assertMockCanManage();
+    return wait(apiKeys.map((k) => ({ ...k })));
+  },
   async createApiKey(name) {
+    assertMockCanManage();
     const secret = `fnx_${randomHex(32)}`;
     const key: ApiKey = { id: `key_${randomHex(6)}`, name, hint: secret.slice(-4), createdAt: NOW.toISOString(), lastUsedAt: null, revokedAt: null };
     apiKeys = [key, ...apiKeys];
     return wait({ key: { ...key }, secret });
   },
   async revokeApiKey(id) {
+    assertMockCanManage();
     const found = apiKeys.find((k) => k.id === id);
     if (!found) throw new Error("Key not found");
     const next = { ...found, revokedAt: NOW.toISOString() };
     apiKeys = apiKeys.map((k) => (k.id === id ? next : k));
     return wait(next);
   },
-  getSettings: () => wait({ ...settings }),
+  getSettings: () => wait({ ...settings, workspaceName: mockOrgName() ?? settings.workspaceName }),
   async saveSettings(next) {
+    assertMockCanManage();
+    // The name belongs to the organization (renamed in Settings → Organization); these are the other settings.
     settings = { ...next };
-    return wait({ ...settings });
+    return wait({ ...settings, workspaceName: mockOrgName() ?? settings.workspaceName });
   },
 };

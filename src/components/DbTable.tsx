@@ -57,8 +57,11 @@ export function DbTable({
   onSort,
   onPickTag,
   caption,
+  selectable = true,
 }: {
   items: Database[];
+  /** False for a member: nothing can be done to a selection, so there is none. */
+  selectable?: boolean;
   selected: Set<string>;
   onToggle: (ids: string[], on: boolean) => void;
   sort?: { key: DatabaseSort; dir: Dir };
@@ -71,17 +74,21 @@ export function DbTable({
   const picked = ids.filter((id) => selected.has(id)).length;
   return (
     <div className="table-card">
-      <div className="select-all-mobile">
-        <Check label="Select all on this page" checked={picked > 0 && picked === ids.length} indeterminate={picked > 0 && picked < ids.length} onChange={(on) => onToggle(ids, on)} />
-        <span aria-hidden="true">Select all on this page</span>
-      </div>
+      {selectable && (
+        <div className="select-all-mobile">
+          <Check label="Select all on this page" checked={picked > 0 && picked === ids.length} indeterminate={picked > 0 && picked < ids.length} onChange={(on) => onToggle(ids, on)} />
+          <span aria-hidden="true">Select all on this page</span>
+        </div>
+      )}
       <table className="data responsive dbs">
         <caption className="sr-only">{caption}</caption>
         <thead>
           <tr>
-            <th scope="col" className="select-col">
-              <Check label="Select all on this page" checked={picked > 0 && picked === ids.length} indeterminate={picked > 0 && picked < ids.length} onChange={(on) => onToggle(ids, on)} />
-            </th>
+            {selectable && (
+              <th scope="col" className="select-col">
+                <Check label="Select all on this page" checked={picked > 0 && picked === ids.length} indeterminate={picked > 0 && picked < ids.length} onChange={(on) => onToggle(ids, on)} />
+              </th>
+            )}
             <Head col={COLUMNS[0]} sort={sort} onSort={onSort} />
             <th scope="col">Tags</th>
             {COLUMNS.filter((c) => c.key !== "name" && c.key !== "keepAwake").map((c) => (
@@ -92,9 +99,11 @@ export function DbTable({
         <tbody>
           {items.map((d) => (
             <tr key={d.id} data-selected={selected.has(d.id) || undefined}>
-              <td className="select-cell">
-                <Check label={`Select ${d.name}`} checked={selected.has(d.id)} onChange={(on) => onToggle([d.id], on)} />
-              </td>
+              {selectable && (
+                <td className="select-cell">
+                  <Check label={`Select ${d.name}`} checked={selected.has(d.id)} onChange={(on) => onToggle([d.id], on)} />
+                </td>
+              )}
               <td data-label="Name" className="name-cell">
                 <Link to={`/databases/${d.id}`} className="row-link mono">
                   {d.name}

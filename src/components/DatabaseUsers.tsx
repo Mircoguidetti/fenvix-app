@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useOrg } from "../session/OrgProvider";
 import { KeyRound, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { users } from "../data/users-client";
 import { type DbUser, type DbUserRole, type DbUserSecret, ROLE_LABELS, usernameProblem } from "../data/users";
@@ -20,6 +21,7 @@ type Dialog = { kind: "add" } | { kind: "reset"; user: DbUser } | { kind: "delet
 const message = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Try again.");
 
 export function DatabaseUsers({ db }: { db: Database }) {
+  const { canManage } = useOrg();
   const toast = useToast();
   const [list, setList] = useState<{ items: DbUser[]; limit: number } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -85,7 +87,7 @@ export function DatabaseUsers({ db }: { db: Database }) {
     });
 
   const full = !!list && list.items.length >= list.limit;
-  const addButton = (
+  const addButton = !canManage ? null : (
     <button type="button" className="btn btn-primary" onClick={() => open({ kind: "add" })} disabled={!list || full}>
       <Plus size={16} aria-hidden="true" />
       Add user
@@ -144,7 +146,7 @@ export function DatabaseUsers({ db }: { db: Database }) {
                         {u.createdAt ? formatDate(u.createdAt) : "Unknown"}
                       </td>
                       <td className="actions-cell">
-                        <div className="row-actions">
+                        {canManage && <div className="row-actions">
                           <button type="button" className="btn btn-sm" onClick={() => open({ kind: "reset", user: u })} aria-label={`Reset password of ${u.username}`}>
                             <KeyRound size={15} aria-hidden="true" />
                             Reset password
@@ -153,7 +155,7 @@ export function DatabaseUsers({ db }: { db: Database }) {
                             <Trash2 size={15} aria-hidden="true" />
                             Delete
                           </button>
-                        </div>
+                        </div>}
                       </td>
                     </tr>
                   ))}

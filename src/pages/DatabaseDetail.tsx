@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { useOrg } from "../session/OrgProvider";
+import { TagChips } from "../components/Tags";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Download, GitFork, History, Trash2 } from "lucide-react";
 import { client, type UsageRange } from "../data";
@@ -39,6 +41,7 @@ export function DatabaseDetailPage() {
 function DatabaseDetail({ id }: { id: string }) {
   const toast = useToast();
   const navigate = useNavigate();
+  const { canManage } = useOrg();
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") === "data" ? "data" : params.get("tab") === "users" ? "users" : "overview";
   const db = useAsync(() => client.getDatabase(id), [id]);
@@ -184,7 +187,7 @@ function DatabaseDetail({ id }: { id: string }) {
               <div className="row-actions">
                 <CopyButton value={d.connectionString} what="connection string" />
                 <button type="button" className="btn" onClick={() => setParams({ tab: "users" }, { replace: true })}>
-                  Manage users
+                  {canManage ? "Manage users" : "View users"}
                 </button>
               </div>
               <dl className="facts facts-tight">
@@ -268,7 +271,13 @@ function DatabaseDetail({ id }: { id: string }) {
           </div>
 
           <Card id="tags" title="Tags" description="Tags group and filter databases across the fleet, for example by customer or environment.">
-            <TagEditor db={d} onChanged={db.reload} />
+            {canManage ? (
+              <TagEditor db={d} onChanged={db.reload} />
+            ) : d.tags.length === 0 ? (
+              <p className="muted">This database has no tags yet.</p>
+            ) : (
+              <TagChips tags={d.tags} max={d.tags.length} />
+            )}
           </Card>
 
           <Card
@@ -313,7 +322,8 @@ function DatabaseDetail({ id }: { id: string }) {
             )}
           </Card>
 
-          <Card id="actions" title="Actions" description="Everything you can do to this database from here.">
+          <Card id="actions" title="Actions" description={canManage ? "Everything you can do to this database from here." : "Only an owner or admin can change this database."}>
+            {canManage && (<>
             <label className="check">
               <input type="checkbox" checked={keepAwake} onChange={(e) => toggleKeepAwake(e.target.checked)} />
               Keep awake
@@ -337,6 +347,8 @@ function DatabaseDetail({ id }: { id: string }) {
                 Erase
               </button>
             </div>
+            </>)}
+            {!canManage && <Message>You have view-only access: keep awake, fork, restore, export and erase are for owners and admins.</Message>}
           </Card>
         </>
       )}
