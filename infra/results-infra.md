@@ -1,5 +1,14 @@
 # FENVIX AWS infrastructure: results
 
+## Update: Let's Encrypt instead of ACM exportable (branch `infra-align`)
+
+- **Certificate.** ACM exportable certificates (paid at every issue and renewal) are gone, with `acm:ExportCertificate`, `fenvix-cert-refresh` and its timer. The server gets a free Let's Encrypt certificate (`*.<region>.db.<domain>` + `console.<domain>` in the first region) with certbot 5.8.0 (PyPI, every wheel pinned by SHA-256, venv on the host) and DNS-01 in Route 53 (`lib/scripts/fenvix-tls.sh`, `lib/scripts/fenvix-acme-dns-hook.sh`). Same files for the engine (`engine.pem`) and Caddy (`fullchain.pem`, `key.pem`), `/etc/fenvix/tls` owned by `fenvix`, files 0600. Timer twice a day; renewal under 30 days; restart only when the certificate changed.
+- **Persistence.** Certificate and key are kept in the Secrets Manager secret `fenvix-<env>-tls-<region>` (stack-created with `{}`); a replaced server reuses it. Failed requests are retried after 20 minutes at the earliest; without a valid certificate the engine and Caddy do not start.
+- **IAM.** Engine role: `route53:ChangeResourceRecordSets` on the stack's zone only, conditions TXT + the region's `_acme-challenge` names + UPSERT/DELETE; `route53:GetChange` on `change/*`; `secretsmanager:GetSecretValue`/`PutSecretValue` on its secret. No `Resource: "*"` for Route 53 or Secrets Manager.
+- **Settings.** `acmeEmail` (required), `acmeStaging` (default false), `dnsZone` (`db` default: zone `db.<domain>`; `domain`: whole domain).
+- **User data.** The boot script (~25 KB) is gzip + base64 in the user data (~13.9 KB), SHA-256 checked, copy at `/opt/fenvix/boot.sh`. Still no assets and no CDK bootstrap.
+- Full detail and test numbers: `report-infra-align.md`, section 7.
+
 ## Update: branch `infra-align` (aligned with the real engine and control plane)
 
 Branch `infra-align` from `origin/e2e-engine` @ `0fde489`; only `infra/` changed. Nothing deployed, no AWS call. Full report of this work: [`report-infra-align.md`](report-infra-align.md). What changed against the sections below:
