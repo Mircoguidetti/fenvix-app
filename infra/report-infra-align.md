@@ -162,5 +162,5 @@ Commit sopra `d63ef74` sullo stesso branch `infra-align`, solo `infra/`. Nessuna
 - Il comportamento di CloudFormation alla cancellazione del secret (periodo di recupero) e alla ricreazione con lo stesso nome: il README dà il comando `--force-delete-without-recovery` se servisse.
 
 ### 7.7 Commit
-Vedi `git log origin/infra-align`: i commit di questa sezione sono sopra `d63ef74` (hash nel messaggio in chat).
+`29ce019` (codice, test, README, policy) e il commit che aggiunge questa sezione e aggiorna `results-infra.md`, sopra `d63ef74`.
 
