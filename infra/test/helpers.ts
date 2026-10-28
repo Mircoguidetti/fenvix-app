@@ -20,6 +20,8 @@ export const BASE_CONTEXT: Record<string, string> = {
   controlPlaneImage: 'ghcr.io/example/fenvix-control-plane:1.0.0',
   proxyImage: 'public.ecr.aws/docker/library/caddy:2.8.4',
   baseDomain: 'example.com',
+  dnsZone: 'domain',
+  acmeEmail: 'certs@example.com',
   dashboardOrigins: 'https://app.example.com',
   engineRetentionWindowSecs: '604800',
 };

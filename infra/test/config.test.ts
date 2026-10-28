@@ -20,7 +20,22 @@ describe('settings lookup', () => {
     expect(cdk.baseDomain).toBe('');
     expect(cdk.dashboardOrigins).toBe('');
     expect(() => loadConfig(makeLookup((k) => ({ ...cdk, budgetEmail: 'a@b.co' })[k], {}))).toThrow(/Missing setting "baseDomain".*BASE_DOMAIN/);
-    expect(() => loadConfig(makeLookup((k) => ({ ...cdk, budgetEmail: 'a@b.co' })[k], { BASE_DOMAIN: 'example.com' }))).toThrow(/FENVIX_DASHBOARD_ORIGINS/);
+    expect(() => loadConfig(makeLookup((k) => ({ ...cdk, budgetEmail: 'a@b.co' })[k], { BASE_DOMAIN: 'example.com', FENVIX_ACME_EMAIL: 'c@d.co' }))).toThrow(/FENVIX_DASHBOARD_ORIGINS/);
+  });
+
+  test('cdk.json ships no ACME email (no invented address): synth stops and names FENVIX_ACME_EMAIL; staging off, zone db.<domain>', () => {
+    const cdk = require('../cdk.json').context as Record<string, string>;
+    expect(cdk.acmeEmail).toBeUndefined();
+    expect(cdk.acmeStaging).toBe('false');
+    expect(cdk.dnsZone).toBe('db');
+    const env = { BASE_DOMAIN: 'example.com' };
+    expect(() => loadConfig(makeLookup((k) => ({ ...cdk, budgetEmail: 'a@b.co' })[k], env))).toThrow(/Missing setting "acmeEmail".*FENVIX_ACME_EMAIL/);
+    const c = loadConfig(makeLookup((k) => ({ ...cdk, budgetEmail: 'a@b.co', dashboardOrigins: 'https://app.example.com' })[k], { ...env, FENVIX_ACME_EMAIL: 'tls@example.com' }));
+    expect(c.acmeEmail).toBe('tls@example.com');
+    expect(c.acmeStaging).toBe(false);
+    const { acmeStaging, ...noStaging } = cdk;
+    void acmeStaging;
+    expect(loadConfig(makeLookup((k) => ({ ...noStaging, budgetEmail: 'a@b.co', dashboardOrigins: 'https://app.example.com' })[k], { ...env, FENVIX_ACME_EMAIL: 'x@y.co' })).acmeStaging).toBe(false);
   });
 
   test('environment beats context; an empty variable does not', () => {

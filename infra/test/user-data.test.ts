@@ -5,7 +5,8 @@ import { join } from 'path';
 import { loadConfig } from '../lib/config';
 import { requiredSecretNames } from '../lib/parameters';
 import { BASE_CONTEXT } from './helpers';
-import { buildUserData, certRefreshScript, createEngineUsersScript, FETCH_CONFIG } from '../lib/user-data';
+import { gzipSync } from 'zlib';
+import { BOOT_CHUNK, bootChunks, buildBoot, buildUserData, createEngineUsersScript, FETCH_CONFIG } from '../lib/user-data';
 
 const config = loadConfig((k) => BASE_CONTEXT[k]);
 const input = {
@@ -13,17 +14,20 @@ const input = {
   region: 'eu-central-1',
   bucketName: 'fenvix-prod-data-865859654353-eu-central-1',
   requiredParameters: requiredSecretNames('prod'),
-  certificateArn: 'arn:aws:acm:eu-central-1:865859654353:certificate/00000000-0000-0000-0000-000000000000',
+  zoneId: 'Z0123456789ABC',
   runControlPlane: true,
 };
-const lines = buildUserData(input);
-const script = lines.join('\n');
+const boot = buildBoot(input);
+const lines = boot.userData;
+const bundleLines = boot.bundle.split('\n');
+/** User data and bundle together: everything the server runs at boot. */
+const script = lines.join('\n') + '\n' + boot.bundle;
 const dir = mkdtempSync(join(tmpdir(), 'fenvix-ud-'));
 const hasPython = spawnSync('python3', ['--version']).status === 0;
-const hasOpenssl = spawnSync('openssl', ['version']).status === 0;
 
 /** The body of the file the boot script writes to `target` (between its heredoc markers). */
-function written(target: string, src = lines): string {
+function written(target: string): string {
+  const src = lines.includes(`cat > ${target} <<'FENVIX_EOF'`) ? lines : bundleLines;
   const start = src.indexOf(`cat > ${target} <<'FENVIX_EOF'`);
   expect(start).toBeGreaterThanOrEqual(0);
   const end = src.indexOf('FENVIX_EOF', start + 1);
@@ -31,15 +35,48 @@ function written(target: string, src = lines): string {
 }
 
 describe('user-data script', () => {
-  test('is valid bash and fits the 16 KB EC2 limit', () => {
+  test('user data and boot bundle are valid bash; the user data fits the 16 KB EC2 limit, every bundle part a Standard parameter', () => {
     const f = join(dir, 'userdata.sh');
-    writeFileSync(f, script + '\n');
+    writeFileSync(f, lines.join('\n') + '\n');
     execFileSync('bash', ['-n', f]);
-    expect(Buffer.byteLength(script)).toBeLessThan(16384);
+    writeFileSync(join(dir, 'bundle.sh'), boot.bundle);
+    execFileSync('bash', ['-n', join(dir, 'bundle.sh')]);
+    expect(Buffer.byteLength(lines.join('\n'))).toBeLessThan(16384);
+    const parts = bootChunks(gzipSync(Buffer.from(boot.bundle), { level: 9 }).toString('base64'));
+    expect(parts.length).toBe(boot.parts);
+    for (const p of parts) expect(p.length).toBeLessThanOrEqual(BOOT_CHUNK);
+  });
+
+  test('the user data fetches the bundle and refuses it unless its SHA-256 matches', () => {
+    const ud = lines.join('\n');
+    expect(ud).toContain('/fenvix-boot/prod/scripts-0');
+    expect(ud).toContain(`echo "${boot.bundleSha256}  /root/fenvix-boot.sh" | sha256sum -c -`);
+    const fetchAt = lines.findIndex((l) => l.includes('/root/fenvix-boot.sh') && l.startsWith('for p in'));
+    expect(lines[fetchAt + 1]).toContain('sha256sum -c -');
+    expect(lines[fetchAt + 2]).toBe('bash /root/fenvix-boot.sh');
+    for (const l of lines) expect(l).not.toContain('\n');
+  });
+
+  test('the boot bundle is the same whatever the stack creates (no CloudFormation value in it)', () => {
+    const other = buildBoot({ ...input, bucketName: 'another-bucket', zoneId: 'ZOTHER' });
+    expect(other.bundleSha256).toBe(boot.bundleSha256);
+    expect(other.userData.join('\n')).toContain("echo 'ZOTHER' > /etc/fenvix/acme-zone-id");
+  });
+
+  test('lego is downloaded at a pinned version and refused unless its SHA-256 matches; never piped into a shell', () => {
+    const ud = lines.join('\n');
+    expect(ud).toContain('https://github.com/go-acme/lego/releases/download/v5.5.2/lego_v5.5.2_linux_$LEGO_ARCH.tar.gz');
+    expect(ud).toContain('LEGO_SHA256=2a35505089e7772c92e1e9ac144df91151ef2eca8568630db0ff91fca06d9bef');
+    expect(ud).toContain('LEGO_SHA256=15b14ec2ab14fde69cc8396eb0204c5ce4327e31a486953225a6059b26db3e8c');
+    const sha = lines.findIndex((l) => l.includes('/tmp/lego.tar.gz" | sha256sum -c -') || l === 'echo "$LEGO_SHA256  /tmp/lego.tar.gz" | sha256sum -c -');
+    const untar = lines.findIndex((l) => l.startsWith('tar -xzf /tmp/lego.tar.gz'));
+    expect(sha).toBeGreaterThan(0);
+    expect(untar).toBe(sha + 1);
+    expect(script).not.toMatch(/curl[^\n]*\|\s*(ba)?sh/);
   });
 
   test('every embedded shell script is valid bash', () => {
-    for (const t of ['/usr/local/bin/fenvix-cert-refresh', '/usr/local/bin/fenvix-create-engine-users']) {
+    for (const t of ['/usr/local/bin/fenvix-tls', '/usr/local/bin/fenvix-create-engine-users']) {
       const f = join(dir, t.split('/').pop()!);
       writeFileSync(f, written(t) + '\n');
       execFileSync('bash', ['-n', f]);
@@ -61,6 +98,7 @@ describe('user-data script', () => {
     expect(script).not.toMatch(/AKIA[0-9A-Z]{16}/);
     expect(script).not.toMatch(/-----BEGIN/);
     expect(script).not.toMatch(/--admin-token[= ]/);
+    expect(script).not.toMatch(/\bacm\b|export-certificate|cert-refresh|CertificateArn/i);
     expect(script).not.toMatch(/FENVIX_(LISTEN|ADMIN_LISTEN|TLS_MODE|S3_BUCKET|AWS_REGION|ADMIN_TOKEN|ACM_CERTIFICATE_ARN|BASE_DOMAIN)/);
     expect(script).not.toContain('self-signed');
     expect(script).not.toContain('session-secret');
@@ -77,7 +115,7 @@ describe('user-data script', () => {
     expect(unit).toContain('RuntimeDirectoryMode=0700');
     expect(unit).toContain('Environment=AWS_REGION=eu-central-1');
     expect(unit).toContain('ExecStartPre=+/usr/local/bin/fenvix-fetch-config --region eu-central-1 --prefix /fenvix/prod --group engine --files /run/fenvix --owner fenvix /fenvix/prod/engine/admin-token');
-    expect(unit).toContain('ExecStartPre=+/usr/local/bin/fenvix-cert-refresh');
+    expect(unit).toContain('ExecStartPre=+/usr/local/bin/fenvix-tls');
     expect(unit).toContain('User=fenvix');
     expect(unit).not.toContain('EnvironmentFile');
   });
@@ -102,26 +140,51 @@ describe('user-data script', () => {
     expect(unit).not.toMatch(/^-ExecStartPre/m);
   });
 
-  test('the TLS terminator publishes the control-plane port and serves console.<domain> with the exported certificate', () => {
-    const run = written('/etc/systemd/system/fenvix-proxy.service').split('\n').find((l) => l.startsWith('ExecStart='))!;
+  test('the TLS terminator publishes the control-plane port and serves console.<domain> from the engine PEM file', () => {
+    const unit = written('/etc/systemd/system/fenvix-proxy.service');
+    const run = unit.split('\n').find((l) => l.startsWith('ExecStart='))!;
     expect(run).toContain('-p 443:443');
-    expect(run).toContain('-v /etc/fenvix/tls/proxy:/certs:ro');
+    expect(run).toContain('-v /etc/fenvix/tls:/certs:ro');
+    expect(unit).toContain('ExecStartPre=+/usr/local/bin/fenvix-tls');
     const caddy = written('/etc/fenvix/proxy/Caddyfile');
     expect(caddy).toContain('https://console.example.com:443 {');
-    expect(caddy).toContain('tls /certs/cert.pem /certs/key.pem');
+    expect(caddy).toContain('tls /certs/engine.pem /certs/engine.pem');
+    expect(caddy).toContain('auto_https off');
     expect(caddy).toContain('reverse_proxy fenvix-control-plane:3000');
     expect(caddy).toContain('admin off');
   });
 
-  test('a renewal timer re-exports the certificate and restarts what uses it', () => {
-    expect(written('/etc/systemd/system/fenvix-cert-refresh.service')).toContain('ExecStart=/usr/local/bin/fenvix-cert-refresh --restart-on-change');
-    expect(written('/etc/systemd/system/fenvix-cert-refresh.timer')).toContain('OnCalendar=');
-    expect(script).toContain('systemctl enable --now fenvix-engine.service fenvix-cert-refresh.timer fenvix-control-plane.service fenvix-proxy.service');
+  test('a timer checks the certificate twice a day and restarts what uses it only on change', () => {
+    expect(written('/etc/systemd/system/fenvix-tls.service')).toContain('ExecStart=/usr/local/bin/fenvix-tls --restart-on-change');
+    expect(written('/etc/systemd/system/fenvix-tls.timer')).toContain('OnCalendar=*-*-* 04,16:20:00 UTC');
+    expect(written('/usr/local/bin/fenvix-tls')).toContain('systemctl try-restart fenvix-engine.service fenvix-proxy.service');
+    expect(script).toContain('systemctl enable --now fenvix-engine.service fenvix-tls.timer fenvix-control-plane.service fenvix-proxy.service');
+  });
+
+  test('certificate directory owned by fenvix, 0700; the instance knows its zone id from the stack', () => {
+    expect(script).toContain('install -d -m 0700 -o fenvix -g fenvix /etc/fenvix/tls');
+    expect(script).toContain("echo 'Z0123456789ABC' > /etc/fenvix/acme-zone-id");
+    expect(script).not.toContain('/etc/fenvix/tls/proxy');
+  });
+
+  test('acmeStaging changes the ACME endpoint and nothing else', () => {
+    const staging = buildBoot({ ...input, config: { ...config, acmeStaging: true } });
+    const a = boot.bundle.split('\n');
+    const b = staging.bundle.split('\n');
+    expect(b.length).toBe(a.length);
+    const diff = a.map((l, n) => [l, b[n]]).filter(([x, y]) => x !== y);
+    expect(diff).toEqual([["SERVER='https://acme-v02.api.letsencrypt.org/directory'", "SERVER='https://acme-staging-v02.api.letsencrypt.org/directory'"]]);
+    const ua = lines.filter((l) => !l.includes(boot.bundleSha256));
+    const ub = staging.userData.filter((l) => !l.includes(staging.bundleSha256));
+    expect(ub).toEqual(ua);
   });
 
   test('a region without the control plane runs the engine and the certificate timer only', () => {
-    const other = buildUserData({ ...input, runControlPlane: false }).join('\n');
-    expect(other).toContain('systemctl enable --now fenvix-engine.service fenvix-cert-refresh.timer\n');
+    const o = buildBoot({ ...input, runControlPlane: false });
+    const other = o.userData.join('\n') + '\n' + o.bundle;
+    expect(o.bundle).toContain("DOMAINS=('*.eu-central-1.db.example.com')");
+    expect(o.bundle).toContain('systemctl try-restart fenvix-engine.service;');
+    expect(other).toContain('systemctl enable --now fenvix-engine.service fenvix-tls.timer\n');
     expect(other).not.toContain('fenvix-control-plane.service');
     expect(other).not.toContain('fenvix-proxy.service');
   });
@@ -201,87 +264,5 @@ describe('fenvix-fetch-config (runs the real embedded script against a fake aws 
     expect(r.status).not.toBe(0);
     expect(r.stderr).toContain('/fenvix/prod/control-plane/engine-admin-token must hold the same value as /fenvix/prod/engine/admin-token');
     expect(r.stderr).not.toContain('another-token');
-  });
-});
-
-describe('fenvix-cert-refresh (real openssl, fake ACM export)', () => {
-  const work = join(dir, 'cert');
-  const bin = join(work, 'bin');
-  const tls = join(work, 'tls');
-  const run = (...args: string[]) =>
-    spawnSync('bash', [join(work, 'refresh.sh'), ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TMPDIR: work } });
-  const ssl = (...a: string[]) => execFileSync('openssl', a, { cwd: work, stdio: 'ignore' });
-  const issue = (cn: string) => {
-    ssl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'issued.key', '-out', 'issued.crt', '-days', '2', '-subj', `/CN=${cn}`);
-    ssl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'ca.key', '-out', 'ca.crt', '-days', '2', '-subj', '/CN=fake-chain');
-  };
-
-  beforeAll(() => {
-    if (!hasOpenssl || !hasPython) return;
-    mkdirSync(join(tls, 'proxy'), { recursive: true });
-    mkdirSync(bin, { recursive: true });
-    // Fake `aws acm export-certificate`: encrypts the issued key with the passphrase the script handed over, as ACM does.
-    writeFileSync(
-      join(bin, 'aws'),
-      [
-        '#!/bin/bash',
-        `[ -f ${work}/fail ] && { echo "AccessDenied" >&2; exit 254; }`,
-        'pass=""; while [ $# -gt 0 ]; do [ "$1" = --passphrase ] && pass="${2#fileb://}"; shift; done',
-        `openssl pkcs8 -topk8 -v2 aes-256-cbc -in ${work}/issued.key -passout "file:$pass" -out ${work}/enc.key`,
-        `python3 -I -c 'import json,sys; print(json.dumps({"Certificate": open(sys.argv[1]).read(), "CertificateChain": open(sys.argv[2]).read(), "PrivateKey": open(sys.argv[3]).read()}))' ${work}/issued.crt ${work}/ca.crt ${work}/enc.key`,
-      ].join('\n') + '\n',
-    );
-    chmodSync(join(bin, 'aws'), 0o755);
-    const s = certRefreshScript('arn:aws:acm:eu-central-1:1:certificate/x', 'eu-central-1', true)
-      .replace("PEM='/etc/fenvix/tls/engine.pem'", `PEM='${tls}/engine.pem'`)
-      .replace("PROXY_DIR='/etc/fenvix/tls/proxy'", `PROXY_DIR='${tls}/proxy'`)
-      .replace('mktemp -d /run/fenvix-cert.XXXXXX', 'mktemp -d')
-      .replace('-o fenvix -g fenvix ', '')
-      .replace('systemctl try-restart', 'echo RESTART');
-    writeFileSync(join(work, 'refresh.sh'), s);
-    issue('*.eu-central-1.db.example.com');
-  });
-
-  (hasOpenssl && hasPython ? test : test.skip)('installs cert chain + decrypted key as one 0600 PEM for the engine, and the proxy files', () => {
-    const r = run();
-    expect(r.status).toBe(0);
-    expect(r.stdout).toContain('certificate installed (none -> ');
-    const pem = readFileSync(join(tls, 'engine.pem'), 'utf8');
-    expect(pem.match(/BEGIN CERTIFICATE/g)).toHaveLength(2);
-    expect(pem).toContain('BEGIN PRIVATE KEY');
-    expect(pem).not.toContain('ENCRYPTED');
-    expect((statSync(join(tls, 'engine.pem')).mode & 0o777).toString(8)).toBe('600');
-    expect((statSync(join(tls, 'proxy', 'key.pem')).mode & 0o777).toString(8)).toBe('600');
-    // The key and the leaf certificate belong together.
-    const mod = (f: string, kind: string) => execFileSync('openssl', [kind, '-in', f, '-noout', '-modulus']).toString();
-    expect(mod(join(tls, 'proxy', 'key.pem'), 'rsa')).toBe(mod(join(tls, 'proxy', 'cert.pem'), 'x509'));
-    expect(r.stdout + r.stderr).not.toContain('PRIVATE KEY');
-  });
-
-  (hasOpenssl && hasPython ? test : test.skip)('unchanged certificate: nothing written, nothing restarted', () => {
-    const r = run('--restart-on-change');
-    expect(r.status).toBe(0);
-    expect(r.stdout).toContain('certificate unchanged');
-    expect(r.stdout).not.toContain('RESTART');
-  });
-
-  (hasOpenssl && hasPython ? test : test.skip)('renewed certificate: new files and one restart of the engine and the terminator', () => {
-    issue('*.eu-central-1.db.example.com');
-    const r = run('--restart-on-change');
-    expect(r.status).toBe(0);
-    expect(r.stdout).toContain('certificate installed');
-    expect(r.stdout).toContain('RESTART fenvix-engine.service fenvix-proxy.service');
-  });
-
-  (hasOpenssl && hasPython ? test : test.skip)('ACM unreachable: keeps the current certificate; with none on disk, stops with a clear message', () => {
-    writeFileSync(join(work, 'fail'), '');
-    const keep = run();
-    expect(keep.status).toBe(0);
-    expect(keep.stderr).toContain('keeping the current certificate');
-    execFileSync('rm', ['-f', join(tls, 'engine.pem')]);
-    const none = run();
-    expect(none.status).toBe(1);
-    expect(none.stderr).toContain('no certificate on disk');
-    execFileSync('rm', ['-f', join(work, 'fail')]);
   });
 });

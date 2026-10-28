@@ -1,3 +1,7 @@
+import { Token } from 'aws-cdk-lib';
+import { createHash } from 'crypto';
+import { gzipSync } from 'zlib';
+import { ACME_ZONE_ID_FILE, LEGO, certificateDomains, legoUrl, tlsScript, tlsStateParameter } from './acme';
 import { FenvixConfig } from './config';
 import {
   CONTROL_PLANE_CONTAINER,
@@ -17,10 +21,36 @@ export interface UserDataInput {
   bucketName: string;
   /** Full SSM names that must exist, or the services refuse to start (lib/parameters.ts). */
   requiredParameters: string[];
-  /** ACM certificate (exportable) of this region; exported to PEM files on the server. May be a CDK token. */
-  certificateArn: string;
+  /** Route 53 zone where the ACME DNS-01 challenge records are written. May be a CDK token. */
+  zoneId: string;
   /** The control plane and its TLS terminator run in the first region only (DNS for console.<domain> points there). */
   runControlPlane: boolean;
+}
+
+/**
+ * SSM String parameter (made by the stack) holding the boot bundle: every script and unit that is the same for any
+ * deployment of this config, gzip + base64. Read once at boot by the host; the user data carries its SHA-256.
+ */
+export function bootParameter(envName: string, part: number): string {
+  return `/fenvix-boot/${envName}/scripts-${part}`;
+}
+
+/** Largest value of a Standard (free) SSM parameter. */
+export const BOOT_CHUNK = 4096;
+
+export function bootChunks(value: string): string[] {
+  const out: string[] = [];
+  for (let n = 0; n < value.length; n += BOOT_CHUNK) out.push(value.slice(n, n + BOOT_CHUNK));
+  return out;
+}
+
+export interface BootScripts {
+  userData: string[];
+  /** The bash script that writes the bundled files (plain text; stored gzip + base64). */
+  bundle: string;
+  bundleSha256: string;
+  /** Number of SSM parameters the bundle needs (see bootChunks). */
+  parts: number;
 }
 
 /** Docker network shared by the control plane and its TLS terminator (the control plane publishes no port). */
@@ -72,42 +102,6 @@ if a.env_file:
 `;
 
 /**
- * Exports the region's ACM certificate (exportable) to the engine's PEM file and the TLS terminator's files. The
- * engine reads its certificate only at start (its rotateCertificates command reloads nothing), so the daily timer
- * runs this with --restart-on-change: when ACM has renewed the certificate, the new files are written and the engine
- * and the terminator are restarted once. The private key is decrypted in /run (memory) and never printed.
- */
-export function certRefreshScript(certificateArn: string, region: string, proxy: boolean): string {
-  return String.raw`#!/bin/bash
-set -euo pipefail
-umask 077
-CERT_ARN='${certificateArn}'
-REGION='${region}'
-PEM='${PATHS.enginePem}'
-PROXY_DIR='${PATHS.proxyCertDir}'
-w="$(mktemp -d /run/fenvix-cert.XXXXXX)"
-trap 'rm -rf "$w"' EXIT
-openssl rand -hex 32 > "$w/pass"
-if ! aws acm export-certificate --region "$REGION" --certificate-arn "$CERT_ARN" --passphrase "fileb://$w/pass" --output json > "$w/out.json" 2> "$w/err"; then
-  if [ -s "$PEM" ]; then echo "fenvix-cert-refresh: export failed, keeping the current certificate: $(head -c 300 "$w/err")" >&2; exit 0; fi
-  echo "fenvix-cert-refresh: cannot export $CERT_ARN and no certificate on disk: $(head -c 300 "$w/err")" >&2; exit 1
-fi
-python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); open(sys.argv[2],"w").write(d["Certificate"].strip()+"\n"+d.get("CertificateChain","").strip()+"\n"); open(sys.argv[3],"w").write(d["PrivateKey"])' "$w/out.json" "$w/chain.pem" "$w/key.enc"
-openssl pkey -in "$w/key.enc" -passin "file:$w/pass" -out "$w/key.pem"
-fp() { openssl x509 -in "$1" -noout -fingerprint -sha256 | cut -d= -f2; }
-new="$(fp "$w/chain.pem")"
-old="none"; if [ -s "$PEM" ]; then old="$(fp "$PEM")"; fi
-if [ "$new" = "$old" ]${proxy ? ' && [ -s "$PROXY_DIR/key.pem" ]' : ''}; then echo "fenvix-cert-refresh: certificate unchanged ($new)"; exit 0; fi
-cat "$w/chain.pem" "$w/key.pem" > "$w/engine.pem"
-install -m 0600 -o fenvix -g fenvix "$w/engine.pem" "$PEM.new" && mv -f "$PEM.new" "$PEM"
-${proxy ? String.raw`install -m 0600 "$w/chain.pem" "$PROXY_DIR/cert.pem"
-install -m 0600 "$w/key.pem" "$PROXY_DIR/key.pem"
-` : ''}echo "fenvix-cert-refresh: certificate installed ($old -> $new)"
-if [ "${'$'}{1:-}" = "--restart-on-change" ]; then systemctl try-restart fenvix-engine.service${proxy ? ' fenvix-proxy.service' : ''}; fi
-`;
-}
-
-/**
  * Run once by an operator (README, Step 10) after the first start. Through the engine's localhost exception it makes
  * the break-glass root user (password typed in, never stored on the server) and the provisioner the control plane
  * uses (role with user-management actions only, password from SSM), as control-plane/docs/data-explorer-security.md
@@ -149,7 +143,7 @@ JS
 `;
 }
 
-export function buildUserData(i: UserDataInput): string[] {
+export function buildBoot(i: UserDataInput): BootScripts {
   const c = i.config;
   const prefix = ssmPrefix(c.envName);
   const heredoc = (target: string, body: string, mode = '0644') => [
@@ -163,7 +157,7 @@ export function buildUserData(i: UserDataInput): string[] {
   const docker = '/usr/bin/docker';
   const engineEnv = Object.entries(engineEnvironment(i.region)).map(([k, v]) => `Environment=${k}=${v}`);
   const cpEnv = controlPlaneEnvironment({ config: c, region: i.region }).map(([k, v]) => `${k}=${v}`);
-  const services = ['fenvix-engine.service', 'fenvix-cert-refresh.timer', ...(i.runControlPlane ? ['fenvix-control-plane.service', 'fenvix-proxy.service'] : [])];
+  const services = ['fenvix-engine.service', 'fenvix-tls.timer', ...(i.runControlPlane ? ['fenvix-control-plane.service', 'fenvix-proxy.service'] : [])];
 
   const controlPlane = !i.runControlPlane
     ? []
@@ -177,7 +171,8 @@ export function buildUserData(i: UserDataInput): string[] {
             '\tauto_https off',
             '}',
             `https://${consoleHost(c)}:443 {`,
-            '\ttls /certs/cert.pem /certs/key.pem',
+            // The engine's file: Caddy takes the certificates and the key out of the same PEM.
+            '\ttls /certs/engine.pem /certs/engine.pem',
             `\treverse_proxy ${CONTROL_PLANE_CONTAINER}:${CONTROL_PLANE_INTERNAL_PORT}`,
             '}',
           ].join('\n'),
@@ -212,11 +207,11 @@ export function buildUserData(i: UserDataInput): string[] {
             'After=docker.service fenvix-control-plane.service',
             'Requires=docker.service',
             '[Service]',
-            'ExecStartPre=+/usr/local/bin/fenvix-cert-refresh',
+            'ExecStartPre=+/usr/local/bin/fenvix-tls',
             `ExecStartPre=-${docker} network create ${DOCKER_NETWORK}`,
             `ExecStartPre=-${docker} pull ${c.proxyImage}`,
             `ExecStartPre=-${docker} rm -f fenvix-proxy`,
-            `ExecStart=${docker} run --rm --name fenvix-proxy --network ${DOCKER_NETWORK} -p ${c.controlPlanePort}:443 -v /etc/fenvix/proxy/Caddyfile:/etc/caddy/Caddyfile:ro -v ${PATHS.proxyCertDir}:/certs:ro ${c.proxyImage}`,
+            `ExecStart=${docker} run --rm --name fenvix-proxy --network ${DOCKER_NETWORK} -p ${c.controlPlanePort}:443 -v /etc/fenvix/proxy/Caddyfile:/etc/caddy/Caddyfile:ro -v /etc/fenvix/tls:/certs:ro ${c.proxyImage}`,
             `ExecStop=${docker} stop fenvix-proxy`,
             'Restart=always',
             'RestartSec=5',
@@ -226,7 +221,41 @@ export function buildUserData(i: UserDataInput): string[] {
         ),
       ];
 
-  return [
+  // Every file that depends on nothing the stack creates goes into the boot bundle (an SSM parameter), so the user
+  // data stays below the 16 KB EC2 limit. The bundle must not contain a CDK token: its SHA-256 is fixed at synth time.
+  const bundle = [
+    '#!/bin/bash',
+    'set -euo pipefail',
+    ...heredoc('/usr/local/bin/fenvix-fetch-config', FETCH_CONFIG, '0755'),
+    ...heredoc(
+      '/usr/local/bin/fenvix-tls',
+      tlsScript({
+        region: i.region,
+        staging: c.acmeStaging,
+        email: c.acmeEmail,
+        domains: certificateDomains(c, i.region, i.runControlPlane),
+        stateParameter: tlsStateParameter(c.envName),
+        restartUnits: ['fenvix-engine.service', ...(i.runControlPlane ? ['fenvix-proxy.service'] : [])],
+      }),
+      '0755',
+    ),
+    ...heredoc('/usr/local/bin/fenvix-create-engine-users', createEngineUsersScript(c, i.region), '0755'),
+    ...heredoc(
+      '/etc/systemd/system/fenvix-tls.service',
+      ['[Unit]', 'Description=FENVIX: renew the certificate when due and restart what uses it if it changed', 'After=network-online.target', '[Service]', 'Type=oneshot', 'ExecStart=/usr/local/bin/fenvix-tls --restart-on-change'].join('\n'),
+    ),
+    ...heredoc(
+      '/etc/systemd/system/fenvix-tls.timer',
+      ['[Unit]', 'Description=FENVIX: certificate check twice a day', '[Timer]', 'OnCalendar=*-*-* 04,16:20:00 UTC', 'RandomizedDelaySec=1h', 'Persistent=true', '[Install]', 'WantedBy=timers.target'].join('\n'),
+    ),
+    ...controlPlane,
+  ].join('\n') + '\n';
+  if (Token.isUnresolved(bundle)) throw new Error('the boot bundle must not contain CDK tokens (its SHA-256 is computed at synth time)');
+  const bundleSha256 = createHash('sha256').update(bundle).digest('hex');
+  const parts = bootChunks(gzipSync(Buffer.from(bundle), { level: 9 }).toString('base64')).length;
+  const partNames = Array.from({ length: parts }, (_, n) => bootParameter(c.envName, n)).join(' ');
+
+  const userData = [
     '#!/bin/bash',
     'set -euo pipefail',
     'exec > >(tee -a /var/log/fenvix-bootstrap.log) 2>&1',
@@ -248,8 +277,10 @@ export function buildUserData(i: UserDataInput): string[] {
     'systemctl enable --now docker',
     'id fenvix >/dev/null 2>&1 || useradd --system --home-dir /var/lib/fenvix --shell /sbin/nologin fenvix',
     'install -d -o fenvix -g fenvix /opt/fenvix/bin /var/lib/fenvix',
-    'install -d -m 0750 -o root -g fenvix /etc/fenvix /etc/fenvix/tls',
-    `install -d -m 0700 -o root -g root /etc/fenvix/proxy ${PATHS.proxyCertDir}`,
+    'install -d -m 0750 -o root -g fenvix /etc/fenvix',
+    'install -d -m 0700 -o fenvix -g fenvix /etc/fenvix/tls',
+    'install -d -m 0700 -o root -g root /etc/fenvix/proxy',
+    `echo '${i.zoneId}' > ${ACME_ZONE_ID_FILE}`,
     '',
     'ARCH="$(uname -m)"',
     'URL="${ENGINE_URL//\\{arch\\}/$ARCH}"',
@@ -257,9 +288,16 @@ export function buildUserData(i: UserDataInput): string[] {
     `if [ -n "$ENGINE_SHA256" ]; then echo "$ENGINE_SHA256  ${PATHS.engineBinary}" | sha256sum -c -; fi`,
     `chmod 0755 ${PATHS.engineBinary}`,
     '',
-    ...heredoc('/usr/local/bin/fenvix-fetch-config', FETCH_CONFIG, '0755'),
-    ...heredoc('/usr/local/bin/fenvix-cert-refresh', certRefreshScript(i.certificateArn, i.region, i.runControlPlane), '0755'),
-    ...heredoc('/usr/local/bin/fenvix-create-engine-users', createEngineUsersScript(c, i.region), '0755'),
+    // ACME client: pinned release, refused unless its SHA-256 matches (lib/acme.ts).
+    `case "$ARCH" in x86_64) LEGO_ARCH=amd64 LEGO_SHA256=${LEGO.sha256.x86_64};; aarch64) LEGO_ARCH=arm64 LEGO_SHA256=${LEGO.sha256.aarch64};; *) echo "FATAL: no lego build for $ARCH" >&2; exit 1;; esac`,
+    `curl --fail --silent --show-error --location --retry 5 --output /tmp/lego.tar.gz "${legoUrl('amd64').replace('amd64', '$LEGO_ARCH')}"`,
+    'echo "$LEGO_SHA256  /tmp/lego.tar.gz" | sha256sum -c -',
+    'tar -xzf /tmp/lego.tar.gz -C /usr/local/bin lego && chown root:root /usr/local/bin/lego && chmod 0755 /usr/local/bin/lego && rm -f /tmp/lego.tar.gz',
+    '',
+    // The other scripts and units: from the boot parameter (gzip + base64), refused unless the SHA-256 fixed here matches.
+    `for p in ${partNames}; do aws ssm get-parameter --region ${i.region} --name "$p" --query Parameter.Value --output text; done | tr -d '\\n' | base64 -d | gzip -d > /root/fenvix-boot.sh`,
+    `echo "${bundleSha256}  /root/fenvix-boot.sh" | sha256sum -c -`,
+    'bash /root/fenvix-boot.sh',
     '',
     ...heredoc(
       '/etc/systemd/system/fenvix-engine.service',
@@ -275,7 +313,7 @@ export function buildUserData(i: UserDataInput): string[] {
         'RuntimeDirectory=fenvix',
         'RuntimeDirectoryMode=0700',
         `ExecStartPre=+${fetch} --group engine --files /run/fenvix --owner fenvix ${required('engine')}`,
-        'ExecStartPre=+/usr/local/bin/fenvix-cert-refresh',
+        'ExecStartPre=+/usr/local/bin/fenvix-tls',
         `ExecStart=${PATHS.engineBinary} ${engineArgs({ config: c, region: i.region, bucketName: i.bucketName }).join(' ')}`,
         'WorkingDirectory=/var/lib/fenvix',
         'Restart=always',
@@ -291,18 +329,15 @@ export function buildUserData(i: UserDataInput): string[] {
         'WantedBy=multi-user.target',
       ].join('\n'),
     ),
-    ...heredoc(
-      '/etc/systemd/system/fenvix-cert-refresh.service',
-      ['[Unit]', 'Description=FENVIX: install a renewed certificate and restart what uses it', '[Service]', 'Type=oneshot', 'ExecStart=/usr/local/bin/fenvix-cert-refresh --restart-on-change'].join('\n'),
-    ),
-    ...heredoc(
-      '/etc/systemd/system/fenvix-cert-refresh.timer',
-      ['[Unit]', 'Description=FENVIX: daily check for a renewed certificate', '[Timer]', 'OnCalendar=*-*-* 03:30:00 UTC', 'RandomizedDelaySec=30m', 'Persistent=true', '[Install]', 'WantedBy=timers.target'].join('\n'),
-    ),
-    ...controlPlane,
     '',
     'systemctl daemon-reload',
     `systemctl enable --now ${services.join(' ')}`,
     'echo "fenvix bootstrap done $(date -u +%FT%TZ)"',
   ];
+  return { userData, bundle, bundleSha256, parts };
+}
+
+/** The user data only (what the EC2 instance gets). */
+export function buildUserData(i: UserDataInput): string[] {
+  return buildBoot(i).userData;
 }

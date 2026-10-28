@@ -18,14 +18,27 @@ describe('deploy-policy.json', () => {
 
   test('has no wildcard action and no dangerous IAM actions', () => {
     for (const a of actions) expect(a).not.toContain('*');
-    const forbidden = ['iam:AttachRolePolicy', 'iam:CreatePolicy', 'iam:CreateUser', 'iam:CreateAccessKey', 'iam:PutUserPolicy', 'iam:CreatePolicyVersion', 'sts:AssumeRole', 'ssm:PutParameter', 'ssm:GetParameter*'];
+    const forbidden = ['iam:AttachRolePolicy', 'iam:CreatePolicy', 'iam:CreateUser', 'iam:CreateAccessKey', 'iam:PutUserPolicy', 'iam:CreatePolicyVersion', 'sts:AssumeRole', 'ssm:GetParameter*'];
     for (const f of forbidden) expect(actions).not.toContain(f);
+  });
+
+  test('SSM writes only the boot-script parameters: never the secrets under /fenvix/<env>/ nor the saved certificate', () => {
+    const ssmWrite = stmts.filter((s) => arr(s.Action).some((a: string) => /^ssm:(Put|Delete|AddTags|RemoveTags)/.test(a)));
+    expect(ssmWrite.map((s) => s.Sid)).toEqual(['BootScriptParametersOnly']);
+    expect(ssmWrite[0].Resource).toBe('arn:aws:ssm:eu-central-1:865859654353:parameter/fenvix-boot/*');
+    const reads = stmts.filter((s) => arr(s.Action).some((a: string) => a.startsWith('ssm:GetParameter')));
+    for (const s of reads) for (const r of arr(s.Resource) as string[]) expect(r).not.toMatch(/parameter\/fenvix(-tls)?\//);
+  });
+
+  test('no ACM permission is left (the certificate is Let\'s Encrypt, issued on the server)', () => {
+    expect(actions.filter((a) => a.startsWith('acm:'))).toEqual([]);
+    expect(JSON.stringify(policy)).not.toContain(':acm:');
   });
 
   test('Resource "*" is used only where AWS has no resource-level permission', () => {
     const star = stmts.filter((s) => arr(s.Resource).includes('*')).flatMap((s) => arr(s.Action) as string[]);
     for (const a of star) {
-      expect(/^(ec2:Describe|cloudwatch:DescribeAlarms$|cloudformation:ValidateTemplate$|route53:CreateHostedZone$|acm:RequestCertificate$)/.test(a)).toBe(true);
+      expect(/^(ec2:Describe|cloudwatch:DescribeAlarms$|cloudformation:ValidateTemplate$|route53:CreateHostedZone$)/.test(a)).toBe(true);
     }
   });
 
@@ -109,7 +122,7 @@ describe('deploy-policy.json', () => {
       'AWS::Budgets::BudgetsAction': 'budgets:CreateBudgetAction',
       'AWS::Route53::HostedZone': 'route53:CreateHostedZone',
       'AWS::Route53::RecordSet': 'route53:ChangeResourceRecordSets',
-      'AWS::CertificateManager::Certificate': 'acm:RequestCertificate',
+      'AWS::SSM::Parameter': 'ssm:PutParameter',
     };
     const { json } = synth({ baseDomain: 'example.com' });
     const types = new Set(Object.values<any>(json.Resources).map((r) => r.Type));

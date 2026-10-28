@@ -44,11 +44,12 @@ export function applySuppressions(stack: Stack): void {
     {
       id: 'AwsSolutions-IAM5',
       reason:
-        'Object-level S3 access needs <bucket>/*; SSM read is the /fenvix/<env>/* path; kms:Decrypt is limited by kms:ViaService to SSM (key id of the AWS-managed aws/ssm key is not known at synth); Session Manager APIs do not support resource-level permissions.',
+        'Object-level S3 access needs <bucket>/*; SSM read is the /fenvix/<env>/* path; kms:Decrypt/Encrypt/GenerateDataKey are limited by kms:ViaService to SSM (and Encrypt/GenerateDataKey to the saved-certificate parameter by encryption context; the key id of the AWS-managed aws/ssm key is not known at synth); route53:GetChange takes a change id that does not exist before the change (change/*); Session Manager APIs do not support resource-level permissions.',
       appliesTo: [
         { regex: '/^Resource::<DataBucket.*\\.Arn>/\\*$/' },
         { regex: '/^Resource::arn:<AWS::Partition>:ssm:[a-z0-9-]+:\\d+:parameter/fenvix/[a-z0-9-]+/\\*$/' },
         { regex: '/^Resource::arn:<AWS::Partition>:kms:[a-z0-9-]+:\\d+:key/\\*$/' },
+        'Resource::arn:aws:route53:::change/*',
         'Resource::*',
       ],
     },

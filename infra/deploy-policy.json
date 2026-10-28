@@ -176,17 +176,13 @@
       "Resource": ["arn:aws:route53:::hostedzone/*", "arn:aws:route53:::change/*"]
     },
     {
-      "Sid": "CertificateRequest",
+      "Sid": "BootScriptParametersOnly",
       "Effect": "Allow",
-      "Action": ["acm:RequestCertificate"],
-      "Resource": "*",
-      "Condition": { "StringEquals": { "aws:RequestedRegion": ["eu-central-1"], "aws:RequestTag/project": "fenvix" } }
-    },
-    {
-      "Sid": "CertificateManage",
-      "Effect": "Allow",
-      "Action": ["acm:DescribeCertificate", "acm:DeleteCertificate", "acm:AddTagsToCertificate", "acm:ListTagsForCertificate"],
-      "Resource": "arn:aws:acm:eu-central-1:865859654353:certificate/*"
+      "Action": [
+        "ssm:PutParameter", "ssm:DeleteParameter", "ssm:GetParameter", "ssm:GetParameters",
+        "ssm:AddTagsToResource", "ssm:RemoveTagsFromResource", "ssm:ListTagsForResource"
+      ],
+      "Resource": "arn:aws:ssm:eu-central-1:865859654353:parameter/fenvix-boot/*"
     }
   ]
 }
