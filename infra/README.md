@@ -10,7 +10,7 @@ This folder describes the AWS setup for FENVIX as code. **Nothing here has been 
 | Engine server | One EC2 server (default `t3.medium`) with a small encrypted disk. It runs the FENVIX engine and restarts it if it stops. AWS replaces the host if the host fails. |
 | Control plane | In the **first region** only: the control-plane container (the API the dashboard calls) and, in front of it, a small TLS terminator (Caddy) that serves `https://console.<your domain>`. |
 | Network | A private network (VPC) with one public subnet. Open to the internet: port **27018** (database, TLS required) and **443** (control plane, HTTPS). The engine's admin port (**8443**) is open to nothing: it listens only inside the server, where the control plane reaches it. No SSH; you connect with Session Manager in the browser. |
-| Certificate and DNS | One certificate per region for `*.<region>.db.<your domain>` (every database host has this form, for example `orders-1a2b3c4d.eu-central-1.db.example.com`) and, in the first region, `console.<your domain>`. DNS records point these names at the server. The server copies the certificate from AWS Certificate Manager at start and after every renewal. |
+| Certificate and DNS | One free **Let's Encrypt** certificate per region for `*.<region>.db.<your domain>` (every database host has this form, for example `orders-1a2b3c4d.eu-central-1.db.example.com`) and, in the first region, `console.<your domain>`. The server requests and renews it itself (DNS challenge in Route 53) and keeps a copy in AWS Secrets Manager, so a replaced server does not request a new one. A Route 53 zone (`db.<your domain>` by default) holds the database records. See "The domain and DNS" and "TLS certificate". |
 | Cost guard | A monthly budget with emails at 50%, 80%, 100%, and an automatic action that **stops the engine server at 100%**. |
 
 Everything is tagged `project=fenvix` and `env=<prod|...>`.
@@ -23,6 +23,8 @@ Everything is tagged `project=fenvix` and `env=<prod|...>`.
 - `lib/engine-command.ts`: the engine's start command (the only place with the engine's flag names).
 - `lib/control-plane-env.ts`: every setting of the control-plane container (the only place to add one).
 - `lib/parameters.ts`: the secrets the services need (the table below mirrors it).
+- `lib/acme.ts`, `lib/scripts/fenvix-tls.sh`, `lib/scripts/fenvix-acme-dns-hook.sh`: the Let's Encrypt certificate (names, challenge records, request, renewal, copy in Secrets Manager).
+- `lib/acme-requirements.txt`: certbot and its dependencies, pinned with SHA-256 hashes (made by `scripts/gen-acme-requirements.py`).
 
 ## Settings
 
@@ -39,7 +41,10 @@ Set them in `cdk.json` (section `context`) or per command with `-c name=value`. 
 | `budgetAmount` | `100` | Monthly budget in US dollars, per region. | `FENVIX_BUDGET_AMOUNT` |
 | `budgetEmail` | **required** | Where alerts go. | `FENVIX_BUDGET_EMAIL` |
 | `baseDomain` | **required** | Your domain, e.g. `fenvix.cloud`. | `BASE_DOMAIN` |
-| `hostedZoneId` | unset | Use an existing Route 53 zone of that domain instead of creating one. **Required with more than one region.** | `FENVIX_HOSTED_ZONE_ID` |
+| `dnsZone` | `db` | `db`: the Route 53 zone is `db.<domain>` (only that subdomain moves to AWS; recommended). `domain`: the zone is the whole domain. See "The domain and DNS". | `FENVIX_DNS_ZONE` |
+| `hostedZoneId` | unset | Use an existing Route 53 zone (`db.<domain>` or `<domain>`, as `dnsZone` says) instead of creating one. **Required with more than one region.** | `FENVIX_HOSTED_ZONE_ID` |
+| `acmeEmail` | **required** | Email of the Let's Encrypt account (expiry and incident notices). No default. | `FENVIX_ACME_EMAIL` |
+| `acmeStaging` | `false` | `true` uses the Let's Encrypt **staging** service: for a first trial only, its certificates are **not trusted** (see "TLS certificate"). | `FENVIX_ACME_STAGING` |
 | `dashboardOrigins` | **required** | Web address of the dashboard, e.g. `https://app.fenvix.cloud` (comma list if several). | `FENVIX_DASHBOARD_ORIGINS` |
 | `engineUrl` | placeholder | HTTPS link to the engine binary. `{arch}` becomes `x86_64` or `aarch64`. | `FENVIX_ENGINE_URL` |
 | `engineSha256` | empty | Checksum of the binary; if set, the server refuses any other file. | `FENVIX_ENGINE_SHA256` |
@@ -48,7 +53,7 @@ Set them in `cdk.json` (section `context`) or per command with `-c name=value`. 
 | `engineRetentionWindowSecs` | `604800` (7 days) | How far back a database can be restored; set by the control plane on every new database. | `FENVIX_ENGINE_RETENTION_WINDOW_SECS` |
 | `mongoPort` / `adminPort` / `controlPlanePort` | `27018` / `8443` / `443` | Database port (open to the internet), engine admin port (open to nothing), control-plane HTTPS port. | `FENVIX_MONGO_PORT` / `FENVIX_ADMIN_PORT` / `FENVIX_CONTROL_PLANE_PORT` |
 
-**Placeholders.** `engineUrl` and `controlPlaneImage` ship with `example.invalid ... REPLACE-ME`. Nothing is downloaded when you build the templates. If a placeholder is still there when the server boots, the server stops with the message "release location still has the placeholder value" (see Step 9) and starts nothing. The engine and the container images must be downloadable **without a login**, because the server's permissions are limited to its own bucket, its own settings and its own certificate. `baseDomain` and `dashboardOrigins` ship empty: `cdk synth` stops with "Missing setting ..." until you set them.
+**Placeholders.** `engineUrl` and `controlPlaneImage` ship with `example.invalid ... REPLACE-ME`. Nothing is downloaded when you build the templates. If a placeholder is still there when the server boots, the server stops with the message "release location still has the placeholder value" (see Step 9) and starts nothing. The engine and the container images must be downloadable **without a login**, because the server's permissions are limited to its own bucket, its own settings, its own certificate copy and its own DNS challenge records. `baseDomain`, `acmeEmail` and `dashboardOrigins` ship empty: `cdk synth` stops with "Missing setting ..." until you set them.
 
 ## The secrets (you create them, they are never in the code)
 
@@ -72,11 +77,65 @@ Four different random values are needed (admin token, user key, provisioner pass
 
 ## Before you start: decisions
 
-1. **The domain.** You need a domain you control (for example `fenvix.cloud`). Without one nothing can start: the engine only accepts encrypted connections and needs a certificate for `*.<region>.db.<domain>`. Choose one of:
-   - **A. Let this stack create a Route 53 hosted zone** for the domain (simplest if the domain has no other DNS records yet). During the first deploy you copy 4 name servers into your domain registrar (Step 7).
-   - **B. Use a Route 53 zone you already have** for that domain: note its id (`Z...`, Route 53 console, Hosted zones). Required if you deploy more than one region.
+1. **The domain and where its DNS lives.** You need a domain you control (for example `fenvix.cloud`). Without one nothing can start: the engine only accepts encrypted connections and needs a certificate for `*.<region>.db.<domain>`. Read "The domain and DNS" below and choose option **B** (recommended: only `db.<domain>` moves to Route 53) or **A** (the whole domain moves to Route 53).
 2. **The dashboard address** (for example `https://app.fenvix.cloud`): where the dashboard web app is served. The API will be `https://console.<domain>/v1`.
-3. **The certificate costs money.** The engine needs the certificate as a file, so it is requested from AWS Certificate Manager as *exportable*, which ACM charges for (see the ACM pricing page in the AWS console). The alternative (free Let's Encrypt certificates) needs the server to be allowed to change your DNS zone; it is not built here.
+3. **An email address for Let's Encrypt** (`acmeEmail`): it receives notices about the certificate (for example if a renewal keeps failing). A shared mailbox is better than a personal one.
+4. **Try with staging first?** With `acmeStaging=true` the first deploy proves the whole certificate flow without using Let's Encrypt's production limits, but the certificate is not trusted by anyone. See "TLS certificate".
+
+## The domain and DNS
+
+The names that must work:
+
+| Name | Points to | Who makes it |
+|---|---|---|
+| `*.<region>.db.<domain>` (for example `*.eu-central-1.db.fenvix.cloud`) | the server's public IP (`PublicIp` output) | the stack, in Route 53 |
+| `console.<domain>` | the same IP (first region only) | the stack (option A) or you (option B) |
+| `_acme-challenge.<region>.db.<domain>` (TXT, only while a certificate is requested) | | the server, in Route 53 |
+| `_acme-challenge.console.<domain>` | option A: TXT made by the server; option B: a CNAME you make once | |
+
+Your website stays on Vercel in both options. The certificate is free (Let's Encrypt) in both options; a Route 53 zone costs about $0.50 a month.
+
+**The registrar matters.** If you buy the domain from **Cloudflare**, Cloudflare Registrar only works with Cloudflare's own DNS: you cannot hand the whole domain to Route 53, so **only option B is possible**. GoDaddy allows both.
+
+### Option B (recommended): only `db.<domain>` moves to Route 53
+The domain's DNS stays where it is (Cloudflare or GoDaddy), with the Vercel records, email records and anything else. Route 53 gets only the subdomain `db.<domain>`. Why we recommend it: it works with both registrars; nothing about the website or email changes; and the AWS side can only ever touch `db.<domain>` (the server's permissions cannot reach the main domain at all, because it is not in AWS).
+
+Settings: `dnsZone=db` (the default).
+
+1. **Before the deploy, create the zone in Route 53** (so the delegation is ready when the server first asks for a certificate): Route 53 console, Hosted zones, Create hosted zone, name `db.<domain>` (for example `db.fenvix.cloud`), type *Public*. Open it and note its id (`Z...`) and the 4 values of its `NS` record. Set `export FENVIX_HOSTED_ZONE_ID="Z..."` in Step 5. (You can also let the stack create the zone: then the NS values are in the `NameServers` output after the deploy, and the server retries the certificate every 20 minutes until the delegation works.)
+2. **At your DNS provider** (Cloudflare: your domain, DNS, Records; GoDaddy: My Products, your domain, DNS), add, before the deploy:
+   - 4 records of type **NS**, name `db`, one per name server of step 1 (for example `ns-123.awsdns-45.com`).
+   - 1 record of type **CNAME**, name `_acme-challenge.console`, target `_acme-challenge-console.db.<domain>` (for example `_acme-challenge-console.db.fenvix.cloud`). On Cloudflare set it to **DNS only** (grey cloud). This lets the server prove it controls `console.<domain>` by writing inside its own Route 53 zone.
+3. **After the deploy** (it prints `ConsoleRecordToCreate`), add:
+   - 1 record of type **A**, name `console`, value the `PublicIp` output. On Cloudflare: **DNS only** (grey cloud): the server serves its own certificate; Cloudflare's proxy would replace it.
+4. If your DNS has **CAA** records for the domain, add `0 issue "letsencrypt.org"` (and `0 issuewild "letsencrypt.org"`), or Let's Encrypt will refuse. No CAA record at all is fine.
+5. Check (CloudShell or any terminal): `dig +short NS db.<domain>` shows the 4 AWS names; `dig +short CNAME _acme-challenge.console.<domain>` shows the target of step 2.
+
+The stack makes, in the `db.<domain>` zone: `*.<region>.db.<domain>` A record. The server makes and removes the `_acme-challenge` TXT records.
+
+### Option A: the whole domain moves to Route 53 (GoDaddy only)
+Route 53 becomes the DNS of the whole domain, and the stack makes every FENVIX record. Settings: `dnsZone=domain`.
+
+1. Before changing anything at GoDaddy, create the zone `<domain>` in Route 53 (or let the stack create it) and **recreate every record the domain has**: the Vercel ones (in Vercel, Project, Settings, Domains, Vercel shows the exact values; usually an `A` record for the bare domain, for example `76.76.21.21`, and a `CNAME` `www` to Vercel), email (`MX`, SPF/DKIM/DMARC `TXT`), and any verification `TXT`.
+2. At GoDaddy, set the domain's name servers to the 4 `NS` values of the Route 53 zone. Until this is done, nothing resolves to the new zone.
+3. Deploy (with `FENVIX_HOSTED_ZONE_ID` if you created the zone). The stack makes `*.<region>.db.<domain>` and `console.<domain>` (A records); the server makes and removes `_acme-challenge` TXT records for both names.
+
+Risk of option A: a mistake in step 1 takes the website or email down, and the whole domain's DNS is in the same AWS account as the server (the server can still only write the two `_acme-challenge` TXT names, see "TLS certificate").
+
+## TLS certificate (Let's Encrypt)
+
+- **What and where.** One certificate per region with the names `*.<region>.db.<domain>` and (first region) `console.<domain>`, an RSA 2048 key. On the server it is in `/etc/fenvix/tls/` (directory and files owned by `fenvix`, files mode 0600): `engine.pem` (certificate chain then key, what the engine loads), `fullchain.pem` and `key.pem` (the same certificate and key, for Caddy).
+- **Who requests it.** The server itself (not a container), with **certbot** (pinned version, installed at boot from PyPI with SHA-256 hashes for every package). The DNS challenge is answered by `fenvix-acme-dns-hook`, which writes one TXT record in Route 53 and waits until Route 53 serves it.
+- **When.** `fenvix-tls` runs before the engine and Caddy start, and twice a day (`fenvix-tls.timer`, 00:00 and 12:00 UTC plus up to one hour). It does nothing while the certificate has more than 30 days left. With less, it requests a new one, installs it, and restarts the engine and Caddy once (a few seconds of interruption; drivers reconnect). If nothing changed, nothing is restarted.
+- **Copy in Secrets Manager.** Every new certificate and key is also written to the secret `fenvix-<env>-tls-<region>` (output `TlsSecret`). A new server (after a redeploy that replaces it) takes it from there instead of asking Let's Encrypt again. Let's Encrypt allows **5 certificates for the same names per week** and **5 failed validations per name per hour**; replacing the server many times would otherwise hit the first limit. Only the server's role can read the secret (and the account's administrators); the deploy role cannot.
+- **When it fails.** If the request fails, the next attempt waits 20 minutes (to stay under the failed-validation limit). If the installed certificate is still valid, the services keep using it and the log says `WARNING`. If there is no valid certificate, the engine and Caddy **do not start** (they never run without TLS) and the log says why: `sudo journalctl -u fenvix-engine -n 30 --no-pager`. No key or secret value is ever printed.
+- **Staging** (`acmeStaging=true`). Uses `https://acme-staging-v02.api.letsencrypt.org/directory`: much higher limits, same steps, but the certificate's issuer is "(STAGING) ..." and **no driver, browser or the control plane trusts it**: the console shows a warning and customer connections with TLS checks fail. Use it for the very first deploy (to see the DNS delegation and the challenge work, `fenvix-tls: certificate installed` in the engine log), then set `acmeStaging=false` and deploy again (the server is replaced and gets a production certificate; a staging certificate is never served once production is configured).
+- **What someone who takes over the server can do.** With the server's role they can request certificates for our names (they can write the challenge TXT records) and read the stored key. They cannot change the A records, other names, other record types or other zones. This is the price of a server that renews its own certificate.
+- **To check or force a check now:** `sudo systemctl start fenvix-tls.service`, then `sudo journalctl -u fenvix-tls -n 20 --no-pager`. To force a new certificate (rarely needed; remember the weekly limit): `sudo rm /etc/fenvix/tls/fullchain.pem`, write `{}` into the secret (Secrets Manager console, Retrieve secret value, Edit, Plaintext), then `sudo systemctl restart fenvix-engine fenvix-proxy`.
+- **Updating certbot.** `python3 -I scripts/gen-acme-requirements.py certbot==X acme==X ...` (every package of the current file, with the new versions) `> lib/acme-requirements.txt`, then check it resolves for both CPUs: `pip download --no-deps --require-hashes --only-binary=:all: --python-version 3.11 --implementation cp --abi cp311 --abi abi3 --abi none --platform manylinux_2_34_x86_64 --platform manylinux_2_28_x86_64 --platform manylinux_2_17_x86_64 --platform manylinux2014_x86_64 -d /tmp/x -r lib/acme-requirements.txt` (and the same with `aarch64`).
+
+## The boot script and the 16 KB limit
+EC2 accepts at most 16 KB of user data. The boot script (`bootScript()` in `lib/user-data.ts`, with the files of `lib/scripts/` and `lib/acme-requirements.txt`) is about 25 KB, so the user data carries it **gzip-compressed** (about 14 KB in all), checks its SHA-256 before running it, and keeps a readable copy at `/opt/fenvix/boot.sh` on the server. Nothing is downloaded for it and nothing is left out. `npm test` checks the size and that the compressed part decodes to the exact script.
 
 ## Deploy, step by step
 
@@ -137,12 +196,14 @@ Get from your engineers: the HTTPS link of the engine binary (with `{arch}` wher
 ```
 export FENVIX_BUDGET_EMAIL="you@yourcompany.com"
 export BASE_DOMAIN="fenvix.cloud"
+export FENVIX_ACME_EMAIL="ops@yourcompany.com"
+export FENVIX_ACME_STAGING="true"    # first trial only; "false" (or remove the line) for the real certificate
 export FENVIX_DASHBOARD_ORIGINS="https://app.fenvix.cloud"
 export FENVIX_ENGINE_URL="https://.../fenvix-engine-{arch}"
 export FENVIX_ENGINE_SHA256="<64 characters>"
 export FENVIX_CONTROL_PLANE_IMAGE="ghcr.io/your-org/fenvix-control-plane:1.0.0"
 ```
-Option B of the domain decision only: `export FENVIX_HOSTED_ZONE_ID="Z..."`.
+If you created the Route 53 zone by hand ("The domain and DNS"): `export FENVIX_HOSTED_ZONE_ID="Z..."`. Option A only: `export FENVIX_DNS_ZONE="domain"`.
 (These last until you close CloudShell. Set them again if it restarts.)
 
 ### Step 6. Check the plan without touching AWS
@@ -158,10 +219,7 @@ npx cdk deploy --all --require-approval broadening
 ```
 Read the table it shows (roles, security group). Type `y`. No `cdk bootstrap` is needed: the stack uses no uploaded files.
 
-- **Option A (new hosted zone):** the deploy waits at the certificate (`CREATE_IN_PROGRESS` on `Certificate`) until your domain points to the new zone. While it waits: Route 53 console, Hosted zones, your domain, copy the 4 values of the `NS` record into your domain registrar as the name servers. The certificate is then validated (minutes to a few hours, depending on the registrar) and the deploy continues. If the deploy gives up after a long wait, finish the name-server change and run the same command again.
-- **Option B (existing zone):** the validation records are added to your zone and the deploy continues by itself.
-
-It takes 10 to 30 minutes. At the end it prints `BucketName`, `InstanceId`, `PublicIp`, `SecretsPath`, `DatabaseHosts` (`*.eu-central-1.db.<domain>`), `ControlPlaneUrl` (`https://console.<domain>/v1`) and, with option A, `NameServers`.
+The deploy does not wait for the certificate: the server requests it when it starts. It takes 10 to 20 minutes. At the end it prints `BucketName`, `InstanceId`, `PublicIp`, `SecretsPath`, `TlsSecret`, `DatabaseHosts` (`*.eu-central-1.db.<domain>`), `ControlPlaneUrl` (`https://console.<domain>/v1`), with option B `ConsoleRecordToCreate` and `ConsoleChallengeRecordToCreate` (make them now if you have not, "The domain and DNS"), and, if the stack created the zone, `NameServers` (put them at your DNS provider now: option B as `NS` records named `db`, option A as the domain's name servers).
 
 ### Step 8. Switch on the cost tracking (once)
 Billing console, Cost allocation tags, activate the user tags `project` and `env`. (Optional but useful: it lets Cost Explorer split costs per tag from the next day on. The budget itself already works per region without it.)
@@ -174,11 +232,13 @@ Billing console, Cost allocation tags, activate the user tags `project` and `env
    systemctl status fenvix-engine fenvix-control-plane fenvix-proxy --no-pager
    sudo journalctl -u fenvix-engine -n 30 --no-pager
    ```
-   Expected: the log ends with `fenvix bootstrap done`; the three services are `active (running)`; the engine log shows `fenvix-cert-refresh: certificate installed` and `admin interface listening on 172.17.0.1:8443 (bearer token required)`.
+   Expected: the log ends with `fenvix bootstrap done`; the three services are `active (running)`; the engine log shows `fenvix-tls: requesting a certificate ...`, `fenvix-tls: certificate kept in Secrets Manager`, `fenvix-tls: certificate installed` and `admin interface listening on 172.17.0.1:8443 (bearer token required)`. The first start can take a few minutes (the DNS challenge).
    - "release location still has the placeholder value": Step 5 was skipped. Set the variables, run `npx cdk deploy --all` again (AWS replaces the server; no data is lost, it lives in S3).
    - "missing SSM parameters: ...": the names listed are missing or misspelled. Fix them in Parameter Store (Step 2), then `sudo systemctl restart fenvix-engine fenvix-control-plane fenvix-proxy`.
    - "... must hold the same value as ...": the two admin tokens differ. Put the same value in both (Step 2), then restart as above.
-   - "cannot export ... and no certificate on disk": the server could not copy the certificate. Check in Certificate Manager that it is *Issued*.
+   - "fenvix-tls: the certificate request failed ... no valid certificate installed": Let's Encrypt could not validate. The lines above it say which name; usually the DNS delegation or the `_acme-challenge.console` CNAME is missing or not yet visible ("The domain and DNS", check 5), or a CAA record forbids Let's Encrypt. Fix it; the server tries again by itself every 20 minutes.
+   - "fenvix-tls: the last certificate request failed ...s ago, next attempt in ...s": it is waiting before the next try, on purpose (Let's Encrypt limits).
+   - "fenvix-tls: cannot read arn:...secret:...": the server cannot read its certificate copy in Secrets Manager; it does not request a new one in that case (that would only burn the weekly limit). Check that the secret `fenvix-<env>-tls-<region>` exists.
 3. Which ports listen where:
    ```
    sudo ss -ltn | grep -E ':(27018|8443|443) '
@@ -209,16 +269,16 @@ curl -s https://console.$D/healthz
 openssl s_client -connect check.eu-central-1.db.$D:27018 -servername check.eu-central-1.db.$D </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -enddate
 timeout 5 bash -c "echo > /dev/tcp/$(dig +short console.$D | head -1)/8443" && echo OPEN || echo CLOSED
 ```
-Expected: `{"ok":true}`; a subject with `*.eu-central-1.db.fenvix.cloud` and an Amazon issuer; `CLOSED` (the admin port is not reachable from the internet). If `dig` is missing, use the `PublicIp` printed in Step 7 instead of `$(dig ...)`.
+Expected: `{"ok":true}`; a subject with `*.eu-central-1.db.fenvix.cloud` and a Let's Encrypt issuer (for example `O = Let's Encrypt, CN = R12`; with staging, an issuer starting with `(STAGING)`); `CLOSED` (the admin port is not reachable from the internet). If `dig` is missing, use the `PublicIp` printed in Step 7 instead of `$(dig ...)`.
 
 ### Certificate renewal
-ACM renews the certificate by itself before it expires (as long as the DNS validation records stay in the zone). Every night (03:30 UTC, plus up to 30 minutes) the server checks it: if it changed, it installs the new files and restarts the engine and the TLS terminator once (a few seconds of interruption; drivers reconnect). The engine cannot load a new certificate without a restart. To do it now: `sudo systemctl start fenvix-cert-refresh.service`, then `sudo journalctl -u fenvix-cert-refresh -n 5 --no-pager`.
+Automatic, see "TLS certificate": checked twice a day, renewed when less than 30 days are left, engine and TLS terminator restarted once only when the certificate changed (the engine cannot load a new certificate without a restart). To check now: `sudo systemctl start fenvix-tls.service`, then `sudo journalctl -u fenvix-tls -n 20 --no-pager`.
 
 ### Adding a region later
 1. You need an existing Route 53 zone: set `FENVIX_HOSTED_ZONE_ID` (if the first deploy created the zone, its id is in Route 53, Hosted zones).
 2. Change one line: `"regions": "eu-central-1,us-east-1"` in `cdk.json`.
 3. In `deploy-policy.json` every ARN that contains `eu-central-1` needs a twin with the new region, and the `aws:RequestedRegion` lists need the new region. Update the inline policy in IAM.
-4. Repeat Step 2 (secrets) in the new region, then `npx cdk deploy --all`. The new region gets its own engine, bucket, certificate and `*.<region>.db.<domain>` record. The control plane stays in the first region and manages **only the first region's engine** (reaching another region's admin port is not built; see `results-infra.md`).
+4. Repeat Step 2 (secrets) in the new region, then `npx cdk deploy --all`. The new region gets its own engine, bucket, certificate (only `*.<region>.db.<domain>`), certificate copy in Secrets Manager and `*.<region>.db.<domain>` record; its server may write only its own `_acme-challenge.<region>.db.<domain>` TXT record. The control plane stays in the first region and manages **only the first region's engine** (reaching another region's admin port is not built; see `results-infra.md`).
 
 ## If the budget stops the server
 At 100% the budget stops the engine server (the data is safe in S3). To resume: raise `budgetAmount`, deploy, and in EC2 console select the instance, Instance state, Start. Services start by themselves. Budget data is updated a few times a day, so the stop can come some hours late.
@@ -227,12 +287,12 @@ At 100% the budget stops the engine server (the data is safe in S3). To resume: 
 
 Do this in order. Data is deleted for good in step 3.
 
-1. In CloudShell: `npx cdk destroy --all`. This removes the server, network, roles, alarm, budget, certificates, DNS records and (if created) the hosted zone. The **S3 bucket stays**.
-2. If you created a hosted zone, point the domain's name servers back at your registrar's before step 1 finishes, or the domain stops resolving.
+1. In CloudShell: `npx cdk destroy --all`. This removes the server, network, roles, alarm, budget, DNS records, the certificate copy in Secrets Manager and (if the stack created it) the hosted zone. The **S3 bucket stays**. Secrets Manager keeps a deleted secret for a recovery period: if you deploy again within it and the deploy fails with "already scheduled for deletion", run `aws secretsmanager delete-secret --region eu-central-1 --secret-id fenvix-prod-tls-eu-central-1 --force-delete-without-recovery` and deploy again.
+2. Option A: point the domain's name servers back at GoDaddy's (with the website records there) before step 1 finishes, or the domain stops resolving. Option B: delete the `db` NS records, `console` and `_acme-challenge.console` at your DNS provider, and the `db.<domain>` zone in Route 53 if you created it by hand.
 3. Delete the bucket (customer data!): S3 console, open `fenvix-prod-data-...`. The bucket policy blocks everyone except the engine role and the account root user. Either sign in as the root user, or first remove the policy: Permissions, Bucket policy, Delete. Then *Empty* (it also removes old versions), then *Delete*.
 4. Systems Manager, Parameter Store: delete the parameters under `/fenvix/prod/`.
 5. IAM: delete the role `fenvix-deployer`.
-6. Next day: Billing, Bills, check that no charges are left (an Elastic IP or hosted zone left behind costs a few dollars a month).
+6. Next day: Billing, Bills, check that no charges are left (an Elastic IP, hosted zone or secret left behind costs a few dollars a month).
 
 ## Checks that ran in development
-`npm test` runs the assertions (bucket, TLS, ports, engine flags, certificate names, secrets, IAM, tags, budget, DNS, regions, deploy policy), the cdk-nag AwsSolutions lint, the boot scripts (bash syntax, the secrets fetcher and the certificate installer against fake AWS answers) and the control plane's own settings check on the container environment. What cannot be proven without a real AWS account is in `results-infra.md`.
+`npm test` runs the assertions (bucket, TLS, ports, engine flags, certificate names, secrets, IAM, Route 53 challenge permission, tags, budget, DNS, regions, deploy policy), the cdk-nag AwsSolutions lint, the boot scripts (bash syntax, size and decoding of the compressed user data, the secrets fetcher, `fenvix-tls` and the DNS hook against a fake certbot and fake AWS answers) and the control plane's own settings check on the container environment. With `FENVIX_TEST_CERTBOT=/path/to/certbot npm test` the real certbot also checks the command line (against a closed local port, never Let's Encrypt). What cannot be proven without a real AWS account is in `results-infra.md`.

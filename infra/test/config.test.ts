@@ -13,14 +13,19 @@ describe('settings lookup', () => {
     expect(envVarName('proxyImage')).toBe('FENVIX_PROXY_IMAGE');
     expect(envVarName('engineRetentionWindowSecs')).toBe('FENVIX_ENGINE_RETENTION_WINDOW_SECS');
     expect(envVarName('mongoPort')).toBe('FENVIX_MONGO_PORT');
+    expect(envVarName('acmeEmail')).toBe('FENVIX_ACME_EMAIL');
+    expect(envVarName('acmeStaging')).toBe('FENVIX_ACME_STAGING');
+    expect(envVarName('dnsZone')).toBe('FENVIX_DNS_ZONE');
   });
 
-  test('cdk.json ships no domain and no dashboard origin: synth stops and names the setting', () => {
+  test('cdk.json ships no domain, no ACME email and no dashboard origin: synth stops and names the setting', () => {
     const cdk = require('../cdk.json').context as Record<string, string>;
     expect(cdk.baseDomain).toBe('');
     expect(cdk.dashboardOrigins).toBe('');
+    expect(cdk.acmeEmail).toBe('');
+    expect(() => loadConfig(makeLookup((k) => ({ ...cdk, budgetEmail: 'a@b.co' })[k], { BASE_DOMAIN: 'example.com' }))).toThrow(/Missing setting "acmeEmail".*FENVIX_ACME_EMAIL/);
     expect(() => loadConfig(makeLookup((k) => ({ ...cdk, budgetEmail: 'a@b.co' })[k], {}))).toThrow(/Missing setting "baseDomain".*BASE_DOMAIN/);
-    expect(() => loadConfig(makeLookup((k) => ({ ...cdk, budgetEmail: 'a@b.co' })[k], { BASE_DOMAIN: 'example.com' }))).toThrow(/FENVIX_DASHBOARD_ORIGINS/);
+    expect(() => loadConfig(makeLookup((k) => ({ ...cdk, budgetEmail: 'a@b.co' })[k], { BASE_DOMAIN: 'example.com', FENVIX_ACME_EMAIL: 'c@d.co' }))).toThrow(/FENVIX_DASHBOARD_ORIGINS/);
   });
 
   test('environment beats context; an empty variable does not', () => {

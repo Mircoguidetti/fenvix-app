@@ -34,6 +34,10 @@ describe('cdk-nag AwsSolutions pack', () => {
     expect(run(true)).toEqual([]);
   });
 
+  test('no unsuppressed findings (dnsZone=db, staging)', () => {
+    expect(run(true, { dnsZone: 'db', acmeStaging: 'true' })).toEqual([]);
+  });
+
   test('no unsuppressed findings (with BASE_DOMAIN and two regions)', () => {
     expect(run(true, { baseDomain: 'example.com', regions: 'eu-central-1,us-east-1', hostedZoneId: 'Z0123456789ABC' })).toEqual([]);
   });

@@ -25,7 +25,7 @@ describe('deploy-policy.json', () => {
   test('Resource "*" is used only where AWS has no resource-level permission', () => {
     const star = stmts.filter((s) => arr(s.Resource).includes('*')).flatMap((s) => arr(s.Action) as string[]);
     for (const a of star) {
-      expect(/^(ec2:Describe|cloudwatch:DescribeAlarms$|cloudformation:ValidateTemplate$|route53:CreateHostedZone$|acm:RequestCertificate$)/.test(a)).toBe(true);
+      expect(/^(ec2:Describe|cloudwatch:DescribeAlarms$|cloudformation:ValidateTemplate$|route53:CreateHostedZone$)/.test(a)).toBe(true);
     }
   });
 
@@ -79,6 +79,21 @@ describe('deploy-policy.json', () => {
     expect(pass.Condition.StringEquals['iam:PassedToService']).toEqual(['ec2.amazonaws.com', 'budgets.amazonaws.com']);
   });
 
+  test('no ACM permission is left (the certificate comes from Let\'s Encrypt on the server)', () => {
+    expect(actions.filter((a) => a.startsWith('acm:'))).toEqual([]);
+  });
+
+  test('Secrets Manager: only fenvix-* secrets, created with the project tag; the deploy role can never read a secret value', () => {
+    const sm = stmts.filter((s) => arr(s.Action).some((a: string) => a.startsWith('secretsmanager:')));
+    for (const s of sm) expect(s.Resource).toBe('arn:aws:secretsmanager:eu-central-1:865859654353:secret:fenvix-*');
+    const create = sm.find((s) => arr(s.Action).includes('secretsmanager:CreateSecret'));
+    expect(create.Condition).toEqual({ StringEquals: { 'aws:RequestTag/project': 'fenvix' } });
+    const all = sm.flatMap((s) => arr(s.Action));
+    for (const a of ['secretsmanager:GetSecretValue', 'secretsmanager:PutSecretValue', 'secretsmanager:PutResourcePolicy', 'secretsmanager:RestoreSecret']) {
+      expect(all).not.toContain(a);
+    }
+  });
+
   test('regions in cdk.json are covered by the policy', () => {
     const regions = String(cdkJson.context.regions).split(',');
     const text = JSON.stringify(policy);
@@ -109,7 +124,7 @@ describe('deploy-policy.json', () => {
       'AWS::Budgets::BudgetsAction': 'budgets:CreateBudgetAction',
       'AWS::Route53::HostedZone': 'route53:CreateHostedZone',
       'AWS::Route53::RecordSet': 'route53:ChangeResourceRecordSets',
-      'AWS::CertificateManager::Certificate': 'acm:RequestCertificate',
+      'AWS::SecretsManager::Secret': 'secretsmanager:CreateSecret',
     };
     const { json } = synth({ baseDomain: 'example.com' });
     const types = new Set(Object.values<any>(json.Resources).map((r) => r.Type));

@@ -1,5 +1,4 @@
-import { CfnOutput, Duration, Fn, RemovalPolicy, Stack, StackProps, Tags } from 'aws-cdk-lib';
-import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import { CfnOutput, Duration, Fn, RemovalPolicy, SecretValue, Stack, StackProps, Tags } from 'aws-cdk-lib';
 import * as budgets from 'aws-cdk-lib/aws-budgets';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cw_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
@@ -7,7 +6,9 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
+import { challengeRecords, consoleChallengeTarget, zoneName } from './acme';
 import { FenvixConfig, PROJECT_TAG } from './config';
 import { consoleHost } from './control-plane-env';
 import { requiredSecretNames, ssmPrefix } from './parameters';
@@ -21,7 +22,7 @@ export interface FenvixStackProps extends StackProps {
   region: string;
   /**
    * The first region of the list: it creates the hosted zone (unless hostedZoneId is given), the console record, and
-   * runs the control plane. Every region has its own certificate and `*.<region>.db.<domain>` record.
+   * runs the control plane. Every region has its own certificate (Let's Encrypt, on the server) and `*.<region>.db.<domain>` record.
    */
   createDns: boolean;
   /** Extra principals (ARNs) allowed to touch bucket data, e.g. a break-glass admin role. The account root is always allowed. */
@@ -79,8 +80,10 @@ export class FenvixStack extends Stack {
     // so it is reachable from the server itself and its containers, and from nowhere on the network.
 
     // ---- Data bucket ------------------------------------------------------------------------------
+    // The name is also written into the (compressed) boot script, so it must be known at synth time.
+    const bucketName = `${name}-data-${this.account}-${region}`;
     const bucket = new s3.Bucket(this, 'DataBucket', {
-      bucketName: `${name}-data-${this.account}-${region}`,
+      bucketName,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
@@ -167,23 +170,58 @@ export class FenvixStack extends Stack {
       }),
     );
 
-    // ---- DNS zone and certificate -----------------------------------------------------------------------
+    // ---- DNS zone, certificate store and the DNS-01 permission ----------------------------------------------
     // Database hosts are <name>-<workspace>.<region>.db.<domain>: two labels before "db", which *.db.<domain> does not
-    // cover. Each region gets *.<region>.db.<domain> (and the first region console.<domain>, the control-plane API).
-    // The engine only loads a PEM file, so the certificate is a public ACM certificate with export allowed (a paid
-    // ACM option); the server exports it at start and after each renewal (fenvix-cert-refresh).
+    // cover. Each region's server gets a Let's Encrypt certificate for *.<region>.db.<domain> (and, where the control
+    // plane runs, console.<domain>) with certbot and a DNS-01 challenge in this zone (lib/acme.ts, lib/scripts/).
     const zone: route53.IHostedZone = c.hostedZoneId
-      ? route53.HostedZone.fromHostedZoneAttributes(this, 'Zone', { hostedZoneId: c.hostedZoneId, zoneName: c.baseDomain })
-      : new route53.PublicHostedZone(this, 'Zone', { zoneName: c.baseDomain });
+      ? route53.HostedZone.fromHostedZoneAttributes(this, 'Zone', { hostedZoneId: c.hostedZoneId, zoneName: zoneName(c) })
+      : new route53.PublicHostedZone(this, 'Zone', { zoneName: zoneName(c) });
     const dbWildcard = `*.${region}.db.${c.baseDomain}`;
-    const cert = new acm.Certificate(this, 'Certificate', {
-      domainName: dbWildcard,
-      subjectAlternativeNames: props.createDns ? [consoleHost(c)] : undefined,
-      validation: acm.CertificateValidation.fromDns(zone),
-      allowExport: true,
+
+    // Certificate and key kept off the server, so a replaced server does not request a new one each time (Let's
+    // Encrypt: 5 identical certificates a week). The stack only creates the secret with an empty JSON object; the
+    // server writes the certificate. Only the engine role can read or write it (and the account's administrators).
+    const tlsStore = new secretsmanager.Secret(this, 'TlsStore', {
+      // Named fenvix-* so the deploy role's Secrets Manager permissions can be limited to fenvix-* secrets.
+      secretName: `${name}-tls-${region}`,
+      description: `FENVIX ${c.envName} ${region}: Let's Encrypt certificate and key of the engine node (written by the server)`,
+      secretStringValue: SecretValue.unsafePlainText('{}'),
+      removalPolicy: RemovalPolicy.DESTROY,
     });
     role.addToPolicy(
-      new iam.PolicyStatement({ sid: 'ExportOwnCertificate', actions: ['acm:ExportCertificate'], resources: [cert.certificateArn] }),
+      new iam.PolicyStatement({
+        sid: 'TlsStoreReadWrite',
+        actions: ['secretsmanager:GetSecretValue', 'secretsmanager:PutSecretValue'],
+        resources: [tlsStore.secretArn],
+      }),
+    );
+    // DNS-01: TXT records with the challenge names of this region only, in this zone only. The A records, other
+    // names, other types and other zones stay out of reach. GetChange (waiting for Route 53 to publish) is addressed
+    // by change id, which is not known in advance.
+    const challengeNames = challengeRecords(c, region, props.createDns).map((r) => r.record);
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'AcmeDnsChallengeTxtOnly',
+        actions: ['route53:ChangeResourceRecordSets'],
+        resources: [zone.hostedZoneArn],
+        conditions: {
+          'ForAllValues:StringEquals': {
+            'route53:ChangeResourceRecordSetsNormalizedRecordNames': challengeNames,
+            'route53:ChangeResourceRecordSetsRecordTypes': ['TXT'],
+            'route53:ChangeResourceRecordSetsActions': ['UPSERT', 'DELETE'],
+          },
+          // ForAllValues is also true for a request without the key: require it to be there.
+          Null: { 'route53:ChangeResourceRecordSetsNormalizedRecordNames': 'false' },
+        },
+      }),
+    );
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'AcmeDnsWait',
+        actions: ['route53:GetChange'],
+        resources: [this.formatArn({ service: 'route53', region: '', account: '', resource: 'change', resourceName: '*' })],
+      }),
     );
 
     // ---- Engine node -------------------------------------------------------------------------------
@@ -193,9 +231,10 @@ export class FenvixStack extends Stack {
       ...buildUserData({
         config: c,
         region,
-        bucketName: bucket.bucketName,
+        bucketName,
         requiredParameters: requiredSecretNames(c.envName),
-        certificateArn: cert.certificateArn,
+        tlsSecretArn: tlsStore.secretArn,
+        hostedZoneId: zone.hostedZoneId,
         runControlPlane: props.createDns,
       }),
     );
@@ -212,7 +251,7 @@ export class FenvixStack extends Stack {
       userDataCausesReplacement: true,
       httpTokens: ec2.HttpTokens.REQUIRED,
       // One hop: the engine and the boot scripts on the host can reach the instance role (data bucket, SSM secrets,
-      // certificate export); a container behind a Docker bridge cannot (one more hop). The control plane and the TLS
+      // certificate store and DNS-01 records); a container behind a Docker bridge cannot (one more hop). The control plane and the TLS
       // terminator need no AWS access (their secrets arrive in an env file), so a break-in there gets no AWS credentials.
       httpPutResponseHopLimit: 1,
       detailedMonitoring: true,
@@ -245,7 +284,8 @@ export class FenvixStack extends Stack {
 
     const target = route53.RecordTarget.fromValues(eip.ref);
     new route53.ARecord(this, 'DbWildcard', { zone, recordName: dbWildcard, target });
-    if (props.createDns) new route53.ARecord(this, 'Console', { zone, recordName: consoleHost(c), target });
+    // With dnsZone=db, console.<domain> is not in the Route 53 zone: it is made by hand at the domain's DNS (outputs below).
+    if (props.createDns && c.dnsZone === 'domain') new route53.ARecord(this, 'Console', { zone, recordName: consoleHost(c), target });
 
     // ---- Cost guard -------------------------------------------------------------------------------
     const budgetName = `${name}-${region}`;
@@ -302,11 +342,22 @@ export class FenvixStack extends Stack {
     new CfnOutput(this, 'PublicIp', { value: eip.ref });
     new CfnOutput(this, 'SecretsPath', { value: `${prefix}/`, description: 'Create the SecureString parameters under this path (README.md)' });
     new CfnOutput(this, 'DatabaseHosts', { value: dbWildcard, description: 'Database hostnames of this region' });
+    new CfnOutput(this, 'TlsSecret', { value: tlsStore.secretArn, description: "Where the server keeps its Let's Encrypt certificate" });
     if (props.createDns) new CfnOutput(this, 'ControlPlaneUrl', { value: `https://${consoleHost(c)}/v1` });
+    if (props.createDns && c.dnsZone === 'db') {
+      new CfnOutput(this, 'ConsoleRecordToCreate', {
+        value: Fn.join('', [`${consoleHost(c)} A `, eip.ref]),
+        description: 'Create this record by hand where your domain DNS is (README.md, "The domain and DNS"); DNS only, not proxied',
+      });
+      new CfnOutput(this, 'ConsoleChallengeRecordToCreate', {
+        value: `_acme-challenge.${consoleHost(c)} CNAME ${consoleChallengeTarget(c)}`,
+        description: 'Create this record by hand where your domain DNS is (README.md, "The domain and DNS"); DNS only, not proxied',
+      });
+    }
     if (!c.hostedZoneId && zone instanceof route53.PublicHostedZone && zone.hostedZoneNameServers) {
       new CfnOutput(this, 'NameServers', {
         value: Fn.join(', ', zone.hostedZoneNameServers),
-        description: 'Give these to your domain registrar (README.md, Step 6)',
+        description: `NS records for ${zoneName(c)} at your domain DNS (README.md, "The domain and DNS")`,
       });
     }
   }

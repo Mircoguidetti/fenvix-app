@@ -35,13 +35,26 @@ export interface FenvixConfig {
    * `*.<region>.db.<baseDomain>` (database hosts) and `console.<baseDomain>` (the control-plane API).
    */
   baseDomain: string;
-  /** Use an existing Route 53 hosted zone instead of creating one. Required with more than one region. */
+  /**
+   * Which name the Route 53 zone has. `db`: the zone is `db.<baseDomain>` (only that subdomain is delegated to Route 53;
+   * the rest of the domain stays where it is, and console.<baseDomain> is made by hand there). `domain`: the zone is
+   * `<baseDomain>` itself (the whole domain is delegated to Route 53). README.md, "The domain and DNS".
+   */
+  dnsZone: DnsZone;
+  /** Use an existing Route 53 hosted zone (named as `dnsZone` says) instead of creating one. Required with more than one region. */
   hostedZoneId?: string;
+  /** Contact address of the Let's Encrypt account (expiry and incident notices). Required, no default. */
+  acmeEmail: string;
+  /** Use the Let's Encrypt staging environment (certificates NOT trusted by drivers or browsers; for a first trial). */
+  acmeStaging: boolean;
   /** Browser origins of the dashboard allowed by the control plane (CORS), e.g. https://app.example.com. */
   dashboardOrigins: string[];
   /** Restore-point window (seconds) the control plane sets on every new database; 0 keeps none. */
   engineRetentionWindowSecs: number;
 }
+
+export const DNS_ZONES = ['db', 'domain'] as const;
+export type DnsZone = (typeof DNS_ZONES)[number];
 
 export type Lookup = (key: string) => string | undefined;
 
@@ -115,10 +128,18 @@ export function loadConfig(get: Lookup): FenvixConfig {
   }
   const hostedZoneId = val('hostedZoneId');
   if (hostedZoneId !== undefined && !/^Z[A-Z0-9]+$/.test(hostedZoneId)) throw new Error('hostedZoneId looks wrong (expected Z...)');
-  // Every region needs its own certificate and DNS record in the zone, so a second region must find an existing zone.
+  // Every region needs its own DNS record and challenge records in the zone, so a second region must find an existing zone.
   if (regions.length > 1 && hostedZoneId === undefined) {
-    throw new Error('More than one region needs hostedZoneId (an existing Route 53 zone of BASE_DOMAIN) so every region can add its own records.');
+    throw new Error('More than one region needs hostedZoneId (an existing Route 53 zone, named as dnsZone says) so every region can add its own records.');
   }
+
+  const dnsZone = val('dnsZone') ?? 'db';
+  if (!(DNS_ZONES as readonly string[]).includes(dnsZone)) throw new Error(`dnsZone must be "db" or "domain", got "${dnsZone}"`);
+
+  const acmeEmail = need('acmeEmail');
+  if (!/^[^@\s'"$`\\]+@[^@\s'"$`\\]+\.[^@\s'"$`\\]+$/.test(acmeEmail)) throw new Error('acmeEmail is not an email address');
+  const acmeStagingRaw = (val('acmeStaging') ?? 'false').toLowerCase();
+  if (acmeStagingRaw !== 'true' && acmeStagingRaw !== 'false') throw new Error(`acmeStaging must be "true" or "false", got "${acmeStagingRaw}"`);
 
   const dashboardOrigins = need('dashboardOrigins').split(',').map((o) => o.trim()).filter(Boolean);
   for (const o of dashboardOrigins) {
@@ -154,7 +175,10 @@ export function loadConfig(get: Lookup): FenvixConfig {
     controlPlaneImage,
     proxyImage,
     baseDomain,
+    dnsZone: dnsZone as DnsZone,
     hostedZoneId,
+    acmeEmail,
+    acmeStaging: acmeStagingRaw === 'true',
     dashboardOrigins,
     engineRetentionWindowSecs: int('engineRetentionWindowSecs', need('engineRetentionWindowSecs'), 0, 31_536_000),
   };

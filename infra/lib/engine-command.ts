@@ -5,10 +5,13 @@ export const PATHS = {
   engineBinary: '/opt/fenvix/bin/fenvix-engine',
   /** Written at every engine start from SSM (0600, owner fenvix); /run/fenvix disappears when the engine stops. */
   adminTokenFile: '/run/fenvix/admin-token',
-  /** Certificate chain + private key in one PEM file (0600, owner fenvix), exported from ACM. */
+  /** Let's Encrypt certificate and key (lib/scripts/fenvix-tls.sh). Directory and files owned by fenvix, files 0600. */
+  tlsDir: '/etc/fenvix/tls',
+  /** Certificate chain + private key in one PEM file: what the engine loads. */
   enginePem: '/etc/fenvix/tls/engine.pem',
-  /** The same certificate for the TLS terminator in front of the control plane (0600, root). */
-  proxyCertDir: '/etc/fenvix/tls/proxy',
+  /** The same certificate and key as two files, for the TLS terminator in front of the control plane. */
+  fullchainPem: '/etc/fenvix/tls/fullchain.pem',
+  keyPem: '/etc/fenvix/tls/key.pem',
 } as const;
 
 /**

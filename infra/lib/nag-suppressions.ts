@@ -44,13 +44,22 @@ export function applySuppressions(stack: Stack): void {
     {
       id: 'AwsSolutions-IAM5',
       reason:
-        'Object-level S3 access needs <bucket>/*; SSM read is the /fenvix/<env>/* path; kms:Decrypt is limited by kms:ViaService to SSM (key id of the AWS-managed aws/ssm key is not known at synth); Session Manager APIs do not support resource-level permissions.',
+        'Object-level S3 access needs <bucket>/*; SSM read is the /fenvix/<env>/* path; kms:Decrypt is limited by kms:ViaService to SSM (key id of the AWS-managed aws/ssm key is not known at synth); Session Manager APIs do not support resource-level permissions; route53:GetChange is addressed by a change id only known after the change (change/*), and it only reads the status of a change.',
       appliesTo: [
+        'Resource::arn:<AWS::Partition>:route53:::change/*',
         { regex: '/^Resource::<DataBucket.*\\.Arn>/\\*$/' },
         { regex: '/^Resource::arn:<AWS::Partition>:ssm:[a-z0-9-]+:\\d+:parameter/fenvix/[a-z0-9-]+/\\*$/' },
         { regex: '/^Resource::arn:<AWS::Partition>:kms:[a-z0-9-]+:\\d+:key/\\*$/' },
         'Resource::*',
       ],
+    },
+  ], true);
+
+  NagSuppressions.addResourceSuppressions(child('TlsStore'), [
+    {
+      id: 'AwsSolutions-SMG4',
+      reason:
+        "Holds the Let's Encrypt certificate and key; it is rewritten by the server at every renewal (about every 60 days), so a Secrets Manager rotation Lambda has nothing to do.",
     },
   ], true);
 

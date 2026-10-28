@@ -2,6 +2,7 @@ import { App, BootstraplessSynthesizer, Stack } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { FenvixConfig, loadConfig } from '../lib/config';
 import { FenvixStack } from '../lib/fenvix-stack';
+import { decodeUserData } from '../lib/user-data';
 
 export const BASE_CONTEXT: Record<string, string> = {
   account: '865859654353',
@@ -20,6 +21,9 @@ export const BASE_CONTEXT: Record<string, string> = {
   controlPlaneImage: 'ghcr.io/example/fenvix-control-plane:1.0.0',
   proxyImage: 'public.ecr.aws/docker/library/caddy:2.8.4',
   baseDomain: 'example.com',
+  dnsZone: 'domain',
+  acmeEmail: 'certs@example.com',
+  acmeStaging: 'false',
   dashboardOrigins: 'https://app.example.com',
   engineRetentionWindowSecs: '604800',
 };
@@ -61,4 +65,17 @@ export function allStatements(json: any): { owner: string; type: string; stateme
     for (const d of docs) for (const s of [].concat(d.Statement)) out.push({ owner: id, type: r.Type, statement: s });
   }
   return out;
+}
+
+/**
+ * The engine instance's user data from a template: the plain header (CloudFormation references shown as JSON, e.g.
+ * {"Ref":"TlsStore..."}) followed by the decompressed boot script.
+ */
+export function userDataText(json: any): { header: string; boot: string; all: string } {
+  const inst = Object.values<any>(json.Resources).find((r) => r.Type === 'AWS::EC2::Instance');
+  const b64 = inst.Properties.UserData['Fn::Base64'];
+  const parts: any[] = typeof b64 === 'string' ? [b64] : b64['Fn::Join'][1];
+  const header = parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join('');
+  const boot = decodeUserData(header);
+  return { header, boot, all: header + '\n' + boot };
 }

@@ -1,6 +1,8 @@
 import { Match } from 'aws-cdk-lib/assertions';
 import { requiredSecretNames } from '../lib/parameters';
-import { allStatements, buildApp, synth } from './helpers';
+import { challengeRecords } from '../lib/acme';
+import { loadConfig } from '../lib/config';
+import { allStatements, BASE_CONTEXT, buildApp, synth, userDataText } from './helpers';
 
 const resourcesOf = (json: any, type: string): [string, any][] =>
   Object.entries<any>(json.Resources).filter(([, r]) => r.Type === type);
@@ -104,9 +106,9 @@ describe('network and security group', () => {
       ...resourcesOf(j, 'AWS::EC2::SecurityGroupIngress').map(([, r]) => r.Properties),
     ];
     expect(rs.filter(internet).map((r) => r.FromPort).sort((a: number, b: number) => a - b)).toEqual([443, 28000]);
-    expect(JSON.stringify(one(j, 'AWS::EC2::Instance').Properties.UserData)).toContain('--listen=0.0.0.0:28000');
-    expect(JSON.stringify(one(j, 'AWS::EC2::Instance').Properties.UserData)).toContain('CONNECTION_PORT=28000');
-    expect(JSON.stringify(one(synth().json, 'AWS::EC2::Instance').Properties.UserData)).toContain('--admin-listen=172.17.0.1:8443');
+    expect(userDataText(j).boot).toContain('--listen=0.0.0.0:28000');
+    expect(userDataText(j).boot).toContain('CONNECTION_PORT=28000');
+    expect(userDataText(synth().json).boot).toContain('--admin-listen=172.17.0.1:8443');
   });
 
   test('a different admin port is still in no rule, and the engine binds it on the bridge', () => {
@@ -116,7 +118,7 @@ describe('network and security group', () => {
       ...resourcesOf(j, 'AWS::EC2::SecurityGroupIngress').map(([, r]) => r.Properties),
     ];
     for (const r of rs) expect(covers(r, 31000)).toBe(false);
-    expect(JSON.stringify(one(j, 'AWS::EC2::Instance').Properties.UserData)).toContain('--admin-listen=172.17.0.1:31000');
+    expect(userDataText(j).boot).toContain('--admin-listen=172.17.0.1:31000');
   });
 
   test('one public subnet, an internet gateway and no NAT gateway', () => {
@@ -166,18 +168,14 @@ describe('engine node', () => {
     expect(JSON.stringify(synth().json.Resources)).toContain(':automate:eu-central-1:ec2:recover');
   });
 
-  const userData = (ctx: Record<string, string> = {}): string => {
-    const { json } = synth(ctx);
-    const ud = one(json, 'AWS::EC2::Instance').Properties.UserData['Fn::Base64'];
-    return typeof ud === 'string' ? ud : JSON.stringify(ud);
-  };
+  const userData = (ctx: Record<string, string> = {}): string => userDataText(synth(ctx).json).all;
 
   test('user-data installs and starts engine and control plane with automatic restart', () => {
     const ud = userData();
     expect(ud).toContain('fenvix-engine.service');
     expect(ud).toContain('fenvix-control-plane.service');
     expect(ud).toContain('Restart=always');
-    expect(ud).toContain('systemctl enable --now fenvix-engine.service fenvix-cert-refresh.timer fenvix-control-plane.service fenvix-proxy.service');
+    expect(ud).toContain('systemctl enable --now fenvix-engine.service fenvix-tls.timer fenvix-control-plane.service fenvix-proxy.service');
     expect(ud).toContain('releases.example.com/fenvix-engine-{arch}');
     expect(ud).toContain('ghcr.io/example/fenvix-control-plane:1.0.0');
   });
@@ -198,10 +196,21 @@ describe('engine node', () => {
     expect(ud).not.toMatch(/-----BEGIN/);
   });
 
-  test('the engine is passed the bucket and the exportable certificate of its own stack', () => {
-    const ud = userData();
-    expect(ud).toMatch(/--bucket=","?\{"Ref":"DataBucket[A-Za-z0-9]+"\}/);
-    expect(ud).toMatch(/CERT_ARN='","?\{"Ref":"Certificate[A-Za-z0-9]+"\}/);
+  test('the engine is passed its bucket; the server is passed the certificate store and the zone of its own stack', () => {
+    const { header, boot } = userDataText(synth().json);
+    expect(boot).toContain(' --bucket=fenvix-prod-data-865859654353-eu-central-1');
+    expect(header).toMatch(/FENVIX_TLS_SECRET_ID='\{"Ref":"TlsStore[A-Za-z0-9]+"\}'/);
+    expect(header).toMatch(/FENVIX_DNS_ZONE_ID='\{"Ref":"Zone[A-Za-z0-9]+"\}'/);
+    expect(userDataText(synth({ hostedZoneId: 'Z0123456789ABC' }).json).header).toContain("FENVIX_DNS_ZONE_ID='Z0123456789ABC'");
+  });
+
+  test('the user data, as EC2 receives it, stays under 16 KB and carries no secret', () => {
+    const { header, boot } = userDataText(synth().json);
+    expect(Buffer.byteLength(header)).toBeLessThan(16384 - 200); // + the length of two resolved ids
+    for (const text of [header, boot]) {
+      expect(text).not.toMatch(/-----BEGIN/);
+      expect(text).not.toMatch(/AKIA[0-9A-Z]{16}/);
+    }
   });
 
   test('sha256 pin is passed to the instance when set', () => {
@@ -256,6 +265,14 @@ describe('IAM', () => {
     }
   });
 
+  test('Resource "*" appears in no Route 53 or Secrets Manager permission', () => {
+    for (const { statement: st } of identity) {
+      if (asArray(st.Action).some((a: string) => a.startsWith('route53:') || a.startsWith('secretsmanager:'))) {
+        expect(asArray(st.Resource)).not.toContain('*');
+      }
+    }
+  });
+
   test('engine role has no managed policies and EC2 is the only principal that can assume it', () => {
     const roles = resourcesOf(json, 'AWS::IAM::Role');
     expect(roles).toHaveLength(2);
@@ -273,11 +290,51 @@ describe('IAM', () => {
     expect(JSON.stringify(stop.statement.Resource)).toContain('EngineInstance');
   });
 
-  test('the engine role may export only its own certificate, and nothing else of ACM', () => {
-    const acmStatements = identity.filter((s) => asArray(s.statement.Action).some((a: string) => a.startsWith('acm:')));
-    expect(acmStatements).toHaveLength(1);
-    expect(asArray(acmStatements[0].statement.Action)).toEqual(['acm:ExportCertificate']);
-    expect(acmStatements[0].statement.Resource).toEqual({ Ref: expect.stringMatching(/^Certificate/) });
+  test('no ACM at all: no certificate resource, no acm: action in any policy', () => {
+    const types = Object.values<any>(json.Resources).map((r) => r.Type);
+    expect(types.filter((t) => t.startsWith('AWS::CertificateManager'))).toEqual([]);
+    for (const { statement: st } of allStatements(json)) for (const a of asArray(st.Action)) expect(a.startsWith('acm:')).toBe(false);
+    expect(JSON.stringify(json)).not.toMatch(/acm:|CertificateExport/);
+  });
+
+  test('Route 53: the engine role may change only the TXT challenge records of its region, in its zone; and read change status', () => {
+    const r53 = identity.filter((s) => s.owner.startsWith('EngineRole') && asArray(s.statement.Action).some((a: string) => a.startsWith('route53:')));
+    expect(r53.flatMap((s) => asArray(s.statement.Action)).sort()).toEqual(['route53:ChangeResourceRecordSets', 'route53:GetChange']);
+    const change = r53.find((s) => asArray(s.statement.Action).includes('route53:ChangeResourceRecordSets'))!.statement;
+    expect(asArray(change.Action)).toEqual(['route53:ChangeResourceRecordSets']);
+    expect(change.Resource).toEqual({ 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':route53:::hostedzone/', { Ref: expect.stringMatching(/^Zone/) }]] });
+    expect(change.Condition).toEqual({
+      'ForAllValues:StringEquals': {
+        'route53:ChangeResourceRecordSetsNormalizedRecordNames': ['_acme-challenge.eu-central-1.db.example.com', '_acme-challenge.console.example.com'],
+        'route53:ChangeResourceRecordSetsRecordTypes': ['TXT'],
+        'route53:ChangeResourceRecordSetsActions': ['UPSERT', 'DELETE'],
+      },
+      Null: { 'route53:ChangeResourceRecordSetsNormalizedRecordNames': 'false' },
+    });
+    const wait = r53.find((s) => asArray(s.statement.Action).includes('route53:GetChange'))!.statement;
+    expect(asArray(wait.Action)).toEqual(['route53:GetChange']);
+    expect(wait.Resource).toEqual({ 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':route53:::change/*']] });
+  });
+
+  test('Route 53 with an existing zone: the ARN of that zone only', () => {
+    const j = synth({ hostedZoneId: 'Z0123456789ABC' }).json;
+    const change = allStatements(j).find((s) => asArray(s.statement.Action).includes('route53:ChangeResourceRecordSets'))!.statement;
+    expect(change.Resource).toEqual({ 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':route53:::hostedzone/Z0123456789ABC']] });
+  });
+
+  test('Secrets Manager: the engine role may read and write its own certificate store, nothing else', () => {
+    const sm = identity.filter((s) => asArray(s.statement.Action).some((a: string) => a.startsWith('secretsmanager:')));
+    expect(sm).toHaveLength(1);
+    expect(sm[0].owner).toMatch(/^EngineRole/);
+    expect(asArray(sm[0].statement.Action).sort()).toEqual(['secretsmanager:GetSecretValue', 'secretsmanager:PutSecretValue']);
+    expect(sm[0].statement.Resource).toEqual({ Ref: expect.stringMatching(/^TlsStore/) });
+  });
+
+  test('the certificate store is created holding an empty JSON object, never a certificate', () => {
+    const secret = one(json, 'AWS::SecretsManager::Secret');
+    expect(secret.Properties.SecretString).toBe('{}');
+    expect(secret.Properties.GenerateSecretString).toBeUndefined();
+    expect(secret.Properties.Name).toBe('fenvix-prod-tls-eu-central-1');
   });
 
   test('S3: the engine role gets object get/put/delete, multipart abort and list on its bucket, nothing on old versions', () => {
@@ -295,7 +352,7 @@ describe('IAM', () => {
 describe('tags', () => {
   const taggable = [
     'AWS::S3::Bucket', 'AWS::EC2::Instance', 'AWS::EC2::VPC', 'AWS::EC2::Subnet', 'AWS::EC2::SecurityGroup', 'AWS::EC2::InternetGateway',
-    'AWS::EC2::RouteTable', 'AWS::EC2::EIP', 'AWS::IAM::Role', 'AWS::CloudWatch::Alarm', 'AWS::Route53::HostedZone', 'AWS::CertificateManager::Certificate',
+    'AWS::EC2::RouteTable', 'AWS::EC2::EIP', 'AWS::IAM::Role', 'AWS::CloudWatch::Alarm', 'AWS::Route53::HostedZone', 'AWS::SecretsManager::Secret',
   ];
 
   test.each([['prod'], ['staging']])('every taggable resource carries project=fenvix and env=%s', (env) => {
@@ -356,21 +413,66 @@ describe('DNS and certificates', () => {
     expect(() => synth({ baseDomain: '   ' })).toThrow(/BASE_DOMAIN/);
   });
 
-  test('certificate *.<region>.db.<domain> (+ console in the first region), exportable, DNS-validated; records to the node IP', () => {
-    const { template, json } = synth({ baseDomain: 'Example.com' });
+  test('acmeEmail is required and has no default: synth stops and names it', () => {
+    expect(() => synth({ acmeEmail: '' })).toThrow(/Missing setting "acmeEmail".*FENVIX_ACME_EMAIL/);
+    expect(() => synth({ acmeEmail: 'not-an-address' })).toThrow(/acmeEmail/);
+    expect(() => synth({ acmeEmail: "a'b@example.com" })).toThrow(/acmeEmail/);
+    expect(require('../cdk.json').context.acmeEmail).toBe('');
+  });
+
+  test('acmeStaging: false by default, only "true" or "false"', () => {
+    expect(loadConfig((k) => ({ ...BASE_CONTEXT, acmeStaging: undefined as any })[k]).acmeStaging).toBe(false);
+    expect(loadConfig((k) => ({ ...BASE_CONTEXT, acmeStaging: 'TRUE' })[k]).acmeStaging).toBe(true);
+    expect(() => synth({ acmeStaging: 'yes' })).toThrow(/acmeStaging/);
+    expect(require('../cdk.json').context.acmeStaging).toBe('false');
+  });
+
+  test('acmeStaging=true changes only the ACME endpoint: same resources, same permissions, same records', () => {
+    const a = synth().json;
+    const b = synth({ acmeStaging: 'true' }).json;
+    const noUd = (j: any) => {
+      const copy = JSON.parse(JSON.stringify(j));
+      for (const r of Object.values<any>(copy.Resources)) if (r.Type === 'AWS::EC2::Instance') r.Properties.UserData = null;
+      return JSON.stringify(copy).replace(/EngineInstance[0-9A-Za-z]+/g, 'EngineInstance');
+    };
+    expect(noUd(b)).toBe(noUd(a));
+    const la = userDataText(a).boot.split('\n');
+    const lb = userDataText(b).boot.split('\n');
+    expect(lb.filter((l, n) => l !== la[n])).toEqual(["ACME_SERVER='https://acme-staging-v02.api.letsencrypt.org/directory'"]);
+  });
+
+  test('dnsZone=domain: zone <domain>, A records *.<region>.db and console to the node IP', () => {
+    const { template, json } = synth({ baseDomain: 'Example.com', dnsZone: 'domain' });
     template.resourceCountIs('AWS::Route53::HostedZone', 1);
     template.hasResourceProperties('AWS::Route53::HostedZone', { Name: 'example.com.' });
-    template.resourceCountIs('AWS::CertificateManager::Certificate', 1);
-    template.hasResourceProperties('AWS::CertificateManager::Certificate', {
-      DomainName: '*.eu-central-1.db.example.com',
-      SubjectAlternativeNames: ['console.example.com'],
-      ValidationMethod: 'DNS',
-      CertificateExport: 'ENABLED',
-    });
     template.hasResourceProperties('AWS::Route53::RecordSet', { Name: '*.eu-central-1.db.example.com.', Type: 'A' });
     template.hasResourceProperties('AWS::Route53::RecordSet', { Name: 'console.example.com.', Type: 'A' });
     const names = resourcesOf(json, 'AWS::Route53::RecordSet').map(([, r]) => r.Properties.Name);
     expect(names).not.toContain('*.db.example.com.');
+  });
+
+  test('dnsZone=db (the default): zone db.<domain>, the database record only; the console records are outputs to create by hand', () => {
+    const { template, json } = synth({ dnsZone: 'db' });
+    template.hasResourceProperties('AWS::Route53::HostedZone', { Name: 'db.example.com.' });
+    expect(resourcesOf(json, 'AWS::Route53::RecordSet').map(([, r]) => r.Properties.Name)).toEqual(['*.eu-central-1.db.example.com.']);
+    expect(json.Outputs.ConsoleChallengeRecordToCreate.Value).toBe('_acme-challenge.console.example.com CNAME _acme-challenge-console.db.example.com');
+    expect(JSON.stringify(json.Outputs.ConsoleRecordToCreate.Value)).toContain('console.example.com A ');
+    const change = allStatements(json).find((s) => asArray(s.statement.Action).includes('route53:ChangeResourceRecordSets'))!.statement;
+    expect(change.Condition['ForAllValues:StringEquals']['route53:ChangeResourceRecordSetsNormalizedRecordNames']).toEqual([
+      '_acme-challenge.eu-central-1.db.example.com',
+      '_acme-challenge-console.db.example.com',
+    ]);
+    expect(loadConfig((k) => ({ ...BASE_CONTEXT, dnsZone: undefined as any })[k]).dnsZone).toBe('db');
+    expect(require('../cdk.json').context.dnsZone).toBe('db');
+    expect(() => synth({ dnsZone: 'apex' })).toThrow(/dnsZone/);
+  });
+
+  test('every challenge record name lies inside the zone the role may change', () => {
+    for (const dnsZone of ['db', 'domain']) {
+      const c = loadConfig((k) => ({ ...BASE_CONTEXT, dnsZone })[k]);
+      const zone = dnsZone === 'db' ? 'db.example.com' : 'example.com';
+      for (const r of challengeRecords(c, 'eu-central-1', true)) expect(r.record.endsWith('.' + zone)).toBe(true);
+    }
   });
 
   test('the certificate covers a database host of the real format, and *.db.<domain> would not', () => {
@@ -378,29 +480,33 @@ describe('DNS and certificates', () => {
     const covered = (wildcard: string) => wildcard.startsWith('*.') && host.split('.').slice(1).join('.') === wildcard.slice(2);
     expect(covered('*.eu-central-1.db.example.com')).toBe(true);
     expect(covered('*.db.example.com')).toBe(false);
+    expect(userDataText(synth().json).boot).toContain("ACME_DOMAINS='*.eu-central-1.db.example.com console.example.com'");
   });
 
   test('an existing hosted zone id is referenced instead of creating a zone', () => {
     const { template } = synth({ baseDomain: 'example.com', hostedZoneId: 'Z0123456789ABC' });
     template.resourceCountIs('AWS::Route53::HostedZone', 0);
-    template.hasResourceProperties('AWS::CertificateManager::Certificate', {
-      DomainValidationOptions: Match.arrayWith([Match.objectLike({ HostedZoneId: 'Z0123456789ABC' })]),
-    });
+    template.hasResourceProperties('AWS::Route53::RecordSet', { HostedZoneId: 'Z0123456789ABC' });
   });
 
-  test('two regions: an existing zone is required; each region its own certificate and record, console and control plane in the first only', () => {
+  test('two regions: an existing zone is required; each region its own certificate names, record and challenge permission; console and control plane in the first only', () => {
     expect(() => buildApp({ regions: 'eu-central-1,us-east-1' })).toThrow(/hostedZoneId/);
     const { stacks } = buildApp({ regions: 'eu-central-1,us-east-1', hostedZoneId: 'Z0123456789ABC' });
     const { Template } = require('aws-cdk-lib/assertions');
     const [a, b] = stacks.map((s) => Template.fromStack(s));
     for (const t of [a, b]) t.resourceCountIs('AWS::Route53::HostedZone', 0);
-    a.hasResourceProperties('AWS::CertificateManager::Certificate', { DomainName: '*.eu-central-1.db.example.com', SubjectAlternativeNames: ['console.example.com'] });
-    b.hasResourceProperties('AWS::CertificateManager::Certificate', { DomainName: '*.us-east-1.db.example.com', SubjectAlternativeNames: Match.absent() });
     const bNames = resourcesOf(b.toJSON(), 'AWS::Route53::RecordSet').map(([, r]) => r.Properties.Name);
     expect(bNames).toEqual(['*.us-east-1.db.example.com.']);
-    const ud = (t: any) => JSON.stringify(one(t.toJSON(), 'AWS::EC2::Instance').Properties.UserData);
+    const names = (t: any) =>
+      allStatements(t.toJSON()).find((s) => asArray(s.statement.Action).includes('route53:ChangeResourceRecordSets'))!.statement.Condition['ForAllValues:StringEquals'][
+        'route53:ChangeResourceRecordSetsNormalizedRecordNames'
+      ];
+    expect(names(a)).toEqual(['_acme-challenge.eu-central-1.db.example.com', '_acme-challenge.console.example.com']);
+    expect(names(b)).toEqual(['_acme-challenge.us-east-1.db.example.com']);
+    const ud = (t: any) => userDataText(t.toJSON()).boot;
     expect(ud(a)).toContain('fenvix-control-plane.service');
     expect(ud(b)).not.toContain('fenvix-control-plane.service');
+    expect(ud(b)).toContain("ACME_DOMAINS='*.us-east-1.db.example.com'");
   });
 
   test('a malformed domain is rejected', () => {
