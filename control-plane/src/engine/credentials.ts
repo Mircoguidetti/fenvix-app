@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { engineName } from "./names.ts";
 
 /**
@@ -91,4 +91,21 @@ export function engineCredential(key: EngineUserKey, id: string): EngineCredenti
 /** Two keys are the same secret (constant time). Used to refuse configurations that reuse one secret for two purposes. */
 export function sameSecret(a: Buffer, b: Buffer): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * A password for a customer's own database user (docs/database-users.md): PASSWORD_LENGTH letters and digits from the
+ * operating system's random source, without bias (bytes of 248 and more are skipped). Unlike the `cp_` passwords it is
+ * not derived from anything: it is shown once and only the engine keeps its SCRAM hash.
+ */
+export function randomPassword(length = PASSWORD_LENGTH): string {
+  let out = "";
+  while (out.length < length) {
+    for (const b of randomBytes(64)) {
+      if (b >= 248) continue;
+      out += ALPHABET[b % 62];
+      if (out.length === length) break;
+    }
+  }
+  return out;
 }

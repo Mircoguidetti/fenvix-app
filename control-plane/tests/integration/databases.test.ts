@@ -24,7 +24,11 @@ describe("createDatabase", () => {
     assert.equal(res.statusCode, 201, res.body);
     const d = json(res);
     assert.match(d.id, /^[0-9a-f-]{36}$/);
-    assert.deepEqual(Object.keys(d).sort(), ["connectionString", "createdAt", "forkedFrom", "host", "id", "keepAwake", "lastActiveAt", "name", "region", "requests24h", "restoredTo", "state", "storageMb", "tags"]);
+    // The Database of the contract, plus the initial user (docs/database-users.md): its password in this answer only.
+    assert.deepEqual(Object.keys(d).sort(), ["connectionString", "createdAt", "forkedFrom", "host", "id", "initialUser", "keepAwake", "lastActiveAt", "name", "region", "requests24h", "restoredTo", "state", "storageMb", "tags"]);
+    assert.equal(d.initialUser.username, "app");
+    assert.equal(d.initialUser.role, "readWrite");
+    assert.match(d.initialUser.password, /^[A-Za-z0-9]{40}$/);
     assert.equal(d.name, "acme-labs-prod-01");
     assert.equal(d.state, "asleep");
     assert.equal(d.keepAwake, false);
@@ -33,7 +37,8 @@ describe("createDatabase", () => {
     assert.equal(d.storageMb, 0);
     assert.deepEqual(d.tags, ["customer:acme-labs", "env:prod"]);
     assert.equal(d.host, "acme-labs-prod-01.eu-central-1.db.db.example.test");
-    assert.equal(d.connectionString, "mongodb://app_user:<password>@acme-labs-prod-01.eu-central-1.db.db.example.test:27017/acme_labs_prod_01?tls=true");
+    assert.equal(d.connectionString, "mongodb://app:<password>@acme-labs-prod-01.eu-central-1.db.db.example.test:27017/acme_labs_prod_01?tls=true&authSource=acme_labs_prod_01&authMechanism=SCRAM-SHA-256");
+    assert.equal(d.initialUser.connectionString, d.connectionString.replace("<password>", d.initialUser.password));
     assert.match(d.createdAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/);
     assert.ok(h.engine.dbs.has(d.id), "the engine has it");
     assert.equal(h.engine.dbs.get(d.id)!.db.workspaceId, u.workspaceId);

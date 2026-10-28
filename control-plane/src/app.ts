@@ -17,6 +17,7 @@ import { JwtVerifier } from "./auth/jwt.ts";
 import { type AuthGateway } from "./auth/gateway.ts";
 import { type Deps } from "./http.ts";
 import { RateLimiter } from "./ratelimit.ts";
+import { OnceSecrets } from "./once.ts";
 import { OperationRunner } from "./services/operations.ts";
 import { buildInvoicePdf } from "./services/account.ts";
 import { buildUsageCsv, syncAllUsage } from "./services/usage.ts";
@@ -24,6 +25,7 @@ import { verifyDownload } from "./downloads.ts";
 import { dataRoutes } from "./routes/data.ts";
 import { sessionRoutes } from "./routes/session.ts";
 import { explorerRoutes } from "./routes/explorer.ts";
+import { usersRoutes } from "./routes/users.ts";
 
 export interface AppOptions {
   cfg: Config;
@@ -100,7 +102,7 @@ export async function buildApp(opts: AppOptions): Promise<App> {
 
   const data = opts.data ?? defaultDataClient(cfg);
   const users = opts.users ?? defaultUsers(cfg);
-  const s: Services = { cfg, db, engine: opts.engine, data, users, log: fastify.log };
+  const s: Services = { cfg, db, engine: opts.engine, data, users, once: new OnceSecrets(), log: fastify.log };
   const runner = new OperationRunner(s);
   const deps: Deps = {
     s,
@@ -176,6 +178,7 @@ export async function buildApp(opts: AppOptions): Promise<App> {
     sessionRoutes(v1, deps);
     dataRoutes(v1, deps);
     await v1.register(async (sub) => explorerRoutes(sub, deps));
+    await v1.register(async (sub) => usersRoutes(sub, deps));
   }, { prefix: "/v1" });
 
   let usageTimer: NodeJS.Timeout | undefined;

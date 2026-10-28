@@ -40,5 +40,10 @@ test("every route the service has beyond the contract is one we documented as an
     "GET /v1/downloads/:token", "GET /v1/operations", "GET /v1/operations/:id",
     "POST /v1/databases/:id/data/collections/:collection/documents",
     "PUT /v1/databases/:id/data/collections/:collection/documents/:docId",
-  ]);
+    // A database's own users (docs/api-extensions.md, "Database users").
+    "DELETE /v1/databases/:id/users/:username",
+    "GET /v1/databases/:id/users",
+    "POST /v1/databases/:id/users",
+    "POST /v1/databases/:id/users/:username/reset-password",
+  ].sort());
 });

@@ -50,7 +50,8 @@ describe("a database through its whole life, on the real driver", () => {
     a = json(res);
     assert.deepEqual([...sim.dbs.keys()], [engineName(a.id)]);
     assert.equal(a.host, `orders-prod-${workspaceCode(u.workspaceId)}.eu-central-1.db.example.test`);
-    assert.equal(a.connectionString, `mongodb://app_user:<password>@${a.host}:27018/${engineName(a.id)}?tls=true`);
+    // No provisioner in this suite (NoEngineUsers): no initial user, so the string names none.
+    assert.equal(a.connectionString, `mongodb://<username>:<password>@${a.host}:27018/${engineName(a.id)}?tls=true&authSource=${engineName(a.id)}&authMechanism=SCRAM-SHA-256`);
     assert.equal(sim.dbs.get(engineName(a.id))!.retention!.window_secs, 3600, "restore points are switched on");
   });
 

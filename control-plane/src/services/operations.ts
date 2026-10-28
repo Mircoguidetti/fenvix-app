@@ -6,7 +6,8 @@ import { ApiError, type ErrorCode, forbidden, conflict, internal, notFound, vali
 import { auditWho, writeAudit } from "../audit.ts";
 import { planFor } from "../limits.ts";
 import { type Tag } from "../validate.ts";
-import { type Database, readDatabase } from "./databases.ts";
+import { type Database, connectionString, readDatabase } from "./databases.ts";
+import { randomPassword } from "../engine/credentials.ts";
 
 export type OperationKind = "create" | "fork" | "restore" | "export" | "erase";
 export type OperationStatus = "queued" | "running" | "succeeded" | "failed";
@@ -95,6 +96,27 @@ export async function viewOperation(s: Services, row: OperationRow): Promise<Ope
 export const operationError = (row: OperationRow): ApiError =>
   row.error ? new ApiError(row.error.code, row.error.message, row.error.field) : internal();
 
+/**
+ * The initial password in the answer to the request that created (or forked) the database, once: the operation made it
+ * in this process's memory (`s.once`) and it is taken out here. Any other reader of the operation (a replay with the
+ * same Idempotency-Key, another request that found the same running operation, a poll) gets `password: null`, and so
+ * does this request when the password was made elsewhere (another instance, a restart): the customer resets it.
+ */
+export function revealInitialPassword(s: Services, caller: Caller, op: OperationRow, body: unknown): unknown {
+  const b = body as (Database & { initialUser?: { username: string; role: string } | null }) | null;
+  if (op.status !== "succeeded" || !b || typeof b !== "object" || !b.initialUser) return body;
+  const own = op.request_id === caller.requestId && op.actor_type === caller.actor.type && op.actor_id === caller.actor.id;
+  const password = own ? s.once.take(op.id) : null;
+  return {
+    ...b,
+    initialUser: {
+      ...b.initialUser,
+      password,
+      connectionString: password === null ? null : connectionString(s.cfg, b, b.initialUser.username, password),
+    },
+  };
+}
+
 // ---------------------------------------------------------------- submitting
 
 interface NewOp {
@@ -159,23 +181,27 @@ async function assertNameFree(c: Client, ws: string, name: string): Promise<void
   if (taken.rowCount) throw conflict(`A database named ${name} already exists.`, "name");
 }
 
-export function submitCreate(s: Services, caller: Caller, req: { name: string; region: string; tags: Tag[] }): Promise<OperationRow> {
+/** The name of a new database's initial user, or null when this deployment cannot make users (NoEngineUsers). */
+const initialUserOf = (s: Services, appUser: string) => (s.users.customerUsers ? appUser : null);
+
+export function submitCreate(s: Services, caller: Caller, req: { name: string; region: string; tags: Tag[]; appUser: string }): Promise<OperationRow> {
   return submit(s, caller, `create:${req.name}`, async (c) => {
     await assertNameFree(c, caller.workspaceId, req.name);
     await assertRoomForDatabases(s, c, caller, 1);
     const id = randomUUID();
+    const appUser = initialUserOf(s, req.appUser);
     await c.query(
-      "insert into public.databases (id, workspace_id, name, region, engine_state) values ($1, $2, $3, $4, 'provisioning')",
-      [id, caller.workspaceId, req.name, req.region],
+      "insert into public.databases (id, workspace_id, name, region, engine_state, app_user) values ($1, $2, $3, $4, 'provisioning', $5)",
+      [id, caller.workspaceId, req.name, req.region, appUser],
     );
     for (const t of req.tags) {
       await c.query("insert into public.database_tags (database_id, workspace_id, key, value) values ($1, $2, $3, $4)", [id, caller.workspaceId, t.key, t.value]);
     }
-    return insertOperation(c, caller, { kind: "create", databaseId: id, params: { name: req.name, region: req.region }, dedupeKey: `create:${req.name}` });
+    return insertOperation(c, caller, { kind: "create", databaseId: id, params: { name: req.name, region: req.region, appUser }, dedupeKey: `create:${req.name}` });
   });
 }
 
-export function submitFork(s: Services, caller: Caller, sourceId: string, name: string): Promise<OperationRow> {
+export function submitFork(s: Services, caller: Caller, sourceId: string, name: string, appUserName: string): Promise<OperationRow> {
   return submit(s, caller, `fork:${sourceId}:${name}`, async (c) => {
     const src = (await c.query(
       "select id, region, storage_bytes, engine_state from public.databases where workspace_id = $1 and id = $2 and engine_state <> 'provisioning' for share",
@@ -186,15 +212,16 @@ export function submitFork(s: Services, caller: Caller, sourceId: string, name: 
     await assertNameFree(c, caller.workspaceId, name);
     await assertRoomForDatabases(s, c, caller, 1);
     const id = randomUUID();
+    const appUser = initialUserOf(s, appUserName);
     await c.query(
-      "insert into public.databases (id, workspace_id, name, region, storage_bytes, forked_from, engine_state) values ($1, $2, $3, $4, $5, $6, 'provisioning')",
-      [id, caller.workspaceId, name, src.region, src.storage_bytes, sourceId],
+      "insert into public.databases (id, workspace_id, name, region, storage_bytes, forked_from, engine_state, app_user) values ($1, $2, $3, $4, $5, $6, 'provisioning', $7)",
+      [id, caller.workspaceId, name, src.region, src.storage_bytes, sourceId, appUser],
     );
     await c.query(
       "insert into public.database_tags (database_id, workspace_id, key, value) select $1, $2, key, value from public.database_tags where database_id = $3",
       [id, caller.workspaceId, sourceId],
     );
-    return insertOperation(c, caller, { kind: "fork", databaseId: id, params: { sourceId, name }, dedupeKey: `fork:${sourceId}:${name}` });
+    return insertOperation(c, caller, { kind: "fork", databaseId: id, params: { sourceId, name, appUser }, dedupeKey: `fork:${sourceId}:${name}` });
   });
 }
 
@@ -421,14 +448,20 @@ export class OperationRunner {
     const ws = op.workspace_id;
     if ((op.kind === "create" || op.kind === "fork") && op.database_id) {
       const still = await s.db.tx(ws, async (c) => (await c.query("select region from public.databases where workspace_id = $1 and id = $2 and engine_state = 'provisioning'", [ws, op.database_id])).rows[0] as { region: string } | undefined);
+      s.once.forget(op.id);
       if (!still) return; // nothing of this operation is left to undo
-      // The user first: from then on nobody can write to it. Then the database, which is ours (its name is made from our id).
-      await s.users.drop(op.database_id, still.region);
+      // The users first (ours and the initial one): from then on nobody can write to it. Then the database, which is ours
+      // (its name is made from our id).
+      await s.users.dropAll(op.database_id, still.region);
       await s.engine.eraseDatabase({ id: op.database_id, idempotencyKey: `${op.id}:cleanup` });
     } else if (op.kind === "erase") {
       const back = await s.db.tx(ws, async (c) => (await c.query("select id, region from public.databases where workspace_id = $1 and id = any($2::uuid[]) and engine_state = 'erasing'", [ws, op.params.ids as string[]])).rows as { id: string; region: string }[]);
-      // These databases stay: their users (dropped before the engine erase was refused) are made again.
-      for (const r of back) await s.users.ensure(String(r.id), String(r.region));
+      // These databases stay: their own user (dropped before the engine erase was refused) is made again, and the
+      // customer's users (locked, not dropped) get their roles back.
+      for (const r of back) {
+        await s.users.ensure(String(r.id), String(r.region));
+        await s.users.unlockCustomers(String(r.id), String(r.region));
+      }
     }
   }
 
@@ -461,21 +494,43 @@ export class OperationRunner {
       return db;
     });
 
+    /**
+     * The customer's initial user (readWrite on this database only). Its password is made in memory (`s.once`, shown
+     * once by the answer to the request that started the operation) and never stored: a retry in this process sets the
+     * same one again, a retry elsewhere a new one. If it cannot be made the create fails and everything is erased.
+     */
+    const makeInitialUser = async (username: string | null, region: string) => {
+      if (!username) return null;
+      const password = s.once.getOrMake(op.id, () => randomPassword());
+      try {
+        await s.users.ensureCustomer(op.database_id!, region, { username, role: "readWrite", password, createdAt: new Date().toISOString() });
+      } catch (e) {
+        // Retried when the engine did not answer; otherwise the create fails with our words, never the engine's.
+        if (e instanceof EngineError && e.kind !== "unavailable") throw new Failure(internal("The database's first user could not be created, so the database was not created. Try again."));
+        throw e;
+      }
+      // Stored with the operation as it is: the password is added to one answer only (revealInitialPassword).
+      return { username, role: "readWrite", password: null, connectionString: null };
+    };
+
     switch (op.kind) {
       // The database, then its own engine user, then Postgres. Each step is repeatable, so a retry after any failure
       // finishes the job; a failure for good erases what was made (finishFailed).
       case "create": {
-        const p = op.params as { name: string; region: string };
+        const p = op.params as { name: string; region: string; appUser?: string | null };
         const eng = await wrap(() => s.engine.createDatabase({ id: op.database_id!, workspaceId: ws, name: p.name, region: p.region, idempotencyKey: op.id }), "The database");
         await wrap(() => s.users.ensure(op.database_id!, p.region), "The database");
-        return { ...(await finishProvisioning(eng)) };
+        const initialUser = await makeInitialUser(p.appUser ?? null, p.region);
+        return { ...(await finishProvisioning(eng)), initialUser };
       }
       case "fork": {
-        // The fork gets a user of its own; the source's user has no right on it (its role names the source only).
-        const p = op.params as { sourceId: string; name: string };
+        // The fork gets users of its own: the control plane's and a new initial user with a new password. The source's
+        // users are never copied and have no right on it (they are defined on the source, with roles on the source only).
+        const p = op.params as { sourceId: string; name: string; appUser?: string | null };
         const eng = await wrap(() => s.engine.forkDatabase({ sourceId: p.sourceId, id: op.database_id!, workspaceId: ws, name: p.name, idempotencyKey: op.id }), "The source database");
         await wrap(() => s.users.ensure(op.database_id!, eng.region), "The database");
-        return { ...(await finishProvisioning(eng)) };
+        const initialUser = await makeInitialUser(p.appUser ?? null, eng.region);
+        return { ...(await finishProvisioning(eng)), initialUser };
       }
       case "restore": {
         const at = (op.params as { at: string }).at;
@@ -498,11 +553,17 @@ export class OperationRunner {
       case "erase": {
         const ids = (op.params as { ids: string[] }).ids;
         for (const id of ids) {
-          // The user first, so nobody can write while (or after) the data goes. If the engine then refuses the erase
-          // for good, finishFailed makes the user again for the databases that stay.
+          // The users first, so nobody can write while (or after) the data goes: the customer's users lose their roles
+          // (kept on the engine, so a refused erase can give them back) and our own user is dropped. Then the database.
+          // Then every user of the database is dropped: the engine's erase does not touch users. If the engine refuses
+          // the erase for good, finishFailed makes our user again and gives the customer's users their roles back.
           const region = await this.regionOf(ws, id);
-          if (region) await wrap(() => s.users.drop(id, region), "The database");
+          if (region) {
+            await wrap(() => s.users.lockCustomers(id, region), "The database");
+            await wrap(() => s.users.drop(id, region), "The database");
+          }
           await wrap(() => s.engine.eraseDatabase({ id, idempotencyKey: `${op.id}:${id}` }), "The database");
+          if (region) await wrap(() => s.users.dropAll(id, region), "The database");
           await s.db.tx(ws, async (c) => {
             await c.query("delete from public.databases where workspace_id = $1 and id = $2 and engine_state = 'erasing'", [ws, id]);
             // keep the lease alive while a long list is worked through

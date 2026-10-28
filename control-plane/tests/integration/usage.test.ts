@@ -422,7 +422,7 @@ describe("API keys", () => {
     assert.equal(created.statusCode, 201, created.body);
     const c = json(created);
     assert.deepEqual(Object.keys(c).sort(), ["key", "secret"]);
-    assert.deepEqual(Object.keys(c.key).sort(), ["createdAt", "dataAccess", "hint", "id", "lastUsedAt", "name", "revokedAt"]);
+    assert.deepEqual(Object.keys(c.key).sort(), ["createdAt", "dataAccess", "hint", "id", "lastUsedAt", "name", "revokedAt", "userAccess"]);
     assert.equal(c.key.name, "CI pipeline");
     assert.match(c.secret, /^fnx_[0-9a-f]{64}$/);
     const list = await h.as(u).get("/api-keys");

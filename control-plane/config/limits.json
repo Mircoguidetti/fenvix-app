@@ -20,5 +20,8 @@
   "exportUrlTtlSeconds": 900,
   "idempotencyTtlHours": 24,
   "emailLinksPerAddressPerHour": 5,
-  "historyMonths": 12
+  "historyMonths": 12,
+  "maxUsersPerDatabase": 20,
+  "userListsPerMinute": 60,
+  "userChangesPerMinute": 10
 }

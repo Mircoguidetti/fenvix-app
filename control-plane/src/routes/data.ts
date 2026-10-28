@@ -10,6 +10,7 @@ import {
   parseTagKey, parseTags, type Obj, isUuid,
 } from "../validate.ts";
 import { signDownload } from "../downloads.ts";
+import { DEFAULT_APP_USER, parseUsername } from "../services/db-users.ts";
 
 const SORTS = ["name", "state", "keepAwake", "storageMb", "requests24h", "lastActiveAt"] as const;
 const RANGES = ["24h", "7d", "30d"] as const;
@@ -29,6 +30,11 @@ export function dataRoutes(app: FastifyInstance, d: Deps): void {
   const { read, write } = routeHelpers(app, d);
   const L = s.cfg.limits;
   const submitted = (op: ops.OperationRow) => ({ submitted: op });
+  /** Create and fork: the answer to the request that started it shows the initial user's password, once. */
+  const withInitialUser = (caller: Parameters<typeof ops.revealInitialPassword>[1], op: ops.OperationRow) =>
+    ({ submitted: op, reveal: (o: ops.OperationRow, body: unknown) => ops.revealInitialPassword(s, caller, o, body) });
+  /** The initial user's name (docs/database-users.md): "app" unless the request names another. */
+  const appUser = (v: unknown) => (v === undefined || v === null ? DEFAULT_APP_USER : parseUsername(v, s, "appUser"));
 
   // ---------------------------------------------------------------- databases (reading)
 
@@ -54,19 +60,23 @@ export function dataRoutes(app: FastifyInstance, d: Deps): void {
 
   // ---------------------------------------------------------------- databases (changing)
 
+  // The answer to the first request carries the initial user's password, which is kept nowhere. A retry with the same
+  // Idempotency-Key replays the operation (http.ts keeps only its id): the same database, `initialUser.password: null`,
+  // never a second user or a second password.
   write("POST", "/databases", {}, async ({ caller, body }) => {
     const b = asObject(body);
     const name = parseName(b.name, L);
     const region = typeof b.region === "string" ? b.region : "";
     if (!s.cfg.regions.includes(region)) throw validation("Choose a region.", "region");
-    return submitted(await ops.submitCreate(s, caller, { name, region, tags: parseTags(b.tags, L) }));
+    return withInitialUser(caller, await ops.submitCreate(s, caller, { name, region, tags: parseTags(b.tags, L), appUser: appUser(b.appUser) }));
   });
 
   write("POST", "/databases/:id/fork", {}, async ({ caller, params, body }) => {
     const b = asObject(body);
     const name = parseName(b.name, L);
+    const user = appUser(b.appUser);
     if (!isUuid(params.id)) throw notFound("That database does not exist.");
-    return submitted(await ops.submitFork(s, caller, String(params.id).toLowerCase(), name));
+    return withInitialUser(caller, await ops.submitFork(s, caller, String(params.id).toLowerCase(), name, user));
   });
 
   write("POST", "/databases/:id/restore", {}, async ({ caller, params, body }) => {
@@ -172,7 +182,9 @@ export function dataRoutes(app: FastifyInstance, d: Deps): void {
     if (typeof name !== "string") throw validation(`Use 1 to ${L.maxApiKeyNameLength} characters for the name.`, "name");
     // Data Explorer: what the key may do with documents. Read only unless asked for.
     const dataAccess = b.dataAccess === undefined ? "read" : parseEnum(b.dataAccess, ["read", "readWrite"] as const, "dataAccess");
-    return { status: 201, body: await account.createApiKey(s, caller, name, dataAccess) };
+    // Database users (docs/database-users.md): "none" (list only) unless asked for.
+    const userAccess = b.userAccess === undefined ? "none" : parseEnum(b.userAccess, ["none", "manage"] as const, "userAccess");
+    return { status: 201, body: await account.createApiKey(s, caller, name, dataAccess, userAccess) };
   });
 
   write("POST", "/api-keys/:id/revoke", { apiKey: false, role: "admin" }, async ({ caller, params }) => ({ status: 200, body: await account.revokeApiKey(s, caller, String(params.id)) }));

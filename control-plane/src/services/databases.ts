@@ -27,11 +27,30 @@ export interface Database {
 export const DATABASE_COLUMNS = `
   d.id, d.name, d.state::text as state, d.keep_awake, d.region, d.workspace_id,
   (d.storage_bytes / 1048576)::bigint as storage_mb, d.requests_24h,
-  d.created_at, d.last_active_at, d.forked_from, d.restored_to,
+  d.created_at, d.last_active_at, d.forked_from, d.restored_to, d.app_user,
   (select coalesce(array_agg(g.key || ':' || g.value order by g.key, g.value), '{}')
      from public.database_tags g where g.database_id = d.id) as tags`;
 
 type Row = Record<string, unknown>;
+
+/** The database name a client names in its connection string, and where its users are defined (their authSource). */
+export function connectionDbName(cfg: Services["cfg"], d: { id: string; name: string }): string {
+  return cfg.connectionDbName === "engine" ? engineName(d.id) : d.name.replaceAll("-", "_");
+}
+
+/**
+ * The connection string of a database for one of its users (docs/database-users.md, "Connection string"). Without a
+ * user it says <username>; without a password (always, except in the one answer that shows a new password) it says
+ * <password>. The user is defined on the database itself, so authSource is the database; TLS is required; the
+ * mechanism is the one the engine stores (SCRAM-SHA-256). Names and passwords are letters, digits, _ and - only, so
+ * nothing needs escaping, but they are escaped anyway.
+ */
+export function connectionString(cfg: Services["cfg"], d: { id: string; name: string; host: string }, user: string | null, password: string | null = null): string {
+  const db = connectionDbName(cfg, d);
+  const u = user === null ? "<username>" : encodeURIComponent(user);
+  const p = password === null ? "<password>" : encodeURIComponent(password);
+  return `mongodb://${u}:${p}@${d.host}:${cfg.connectionPort}/${db}?tls=true&authSource=${db}&authMechanism=SCRAM-SHA-256`;
+}
 
 export function toDatabase(s: Pick<Services, "cfg">, r: Row): Database {
   const name = String(r.name);
@@ -47,8 +66,9 @@ export function toDatabase(s: Pick<Services, "cfg">, r: Row): Database {
     createdAt: iso(r.created_at as Date)!,
     region,
     host,
-    // The password is never stored or sent: it is written as <password>.
-    connectionString: `mongodb://app_user:<password>@${host}:${s.cfg.connectionPort}/${s.cfg.connectionDbName === "engine" ? engineName(String(r.id)) : name.replaceAll("-", "_")}?tls=true`,
+    // The password is never stored or sent here: it is written as <password>. The user is the database's initial user
+    // (migration 0007, databases.app_user), or <username> when there is none.
+    connectionString: connectionString(s.cfg, { id: String(r.id), name, host }, r.app_user ? String(r.app_user) : null),
     tags: r.tags as string[],
     keepAwake: Boolean(r.keep_awake),
     forkedFrom: r.forked_from ? String(r.forked_from) : null,

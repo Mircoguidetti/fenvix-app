@@ -17,7 +17,16 @@ export interface Limits {
   exportUrlTtlSeconds: number;
   idempotencyTtlHours: number;
   emailLinksPerAddressPerHour: number;
+  /** Customer users per database (docs/database-users.md), not counting the control plane's own `cp_` user. */
+  maxUsersPerDatabase: number;
+  /** Listing a database's users, per person and per API key, per minute. */
+  userListsPerMinute: number;
+  /** Creating, resetting and deleting users, per person and per API key, per minute. */
+  userChangesPerMinute: number;
 }
+
+/** Limits added after the first limits.json: a file without them gets these. */
+const LIMIT_DEFAULTS: Partial<Limits> = { maxUsersPerDatabase: 20, userListsPerMinute: 60, userChangesPerMinute: 10 };
 
 export interface PlanLimits {
   maxDatabases: number | null;
@@ -55,7 +64,7 @@ function fail(file: string, why: string): never {
 export function parseLimits(raw: unknown, file = "limits"): Limits {
   const o = raw as Record<string, unknown>;
   const num = (k: keyof Limits): number => {
-    const v = o[k];
+    const v = o[k] ?? LIMIT_DEFAULTS[k];
     if (typeof v !== "number" || !Number.isInteger(v) || v < 1) fail(file, `${k} must be a positive integer`);
     return v;
   };
@@ -80,6 +89,9 @@ export function parseLimits(raw: unknown, file = "limits"): Limits {
     exportUrlTtlSeconds: num("exportUrlTtlSeconds"),
     idempotencyTtlHours: num("idempotencyTtlHours"),
     emailLinksPerAddressPerHour: num("emailLinksPerAddressPerHour"),
+    maxUsersPerDatabase: num("maxUsersPerDatabase"),
+    userListsPerMinute: num("userListsPerMinute"),
+    userChangesPerMinute: num("userChangesPerMinute"),
   };
 }
 

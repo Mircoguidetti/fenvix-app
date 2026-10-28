@@ -14,14 +14,15 @@ import { SKIP, type World, cookie, engineHas, engineUsers, secretsOf, startWorld
  * holding the database, no longer holding it; Postgres refusing the write after the engine said yes, and the engine
  * failing after Postgres said yes. After each: clean errors, and Postgres and the engine agree (nothing left behind).
  */
-const inject = { ensure: [] as EngineErrorKind[], erase: [] as EngineErrorKind[] };
+const inject = { ensure: [] as EngineErrorKind[], erase: [] as EngineErrorKind[], ensureCustomer: [] as EngineErrorKind[] };
 
-const wrapUsers = (u: EngineUsers): EngineUsers => ({
-  ensure: async (id, r) => { const k = inject.ensure.shift(); if (k) throw new EngineError(k, "injected"); return u.ensure(id, r); },
-  drop: (id, r) => u.drop(id, r),
-  list: (r) => u.list(r),
-  currentVersion: () => u.currentVersion(),
-  close: () => u.close(),
+const wrapUsers = (u: EngineUsers): EngineUsers => new Proxy(u, {
+  get(t, p) {
+    if (p === "ensure") return async (id: string, r: string) => { const k = inject.ensure.shift(); if (k) throw new EngineError(k, "injected"); return t.ensure(id, r); };
+    if (p === "ensureCustomer") return async (...a: Parameters<EngineUsers["ensureCustomer"]>) => { const k = inject.ensureCustomer.shift(); if (k) throw new EngineError(k, "injected"); return t.ensureCustomer(...a); };
+    const v = (t as unknown as Record<string | symbol, unknown>)[p];
+    return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+  },
 });
 
 const wrapEngine = (e: EngineClient): EngineClient => new Proxy(e, {
@@ -121,6 +122,21 @@ describe("engine-real: failures", { skip: SKIP }, () => {
     assert.equal(await row(id), undefined);
     assert.equal(await engineHas(w.e, engineName(id)), false);
     assert.equal(await userOf(id), undefined);
+  });
+
+  test("the database and its own user were made but the customer's initial user cannot be: the create fails, and the database and every user are gone", async () => {
+    inject.ensureCustomer.push("invalid");
+    const r = await create("initial-fails-01");
+    const d = await w.settle(r);
+    assert.notEqual(d.status, 201);
+    assertClean(r.body, "response");
+    assert.match(r.body, /first user could not be created/);
+    const id = (await w.h.admin.query("select database_id from public.operations where id = $1", [opIdOf(r)])).rows[0].database_id;
+    assert.equal(await row(id), undefined);
+    assert.equal(await engineHas(w.e, engineName(id)), false);
+    assert.equal(await userOf(id), undefined);
+    const root = w.e.rootClient();
+    try { assert.deepEqual((await root.db(engineName(id)).command({ usersInfo: 1 })).users, [], "no user of any kind is left on the database"); } finally { await root.close(); }
   });
 
   test("…and when the engine cannot be reached for that clean-up, the failure waits: nothing is marked failed until it is done", async () => {

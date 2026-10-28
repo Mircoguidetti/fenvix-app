@@ -40,8 +40,12 @@ export interface Ctx {
 
 export type Outcome =
   | { status: number; body: unknown; headers?: Record<string, string> }
-  /** A long operation was submitted; the wrapper runs it and answers with its result or a 202. */
-  | { submitted: OperationRow };
+  /**
+   * A long operation was submitted; the wrapper runs it and answers with its result or a 202. `reveal` may add to the
+   * FIRST answer of the request that submitted it (an initial password, docs/database-users.md); a replay of the
+   * request with its Idempotency-Key and a poll of the operation never call it.
+   */
+  | { submitted: OperationRow; reveal?: (op: OperationRow, body: unknown) => unknown };
 
 export function setSessionCookies(d: Deps, reply: FastifyReply, t: Tokens): void {
   const base = { httpOnly: true, secure: d.s.cfg.cookieSecure, sameSite: "lax" as const, path: "/", domain: d.s.cfg.cookieDomain };
@@ -200,7 +204,12 @@ export function routeHelpers(app: FastifyInstance, d: Deps): RouteHelpers {
             if ("submitted" in out) {
               if (key) await idem.finish(d.s, caller, key, { operationId: out.submitted.id });
               const op = await d.runner.runAndWait(out.submitted, d.s.cfg.operationWaitMs);
-              return send(reply, await renderOperation(d, op));
+              const r = await renderOperation(d, op);
+              if (out.reveal) {
+                r.body = out.reveal(op, r.body);
+                reply.header("Pragma", "no-cache");
+              }
+              return send(reply, r);
             }
             if (key) await idem.finish(d.s, caller, key, mode === "no-replay" ? { status: out.status } : { status: out.status, body: out.body });
             return send(reply, out);

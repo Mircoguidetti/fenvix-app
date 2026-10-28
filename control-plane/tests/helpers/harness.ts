@@ -95,7 +95,7 @@ export interface Harness {
   user(name?: string): Promise<Fixture>;
   /** Adds an existing user to another workspace with a role. */
   addMember(ws: string, name: string, role: "owner" | "admin" | "member"): Promise<Fixture>;
-  apiKey(ws: string, name?: string, dataAccess?: "read" | "read_write"): Promise<string>;
+  apiKey(ws: string, name?: string, dataAccess?: "read" | "read_write", userAccess?: "none" | "manage"): Promise<string>;
   /** inject() with a session cookie or API key. */
   as(who: Fixture | string): Client;
   close(): Promise<void>;
@@ -169,9 +169,9 @@ export async function startHarness(over: Record<string, string | undefined> = {}
       await admin.query("insert into public.workspace_members (workspace_id, user_id, role) values ($1, $2, $3)", [ws, id, role]);
       return make(id, email, name, ws);
     },
-    async apiKey(ws, name = "test key", dataAccess = "read") {
+    async apiKey(ws, name = "test key", dataAccess = "read", userAccess = "none") {
       const secret = `fnx_${randomBytes(32).toString("hex")}`;
-      await admin.query("insert into public.api_keys (workspace_id, name, key_hash, last4, data_access) values ($1, $2, $3, $4, $5)", [ws, name, createHash("sha256").update(secret).digest("hex"), secret.slice(-4), dataAccess]);
+      await admin.query("insert into public.api_keys (workspace_id, name, key_hash, last4, data_access, user_access) values ($1, $2, $3, $4, $5, $6)", [ws, name, createHash("sha256").update(secret).digest("hex"), secret.slice(-4), dataAccess, userAccess]);
       return secret;
     },
     as(who) {

@@ -4,6 +4,7 @@ import type { Db } from "./db.ts";
 import type { EngineClient } from "./engine/types.ts";
 import type { DataClient } from "./engine/data.ts";
 import type { EngineUsers } from "./engine/users.ts";
+import type { OnceSecrets } from "./once.ts";
 
 /** Who is calling and for which workspace. Every service function takes one. */
 export interface Caller {
@@ -23,5 +24,7 @@ export interface Services {
   data: DataClient;
   /** Per-database engine users (create with the database, drop with it). */
   users: EngineUsers;
+  /** Initial passwords between the operation that sets them and the answer that shows them, in memory only. */
+  once: OnceSecrets;
   log: FastifyBaseLogger;
 }

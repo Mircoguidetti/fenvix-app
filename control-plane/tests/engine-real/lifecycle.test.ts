@@ -31,7 +31,7 @@ describe("engine-real: every operation against the real engine", { skip: SKIP },
     a = done.body.result ?? done.body;
     assert.equal(await engineHas(w.e, engineName(a.id)), true);
     assert.equal(a.host, `orders-prod-${workspaceCode(w.u.workspaceId)}.eu-central-1.db.example.test`);
-    assert.equal(a.connectionString, `mongodb://app_user:<password>@${a.host}:27018/${engineName(a.id)}?tls=true`);
+    assert.equal(a.connectionString, `mongodb://app:<password>@${a.host}:27018/${engineName(a.id)}?tls=true&authSource=${engineName(a.id)}&authMechanism=SCRAM-SHA-256`);
     const u = await userOf(a.id);
     assert.ok(u, "the database's user exists on the engine");
     assert.equal(u!.db, engineName(a.id), "defined on the database itself");
