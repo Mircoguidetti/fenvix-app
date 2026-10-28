@@ -88,4 +88,9 @@ export interface EngineClient {
   setKeepAwake(req: { id: string; enabled: boolean }): Promise<EngineDatabase>;
   /** Hourly usage in [from, to), plus wake-ups, for the usage sync. */
   usage(req: { id: string; from: string; to: string }): Promise<EngineUsage>;
+  /**
+   * Only for engines whose export is not a download link of their own: the archive of an export, produced as a
+   * stream by this service and served at a signed `/downloads/` link. Absent on the fake.
+   */
+  openExportArchive?(exportId: string): Promise<{ filename: string; mimeType: string; body: AsyncIterable<Uint8Array> }>;
 }

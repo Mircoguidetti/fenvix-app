@@ -17,6 +17,9 @@ export interface FenvixConfig {
   retentionDays: number;
   budgetAmountUsd: number;
   budgetEmail: string;
+  /** The engine's MongoDB listener, open to the internet (customers connect here). */
+  mongoPort: number;
+  /** The engine's control (admin) interface, reachable only from the server's own security group. */
   adminPort: number;
   controlPlanePort: number;
   /** Engine release URL. `{arch}` is replaced on the instance with `uname -m` (x86_64 or aarch64). */
@@ -91,10 +94,11 @@ export function loadConfig(get: Lookup): FenvixConfig {
   const budgetAmountUsd = Number(need('budgetAmount'));
   if (!Number.isFinite(budgetAmountUsd) || budgetAmountUsd <= 0) throw new Error('budgetAmount must be a number above 0');
 
+  const mongoPort = int('mongoPort', need('mongoPort'), 1024, 65535);
   const adminPort = int('adminPort', need('adminPort'), 1024, 65535);
   const controlPlanePort = int('controlPlanePort', need('controlPlanePort'), 1, 65535);
-  if ([27017, controlPlanePort].includes(adminPort)) throw new Error('adminPort must differ from 27017 and controlPlanePort');
-  if (controlPlanePort === 27017) throw new Error('controlPlanePort must differ from 27017');
+  if ([mongoPort, controlPlanePort].includes(adminPort)) throw new Error('adminPort must differ from mongoPort and controlPlanePort');
+  if (controlPlanePort === mongoPort) throw new Error('controlPlanePort must differ from mongoPort');
 
   const baseDomain = val('baseDomain')?.toLowerCase();
   if (baseDomain !== undefined && !/^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(baseDomain)) {
@@ -122,6 +126,7 @@ export function loadConfig(get: Lookup): FenvixConfig {
     retentionDays: int('retentionDays', need('retentionDays'), 1, 3650),
     budgetAmountUsd,
     budgetEmail,
+    mongoPort,
     adminPort,
     controlPlanePort,
     engineUrl,

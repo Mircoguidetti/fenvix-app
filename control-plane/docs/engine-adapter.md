@@ -1,57 +1,108 @@
-# Engine adapter: what the real `EngineClient` must call
+# Engine adapter: `ENGINE_DRIVER=real`
 
-**Status: not implemented.** The task named the branch `control-ops` of `Mircoguidetti/test5` as the engine's admin interface. That branch does not exist on the remote (branches there: `main`, `compat-audit`, `compat-indexes`, `engine-cost`, `load-test`, `slatedb-tenant-bench`; none has a create, fork, restore, export, erase, keep-awake or usage call: the engine in `mongo-server/` speaks only the MongoDB wire protocol). So this service ships the interface and an in-memory fake (`src/engine/fake.ts`), and this page is the specification the real adapter has to meet. Everything under "Suggested HTTP shape" is a proposal for the engine team, not something that exists.
+**Status: implemented and tested against a simulated engine, never against the real one.** The engine's admin interface is `control-ops` (`Mircoguidetti/test5`, branch `control-ops`, `mongo-server/src/ctl/*`, results in `results-ops.md`). It is not published as a release, so everything below was written from that code and that report. The simulated engine used by the tests (`tests/helpers/sim-engine.ts`) models only what those files say; where they say nothing, the simulator does nothing and the question is listed under "Open questions".
 
-The interface is `src/engine/types.ts`. The server refuses to start with any `ENGINE_DRIVER` other than `fake`, and says why.
+The interface is `src/engine/types.ts` (unchanged except for one optional method, `openExportArchive`); the fake (`ENGINE_DRIVER=fake`) and the real adapter (`src/engine/real.ts`) implement the same interface and run the same contract tests (`tests/unit/real-engine.test.ts`, "contract: ...").
 
-## Rules that hold for every call
+## Which control-plane operation calls which engine route
 
-1. **Databases are addressed by `id`**, the UUID of the row in Postgres (`public.databases.id`). The engine never needs the name for addressing. The name is only for routing (see "Connections" below).
-2. **Idempotency.** Every call that changes something carries an `idempotencyKey`. Calling again with the same key must return the first result and must not do the work twice. The control plane uses the id of its operation record (`public.operations.id`, plus `:<databaseId>` for each database of an erase) as the key, and retries with the same key after a timeout, a crash or a 5xx. The fake enforces this and the tests rely on it (`tests/unit/misc.test.ts`, `tests/integration/operations.test.ts`).
-3. **Error mapping.** The adapter turns engine answers into `EngineError`:
+All routes are under `/v1` of the admin interface, JSON, `Authorization: Bearer <token>`. `{db}` is the engine name of the database, `db_` plus the 32 hex digits of its id (see "Names, ports, hostnames").
 
-   | Engine says | `EngineError.kind` | Control plane does |
-   | --- | --- | --- |
-   | not found | `not_found` | fails the operation: 404 |
-   | already exists, busy | `conflict` | fails the operation: 409 |
-   | request refused (for example a restore point outside the retained history) | `invalid` | fails the operation: 400 with the engine's message, which must be written for people |
-   | timeout, connection error, 5xx | `unavailable` | retries with backoff (5 s, 10 s, ... up to 5 minutes, 8 attempts), then fails: 500 |
-
-4. **Timeouts.** The adapter must time out each call (the control plane waits `OPERATION_WAIT_MS`, default 20 s, before answering 202 and carrying on in the background; calls themselves may take longer).
-5. **Authentication** between the control plane and the engine is the engine team's choice; the adapter will need its own environment variables (for example `ENGINE_ADMIN_URL`, `ENGINE_ADMIN_TOKEN`). Add them to `src/config.ts` when the adapter is written. Never log them.
-
-## The calls
-
-| `EngineClient` method | What the engine must do | Suggested HTTP shape |
+| `EngineClient` method | Engine call(s) | Notes |
 | --- | --- | --- |
-| `createDatabase({ id, workspaceId, name, region, idempotencyKey })` | Create an empty database with this id, asleep, in this region. Same id again: return the existing one. | `PUT /admin/v1/databases/{id}` body `{ workspaceId, name, region }`, header `Idempotency-Key` |
-| `getDatabase(id)` | Return the database or null. | `GET /admin/v1/databases/{id}` (404 gives null) |
-| `listDatabases(workspaceId)` | All databases of a workspace (for reconciliation; not called by the service today). | `GET /admin/v1/databases?workspaceId=` |
-| `forkDatabase({ sourceId, id, workspaceId, name, idempotencyKey })` | Instant copy-on-write copy of `sourceId` as `id`, asleep, same region. Source must stay usable. | `POST /admin/v1/databases/{sourceId}/fork` body `{ id, workspaceId, name }` |
-| `restoreDatabase({ id, at, idempotencyKey })` | Roll the database back in place to `at` (ISO UTC). Refuse (`invalid`) a point before the oldest retained backup or in the future. | `POST /admin/v1/databases/{id}/restore` body `{ at }` |
-| `exportDatabases({ ids, idempotencyKey })` | Prepare **one archive** of all listed databases. Return a stable `exportId`, a `filename`, a `mimeType` and the size. Same key: same `exportId`. | `POST /admin/v1/exports` body `{ ids }` |
-| `exportDownloadUrl(exportId, ttlSeconds)` | A fresh link to the archive that works for `ttlSeconds` (the control plane asks for 900, the contract's 15 minutes) and no longer. Callable many times. | `POST /admin/v1/exports/{exportId}/link` body `{ ttlSeconds }`, or a presigned object-store URL |
-| `eraseDatabase({ id, idempotencyKey })` | Delete the live data **and every backup**. Erasing what is already gone returns `{ erased: false }`, not an error. | `DELETE /admin/v1/databases/{id}` |
-| `setKeepAwake({ id, enabled })` | `true`: wake it and pin it (never sleep). `false`: unpin. Repeating changes nothing. Returns the database. | `PUT /admin/v1/databases/{id}/keep-awake` body `{ enabled }` |
-| `usage({ id, from, to })` | Hourly buckets in `[from, to)` (`hour`, `requests`, `storageBytes`), current `state`, `storageBytes`, `lastActiveAt`, and wake-ups since `from` (`at`, `firstRequestMs`). Hours without traffic may be left out. | `GET /admin/v1/databases/{id}/usage?from=&to=` |
+| `createDatabase` | `POST /databases {name}` (201); if 409 `exists`: `GET /databases/{db}`. Then, if `ENGINE_RETENTION_WINDOW_SECS` is set, `PUT /databases/{db}/retention` | The engine has no idempotency key. A retry after a lost answer meets 409 `exists`, and the database is accepted as the one asked for because its name is made from the id. 409 `exists` followed by a 404 (the engine is still finishing or undoing an earlier create) is retried later, not failed. |
+| `getDatabase` | `GET /databases/{db}` | 404 gives `null`. With several regions, each engine is asked in turn (see "Regions"). |
+| `listDatabases(workspaceId)` | none | **Not supported**: the engine does not record the workspace, and its only listing (`GET /databases`) returns every customer's databases, a route this service may not call. The service does not call this method today; the adapter answers `invalid`. |
+| `forkDatabase` | `POST /databases/{src}/fork {target, mode}` (`mode` = `ENGINE_FORK_MODE`, default `clone`); 409 `exists` is accepted only if `GET /databases/{target}` says it is a fork of `{src}`; then retention as above | `clone` is the engine's shallow copy (instant, about 20 GET + 20 PUT whatever the size). While a clone fork exists the source cannot be erased (see erase). `copy` is independent but copies every object (110 COPY at 100k documents). A `copy` of a database that is itself a clone fork is refused by the engine (409 `source_is_shallow_fork`). Forking closes the source for a moment; it wakes on demand. |
+| `restoreDatabase` | `POST /databases/{db}/restore {to}`, then `GET /databases/{db}` and `GET /databases/{db}/restore-points` | Needs restore points: retention is off in the engine unless configured (`ENGINE_RETENTION_WINDOW_SECS`, or the engine's own `--retention-window-secs`). Refusals: 409 `retention_off` / `no_restore_points` give "There is no backup to restore from yet"; 409 `retention_gap` / `point_expired` / `point_missing` give "The backups needed for that time are no longer available"; 400 for a time before the earliest restorable one or in the future passes the engine's own sentence on. 500 `restore_retried` (the engine's own retry finished the restore) is a success. 409 `transactions_open` is retried. |
+| `exportDatabases` | `POST /databases/{db}/exports` for each database | The engine exports one database at a time into mongodump-style files. The adapter returns one id naming all the snapshots, `filename` `fenvix-export-N-databases.zip`, `mimeType` `application/zip`, `sizeBytes` 0 (a dump's size is only known once it has been read). A retry with the same idempotency key gets the first answer, **in this process only**. |
+| `exportDownloadUrl` | `GET /exports/{id}` of the first snapshot (to see it has not expired), then a link signed by this service | The engine's download needs the admin token, so it cannot be handed to a browser. The link is `API_PUBLIC_URL/downloads/<token>`, signed with `DOWNLOAD_SIGNING_KEY`, valid for the TTL asked (the contract's 15 minutes). |
+| `openExportArchive` (served at that link) | `GET /exports/{id}` and `GET /exports/{id}/files/{path}` (with `Range: bytes=N-` to resume) | Streams a ZIP (stored, no compression, no ZIP64) with one folder per database, named by its engine name, holding `<collection>.bson` and `<collection>.metadata.json`. A transfer that breaks off is continued from the byte reached, up to 5 times; after that the stream fails (the client sees a broken download, never a short file that looks whole). |
+| `eraseDatabase` | `DELETE /databases/{db}` | 404 gives `{ erased: false }` (so repeating an erase is fine). 409 `has_forks` is a `conflict` ("Other databases are forks of this one and still read its data. Erase them first."). 500 `erase_incomplete` is retried (the engine finishes the erase when asked again). The engine returns the erased database's usage in the answer; the control plane does not keep it (open question 8). |
+| `setKeepAwake` | `PUT /databases/{db}/keep-awake` or `DELETE ...` | Repeatable. |
+| `usage` | `GET /databases/{db}` and `GET /databases/{db}/usage?from=YYYY-MM-DD&to=YYYY-MM-DD&storage=false` | The engine counts per UTC day, not per hour: each day becomes **one bucket at 00:00 UTC** holding that day's Mongo commands. Hourly charts built from it are not real hourly data (open question 8). Wake-ups carry the whole first command's latency. |
 
-`EngineDatabase` (the return value of create, get, fork, restore, set-keep-awake) carries `state` (`awake` or `asleep`), `storageBytes`, `lastActiveAt`, `keepAwake`, `forkedFrom`, `restoredTo` and `earliestRestorePoint`. The control plane copies `state` and `storageBytes` into Postgres when a create or fork finishes, and the usage sync keeps them current afterwards.
+Error mapping (`EngineError.kind`): 404/410 `not_found`; 409 `exists` / `has_forks` / `source_is_shallow_fork` / unknown 409 `conflict`; 409 `busy` / `owned_elsewhere` / `operation_in_progress` / `transactions_open`, any 5xx, 401/403 (wrong token), timeouts and network errors `unavailable` (retried with backoff, 8 attempts); 400 and the history codes above `invalid`. A 400 is shown to the customer only for a restore time out of range; any other 400 is our own mistake and is shown as "The database engine refused the request.". Messages never carry the engine's address or token.
 
-## What the engine does not get
+## Names, ports, hostnames
 
-Tags, billing, invoices, users, API keys and the idle-timeout setting stay in Postgres. The workspace setting `idleMinutes` is stored but **not yet pushed to the engine**; the adapter needs a call for it (for example `PUT /admin/v1/workspaces/{id}/idle-timeout`) once the engine supports one.
+**The engine's database name is derived from the database id: `db_<32 hex digits of the id>`** (`src/engine/names.ts`). Why: the engine has one flat namespace of database names, and a Mongo client chooses the database with the `$db` of each command (`mongo-server/src/cmd.rs`); the hostname plays no part in routing. Names in the control plane are unique per workspace only, so two workspaces with `orders-prod` would be the same database in the engine. The id is unique everywhere and never changes, which also means restore, erase and keep-awake work from the id alone (including a retried erase after the Postgres row is gone).
 
-## Connections
+Consequences, all deliberate:
 
-The Database JSON carries `host` (from `HOST_TEMPLATE`, default `<name>.<region>.db.<BASE_DOMAIN>`) and a connection string with `<password>` as a placeholder. The control plane stores no database passwords. The engine must route an incoming connection on that host to the right database id, and the user's password must come from somewhere the engine team decides (not specified by the contract).
+* The connection string's database name is the engine name: `mongodb://app_user:<password>@<host>:<port>/db_<hex>?tls=true`. Setting `CONNECTION_DB_NAME=engine` does this; `name` (the default, used by the fake) keeps the old `orders_prod` form. With `ENGINE_DRIVER=real` the setting **must** be `engine`; the service refuses to start otherwise.
+* **The hostname carries the workspace code**: `<name>-<workspace>.<region>.db.<BASE_DOMAIN>`, where `<workspace>` is the first 8 hex digits of the workspace id (`workspaceCode()` in `src/config.ts`). With `ENGINE_DRIVER=real`, `HOST_TEMPLATE` must contain `<workspace>` (and `BASE_DOMAIN` must be set); the service refuses to start otherwise. A name of 48 characters plus `-` plus 8 is 57, inside the 63 of a DNS label. Migration `0003` makes `(workspace code, name)` unique across workspaces, so two hostnames can never be equal; if two workspaces ever share a code and a name, the second create is the ordinary 409 "name already exists".
+* **Ports.** The engine listens on **27018** for MongoDB and **8443** for the control (admin) interface. Nothing is written in the code: the admin address comes from `ENGINE_ADMIN_ENDPOINTS` (for example `https://<private address>:8443`), the port in connection strings from `CONNECTION_PORT` (required with the real driver; set it to the port customers reach, 27018 if they reach the engine directly). `infra/` follows: `mongoPort` (default 27018) is the only database port open to the internet, `adminPort` (default 8443) is open to the server's own security group only, and the engine is told to listen on both. The control-plane container's own `PORT=8443` is inside the container (published as `controlPlanePort`, 443) and does not clash with the engine's 8443 on the host.
 
-**Open problem:** database names are unique per workspace, not globally (that is what the contract and `0001_init.sql` say). Two workspaces can both have `orders-prod`, and then `orders-prod.<region>.db.<base>` is ambiguous. The template accepts `<workspace>` (the first 8 hex characters of the workspace id) so that routing can be made unique, for example `<name>-<workspace>.<region>.db.<BASE_DOMAIN>`. The default is left as the task specified. This needs a decision before the first customer connects.
+## Configuration
 
-## Round trip to run when the interface exists
+All values are environment variables (see `control-plane/README.md` for the full table). With `ENGINE_DRIVER=real` there is no default for an address, a port, a secret or a certificate:
 
-1. `ENGINE_DRIVER=<real>`, start the service against a scratch Postgres with both migrations applied and a local S3-compatible store behind the engine.
-2. `POST /v1/databases` -> 201, then connect with a Mongo client to the returned host, write a document.
-3. `POST /v1/databases/{id}/fork` -> 201; the fork reads the document; a write to the fork does not appear in the source.
-4. `POST /v1/databases/{id}/restore` with a time before the write; the document is gone.
-5. `POST /v1/databases/erase` -> `{ "affected": 2 }`; the engine's objects (data and backups) are gone from the store; repeating the call gives `{ "affected": 0 }`.
-6. Kill the engine during step 3, retry: the fork exists once.
+| Variable | Meaning |
+| --- | --- |
+| `ENGINE_ADMIN_ENDPOINTS` | **required.** `region=url` pairs, or one bare url when `REGIONS` has one region. No credentials, no path. |
+| `ENGINE_ADMIN_TOKEN` or `ENGINE_ADMIN_TOKEN_FILE` | **required, secret**, at least 16 characters (the engine requires the same). Never logged; a test checks the log. |
+| `ENGINE_ADMIN_CA_FILE`, `ENGINE_ADMIN_CLIENT_CERT_FILE` + `ENGINE_ADMIN_CLIENT_KEY_FILE`, `ENGINE_ADMIN_TLS_SERVER_NAME` | PEM files for an `https://` admin address: a private CA, a client certificate, a name to check the certificate against. Certificate checking is always on. |
+| `ENGINE_ADMIN_ALLOW_PLAIN_HTTP` | `true` to use `http://` in production. The engine's admin interface has no TLS of its own (open question 3), so this is a statement that the path to it is private. |
+| `ENGINE_REQUEST_TIMEOUT_MS`, `ENGINE_LONG_REQUEST_TIMEOUT_MS` | per-call timeouts (defaults 15 s and 10 min; fork, restore, export and erase are the long ones). |
+| `ENGINE_FORK_MODE` | `clone` (default) or `copy`. |
+| `ENGINE_RETENTION_WINDOW_SECS`, `ENGINE_RETENTION_INTERVAL_SECS` | restore-point window (and interval) set on every database this service creates or forks. Unset: the engine's own default (off unless the engine was started with a window). |
+| `CONNECTION_PORT`, `CONNECTION_DB_NAME`, `HOST_TEMPLATE`, `BASE_DOMAIN` | see above. |
+
+## The permission boundary
+
+"The control plane may do the operations it is meant to do and nothing else" is enforced in layers, because the engine alone cannot do it: its admin interface has **one token that opens every route**.
+
+1. **In the adapter (code, tested).** `src/engine/admin-http.ts` is the only code that talks to the engine. A request leaves only if its method and path match the 13 routes in `ALLOWED_ROUTES` (the ones the table above uses), and the database in the path is a `db_<32 hex>` name this service makes. Everything else is refused before it reaches the network, whatever the caller asks: listing all databases (`GET /v1/databases`, which would enumerate every customer), manifests, checkpoints, deleting exports, `/health`, any database name the service did not make (so `admin`, `local`, or a customer database created some other way cannot be touched even by a bug), path tricks (`..`, `%2F`, trailing slash). Tests: `tests/unit/real-engine.test.ts`, "permission boundary" (22 refused routes, none reaches a simulated engine), and the integration test checks that every request of a full run is on the list and that `GET /v1/databases` is never sent.
+2. **In the network (`infra/`).** The admin port is open only to the server's own security group (asserted in `infra/test/infra.test.ts`, now for 8443). The instance answers the metadata service for one hop only (`httpPutResponseHopLimit: 1`, new, tested): the engine on the host can use the instance role (data bucket, secrets), a container behind Docker's bridge cannot, so a break-in into the control-plane container gets no AWS credentials. *Not verified on AWS.*
+3. **In Postgres.** The service connects as `fenvix_control_plane` (0002): not superuser, no `BYPASSRLS`, only the table grants listed there, every policy limited to the workspace of the current transaction. Migration `0003` removes the other way in (below).
+4. **The token.** The service reads it from the environment (`ENGINE_ADMIN_TOKEN`), puts it in no log and no error message. In `infra/` the natural place is an SSM parameter `/fenvix/prod/control-plane/engine-admin-token` (handed to the container as `ENGINE_ADMIN_TOKEN`) with the same value as the engine's `/fenvix/prod/engine/admin-token`.
+
+What this does **not** do: the engine still trusts any holder of the token completely. A separate, narrower token (for example one that cannot erase) would need the engine to support roles (open question 12).
+
+## The dashboard's side door (migration 0003)
+
+`supabase/migrations/0003_close_dashboard_write_path.sql`, as the README announced: it revokes `insert`, `update`, `delete` and `truncate` of `authenticated` (and `anon`) on `databases`, `database_tags`, `api_keys` and `workspace_settings`, drops their write policies (reads stay), and revokes execute on the eleven `fenvix_*` functions that change data (create, fork, restore, erase, keep awake, tags, settings, API keys). After it the only writer of those tables is the control-plane role, which makes the engine call and the Postgres change as one operation. Reading, the usage and billing functions and the dashboard's other data are untouched. It also creates the unique index `databases_host_unique` (see above). It is safe to repeat; if `0001_init.sql` is ever run again (it re-grants), run `0003` again.
+
+**It breaks the live dashboard until the dashboard talks to the API instead of the Supabase functions** (every mutation in `src/data/supabase.ts` is one of the revoked functions). So it is a separate file, not applied by anything in this repository, and meant to be run at cutover (README, step 9). `tests/integration/closed-door.test.ts` proves it on a scratch Postgres: the dashboard role still reads, cannot write the four tables, cannot call any of the eleven functions, nothing changed, and the control plane works. `supabase/tests/rls.sql` and `functions.sql` test the dashboard as it is before cutover (they exercise those writes), so they apply to a database with `0001` only.
+
+## Regions
+
+The engine has no idea of regions: there is one engine (one admin address) per region. The adapter picks the engine of the region given at create; a fork is made where its source is; for every call that has only the id (get, restore, erase, keep awake, usage, export) it asks each engine in turn for the database and remembers the answer in memory. With one region it asks nobody and uses that engine. If an engine cannot answer, the call is `unavailable`, never "not found" (so a region outage cannot make an erase report success).
+
+## Open questions
+
+Things the code of `control-ops` does not settle. None was guessed; each is a place where this adapter does the cautious thing.
+
+1. **The engine's MongoDB listener has no authentication, no TLS and no tenant isolation** (`mongo-server/src/*`: no SASL, no `rustls`; `cmd.rs` answers `listDatabases`/`$db` for any name). `app_user:<password>` in the connection string and `tls=true` change nothing today; any client that reaches port 27018 can read every database, and the `listDatabases` command lists them. The engine name makes a database unguessable, not unreachable. This must be answered before a customer connects.
+2. **The hostname does not route anything in the engine.** Who sends `<name>-<workspace>.<region>.db.<domain>` to the right node (DNS only, a proxy)? `infra/` creates DNS only when `BASE_DOMAIN` is set; I did not check what records it makes.
+3. **TLS on the admin interface.** It is plain HTTP, one request per connection, no rate limit on bad tokens (`results-ops.md`, section 4). Is 8443 a TLS terminator in front of it? The adapter supports both (`https` with CA / client certificate, or `http` with `ENGINE_ADMIN_ALLOW_PLAIN_HTTP`).
+4. **No idempotency keys in the engine.** Create, fork, erase and keep-awake are repeatable by their nature. A retried **restore** is applied again (it rolls back writes made since the first one, and takes another safety point). A retried **export** makes another snapshot (kept 24 hours, pinning storage). Would the engine accept a client-supplied operation id?
+5. **Restore points.** Retention is off by default in the engine, and "not restorable before the first point". The control plane's plan has `retentionDays`; the engine has a window per database. Today one window for all (`ENGINE_RETENTION_WINDOW_SECS`) set at create and fork; databases that exist from before it was set have none. How do plan retention and engine retention relate? The control plane checks `at >= created_at`; the engine's first point can be a little later, in which case the engine answers 400 (shown as is).
+6. **Erasing a database that has clone forks is refused** (409 `has_forks`), and there is no "detach". What should "erase" do for the customer: refuse (today), use `ENGINE_FORK_MODE=copy` (independent, but O(size) COPY requests and not allowed from a clone fork), or have the engine add a detach/materialize operation?
+7. **Export.** There is no archive form and no presigned link in the engine, so the adapter builds a ZIP and serves it behind a signed link; limits: no ZIP64 (4 GiB per collection), folder names are engine names (`db_<hex>`), `sizeBytes` is 0, the engine drops the snapshot after 24 hours (`--export-ttl-secs`) while an operation record is kept 90 days (a later poll then answers "The export is ready but its download link could not be made"), and the first export of a database closes it for a moment. Is a ZIP built by the control plane acceptable, or should the engine offer one?
+8. **Usage.** Daily counts only (so no hourly curve), `requests` = Mongo commands (not object-store requests), a process killed with `-9` loses up to `--usage-flush-secs`, other processes' counters are as of their last flush. The erase answer carries the erased database's `final_usage` and then the engine deletes it; the control plane's `usage_*` rows go with the Postgres row, so the last partial day is lost. Is that acceptable for billing?
+9. **Regions.** Is one engine per region the intended shape? (The adapter asks each engine for ids it has not seen; a region field in the engine's metadata would avoid that.)
+10. **The engine stores neither workspace nor user-visible name**, so `getDatabase`, `restore` and `keep awake` return `workspaceId: ""` and `name: ""` (the control plane reads only state and size from them), and `listDatabases` cannot be offered.
+11. **Several engine processes in one region.** Operations answer 409 `owned_elsewhere` when another process has the database awake ("retry on the owner"). With one admin address per region the retry may never reach the owner. `infra/` builds one node per region; is that the assumption?
+12. **One admin token, all rights.** Roles in the engine, or a second narrower token, would let the control plane's token lose `erase` etc. Rotation: the adapter reads the token at start.
+13. **`idleMinutes`** (workspace setting) still has nowhere to go: the engine has only the process-wide `--idle-secs`.
+14. **`infra/` and the engine do not agree on names.** `infra/lib/user-data.ts` starts the engine with `FENVIX_LISTEN`, `FENVIX_ADMIN_LISTEN`, `FENVIX_TLS_MODE`, `FENVIX_ADMIN_TOKEN`...; the engine reads `--listen`, `--admin-listen`, `--admin-token-file` / `MONGO_ADMIN_TOKEN`, and has no TLS mode. And `infra/` gives the control-plane container `FENVIX_REGION`, `PORT`, `BASE_DOMAIN`, `SESSION_SECRET`, not the settings this service reads (`REGIONS`, `API_PUBLIC_URL`, `DOWNLOAD_SIGNING_KEY`, `CONNECTION_PORT`, `ENGINE_*`, ...). Both were already so before this work.
+15. The response fields the adapter reads (`state`, `storage_bytes`, `last_active_at`, `keep_awake`, `forked_from.database`, `earliest_restorable`, the usage `days[]`, export `files[].path`) are taken from `meta.rs`, `usage.rs`, `pitr.rs` and `export.rs`. A change there changes the adapter; there is no schema document.
+
+## What is missing before it talks to the published engine
+
+1. The engine has to be published (a binary or image built from `control-ops` and merged into the line the infra downloads), and questions 1 to 3 answered (listener authentication and TLS, who routes hostnames, TLS in front of the admin interface).
+2. Run the round trip below against it with a local S3-compatible store; the simulator cannot show that the real engine behaves as read.
+3. Settings in the deployment: the admin token as a secret, `ENGINE_ADMIN_ENDPOINTS`, `CONNECTION_PORT`, `BASE_DOMAIN`, `HOST_TEMPLATE` with `<workspace>`, `CONNECTION_DB_NAME=engine`, and the retention window; plus the infra gaps in question 14.
+4. At cutover, run `0003` (it needs the dashboard to use the API first).
+
+## Round trip to run when the engine exists
+
+1. `ENGINE_DRIVER=real` with the settings above, service against a scratch Postgres with the three migrations applied and a local S3-compatible store behind the engine.
+2. `POST /v1/databases` gives 201; connect with a Mongo client to `<host>:<port>/db_<hex>` and write a document.
+3. `POST /v1/databases/{id}/fork` gives 201; the fork reads the document; a write to the fork does not appear in the source.
+4. `POST /v1/databases/{id}/restore` with a time between the first restore point and now; the document written later is gone.
+5. `POST /v1/databases/export` and download the link: a ZIP that `mongorestore` loads.
+6. `POST /v1/databases/erase` with the source while the fork exists gives 409; erase the fork, then the source: `{ "affected": ... }`; the engine's objects are gone from the store; repeating gives `{ "affected": 0 }`.
+7. Kill the engine during step 3 (and again during erase), retry: one fork, no leftovers.

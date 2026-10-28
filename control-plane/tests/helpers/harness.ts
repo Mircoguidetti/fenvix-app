@@ -8,6 +8,7 @@ import { buildApp, type App } from "../../src/app.ts";
 import { loadConfig, type Config } from "../../src/config.ts";
 import { JwtVerifier } from "../../src/auth/jwt.ts";
 import { FakeEngine } from "../../src/engine/fake.ts";
+import type { EngineClient } from "../../src/engine/types.ts";
 import { FakeGateway } from "./fake-gateway.ts";
 import { Db } from "../../src/db.ts";
 
@@ -98,7 +99,7 @@ export interface Harness {
 const dropActiveOperations = (admin: pg.Pool) =>
   admin.query("update public.operations set status = 'failed', finished_at = now(), error = '{\"code\":\"internal\",\"message\":\"test cleanup\"}' where status in ('queued', 'running')");
 
-export async function startHarness(over: Record<string, string | undefined> = {}, opts: { engine?: FakeEngine; gateway?: FakeGateway } = {}): Promise<Harness> {
+export async function startHarness(over: Record<string, string | undefined> = {}, opts: { engine?: FakeEngine; gateway?: FakeGateway; /** Use this engine client instead of the fake (the fake in `Harness.engine` is then unused). */ engineFactory?: (cfg: Config) => EngineClient } = {}): Promise<Harness> {
   const adminUrl = process.env.TEST_DATABASE_URL ?? ADMIN_URL;
   const admin = new pg.Pool({ connectionString: adminUrl, max: 4 });
   // The sweeper looks across workspaces, so leftovers of an earlier test must not be picked up by this one.
@@ -132,7 +133,7 @@ export async function startHarness(over: Record<string, string | undefined> = {}
   const logs = new Lines();
   const appDb = new Db(cpUrl, 6);
   const app = await buildApp({
-    cfg, engine, gateway, logStream: logs,
+    cfg, engine: opts.engineFactory ? opts.engineFactory(cfg) : engine, gateway, logStream: logs,
     db: appDb,
     verifier: new JwtVerifier(cfg.supabaseUrl, cfg.supabaseJwksUrl),
   });

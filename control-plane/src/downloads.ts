@@ -6,8 +6,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * the link can download that one file until it expires, which is the same as a presigned URL.
  */
 export interface DownloadClaim {
+  /** Workspace of the file; empty for an engine export, whose link is only ever handed out by an authenticated request. */
   ws: string;
-  kind: "usage-csv" | "invoice-pdf";
+  kind: "usage-csv" | "invoice-pdf" | "engine-export";
   /** Parameters of the file (the usage query, or the invoice id). */
   p: Record<string, unknown>;
   /** Expiry, seconds since the epoch. */

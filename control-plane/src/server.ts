@@ -1,16 +1,21 @@
 import { buildApp } from "./app.ts";
-import { loadConfig } from "./config.ts";
+import { type Config, loadConfig } from "./config.ts";
 import { SupabaseGateway } from "./auth/gateway.ts";
 import { FakeEngine } from "./engine/fake.ts";
+import { RealEngine } from "./engine/real.ts";
 import type { EngineClient } from "./engine/types.ts";
 
-function makeEngine(driver: string): EngineClient {
+function makeEngine(cfg: Config): EngineClient {
+  const driver = cfg.engineDriver;
+  if (driver === "real" && cfg.engine) {
+    return new RealEngine({ settings: cfg.engine, downloadSigningKey: cfg.downloadSigningKey, apiPublicUrl: cfg.apiPublicUrl });
+  }
   if (driver === "fake") {
     console.warn(JSON.stringify({ level: "warn", msg: "ENGINE_DRIVER=fake: databases exist only in this process's memory. Never use this in production." }));
     return new FakeEngine();
   }
   throw new Error(
-    `ENGINE_DRIVER=${driver} is not available. Only "fake" exists: the engine admin interface (test5, branch control-ops) was not available when this service was written. See control-plane/docs/engine-adapter.md.`,
+    `ENGINE_DRIVER=${driver} is not known. Use "real" (the engine's admin interface) or "fake" (in memory, never for production). See control-plane/docs/engine-adapter.md.`,
   );
 }
 
@@ -24,7 +29,7 @@ try {
 
 let engine: EngineClient;
 try {
-  engine = makeEngine(cfg.engineDriver);
+  engine = makeEngine(cfg);
 } catch (e) {
   console.error(JSON.stringify({ level: "fatal", msg: e instanceof Error ? e.message : String(e) }));
   process.exit(1);

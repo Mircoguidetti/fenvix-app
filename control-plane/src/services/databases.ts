@@ -1,4 +1,5 @@
 import { renderHost } from "../config.ts";
+import { engineName } from "../engine/names.ts";
 import { type Caller, type Services } from "../context.ts";
 import { type Client, iso } from "../db.ts";
 import { auditWho, writeAudit } from "../audit.ts";
@@ -47,7 +48,7 @@ export function toDatabase(s: Pick<Services, "cfg">, r: Row): Database {
     region,
     host,
     // The password is never stored or sent: it is written as <password>.
-    connectionString: `mongodb://app_user:<password>@${host}:${s.cfg.connectionPort}/${name.replaceAll("-", "_")}?tls=true`,
+    connectionString: `mongodb://app_user:<password>@${host}:${s.cfg.connectionPort}/${s.cfg.connectionDbName === "engine" ? engineName(String(r.id)) : name.replaceAll("-", "_")}?tls=true`,
     tags: r.tags as string[],
     keepAwake: Boolean(r.keep_awake),
     forkedFrom: r.forked_from ? String(r.forked_from) : null,

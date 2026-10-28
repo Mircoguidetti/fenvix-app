@@ -2,11 +2,11 @@ import { randomUUID } from "node:crypto";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
-import type { Writable } from "node:stream";
+import { Readable, type Writable } from "node:stream";
 import type { Config } from "./config.ts";
 import type { Services } from "./context.ts";
 import { Db } from "./db.ts";
-import type { EngineClient } from "./engine/types.ts";
+import { type EngineClient, EngineError } from "./engine/types.ts";
 import { ApiError, internal, notFound } from "./errors.ts";
 import { JwtVerifier } from "./auth/jwt.ts";
 import { type AuthGateway } from "./auth/gateway.ts";
@@ -125,6 +125,15 @@ export async function buildApp(opts: AppOptions): Promise<App> {
     const claim = verifyDownload(cfg.downloadSigningKey, String((req.params as { token: string }).token));
     if (!claim) throw notFound("This download link has expired or is not valid.");
     reply.header("Cache-Control", "no-store");
+    if (claim.kind === "engine-export") {
+      if (!s.engine.openExportArchive) throw notFound("This download link has expired or is not valid.");
+      const a = await s.engine.openExportArchive(String(claim.p.exportId)).catch((e) => {
+        if (e instanceof EngineError && e.kind === "not_found") throw notFound("This export has expired or does not exist.");
+        throw e;
+      });
+      reply.header("Content-Type", a.mimeType).header("Content-Disposition", `attachment; filename="${a.filename}"`);
+      return reply.send(Readable.from(a.body));
+    }
     if (claim.kind === "usage-csv") {
       const { filename, csv } = await buildUsageCsv(s, claim.ws, claim.p as unknown as Parameters<typeof buildUsageCsv>[2]);
       return reply.header("Content-Type", "text/csv; charset=utf-8").header("Content-Disposition", `attachment; filename="${filename}"`).send(csv);

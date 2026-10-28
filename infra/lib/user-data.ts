@@ -93,7 +93,7 @@ export function buildUserData(i: UserDataInput): string[] {
       [
         `FENVIX_S3_BUCKET=${i.bucketName}`,
         `FENVIX_AWS_REGION=${i.region}`,
-        'FENVIX_LISTEN=0.0.0.0:27017',
+        `FENVIX_LISTEN=0.0.0.0:${c.mongoPort}`,
         `FENVIX_ADMIN_LISTEN=0.0.0.0:${c.adminPort}`,
         'FENVIX_TLS_MODE=self-signed',
         ...(c.baseDomain ? [`FENVIX_BASE_DOMAIN=${c.baseDomain}`] : []),

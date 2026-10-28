@@ -141,7 +141,7 @@ async function submit(s: Services, caller: Caller, dedupeKey: string | null, wor
       const existing = await s.db.tx(caller.workspaceId, (c) => activeByDedupe(c, caller.workspaceId, dedupeKey));
       if (existing) return existing;
     }
-    if (isUniqueViolation(e, "databases_workspace_name")) throw conflict("A database with that name already exists.", "name");
+    if (isUniqueViolation(e, "databases_workspace_name") || isUniqueViolation(e, "databases_host_unique")) throw conflict("A database with that name already exists.", "name");
     throw e;
   }
 }

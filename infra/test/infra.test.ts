@@ -73,21 +73,21 @@ describe('network and security group', () => {
   const covers = (r: any, port: number) => r.FromPort <= port && port <= r.ToPort;
   const internet = (r: any) => r.CidrIp === '0.0.0.0/0' || r.CidrIpv6 === '::/0';
 
-  test('opens exactly 27017 and 443 to the internet', () => {
+  test('opens exactly the MongoDB port (27018) and 443 to the internet', () => {
     const open = rules.filter(internet).map((r) => [r.FromPort, r.ToPort]);
-    expect(open.sort()).toEqual([[443, 443], [27017, 27017]].sort());
+    expect(open.sort()).toEqual([[443, 443], [27018, 27018]].sort());
     for (const r of rules.filter(internet)) expect(r.IpProtocol).toBe('tcp');
   });
 
-  test('the admin port (27018) is in no internet-facing rule, even as part of a range', () => {
-    for (const r of rules.filter(internet)) expect(covers(r, 27018)).toBe(false);
+  test('the admin port (8443) is in no internet-facing rule, even as part of a range', () => {
+    for (const r of rules.filter(internet)) expect(covers(r, 8443)).toBe(false);
     for (const r of rules.filter((x) => x.CidrIp !== undefined || x.CidrIpv6 !== undefined || x.SourcePrefixListId !== undefined)) {
-      expect(covers(r, 27018)).toBe(false);
+      expect(covers(r, 8443)).toBe(false);
     }
   });
 
   test('the admin port is reachable only from the same security group', () => {
-    const admin = rules.filter((r) => covers(r, 27018));
+    const admin = rules.filter((r) => covers(r, 8443));
     expect(admin).toHaveLength(1);
     expect(JSON.stringify(admin[0].SourceSecurityGroupId)).toContain(sgId);
     expect(admin[0].GroupId ? JSON.stringify(admin[0].GroupId) : sgId).toContain(sgId);
@@ -97,6 +97,17 @@ describe('network and security group', () => {
     for (const r of rules) expect(covers(r, 22)).toBe(false);
     const inst = one(json, 'AWS::EC2::Instance');
     expect(inst.Properties.KeyName).toBeUndefined();
+  });
+
+  test('the MongoDB port follows the parameter and the engine is told to listen on it', () => {
+    const j = synth({ mongoPort: '28000' }).json;
+    const rs: any[] = [
+      ...(resourcesOf(j, 'AWS::EC2::SecurityGroup')[0][1].Properties.SecurityGroupIngress ?? []),
+      ...resourcesOf(j, 'AWS::EC2::SecurityGroupIngress').map(([, r]) => r.Properties),
+    ];
+    expect(rs.filter(internet).map((r) => r.FromPort).sort((a: number, b: number) => a - b)).toEqual([443, 28000]);
+    expect(JSON.stringify(one(j, 'AWS::EC2::Instance').Properties.UserData)).toContain('FENVIX_LISTEN=0.0.0.0:28000');
+    expect(JSON.stringify(one(synth().json, 'AWS::EC2::Instance').Properties.UserData)).toContain('FENVIX_ADMIN_LISTEN=0.0.0.0:8443');
   });
 
   test('admin port follows the parameter', () => {
@@ -139,6 +150,11 @@ describe('engine node', () => {
       expect.objectContaining({ DeviceName: '/dev/xvda', Ebs: expect.objectContaining({ Encrypted: true, VolumeSize: 30, VolumeType: 'gp3', DeleteOnTermination: true }) }),
     ]);
     expect(p.MetadataOptions.HttpTokens).toBe('required');
+  });
+
+  test('the instance role is out of reach of containers: the metadata service answers one hop only', () => {
+    const { Properties: p } = one(synth().json, 'AWS::EC2::Instance');
+    expect(p.MetadataOptions.HttpPutResponseHopLimit).toBe(1);
   });
 
   test('has an elastic IP and an auto-recovery alarm', () => {
@@ -384,6 +400,7 @@ describe('regions', () => {
     expect(() => synth({ regions: 'eu-central-1,eu-central-1' })).toThrow(/duplicate/);
     expect(() => synth({ budgetEmail: '' })).toThrow(/budgetEmail/);
     expect(() => synth({ retentionDays: '0' })).toThrow(/retentionDays/);
-    expect(() => synth({ adminPort: '27017' })).toThrow(/adminPort/);
+    expect(() => synth({ adminPort: '27018' })).toThrow(/adminPort/);
+    expect(() => synth({ controlPlanePort: '27018' })).toThrow(/controlPlanePort/);
   });
 });

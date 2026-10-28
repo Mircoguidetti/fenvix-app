@@ -67,7 +67,7 @@ export class FenvixStack extends Stack {
       description: 'FENVIX engine node: MongoDB wire (TLS) and control-plane HTTPS from the internet; admin port from this group only',
       allowAllOutbound: true,
     });
-    sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(27017), 'MongoDB wire protocol; the engine requires TLS');
+    sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(c.mongoPort), 'MongoDB wire protocol; the engine requires TLS');
     sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(c.controlPlanePort), 'Control-plane HTTPS');
     sg.connections.allowInternally(ec2.Port.tcp(c.adminPort), 'Engine admin port: members of this security group only');
 
@@ -201,6 +201,9 @@ export class FenvixStack extends Stack {
       userData,
       userDataCausesReplacement: true,
       httpTokens: ec2.HttpTokens.REQUIRED,
+      // One hop: the engine on the host can reach the instance role (the data bucket, the SSM secrets); a container
+      // behind Docker's bridge cannot. The control-plane container needs none of that, so a break-in there gets no AWS credentials.
+      httpPutResponseHopLimit: 1,
       detailedMonitoring: true,
       associatePublicIpAddress: true,
       blockDevices: [
