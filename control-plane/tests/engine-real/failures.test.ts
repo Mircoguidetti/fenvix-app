@@ -309,6 +309,22 @@ describe("engine-real: failures", { skip: SKIP }, () => {
     const forkId = (await w.h.admin.query("select database_id from public.operations where id = $1", [opIdOf(r)])).rows[0].database_id;
     await restartAdmin(); // memory store: the source is gone too, so the retry meets "source does not exist"
     const d = await w.settle(opIdOf(r));
+    if (w.e.profile === "production") {
+      // Durable store: the source survived the crash, the engine finished its interrupted fork on restart and the
+      // retry completes it: one fork, with its own new users, consistent in Postgres and the engine.
+      assert.equal(d.body.status, "succeeded", JSON.stringify(d.body));
+      assertClean(JSON.stringify(d.body), "operation");
+      assert.equal((await row(forkId))?.engine_state, "ready");
+      assert.equal(await engineHas(w.e, engineName(forkId)), true);
+      assert.ok(await userOf(forkId));
+      for (const id of [forkId, src.id]) {
+        const er = await w.settle(keep(await w.h.as(w.u).post("/databases/erase", { ids: [id] }, cookie)));
+        assert.deepEqual(er.body.result ?? er.body, { affected: 1 });
+        assert.equal(await engineHas(w.e, engineName(id)), false);
+        assert.equal(await userOf(id), undefined);
+      }
+      return;
+    }
     assert.equal(d.body.status, "failed");
     assertClean(JSON.stringify(d.body), "operation");
     assert.equal(await row(forkId), undefined);

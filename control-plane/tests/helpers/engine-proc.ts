@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MongoClient, type MongoClientOptions } from "mongodb";
+import { type LocalS3, assertLocal, dropBucket, makeBucket } from "./s3-local.ts";
 
 /**
  * Starts and stops REAL FENVIX engine processes (Mircoguidetti/test5, `mongo-server`) for the engine-real suite.
@@ -16,6 +17,15 @@ import { MongoClient, type MongoClientOptions } from "mongodb";
  *    process gets the admin interface and a separate "auth" process is the MongoDB listener the Data Explorer and the
  *    per-database users use. Data written through one is not seen by the other: the suite says which checks need the
  *    fused engine.
+ *
+ * Two profiles (ENGINE_E2E_PROFILE):
+ *  - `memory` (default): `--store memory --no-leases`, admin on 127.0.0.1. A restart brings the engine back EMPTY.
+ *  - `production`: as the deployment runs it, without AWS: `--store s3` against a LOCAL S3-compatible store (MinIO,
+ *    ENGINE_E2E_S3_ENDPOINT / _ACCESS_KEY / _SECRET_KEY / _REGION; one fresh bucket per engine), `--region`, leases on
+ *    (`--holder`, short ttl), the admin interface on a separate interface (127.0.0.2 by default, ENGINE_E2E_ADMIN_HOST)
+ *    with the token, `--auth`, `--tls-mode requireTLS`, `--log-commands` (command names only: the suite checks which
+ *    commands reached the data port). Data and users survive a restart. The S3 credentials are given to the engine
+ *    in ITS environment only (AWS_ACCESS_KEY_ID/...); nothing of the caller's AWS_* environment is passed on.
  *
  * Everything lives in a fresh temporary directory: the admin token, a throw-away CA and server certificate, the
  * bootstrap root password. Nothing is a production value and nothing is written in the repository.
@@ -61,6 +71,11 @@ export interface ProcOptions {
   idleSecs?: number;
   extraArgs?: string[];
   env?: Record<string, string>;
+  /** Address the admin interface binds to (default 127.0.0.1). */
+  adminHost?: string;
+  /** `--store s3` against a local S3-compatible store, with leases (the production profile). */
+  s3?: LocalS3 & { bucket: string; holder: string };
+  logCommands?: boolean;
 }
 
 /** One engine process. Its log is kept in memory (the suite checks it for secrets). */
@@ -74,9 +89,13 @@ export class EngineProcess {
 
   args(): string[] {
     const o = this.o;
+    const store = o.s3
+      ? ["--store", "s3", "--bucket", o.s3.bucket, "--region", o.s3.region, "--endpoint", o.s3.endpoint, "--holder", o.s3.holder, "--lease-ttl-secs", "10"]
+      : ["--store", "memory", "--no-leases"];
     return [
-      "--listen", `127.0.0.1:${o.dataPort}`, "--store", "memory", "--no-leases", "--idle-secs", String(o.idleSecs ?? 3),
-      ...(o.adminPort ? ["--admin-listen", `127.0.0.1:${o.adminPort}`, "--admin-token-file", o.tokenFile!, "--pin-lease-ttl-secs", "6"] : []),
+      "--listen", `127.0.0.1:${o.dataPort}`, ...store, "--idle-secs", String(o.idleSecs ?? 3),
+      ...(o.logCommands ? ["--log-commands"] : []),
+      ...(o.adminPort ? ["--admin-listen", `${o.adminHost ?? "127.0.0.1"}:${o.adminPort}`, "--admin-token-file", o.tokenFile!, "--pin-lease-ttl-secs", "6"] : []),
       ...(o.auth ? ["--auth"] : []),
       ...(o.tls ? ["--tls-mode", "requireTLS", "--tls-certificate-key-file", o.tls.serverPem] : []),
       ...(o.extraArgs ?? []),
@@ -87,7 +106,9 @@ export class EngineProcess {
     if (this.child) throw new Error("already running");
     this.starts++;
     const from = this.log.length;
-    const child = spawn(this.o.bin, this.args(), { env: { PATH: process.env.PATH ?? "", ...this.o.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+    // A clean environment: PATH, then (production profile) the LOCAL store's test credentials, never the caller's AWS_*.
+    const s3env: Record<string, string> = this.o.s3 ? { AWS_ACCESS_KEY_ID: this.o.s3.accessKey, AWS_SECRET_ACCESS_KEY: this.o.s3.secretKey } : {};
+    const child = spawn(this.o.bin, this.args(), { env: { PATH: process.env.PATH ?? "", ...s3env, ...this.o.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout!.on("data", (b: Buffer) => { this.log += b.toString(); });
     child.stderr!.on("data", (b: Buffer) => { this.log += b.toString(); });
     this.child = child;
@@ -128,6 +149,8 @@ export class EngineProcess {
 
 export interface EngineEnv {
   fused: boolean;
+  /** `production` (local S3 store, leases, separate admin interface: data survives a restart) or `memory`. */
+  profile: "memory" | "production";
   admin: EngineProcess;
   /** The MongoDB listener with authentication (the admin process itself when fused). */
   auth: EngineProcess;
@@ -157,6 +180,16 @@ export interface EngineEnv {
 
 export const PROVISIONER_ACTIONS = ["createUser", "dropUser", "viewUser", "changePassword", "changeCustomData", "grantRole", "revokeRole"];
 
+export const PROFILE: "memory" | "production" = process.env.ENGINE_E2E_PROFILE === "production" ? "production" : "memory";
+
+/** The local S3-compatible store of the production profile (required there). */
+export function localS3(): LocalS3 {
+  const v = (k: string) => { const x = process.env[k]; if (!x) throw new Error(`ENGINE_E2E_PROFILE=production needs ${k}`); return x; };
+  const s3 = { endpoint: v("ENGINE_E2E_S3_ENDPOINT"), accessKey: v("ENGINE_E2E_S3_ACCESS_KEY"), secretKey: v("ENGINE_E2E_S3_SECRET_KEY"), region: process.env.ENGINE_E2E_S3_REGION ?? "eu-central-1" };
+  assertLocal(s3);
+  return s3;
+}
+
 export async function startEngines(adminBin: string, authBin: string | undefined): Promise<EngineEnv> {
   const capsA = capabilities(adminBin);
   if (!capsA.admin) throw new Error("ENGINE_E2E_BIN has no admin interface (--admin-listen): build branch control-ops (or the fused branch)");
@@ -171,7 +204,14 @@ export async function startEngines(adminBin: string, authBin: string | undefined
   writeFileSync(tokenFile, token, { mode: 0o600 });
   const tls = makeTls(dir);
   const [dataPort, adminPort, authPort] = [await freePort(), await freePort(), await freePort()];
-  const admin = new EngineProcess({ bin: adminBin, dataPort, adminPort, tokenFile, ...(fused ? { auth: true, tls: { serverPem: tls.serverPem } } : {}) });
+  const prod = PROFILE === "production";
+  if (prod && !fused) throw new Error("ENGINE_E2E_PROFILE=production needs the fused engine (one binary with --admin-listen and --auth)");
+  const s3 = prod ? { ...localS3(), bucket: `fenvix-e2e-${randomBytes(6).toString("hex")}`, holder: `e2e-${randomBytes(4).toString("hex")}` } : undefined;
+  if (s3) await makeBucket(s3, s3.bucket);
+  const admin = new EngineProcess({
+    bin: adminBin, dataPort, adminPort, tokenFile, ...(fused ? { auth: true, tls: { serverPem: tls.serverPem } } : {}),
+    ...(prod ? { s3, adminHost: process.env.ENGINE_E2E_ADMIN_HOST ?? "127.0.0.2", logCommands: true } : {}),
+  });
   const auth = fused ? admin : new EngineProcess({ bin: authPath, dataPort: authPort, auth: true, tls: { serverPem: tls.serverPem } });
   const root = { username: "bootstrap_root", password: randomBytes(18).toString("base64url") };
   const provisioner = { username: "fenvix_provisioner", password: randomBytes(18).toString("base64url") };
@@ -183,13 +223,20 @@ export async function startEngines(adminBin: string, authBin: string | undefined
     new MongoClient(`mongodb://${dataAddr}/`, { ...base, ...(cred ? { auth: { username: cred.username, password: cred.password }, authSource: cred.authSource, authMechanism: "SCRAM-SHA-256" } : {}), ...extra });
 
   const env: EngineEnv = {
-    fused, admin, auth, token, tokenFile, adminUrl: `http://127.0.0.1:${adminPort}`, dataAddr, adminDataAddr: `127.0.0.1:${dataPort}`,
+    fused, profile: PROFILE, admin, auth, token, tokenFile, adminUrl: `http://${admin.o.adminHost ?? "127.0.0.1"}:${adminPort}`, dataAddr, adminDataAddr: `127.0.0.1:${dataPort}`,
     caFile: tls.caFile, root, provisioner, userKey, dir, provisionerPrivileges: PROVISIONER_ACTIONS,
     rootClient: () => clientAs({ ...root, authSource: "admin" }),
     adminDataClient: () => fused ? clientAs({ ...root, authSource: "admin" }) : new MongoClient(`mongodb://127.0.0.1:${dataPort}/`, { directConnection: true, serverSelectionTimeoutMS: 5000 }),
     clientAs,
     async bootstrap() {
       // The engine's localhost exception: until the first user exists, it can be created from the machine itself.
+      // With a durable store (production profile) the users survive a restart: then there is nothing to make again.
+      const r0 = clientAs({ ...root, authSource: "admin" });
+      try {
+        await r0.db("admin").command({ ping: 1 });
+        const has = await r0.db("admin").command({ usersInfo: provisioner.username });
+        if (Array.isArray(has.users) && has.users.length === 1) return;
+      } catch { /* no root yet */ } finally { await r0.close(); }
       const anon = clientAs();
       try { await anon.db("admin").command({ createUser: root.username, pwd: root.password, roles: ["root"] }); } finally { await anon.close(); }
       const r = clientAs({ ...root, authSource: "admin" });
@@ -201,6 +248,7 @@ export async function startEngines(adminBin: string, authBin: string | undefined
     async stop() {
       await admin.stop();
       if (!fused) await auth.stop();
+      if (s3) await dropBucket(s3, s3.bucket).catch(() => {});
       rmSync(dir, { recursive: true, force: true });
     },
   };
