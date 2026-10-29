@@ -228,3 +228,88 @@ Il CORS: `DASHBOARD_ORIGINS` è ciò che `control-plane/src/config.ts` legge in 
 
 ### 8.5 Commit
 Su `infra-align`, sopra `3a7c3f1`: `57755e3` (codice, test, README, `results-infra.md`) e il commit che aggiunge questa sezione.
+
+## 9. Allineamento al motore finale (test5 `final-engine`, motore `41ed169`)
+
+Punta controllata prima di iniziare: `origin/infra-align` = `2694131`. Solo `infra/`. Nessuna attività AWS; le variabili `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` tolte dall'ambiente in ogni comando (valori mai letti). Rete usata: GitHub (clone di `Mircoguidetti/test5` e di `apache/arrow-rs-object-store` al tag `v0.14.2`) e registry npm (`npm ci`).
+
+**Fonte.** Ho letto il codice del motore a `41ed169`, non solo il report: `mongo-server/src/main.rs` (`struct Args`, la costruzione del client S3), `mongo-server/src/ctl/mod.rs` (`CtlArgs`, lettura del token), `tls.rs`, `admin_cmds.rs`, `auth.rs`, `authz.rs` + `builtin_roles.json`, `ctl/http.rs`, `ctl/api.rs`, `ctl/pitr.rs`, `lease.rs`. La punta del branch (`e038db7`) cambia solo report e strumenti: `main.rs` è identico a `41ed169`. Per le credenziali S3 ho letto `object_store` 0.14.2 (la versione nel `Cargo.lock` del motore): `src/aws/builder.rs`, `src/aws/credential.rs`, `src/client/mod.rs`, `src/client/token.rs`.
+
+### 9.1 Flag e variabili d'ambiente del motore, confronto con infra
+
+Flag (tutti `clap`, `--nome-con-trattini`). "Default" = non passato da infra.
+
+| infra assume | il motore ha (codice `41ed169`) | azione |
+|---|---|---|
+| binario `/opt/fenvix/bin/fenvix-engine` | il binario si chiama `mongo-server` | salvato come `/opt/fenvix/bin/mongo-server`; il nome sta solo in `ENGINE_BINARY_NAME` (`lib/engine-command.ts`); un test fallisce se compare altrove in `lib/` o `test/`. L'URL di download (`engineUrl`) resta un'impostazione libera |
+| `--listen=0.0.0.0:27018` | `--listen` (default `127.0.0.1:27018`) | invariato |
+| `--admin-listen=172.17.0.1:8443` | `--admin-listen` (senza: niente porta admin, niente agenti ctl, niente ripresa dopo crash) | invariato |
+| `--admin-token-file` | **esistono tutti e tre**: `--admin-token-file`, `--admin-token`, `MONGO_ADMIN_TOKEN`; ordine: file, poi flag, poi variabile; il file viene letto e ripulito (`trim`); minimo 16 caratteri | tengo il **file** (`/run/fenvix/admin-token`, 0600, cartella 0700, scritto da SSM a ogni avvio). Perché non la variabile: un `Environment=` è stampato da `systemctl show`/`status`, si eredita nei processi figli e si legge da `/proc/<pid>/environ`; il file non va in riga di comando né nel journal |
+| `--auth` | `--auth` | invariato |
+| `--tls-mode=requireTLS` | `disabled\|allowTLS\|preferTLS\|requireTLS` | invariato |
+| `--tls-certificate-key-file=/etc/fenvix/tls/engine.pem` | un file PEM con tutti i certificati (catena) e la chiave (PKCS#8, PKCS#1 o SEC1) | invariato: `engine.pem` è catena + chiave PKCS#8 RSA |
+| nessun `--tls-ca-file` | `--tls-ca-file` è **facoltativo**: serve solo a verificare i **certificati client**; se c'è, il motore chiede un certificato a ogni client e rifiuta chi non lo presenta (salvo `--tls-allow-connections-without-certificates`) | non lo passo (i clienti usano utente e password); un test vieta il flag |
+| regione da `AWS_REGION` nell'unità | `--region` facoltativo, ma con `--store s3` serve uno tra `--region`, `AWS_REGION`, `AWS_DEFAULT_REGION`, altrimenti il motore non parte | **aggiunto** `--region=<regione>`; tengo anche `AWS_REGION`/`AWS_DEFAULT_REGION` (stesso valore, stessa sorgente) |
+| `--store=s3 --bucket=...` | `--store s3\|local\|memory`, `--bucket` (default `bench`) | invariato |
+| nessun `--endpoint` (temevo il default MinIO) | `--endpoint` vuoto = AWS (anche `AWS_ENDPOINT`) | risolto: nessun endpoint, nessun MinIO |
+| nessun `--holder` | `--holder` (default: `<pid>-<casuale>` a ogni avvio) | **aggiunto** `--holder=<instance id>`, vedi 9.3 |
+| nessun `--idle-secs` | default 60 | **esplicito** `--idle-secs=60` |
+| `engineRetentionWindowSecs`=604800 solo nel control plane | `--retention-window-secs` (default **0**: nessun punto di ripristino per i database senza impostazione propria) | **aggiunto** `--retention-window-secs=<engineRetentionWindowSecs>` (604800) |
+| nessun `--wal-gc-mode` | default `bulk`; `slatedb` rompe i restore (7 su 7 falliti nel report del motore) | **esplicito** `--wal-gc-mode=bulk` |
+| — | `--lease-ttl-secs` 30, `--replica-set` vuoto, `--advertise`, `--process-lease`, `--ttl-sweep-secs`, `--ttl-wake-sleeping`, `--ttl-*`, `--wal-flush-ms` 0, `--writer-poll-secs` 30, `--wal-gc-secs` 20, `--sst-gc-secs` 60, `--sst-gc-min-unref-secs` 120, `--group-commit-window-ms` 0, `--group-commit-adaptive`, `--durable-reads` true, `--max-concurrent-wakes` 0, `--retention-interval-secs` 600, `--retention-prune-secs` 600, `--usage-flush-secs` 60, `--pin-lease-ttl-secs` 30, `--export-ttl-secs` 86400 | lasciati al default (elenco nel commento di `engineArgs`). `--replica-set` vuoto = server standalone: niente transazioni multi-documento né change stream per i driver (decisione 9.5.3) |
+| — | controlli di test: `--no-leases`, `--unsafe-skip-ownership-checks`, `--ack-before-durable`, `--no-ctl-recovery`, `--no-maintenance`, `--no-ttl`, `--gc-control-delete-live`, `--l0-max-ssts`, `--l0-sst-bytes`, `--serialize-reads`, `--no-group-commit`, `--log-commands`, `--local-dir` | mai passati; un test li vieta |
+
+Variabili d'ambiente lette dal motore (ricerca di `env::var`/`var_os` in `mongo-server/src` e `src`):
+
+| variabile | uso | infra |
+|---|---|---|
+| tutte le `AWS_*` (via `AmazonS3Builder::from_env()`): `AWS_REGION`, `AWS_DEFAULT_REGION`, `AWS_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_CONTAINER_CREDENTIALS_*`, `AWS_METADATA_ENDPOINT`, `AWS_IMDSV1_FALLBACK`, ... | configurazione S3 e credenziali | l'unità imposta solo `AWS_REGION` e `AWS_DEFAULT_REGION`; nessuna chiave |
+| `MONGO_ADMIN_TOKEN` | token admin (terza scelta) | non usata (file) |
+| `MONGO_NO_FETCH_SCAN`, `MONGO_BUILD_CHUNK`, `MONGO_TEST_DISABLE_WAL_RETENTION_GUARD`, `CTL_DISABLE_WAL_RETENTION`, `CTL_USAGE_DAY_OFFSET_MS`, `CTL_FAILPOINT` | controlli di test | non impostate (un servizio systemd non eredita l'ambiente di chi lo avvia) |
+
+### 9.2 Credenziali S3: cosa ho verificato leggendo il codice
+- Il motore (`main.rs`, `--store s3`) costruisce il client con `AmazonS3Builder::from_env()` più bucket, regione ed endpoint; **non passa chiavi**.
+- `object_store` 0.14.2, `builder.rs` riga 1168 e seguenti, ordine delle sorgenti: credenziali date al builder → chiavi statiche (`AWS_ACCESS_KEY_ID`+`AWS_SECRET_ACCESS_KEY`) → token d'identità web (`AWS_WEB_IDENTITY_TOKEN_FILE`+`AWS_ROLE_ARN`) → credenziali del container ECS (`AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`) → EKS Pod Identity → **altrimenti `InstanceCredentialProvider`** su `http://169.254.169.254`. Nell'unità nessuna di quelle variabili è impostata, quindi si arriva al ruolo dell'istanza.
+- `credential.rs` `instance_creds`: prima `PUT /latest/api/token` con `X-aws-ec2-metadata-token-ttl-seconds: 600` (**IMDSv2**), poi `GET .../iam/security-credentials/` e `GET .../<ruolo>` con l'header del token. Il ripiego su IMDSv1 avviene solo se `imdsv1_fallback` è vero, e il suo default è falso (`ConfigValue<bool>` di default): con `HttpTokens: required` non serve.
+- Client dei metadati: HTTP permesso, timeout di connessione 1 s (`metadata_options`). Le credenziali vengono messe in cache e rinnovate quando mancano meno di 5 minuti alla scadenza (`token.rs`, `min_ttl` 300 s).
+- **Hop limit 1**: il motore è un processo sull'host (non in un container), quindi la risposta PUT arriva con un solo salto. Il template ha `HttpTokens: required`, `HttpPutResponseHopLimit: 1`.
+- Permessi: il ruolo ha `s3:GetObject/PutObject/DeleteObject/AbortMultipartUpload` sugli oggetti e `s3:ListBucket` sul bucket. La pulizia WAL `bulk` usa la cancellazione multipla (DeleteObjects), che richiede `s3:DeleteObject`: presente.
+
+Non verificato: che il tarball di `object_store` 0.14.2 scaricato da crates.io (checksum nel `Cargo.lock`) sia identico al tag GitHub che ho letto (crates.io non raggiungibile da qui); che `reqwest` non usi un proxy (lo farebbe solo con `HTTP_PROXY`/`HTTPS_PROXY` nell'ambiente del servizio, che l'unità non imposta); che slatedb non legga altre variabili (non ho letto il suo codice).
+
+### 9.3 Scelte sui valori
+- **`--holder=<instance id>`.** Il proprietario dei lease. Con il default (diverso a ogni avvio), dopo un crash il motore riavviato trova i lease dei database aperti intestati al processo morto e li può riprendere solo dopo la scadenza (`--lease-ttl-secs` 30, rinnovo ogni 10 s): fino a 30 s di errori "retry" su quei database. Con un id stabile, `lease.rs` riconosce il lease come proprio (`holder == self.holder`) e lo riprende subito. È sicuro solo se due processi vivi non hanno mai lo stesso id: l'instance id è unico per istanza (una sostituzione da CloudFormation crea un'istanza nuova con id diverso, che aspetta i lease della vecchia) e systemd tiene un solo motore per istanza. Non uso l'hostname (può essere generico) né il machine-id (dipende da come è fatta l'AMI). Implementazione: il boot script legge l'id da IMDSv2 (`curl` con token, `--retry 3`), lo controlla con `^i-[0-9a-f]{8,17}$` (altrimenti si ferma) e lo scrive nell'unità al posto di `@INSTANCE_ID@` prima di `systemctl enable`. Un test esegue il controllo e la sostituzione veri e prova 5 valori sbagliati. Anche `/v1/health` della porta admin mostra il `holder`.
+- **`--idle-secs=60`.** Default del motore e valore con cui è stato verificato (report del motore, esempio di produzione). Un database aperto costa richieste S3 periodiche (rinnovo del lease ogni 10 s, lettura del manifest ogni 30 s); chiuso non costa nulla, ma il primo comando dopo la chiusura paga un risveglio a freddo. Alzarlo riduce i risvegli e aumenta il costo dei database poco usati: da decidere con i numeri del primo mese.
+- **`--retention-window-secs=604800`.** Il control plane imposta già 604800 su ogni database che crea; il flag è la rete di sicurezza per i database senza impostazione (per esempio se la chiamata `PUT /retention` fallisse) e prende lo stesso valore (`engineRetentionWindowSecs`, una sola sorgente). Conseguenza: vale anche per il tenant `admin` (utenti e ruoli), che terrà 7 giorni di WAL (pochi dati).
+- **`--wal-gc-mode=bulk`.** È il default; lo fisso perché è l'unica modalità con cui i restore sono esatti.
+
+### 9.4 Utenti, token, TLS
+- **Utenti con `--auth` (Step 10).** Lo script `fenvix-create-engine-users` è ancora corretto per il motore finale, verificato sul codice: (1) eccezione localhost in `auth.rs` (`authorize`): finché non esiste alcun utente, `createUser`/`createRole` su `admin` sono ammessi solo se il client si collega da un indirizzo di loopback; lo script usa `docker run --network host` verso `127.0.0.1:27018`, quindi è loopback; TLS richiesto, lo script usa `tls: true` + `tlsAllowInvalidHostnames` (il certificato è per `*.<regione>.db.<dominio>`, non per 127.0.0.1); (2) SCRAM-SHA-256 c'è; `mechanisms: ["SCRAM-SHA-256"]` è accettato da `create_user`; (3) il ruolo `fenvix_provisioner` sulla risorsa `{db: "", collection: ""}` con 7 azioni tutte note al motore (`action_known`); `fenvix_root` (ruolo `root`) può concederlo (`may_grant`). Ho solo corretto un commento: il motore oggi oscura le password nei messaggi di errore (report del motore 2.2); lo script continua comunque a stampare solo i codici d'errore. Non eseguito su un motore vero.
+- **Rinnovo del certificato.** Il motore ha `rotateCertificates` e ricarica davvero i file (`tls.rs` `rotate`, test `test_09c_tls_rotate.py` del motore, eseguito però **senza** `--auth`). Con `--auth`, `authz::required` non ha una voce per `rotateCertificates` e lo tratta come comando sconosciuto: serve l'azione `anyAction`, che in `builtin_roles.json` ha solo `__system`; `root` non ce l'ha. Quindi con `--auth` nessun nostro utente può farlo. **Tengo il riavvio** (motore e Caddy solo quando il certificato cambia, già così); README aggiornato con il motivo. Se il motore aggiungesse `rotateCertificates → azione rotateCertificates sul cluster` (come mongod: ce l'hanno `root`, `hostManager`, `clusterAdmin`), si potrebbe sostituire il riavvio con il comando (decisione 9.5.2).
+- **Porta admin.** `GET /v1/health` (non `/health`): il token si controlla prima del percorso, quindi senza token risponde 401 su qualunque percorso; README corretto su `/v1/health`.
+
+### 9.5 Decisioni che servono a te
+1. **`--holder` = instance id** (9.3): se preferisci il default del motore (nessun rischio di id condivisi, ma fino a 30 s di attesa dopo un crash), è una riga in `engineArgs` più le tre righe IMDS nel boot script.
+2. **`rotateCertificates` con `--auth`**: chiedere al motore di mapparlo sull'azione `rotateCertificates` del cluster (come mongod) toglierebbe il riavvio a ogni rinnovo (ogni ~60 giorni, pochi secondi di disconnessione). Oggi non serve cambiare nulla in infra.
+3. **Replica set**: con `--replica-set` vuoto i driver vedono un server standalone e **non permettono transazioni multi-documento né change stream**. Abilitarli richiede `--replica-set` + `--advertise` con un nome host che i clienti raggiungono e che il certificato copre: decisione di prodotto, non l'ho attivato.
+4. **`--idle-secs`**: 60 ora; da rivedere con i costi reali.
+5. **Ruolo del provisioner**: nel motore la risorsa `{db: "", collection: ""}` copre anche il database `admin` (`Res::covers`), quindi il provisioner può concedere ruoli **su `admin`** (per esempio `userAdmin@admin`, o creare ruoli personalizzati su `admin`). `may_grant` impedisce di dare privilegi di cluster che il provisioner non ha, ma non ho verificato fin dove arrivi un utente con ruoli su `admin` (per esempio scritture dirette su `admin.system.users`). Va chiuso dal control plane (non concedere mai ruoli su `admin`) e provato con un test sul motore; non è cambiato qui.
+
+### 9.6 Test, synth e template
+- Prima (su `2694131`): `tsc --noEmit` esito 0; jest **139 passati, 1 saltato** (il test con certbot reale, solo con `FENVIX_TEST_CERTBOT`), 140 totali, 10 suite; user data 13.910 byte.
+- Dopo: `tsc --noEmit` esito 0; jest **141 passati, 1 saltato**, 142 totali, 10 suite. Nuovi: nome del binario in un solo punto; holder da IMDSv2 controllato e sostituito prima di `enable` (eseguito con bash). Aggiornati: elenco esatto dei flag, flag vietati (più controlli di test, `--tls-ca-file`, `--wal-gc-mode` diversi da bulk), unità con `--region`/`--holder`.
+- `cdk synth --quiet` con la CLI vera, `env -i` (nessuna variabile AWS) e proxy verso `127.0.0.1:9`: esito 0, template 40,1 KB, solo gli avvisi W3010 noti.
+- Template: ingressi solo `0.0.0.0/0` su 27018 e 443, **8443 in nessuna regola** (compare solo in `--admin-listen=172.17.0.1:8443` e nell'endpoint interno del control plane); user data **14.171 byte** (limite 16.384; dominio lungo 14.275 nel test): ci stiamo, nessun controllo tolto; nessun `BEGIN`, `PRIVATE KEY`, `AKIA`, `password=`, `MONGO_ADMIN_TOKEN` (l'unico `admin-token=` è il nome del parametro nel `--match`, come prima); IMDS `required`, hop 1; permessi del ruolo motore invariati (S3 sul suo bucket, SSM `/fenvix/prod/*`, `kms:Decrypt` via SSM, Session Manager, il suo secret TLS, la sua zona Route 53 con condizioni). cdk-nag: 0 risultati non giustificati nelle tre configurazioni del test; `lib/nag-suppressions.ts` non è cambiato.
+- `shellcheck` non è installato qui: lo script è stato controllato solo con `bash -n` e con l'esecuzione delle parti nei test.
+
+### 9.7 Cosa NON ho potuto verificare (richiede AWS o un motore in esecuzione)
+- Che il motore su EC2 ottenga davvero le credenziali dal ruolo dell'istanza via IMDSv2 con hop 1 e scriva nel bucket (verificato solo leggendo il codice, 9.2), e che la bucket policy accetti la sessione del ruolo.
+- Che le PUT condizionali dei lease (`If-None-Match`/`If-Match`) funzionino sul bucket vero (il report del motore le ha provate su MinIO, non su S3).
+- Il boot reale: lettura dell'instance id da IMDSv2 su AL2023, l'avvio del binario `mongo-server` con questi flag, i messaggi di log attesi nello Step 9.
+- Lo script dello Step 10 contro il motore vero (eccezione localhost, creazione di ruolo e utenti).
+- Che `rotateCertificates` con `--auth` risponda davvero Unauthorized a `root` (dedotto dal codice, 9.4).
+- Il tempo di chiusura del motore allo stop di systemd (`close_all` di molti database) rispetto al timeout di default di 90 s: non l'ho cambiato.
+- Tutto quanto elencato in 7.6 e 8.4.
+
+### 9.8 Commit
+Su `infra-align`, sopra `2694131`: `7cd2107` (codice, test, README) e il commit che aggiunge questa sezione. Nel README il nome `mongo-server` compare in due frasi (Step 5 e Step 9): da aggiornare insieme a `ENGINE_BINARY_NAME` quando il binario verrà rinominato.
