@@ -215,7 +215,7 @@ npm ci
 If CloudShell says `node` is too old, run `nvm install 22` first. If the repository is private, `git clone` asks for a login and will fail for a password: ask your engineer for a read-only access token, or download the `infra-align` branch as a zip on your computer and upload it with CloudShell menu Actions, Upload file, then `unzip` it.
 
 ### Step 5. Fill in the settings
-Get from your engineers: the HTTPS link of the engine binary (with `{arch}` where the CPU name goes), its SHA-256, and the control-plane image name. Then:
+Get from your engineers: the HTTPS link of the engine binary (with `{arch}` where the CPU name goes), its SHA-256, and the control-plane image name. Whatever the file in the link is called, the server saves it as `/opt/fenvix/bin/mongo-server`. Then:
 ```
 export FENVIX_BUDGET_EMAIL="you@yourcompany.com"
 export BASE_DOMAIN="fenvix.dev"
@@ -255,7 +255,7 @@ Billing console, Cost allocation tags, activate the user tags `project` and `env
    systemctl status fenvix-engine fenvix-control-plane fenvix-proxy --no-pager
    sudo journalctl -u fenvix-engine -n 30 --no-pager
    ```
-   Expected: the log ends with `fenvix bootstrap done`; the three services are `active (running)`; the engine log shows `fenvix-tls: requesting a certificate ...`, `fenvix-tls: certificate kept in Secrets Manager`, `fenvix-tls: certificate installed` and `admin interface listening on 172.17.0.1:8443 (bearer token required)`. The first start can take a few minutes (the DNS challenge).
+   Expected: the log ends with `fenvix bootstrap done`; the three services are `active (running)`; the engine log shows `fenvix-tls: requesting a certificate ...`, `fenvix-tls: certificate kept in Secrets Manager`, `fenvix-tls: certificate installed` and `admin interface listening on 172.17.0.1:8443 (bearer token required)` and `mongo-server listening on 0.0.0.0:27018 (idle close after 60 s, holder i-..., lease ttl 30 s)` (the holder is the instance id). The first start can take a few minutes (the DNS challenge).
    - "release location still has the placeholder value": Step 5 was skipped. Set the variables, run `npx cdk deploy --all` again (AWS replaces the server; no data is lost, it lives in S3).
    - "missing SSM parameters: ...": the names listed are missing or misspelled. Fix them in Parameter Store (Step 2), then `sudo systemctl restart fenvix-engine fenvix-control-plane fenvix-proxy`.
    - "... must hold the same value as ...": the two admin tokens differ. Put the same value in both (Step 2), then restart as above.
@@ -269,12 +269,12 @@ Billing console, Cost allocation tags, activate the user tags `project` and `env
    Expected: `0.0.0.0:27018`, `172.17.0.1:8443` (the admin port, inside the server only) and `0.0.0.0:443`.
 4. The admin port refuses requests without the token (from the server):
    ```
-   curl -s -o /dev/null -w '%{http_code}\n' http://172.17.0.1:8443/health
+   curl -s -o /dev/null -w '%{http_code}\n' http://172.17.0.1:8443/v1/health
    ```
    Expected: `401`.
 
 ### Step 10. Create the engine's users (once)
-The control plane makes one engine user per customer database, through an engine user called `fenvix_provisioner`. That user is made once, from the server itself:
+The control plane makes one engine user per customer database, through an engine user called `fenvix_provisioner`. That user is made once, from the server itself: the engine runs with `--auth`, and while it has no user at all it accepts `createUser` on `admin` only from a connection coming from the server itself (127.0.0.1, the "localhost exception"). The script uses it to make `fenvix_root`, then logs in as `fenvix_root` for the rest:
 ```
 sudo /usr/local/bin/fenvix-create-engine-users
 ```
@@ -295,7 +295,7 @@ timeout 5 bash -c "echo > /dev/tcp/$(dig +short api.$D | head -1)/8443" && echo 
 Expected: `{"ok":true}`; a subject with `*.eu-central-1.db.fenvix.dev` and a Let's Encrypt issuer (for example `O = Let's Encrypt, CN = R12`; with staging, an issuer starting with `(STAGING)`); `CLOSED` (the admin port is not reachable from the internet). If `dig` is missing, use the `PublicIp` printed in Step 7 instead of `$(dig ...)`.
 
 ### Certificate renewal
-Automatic, see "TLS certificate": checked twice a day, renewed when less than 30 days are left, engine and TLS terminator restarted once only when the certificate changed (the engine cannot load a new certificate without a restart). To check now: `sudo systemctl start fenvix-tls.service`, then `sudo journalctl -u fenvix-tls -n 20 --no-pager`.
+Automatic, see "TLS certificate": checked twice a day, renewed when less than 30 days are left, engine and TLS terminator restarted once only when the certificate changed. The engine has `rotateCertificates` (it reloads the files without a restart), but with `--auth` the engine allows that command only to a user with every privilege (`__system`), which no user here has, not even `fenvix_root`; so the server restarts it instead (a few seconds; drivers reconnect). To check now: `sudo systemctl start fenvix-tls.service`, then `sudo journalctl -u fenvix-tls -n 20 --no-pager`.
 
 ### Adding a region later
 1. You need an existing Route 53 zone: set `FENVIX_HOSTED_ZONE_ID` (if the first deploy created the zone, its id is in Route 53, Hosted zones).

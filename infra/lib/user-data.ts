@@ -9,7 +9,7 @@ import {
   apiHost,
   controlPlaneEnvironment,
 } from './control-plane-env';
-import { DOCKER_BRIDGE_IP, PATHS, engineArgs, engineEnvironment } from './engine-command';
+import { DOCKER_BRIDGE_IP, INSTANCE_ID_PLACEHOLDER, PATHS, engineArgs, engineEnvironment } from './engine-command';
 import { MUST_MATCH, ssmPrefix } from './parameters';
 
 export { ssmPrefix };
@@ -81,8 +81,7 @@ if a.env_file:
  * Run once by an operator (README, Step 10) after the first start. Through the engine's localhost exception it makes
  * the break-glass root user (password typed in, never stored on the server) and the provisioner the control plane
  * uses (role with user-management actions only, password from SSM), as control-plane/docs/data-explorer-security.md
- * says. Uses the control-plane image's MongoDB driver. Prints no password and no engine message (the engine echoes
- * refused commands, password included). Running it again resets the provisioner's password to the SSM value.
+ * says. Uses the control-plane image's MongoDB driver. Prints no password and no engine message (only error codes). Running it again resets the provisioner's password to the SSM value.
  */
 export function createEngineUsersScript(c: FenvixConfig, region: string): string {
   const prefix = ssmPrefix(c.envName);
@@ -222,6 +221,10 @@ export function bootScript(i: UserDataInput): string[] {
     // The two values CloudFormation filled in (buildUserData): checked before they go into a sourced file.
     `[[ "$FENVIX_TLS_SECRET_ID" =~ ^arn:aws[a-z-]*:secretsmanager:${i.region}:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$ ]] || { echo "FATAL: bad TLS secret id" >&2; exit 1; }`,
     '[[ "$FENVIX_DNS_ZONE_ID" =~ ^Z[A-Z0-9]+$ ]] || { echo "FATAL: bad hosted zone id" >&2; exit 1; }',
+    // The instance id, the engine's lease holder (engine-command.ts). IMDSv2: a session token first.
+    "IMDS_TOKEN=\"$(curl -fsS --retry 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)\"",
+    'INSTANCE_ID="$(curl -fsS --retry 3 -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)"',
+    '[[ "$INSTANCE_ID" =~ ^i-[0-9a-f]{8,17}$ ]] || { echo "FATAL: bad instance id" >&2; exit 1; }',
     '',
     'dnf install -y docker python3.11 python3.11-pip',
     // Pin the bridge address the engine's admin interface binds to (it is Docker's default anyway).
@@ -270,7 +273,7 @@ export function bootScript(i: UserDataInput): string[] {
         'TimeoutStartSec=15min',
         `ExecStartPre=+${fetch} --group engine --files /run/fenvix --owner fenvix ${required('engine')}`,
         'ExecStartPre=+/usr/local/bin/fenvix-tls',
-        `ExecStart=${PATHS.engineBinary} ${engineArgs({ config: c, region: i.region, bucketName: i.bucketName }).join(' ')}`,
+        `ExecStart=${PATHS.engineBinary} ${engineArgs({ config: c, region: i.region, bucketName: i.bucketName, holder: INSTANCE_ID_PLACEHOLDER }).join(' ')}`,
         'WorkingDirectory=/var/lib/fenvix',
         'Restart=always',
         'RestartSec=5',
@@ -285,6 +288,7 @@ export function bootScript(i: UserDataInput): string[] {
         'WantedBy=multi-user.target',
       ].join('\n'),
     ),
+    `sed -i "s/${INSTANCE_ID_PLACEHOLDER}/$INSTANCE_ID/" /etc/systemd/system/fenvix-engine.service`,
     ...heredoc(
       '/etc/systemd/system/fenvix-tls.service',
       [

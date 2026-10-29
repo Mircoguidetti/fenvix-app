@@ -7,6 +7,7 @@ import { requiredSecretNames } from '../lib/parameters';
 import { BASE_CONTEXT } from './helpers';
 import { BOOT_SCRIPT_PATH, bootScript, buildUserData, createEngineUsersScript, decodeUserData, FETCH_CONFIG } from '../lib/user-data';
 import { ACME_DIRECTORY } from '../lib/acme';
+import { INSTANCE_ID_PLACEHOLDER, PATHS } from '../lib/engine-command';
 
 const config = loadConfig((k) => BASE_CONTEXT[k]);
 const input = {
@@ -134,6 +135,31 @@ describe('user-data script', () => {
     expect(unit).toContain('TimeoutStartSec=15min');
     expect(unit).toContain('User=fenvix');
     expect(unit).not.toContain('EnvironmentFile');
+    expect(exec).toContain('--region=eu-central-1');
+    expect(exec).toContain(`--holder=${INSTANCE_ID_PLACEHOLDER} `);
+    expect(exec.startsWith(`ExecStart=${PATHS.engineBinary} `)).toBe(true);
+  });
+
+  test('the lease holder is the instance id from IMDSv2, checked, and put into the unit before it is enabled', () => {
+    const at = (p: (l: string) => boolean) => lines.findIndex(p);
+    const check = lines.find((l) => l.startsWith('[[ "$INSTANCE_ID" =~'))!;
+    const sed = lines.find((l) => l.startsWith('sed -i ') && l.includes(INSTANCE_ID_PLACEHOLDER))!;
+    expect(at((l) => l.startsWith('IMDS_TOKEN="$(curl') && l.includes('-X PUT'))).toBeLessThan(at((l) => l === check));
+    expect(at((l) => l === sed)).toBeGreaterThan(at((l) => l === "cat > /etc/systemd/system/fenvix-engine.service <<'FENVIX_EOF'"));
+    expect(at((l) => l === sed)).toBeLessThan(at((l) => l.startsWith('systemctl enable --now fenvix-engine.service')));
+    // Run the real check and the real substitution on a copy of the unit.
+    const unitFile = join(dir, 'engine.service');
+    const f = join(dir, 'holder.sh');
+    writeFileSync(f, [check, sed.split('/etc/systemd/system/fenvix-engine.service').join(unitFile)].join('\n') + '\n');
+    const runWith = (id: string) => {
+      writeFileSync(unitFile, written('/etc/systemd/system/fenvix-engine.service') + '\n');
+      return spawnSync('bash', [f], { encoding: 'utf8', env: { ...process.env, INSTANCE_ID: id } });
+    };
+    expect(runWith('i-0123456789abcdef0').status).toBe(0);
+    const done = readFileSync(unitFile, 'utf8');
+    expect(done).toContain('--holder=i-0123456789abcdef0 ');
+    expect(done).not.toContain(INSTANCE_ID_PLACEHOLDER);
+    for (const bad of ['', 'i-12', 'i-0123456789abcdef0/x', 'i-0123456789ABCDEF0', "i-01234567'; reboot"]) expect(runWith(bad).status).toBe(1);
   });
 
   test('the admin interface is bound to the pinned Docker bridge, never to all interfaces', () => {
