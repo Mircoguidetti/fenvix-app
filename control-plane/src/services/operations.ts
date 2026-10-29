@@ -555,7 +555,8 @@ export class OperationRunner {
         for (const id of ids) {
           // The users first, so nobody can write while (or after) the data goes: the customer's users lose their roles
           // (kept on the engine, so a refused erase can give them back) and our own user is dropped. Then the database.
-          // Then every user of the database is dropped: the engine's erase does not touch users. If the engine refuses
+          // Then every user of the database is dropped (the final engine's erase drops them itself, so this usually finds
+          // none; it stays for engines that do not, and costs one usersInfo). If the engine refuses
           // the erase for good, finishFailed makes our user again and gives the customer's users their roles back.
           const region = await this.regionOf(ws, id);
           if (region) {

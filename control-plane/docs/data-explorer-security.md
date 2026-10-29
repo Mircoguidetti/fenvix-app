@@ -80,7 +80,7 @@ No answer loads a whole collection: there is no count of documents (only the met
 ### 5. Roles
 
 * Reading: everyone who can read the database today: owner, admin, member, and every API key of the workspace.
-* Inserting, saving, deleting: owner, admin and member (the same people who can already create, fork and restore databases, which also change data), and **only API keys whose `data_access` is `read_write`**. A key without it gets 403 on every write, and the refusal is audited (`outcome = denied`).
+* Inserting, saving, deleting: owner and admin (since organizations, a member only reads: docs/organizations.md), and **only API keys whose `data_access` is `read_write`**. A member or a key without it gets 403 on every write, and the refusal is audited (`outcome = denied`). Checked against the final engine with `--auth` in `tests/engine-real/final-engine.test.ts` (g).
 * The roles were enough for people. For keys there was no notion of "read only", so the minimal change is one column, `api_keys.data_access` (`read` | `read_write`, default `read`) in migration 0004. **Every key that exists today becomes read-only for documents**; a read-write key is made with `POST /api-keys {"name": …, "dataAccess": "readWrite"}` (owner or admin, signed in; keys still cannot make keys). The dashboard's API keys page was not changed, so read-write keys are made through the API for now. Tests: `explorer.test.ts` ("roles and API keys").
 
 ### 6. Credentials towards the engine: one engine user per database

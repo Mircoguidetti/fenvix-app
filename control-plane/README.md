@@ -37,6 +37,11 @@ SEEDED_DATABASE_URL=... node --test tests/integration/seeded.test.ts   # optiona
 # optional: the whole service against REAL engine processes (the suite starts and stops them itself)
 ENGINE_E2E_BIN=<test5 control-ops or fused build>/mongo-server ENGINE_E2E_AUTH_BIN=<test5 compat-gaps build>/mongo-server \
   TEST_DATABASE_URL=... npm run test:engine-real
+# the final engine (test5 final-engine, one binary) as production runs it: local S3 store (MinIO), leases, region,
+# admin interface on 127.0.0.2, --auth, requireTLS. Test credentials of the LOCAL MinIO only; never real AWS.
+ENGINE_E2E_BIN=<test5 final-engine build>/mongo-server ENGINE_E2E_PROFILE=production \
+  ENGINE_E2E_S3_ENDPOINT=http://127.0.0.1:9000 ENGINE_E2E_S3_ACCESS_KEY=<minio user> ENGINE_E2E_S3_SECRET_KEY=<minio password> \
+  ENGINE_E2E_S3_REGION=eu-central-1 ENGINE_E2E_PYTHON=<python with pymongo> TEST_DATABASE_URL=... npm run test:engine-real
 ```
 
 `npm start` runs `node src/server.ts` (Node 22.18 or newer runs TypeScript directly, no build). It needs the environment below. The integration tests create their own users and workspaces with random ids, and connect as `fenvix_control_plane` exactly like production, so they exercise the real grants and policies. They set that role's password to a random value on the scratch database only.

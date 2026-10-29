@@ -6,6 +6,19 @@ Engine code read and run: branch `control-ops` @ `1f473f9` (admin interface, `mo
 
 "infra (main)" means `infra/` on `origin/main` = `origin/infra-aws` @ `0c4a32c`. "infra (this branch)" means `infra/` as it is on `data-browser` / `e2e-engine`: commit `646b694` (engine-adapter) already changed the ports there, and nothing else since.
 
+## 0. Update: the final engine (test5 `final-engine`, engine commit `41ed169`)
+
+Checked on branch `e2e-final` (results in `results-e2e-final.md`). Where this section and the rest of the document disagree, this section is right; the rest describes the two older branches.
+
+* **One binary** has the admin interface, `--auth`, TLS and the users (`mongo-server`, `cargo build --release --workspace`). The engine-real suite runs it as one process; `ENGINE_E2E_PROFILE=production` runs it as the deployment will (local S3 store, leases, region, admin interface on its own address).
+* **S3**: credentials only from the standard AWS chain (environment variables, web identity, container, instance role via IMDSv2); `--region` (or `AWS_REGION` / `AWS_DEFAULT_REGION`) is **required**; `--endpoint` only for S3-compatible stores, empty means AWS. Nothing is fixed in the code any more (2.5 is solved). `--store local` now runs the control operations (one process only).
+* **grantRole rule**: `createUser`/`updateUser`/`grantRolesToUser`/`createRole`/... need `grantRole` on the database of each privilege granted, and the possession of every cluster-wide or any-database privilege. The provisioner (`fenvix_provisioner`: 7 actions on `{db: "", collection: ""}`) still makes everything the control plane makes; it can no longer make `root`, `__system`, cluster roles or any-database roles (gap 2 below: closed). What it can still do with a stolen password: any **database-level** role on any named database (`dbOwner` on a customer database, `readWrite`/`userAdmin` on `admin`), and a copy of its own role. Tested in `tests/engine-real/final-engine.test.ts` (d).
+* **Users and erase/create/fork**: the engine's erase deletes the users and roles defined on the database; create and fork refuse with `409 users_exist` a name that still has users or roles (`exists` is checked first, so a retry of our own create/fork still gets `409 exists`). The control plane keeps its own order (lock, drop `cp_`, erase, drop all): the last step now finds nothing, harmlessly. The control plane's names are made from new ids, so it never meets `users_exist` in its flows.
+* **`Unauthorized` messages** no longer carry `pwd` (gap 3: closed; the control plane still passes none of the engine's text on).
+* **`rotateCertificates`** really reloads the certificate with TLS on (unusable files are refused and the previous certificate stays); with TLS off it answers ok and does nothing. **But with `--auth` no user can run it, not even root** (`authz.rs` has no entry for it, so it needs the internal `anyAction`; the same is true of `tenantAdmin`). In production a renewed certificate therefore still needs an engine restart (2.4 and infra item 6 stay as written). The control plane never sends it.
+* **`tenantAdmin`** (and every other engine command) is not used by the control plane: it drives the engine only through the admin interface with the token; on the data port it sends user commands (as the provisioner) and data commands (as `cp_<id>`). Checked in the source and in the engine's command log (`final-engine.test.ts`, b).
+* Still open: TLS on the admin interface (gap 6), a role allow-list for the provisioner (new, see above).
+
 ## 1. Summary
 
 | Topic | Engine (real) | Control plane | infra (main) | infra (this branch) |
@@ -94,13 +107,16 @@ All adapter routes were run against `control-ops` (results-e2e-engine.md, sectio
 
 ### 2.8 Engine gaps found (to report to the engine side)
 
-1. Admin interface and authentication are on two branches (`control-ops`, `compat-gaps`); production needs both in one binary.
-2. `createUser` does not check `grantRole` on the roles granted: a user with only `createUser` can create a `root` user. mongod checks it.
-3. `Unauthorized` messages repeat the whole command, `pwd` included.
-4. S3 credentials and region are fixed (2.5).
-5. `--store local` cannot run control operations (2.5).
-6. No TLS on the admin interface.
-7. `rotateCertificates` is accepted but does nothing: certificates are read only at start.
+Status with the final engine (section 0) in brackets.
+
+1. Admin interface and authentication are on two branches (`control-ops`, `compat-gaps`); production needs both in one binary. [closed]
+2. `createUser` does not check `grantRole` on the roles granted: a user with only `createUser` can create a `root` user. mongod checks it. [closed; database-level roles remain grantable, section 0]
+3. `Unauthorized` messages repeat the whole command, `pwd` included. [closed]
+4. S3 credentials and region are fixed (2.5). [closed]
+5. `--store local` cannot run control operations (2.5). [closed, one process only]
+6. No TLS on the admin interface. [open]
+7. `rotateCertificates` is accepted but does nothing: certificates are read only at start. [reloads now, but with `--auth` nobody may run it: still a restart in production]
+8. With `--auth`, `tenantAdmin` and `rotateCertificates` are refused even to root (no entry in `authz.rs`). [new; the control plane uses neither]
 
 ## 3. What to change in `infra/` (relative to main = infra-aws @ `0c4a32c`)
 
