@@ -48,8 +48,12 @@ const BUCKET_DENY_ACTIONS = [
 export const GITHUB_OIDC_HOST = 'token.actions.githubusercontent.com';
 
 /** The `sub` claim GitHub puts in the token of a workflow run on a branch (default claim format). */
-export function publishSubjects(repo: string, branches: string[]): string[] {
-  return branches.map((b) => `repo:${repo}:ref:refs/heads/${b}`);
+export function publishSubjects(repo: string, branches: string[], ids?: { ownerId?: string; repoId?: string }): string[] {
+  const byName = branches.map((b) => `repo:${repo}:ref:refs/heads/${b}`);
+  if (!ids?.ownerId || !ids.repoId) return byName;
+  // GitHub also writes the numeric ids into the claim: repo:<owner>@<ownerId>/<name>@<repoId>:ref:...
+  const [owner, name] = repo.split('/');
+  return [...byName, ...branches.map((b) => `repo:${owner}@${ids.ownerId}/${name}@${ids.repoId}:ref:refs/heads/${b}`)];
 }
 
 const instanceType_ = (c: FenvixConfig) => new ec2.InstanceType(c.instanceType);
@@ -221,9 +225,9 @@ export class FenvixStack extends Stack {
         }).attrArn;
 
       // One role per repository, one prefix per role, PutObject only: no read, no list, no delete, no other prefix.
-      const publishers: { id: string; roleName: string; repo: string; branches: string[]; prefix: string }[] = [
-        { id: 'PublishEngineRole', roleName: `${name}-publish-engine`, repo: c.engineRepo, branches: c.engineRepoBranches, prefix: ARTIFACT_PREFIXES.engine },
-        { id: 'PublishControlPlaneRole', roleName: `${name}-publish-control-plane`, repo: c.controlPlaneRepo, branches: c.controlPlaneRepoBranches, prefix: ARTIFACT_PREFIXES.controlPlane },
+      const publishers: { id: string; roleName: string; repo: string; repoId?: string; branches: string[]; prefix: string }[] = [
+        { id: 'PublishEngineRole', roleName: `${name}-publish-engine`, repo: c.engineRepo, repoId: c.engineRepoId, branches: c.engineRepoBranches, prefix: ARTIFACT_PREFIXES.engine },
+        { id: 'PublishControlPlaneRole', roleName: `${name}-publish-control-plane`, repo: c.controlPlaneRepo, repoId: c.controlPlaneRepoId, branches: c.controlPlaneRepoBranches, prefix: ARTIFACT_PREFIXES.controlPlane },
       ];
       const publishRoles = publishers.map((pub) => {
         const r = new iam.Role(this, pub.id, {
@@ -236,7 +240,7 @@ export class FenvixStack extends Stack {
               StringEquals: {
                 [`${GITHUB_OIDC_HOST}:aud`]: 'sts.amazonaws.com',
                 // Exact subjects only (no wildcard): this repository, a run on one of these branches.
-                [`${GITHUB_OIDC_HOST}:sub`]: publishSubjects(pub.repo, pub.branches),
+                [`${GITHUB_OIDC_HOST}:sub`]: publishSubjects(pub.repo, pub.branches, { ownerId: c.githubOwnerId, repoId: pub.repoId }),
               },
             },
             'sts:AssumeRoleWithWebIdentity',

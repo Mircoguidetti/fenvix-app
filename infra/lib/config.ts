@@ -40,6 +40,13 @@ export interface FenvixConfig {
   controlPlaneRepo: string;
   controlPlaneRepoBranches: string[];
   /**
+   * Numeric GitHub ids of the owner and of each repository. GitHub now writes them into the OIDC `sub` claim
+   * (repo:<owner>@<ownerId>/<repo>@<repoId>:ref:...), so when they are set the publish roles trust that form too.
+   */
+  githubOwnerId?: string;
+  engineRepoId?: string;
+  controlPlaneRepoId?: string;
+  /**
    * ARN of the account's GitHub OIDC provider (token.actions.githubusercontent.com) when it exists already (an account
    * can have only one per URL). Empty: the first region's stack creates it.
    */
@@ -202,6 +209,12 @@ export function loadConfig(get: Lookup): FenvixConfig {
     if (!/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(v)) throw new Error(`${key} must be owner/repository, got "${v}"`);
     return v;
   };
+  const numericId = (key: string) => {
+    const v = val(key);
+    if (v === undefined || v === '') return undefined;
+    if (!/^\d{1,20}$/.test(v)) throw new Error(`${key} must be a number (the GitHub id), got "${v}"`);
+    return v;
+  };
   const branches = (key: string) => {
     const list = need(key).split(',').map((b) => b.trim()).filter(Boolean);
     for (const b of list) {
@@ -241,6 +254,9 @@ export function loadConfig(get: Lookup): FenvixConfig {
     engineRepoBranches: branches('engineRepoBranches'),
     controlPlaneRepo: repo('controlPlaneRepo'),
     controlPlaneRepoBranches: branches('controlPlaneRepoBranches'),
+    githubOwnerId: numericId('githubOwnerId'),
+    engineRepoId: numericId('engineRepoId'),
+    controlPlaneRepoId: numericId('controlPlaneRepoId'),
     githubOidcProviderArn,
     artifactsBucket,
     proxyImage,

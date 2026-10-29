@@ -160,6 +160,15 @@ describe('publish roles: limited', () => {
     }
   });
 
+  test('with the GitHub ids set, the roles also trust the id form of the subject GitHub now sends', () => {
+    expect(publishSubjects('Mircoguidetti/fenvix-app', ['main'], { ownerId: '17613795', repoId: '1434576189' })).toEqual([
+      'repo:Mircoguidetti/fenvix-app:ref:refs/heads/main',
+      'repo:Mircoguidetti@17613795/fenvix-app@1434576189:ref:refs/heads/main',
+    ]);
+    expect(publishSubjects('Mircoguidetti/fenvix-app', ['main'], { ownerId: '17613795' })).toEqual(['repo:Mircoguidetti/fenvix-app:ref:refs/heads/main']);
+    expect(() => synth({ githubOwnerId: 'abc' })).toThrow(/must be a number/);
+  });
+
   test('more branches are listed one by one; a wildcard branch is refused', () => {
     expect(publishSubjects('Mircoguidetti/fenvix-engine', ['main', 'release-pipeline'])).toEqual([
       'repo:Mircoguidetti/fenvix-engine:ref:refs/heads/main',
