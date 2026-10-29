@@ -518,7 +518,10 @@ describe("usage sync (engine to Postgres)", () => {
     const { syncWorkspaceUsage } = await import("../../src/services/usage.ts");
     const e = await h.user("Syncer");
     const id = json(await h.as(e).post("/databases", { name: "sync-01", region: "eu-central-1" })).id;
+    // 12:30 UTC of today, whatever the clock says: the sync reads from the start of yesterday (UTC), so an hour 30 hours
+    // back must not depend on the time the test runs (before 06:00 UTC it used to fall outside).
     const now = new Date();
+    now.setUTCHours(12, 30, 0, 0);
     const hour = (back: number) => new Date(Math.floor(now.getTime() / 3600000) * 3600000 - back * 3600000).toISOString();
     h.engine.dbs.get(id)!.db.storageBytes = 3 * 1048576;
     h.engine.dbs.get(id)!.db.state = "awake";
