@@ -36,6 +36,30 @@ export interface NewDatabase {
   appUser?: string;
 }
 
+/**
+ * Create, fork, restore, export and erase are long operations on the control plane. The request waits a while for the
+ * result; when the work takes longer, the dashboard polls the operation until it has succeeded or failed.
+ */
+export type OperationKind = "create" | "fork" | "restore" | "export" | "erase";
+/** "submitting" until the control plane has accepted the request, then the operation's own status. */
+export type OperationStatus = "submitting" | "queued" | "running" | "succeeded" | "failed";
+
+export interface OperationProgress {
+  kind: OperationKind;
+  status: OperationStatus;
+  /** The control plane's operation id, once it is known. */
+  operationId: string | null;
+  /** Set when the status is "failed": the reason, written for people. */
+  error: string | null;
+}
+
+export interface OperationOptions {
+  /** Called on every change of status, so the screen can say what is happening. */
+  onProgress?: (progress: OperationProgress) => void;
+  /** Stops waiting (the operation itself goes on in the background). */
+  signal?: AbortSignal;
+}
+
 /** A file the browser can download. */
 export interface ExportResult {
   filename: string;

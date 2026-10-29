@@ -3,7 +3,7 @@ import { useOrg } from "../session/OrgProvider";
 import { TagChips } from "../components/Tags";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Download, GitFork, History, Trash2 } from "lucide-react";
-import { client, type UsageRange } from "../data";
+import { client, type OperationProgress, type UsageRange } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { CopyButton } from "../components/CopyButton";
@@ -15,6 +15,7 @@ import { DataExplorer } from "../components/DataExplorer";
 import { DatabaseUsers } from "../components/DatabaseUsers";
 import { DatabaseNetwork } from "../components/DatabaseNetwork";
 import { PasswordDialog } from "../components/PasswordOnce";
+import { OperationNote } from "../components/OperationNote";
 import { connectionParts } from "../data/connection";
 import { useAsync } from "../lib/useAsync";
 import { download } from "../lib/download";
@@ -53,6 +54,9 @@ function DatabaseDetail({ id }: { id: string }) {
   const [field, setField] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Where the running fork, restore, erase or export has got to. */
+  const [progress, setProgress] = useState<OperationProgress | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [keepLocal, setKeepLocal] = useState<boolean | null>(null);
   /** The fork's first user and its password, shown once before the fork is opened; never kept after. */
   const [forked, setForked] = useState<{ id: string; username: string; password: string; connectionString: string | null } | null>(null);
@@ -95,6 +99,7 @@ function DatabaseDetail({ id }: { id: string }) {
 
   async function run(work: () => Promise<void>) {
     setBusy(true);
+    setError(null);
     try {
       await work();
       setDialog(null);
@@ -102,37 +107,44 @@ function DatabaseDetail({ id }: { id: string }) {
       setError(e instanceof Error ? e.message : "That did not work. Try again.");
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
+  const track = { onProgress: setProgress };
 
   const fork = () =>
     run(async () => {
-      const copy = await client.forkDatabase(d.id, field);
-      toast(`Forked ${d.name} as ${copy.name}`, "success");
+      const copy = await client.forkDatabase(d.id, field, track);
       const first = copy.initialUser;
+      // After a long fork (202) the password is not in the answer: say how to get one.
+      toast(first && !first.password ? `Forked ${d.name} as ${copy.name}. Its user's password could not be shown: reset it in Users.` : `Forked ${d.name} as ${copy.name}`, "success");
       if (first?.password) setForked({ id: copy.id, username: first.username, password: first.password, connectionString: first.connectionString });
       else navigate(`/databases/${copy.id}`);
     });
   const restore = () =>
     run(async () => {
       if (!field) throw new Error("Choose a date and time.");
-      await client.restoreDatabase(d.id, `${field}:00Z`);
+      await client.restoreDatabase(d.id, `${field}:00Z`, track);
       toast(`Restored ${d.name} to ${formatDateTime(`${field}:00Z`)}`, "success");
       db.reload();
     });
   const erase = () =>
     run(async () => {
-      await client.eraseDatabases([d.id]);
+      await client.eraseDatabases([d.id], track);
       toast(`Erased ${d.name}`, "success");
       navigate("/databases");
     });
   async function exportData() {
+    setExporting(true);
     try {
-      const file = await client.exportDatabases([d.id]);
+      const file = await client.exportDatabases([d.id], track);
       download(file);
       toast(`Export ready: ${file.filename}`, "success");
     } catch (e) {
       toast(e instanceof Error ? e.message : "Export failed.", "error");
+    } finally {
+      setExporting(false);
+      setProgress(null);
     }
   }
   async function toggleKeepAwake(on: boolean) {
@@ -344,15 +356,16 @@ function DatabaseDetail({ id }: { id: string }) {
                 <History size={16} aria-hidden="true" />
                 Restore to a point in time
               </button>
-              <button type="button" className="btn" onClick={exportData}>
+              <button type="button" className="btn" onClick={exportData} disabled={exporting}>
                 <Download size={16} aria-hidden="true" />
-                Export
+                {exporting ? "Exporting…" : "Export"}
               </button>
               <button type="button" className="btn btn-danger" onClick={() => open("erase")}>
                 <Trash2 size={16} aria-hidden="true" />
                 Erase
               </button>
             </div>
+            <OperationNote progress={exporting ? progress : null} />
             </>)}
             {!canManage && <Message>You have view-only access: keep awake, fork, restore, export and erase are for owners and admins.</Message>}
           </Card>
@@ -379,6 +392,7 @@ function DatabaseDetail({ id }: { id: string }) {
               {error}
             </p>
           )}
+          <OperationNote progress={busy ? progress : null} />
         </div>
       </ConfirmDialog>
 
@@ -392,6 +406,7 @@ function DatabaseDetail({ id }: { id: string }) {
               {error}
             </p>
           )}
+          <OperationNote progress={busy ? progress : null} />
         </div>
       </ConfirmDialog>
 
@@ -407,6 +422,7 @@ function DatabaseDetail({ id }: { id: string }) {
               {error}
             </p>
           )}
+          <OperationNote progress={busy ? progress : null} />
         </div>
       </ConfirmDialog>
     </>

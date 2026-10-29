@@ -2,7 +2,7 @@
 
 This is the HTTP API the dashboard needs. Each method of `DataClient` (`src/data/client.ts`) and `SessionClient` (`src/session/client.ts`) maps to exactly one endpoint below. The TypeScript types in `src/data/types.ts` and `src/session/client.ts` are the source of truth for the JSON shapes; they are copied here so the engine team does not need the front-end code.
 
-The dashboard ships with two implementations of each interface: a mock (`VITE_DATA_BACKEND=mock`) and one on Supabase (the default). The Supabase one does not use the HTTP endpoints below; see "Running on Supabase" at the end for how each method maps onto database functions and where its behaviour differs. These endpoints remain the contract for the engine team.
+The dashboard ships with three implementations of `DataClient`, picked in `src/data/index.ts`: a mock (`VITE_DATA_BACKEND=mock`), the control plane over HTTP (`src/data/api-http.ts`, whenever `VITE_API_URL` is set) and the Supabase functions (otherwise). The HTTP one uses the endpoints below; see "The dashboard on the control plane" at the end for what it adds (operations, idempotency, errors). The Supabase one does not use them; see "Running on Supabase" for how each method maps onto database functions and where its behaviour differs.
 
 ## Conventions
 
@@ -415,6 +415,28 @@ The emailed link points at `https://app.fenvix.cloud/?token=<token>`. The dashbo
 
 Ends the session and clears the cookie. Response `204`. Signing out when already signed out is also `204`.
 
+
+---
+
+## The dashboard on the control plane
+
+`src/data/api-http.ts` implements every `DataClient` method with the endpoint of the same name above, with the
+session token of the signed-in person as `Authorization: Bearer`, the chosen organization as `X-Fenvix-Workspace`,
+and the error handling shared with the Data, Users, Network and organization screens (`src/data/http.ts`).
+Where the service goes beyond this contract (see `control-plane/docs/api-extensions.md`), the dashboard does this:
+
+- **Operations.** Create, fork, restore, export and erase may answer `202 { "operation": { id, status, ... } }`
+  instead of their result. The client then polls `GET /operations/{id}` (every 1.5 s, up to 10 minutes) until
+  `status` is `succeeded` (the result is in `result`) or `failed` (the reason is in `error.message`, shown as is).
+  The screens show the state on the way: sending, queued, in progress, done, or the reason it failed.
+- **Idempotency.** Every `POST` and `PUT` carries a new `Idempotency-Key` per action. When the answer is lost
+  (network error, 502, 503, 504) the same request is sent again with the same key, at most twice.
+- **The initial password** of a create or fork is shown only when the first answer (`201`) carries
+  `initialUser.password`. After a `202`, a replay or a poll it is `null`, and the screen says to reset the password
+  in the Users tab.
+- **Errors.** The server's `error.message` is shown as is. An answer without one (a proxy page, an empty body) gets a
+  sentence for its status: 401 "Your session has ended. Sign in again.", 403, 404, 409, 422, 429 and 5xx likewise.
+- **VITE_API_URL** includes `/v1` (`https://api.fenvix.dev/v1`); a bare host gets `/v1` added.
 
 ---
 

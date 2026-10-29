@@ -1,7 +1,9 @@
 /**
- * Configuration that comes from the environment. Only two public values exist in the browser:
- * the Supabase URL and its anon key. Nothing secret is ever read here.
+ * Configuration that comes from the environment. Only public values exist in the browser: the Supabase URL and its
+ * anon key, and the control plane's address. Nothing secret is ever read here.
  */
+import { normalizeApiUrl } from "../data/http";
+
 export type Backend = "supabase" | "mock";
 
 const raw = import.meta.env;
@@ -10,10 +12,12 @@ const raw = import.meta.env;
 export const backend: Backend = raw.VITE_DATA_BACKEND === "mock" ? "mock" : "supabase";
 
 /**
- * The control-plane API, including /v1 (for example https://api.fenvix.cloud/v1). Only the Data Explorer uses it
- * today; without it the Data tab says it is not set up. Not a secret.
+ * The control-plane API, including /v1 (for example https://api.fenvix.dev/v1). A bare host (https://api.fenvix.dev)
+ * gets /v1 added. When it is set, every data screen talks to the control plane (src/data/index.ts); without it the
+ * dashboard reads and writes through the Supabase functions and the Data, Users and Network tabs say they are not set
+ * up. Not a secret.
  */
-export const apiUrl: string = (raw.VITE_API_URL ?? "").trim().replace(/\/+$/, "");
+export const apiUrl: string = normalizeApiUrl(raw.VITE_API_URL ?? "");
 
 export const supabaseUrl: string = (raw.VITE_SUPABASE_URL ?? "").trim();
 export const supabaseAnonKey: string = (raw.VITE_SUPABASE_ANON_KEY ?? "").trim();
