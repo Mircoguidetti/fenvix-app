@@ -82,5 +82,11 @@ export interface DataClient {
   /** Replaces the one document matching `filter` (its `_id` and the values last read). */
   replaceOne(t: DataTarget, collection: string, filter: Document, doc: Document, o: CallOptions): Promise<{ matched: number }>;
   deleteOne(t: DataTarget, collection: string, filter: Document, o: CallOptions): Promise<{ deleted: number }>;
+  /**
+   * The address this process reaches the engine's MongoDB listener of a region from, as the engine sees it (the local
+   * end of a TCP connection; there is no address translation between a container and its host). Null when it cannot be
+   * reached. Used to tell whether the engine trusts the control plane (docs/network-allowlist.md).
+   */
+  sourceAddress(region: string): Promise<string | null>;
   close(): Promise<void>;
 }

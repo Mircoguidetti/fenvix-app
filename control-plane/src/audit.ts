@@ -14,7 +14,8 @@ const SECRET_KEYS = /secret|token|password|authorization|cookie|key_hash|connect
 
 function scrub(value: unknown, depth = 0): unknown {
   if (depth > 4) return "[deep]";
-  if (Array.isArray(value)) return value.slice(0, 50).map((v) => scrub(v, depth + 1));
+  // 100: an IP allowlist (at most 100 entries) is kept whole in its before and after.
+  if (Array.isArray(value)) return value.slice(0, 100).map((v) => scrub(v, depth + 1));
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, SECRET_KEYS.test(k) ? "[removed]" : scrub(v, depth + 1)]));
   }

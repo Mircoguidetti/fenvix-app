@@ -14,10 +14,14 @@ import type { EngineSettings } from "../config.ts";
  * is a name this service makes (`db_` and 32 hex digits; see names.ts), never any other database in the engine.
  * Routes that exist in the engine but that no operation needs are left out on purpose: `GET /v1/databases` (it
  * would list every customer's databases), `/manifest`, `/checkpoints`, `DELETE /v1/exports/{id}`, `/v1/health`.
+ * `GET /v1/network` does show every address the engine tracks: the adapter keeps only the blocks of the database asked
+ * about and the trusted networks (real.ts), and passes nothing else on.
  */
 const DB = "db_[0-9a-f]{32}";
 const EXPORT_ID = `${DB}\\.[0-9a-f]{16}`;
 const FILE = "[^/?#]{1,300}";
+/** An IPv4 or IPv6 address as the adapter writes it (checked before by netlist.ts). */
+const IP = "[0-9a-f.:]{2,39}";
 
 export type RouteClass = "short" | "long";
 
@@ -38,6 +42,11 @@ export const ALLOWED_ROUTES: readonly Route[] = [
   route("POST", `databases/${DB}/exports`, "long", "export snapshot"),
   route("GET", `exports/${EXPORT_ID}`, "short", "export record"),
   route("GET", `exports/${EXPORT_ID}/files/${DB}/${FILE}`, "long", "export file"),
+  route("GET", `databases/${DB}/ip-allowlist`, "short", "read the IP allowlist"),
+  route("PUT", `databases/${DB}/ip-allowlist`, "short", "set the IP allowlist"),
+  route("DELETE", `databases/${DB}/ip-allowlist`, "short", "clear the IP allowlist"),
+  route("GET", "network", "short", "network state (blocks, trusted networks)"),
+  route("DELETE", `network/blocks/${IP}`, "short", "unblock an address"),
 ];
 
 /** The class of an allowed request, or a refusal. Never reaches the network for anything else. */

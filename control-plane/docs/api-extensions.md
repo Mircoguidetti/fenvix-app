@@ -117,3 +117,30 @@ Changes to existing behaviour:
 * A `member` can no longer create, fork, restore, export, erase, keep awake or tag databases, download invoices, or
   change documents in the Data Explorer (`403`). Reading is unchanged.
 * `403` for a person with no organization now says to create one or accept an invitation.
+
+## IP allowlist
+
+Which addresses may sign in to a database, and the addresses the engine has blocked after failed sign-ins. Rules,
+order of the operations, divergence with the engine and what the control plane does so it never blocks itself are in
+[`network-allowlist.md`](network-allowlist.md). Needs migration `0009_ip_allowlist.sql` and the engine of
+`Mircoguidetti/test5` branch `network-limits` (commit 1c9fee7 or later). Five routes, not in the contract document; the
+contract test lists them as extensions:
+
+* `GET /databases/{id}/ip-allowlist` (every role, API keys) -> `{ entries, allowAll, maxEntries, updatedAt, updatedBy:
+  { type, id, name } | null, engine: { status: "in_sync" | "different" | "unavailable", entries?, enforced },
+  dataExplorer: { trusted: true | false | null } }`. `entries` is the saved list in the engine's form; `engine.entries`
+  is there only when the engine holds a different list.
+* `PUT /databases/{id}/ip-allowlist` `{ entries: [...] }` (owner, admin, API keys; a member gets `403`) -> the same
+  answer. At most 100 IPv4 or IPv6 addresses or CIDR networks, checked with the engine's rules; `[]` allows every
+  address. A refused entry is a `400` whose `field` is `entries[<index>]`. The engine is changed first; if it refuses
+  or does not answer, nothing is saved (`400` or `503`).
+* `POST /databases/{id}/ip-allowlist/reapply` (owner, admin, API keys) -> the same answer: sends the saved list to the
+  engine again, after `engine.status` was `different`.
+* `GET /databases/{id}/network/blocks` (owner, admin, API keys) -> `{ items: [{ ip, until, remainingSecs }] }`: the
+  addresses blocked on this database. Only the address (an IPv6 block is shown as its `/64`) and its end.
+* `POST /databases/{id}/network/unblock` `{ ip }` (owner, admin, API keys) -> `{ ip, unblocked }`. Only an address the
+  previous route lists; anything else is a `404`.
+
+Every change is recorded in `audit_log`: `database.ip_allowlist.set` and `.reapply` with `before` and `after`,
+`database.network.unblock` with `ip`.
+

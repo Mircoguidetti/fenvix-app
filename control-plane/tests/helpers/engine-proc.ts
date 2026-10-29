@@ -190,7 +190,12 @@ export function localS3(): LocalS3 {
   return s3;
 }
 
-export async function startEngines(adminBin: string, authBin: string | undefined): Promise<EngineEnv> {
+export interface EngineStartOptions {
+  /** More flags for the engine with the admin interface (for example --trusted-networks). */
+  extraArgs?: string[];
+}
+
+export async function startEngines(adminBin: string, authBin: string | undefined, so: EngineStartOptions = {}): Promise<EngineEnv> {
   const capsA = capabilities(adminBin);
   if (!capsA.admin) throw new Error("ENGINE_E2E_BIN has no admin interface (--admin-listen): build branch control-ops (or the fused branch)");
   const fused = capsA.auth && (!authBin || authBin === adminBin);
@@ -211,6 +216,7 @@ export async function startEngines(adminBin: string, authBin: string | undefined
   const admin = new EngineProcess({
     bin: adminBin, dataPort, adminPort, tokenFile, ...(fused ? { auth: true, tls: { serverPem: tls.serverPem } } : {}),
     ...(prod ? { s3, adminHost: process.env.ENGINE_E2E_ADMIN_HOST ?? "127.0.0.2", logCommands: true } : {}),
+    ...(so.extraArgs ? { extraArgs: so.extraArgs } : {}),
   });
   const auth = fused ? admin : new EngineProcess({ bin: authPath, dataPort: authPort, auth: true, tls: { serverPem: tls.serverPem } });
   const root = { username: "bootstrap_root", password: randomBytes(18).toString("base64url") };

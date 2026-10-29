@@ -51,6 +51,22 @@ export interface EngineExport {
   sizeBytes: number;
 }
 
+/** The IP allowlist of a database as the engine holds it (docs/network-allowlist.md). */
+export interface EngineAllowlist {
+  /** The networks in the engine's form (`10.0.0.0/8`, `203.0.113.7/32`); empty: every address is allowed. */
+  entries: string[];
+  /** False when the engine runs without authentication: then nothing checks the list. */
+  enforced: boolean;
+}
+
+/** An address the engine refuses on one database after too many failed sign-ins. Never a user name or a password. */
+export interface EngineBlock {
+  /** The address, or its /64 for IPv6 (the engine counts IPv6 per /64), as the engine shows it. */
+  ip: string;
+  until: string;
+  remainingSecs: number;
+}
+
 export type EngineErrorKind =
   /** The id is unknown to the engine. */
   | "not_found"
@@ -88,6 +104,16 @@ export interface EngineClient {
   setKeepAwake(req: { id: string; enabled: boolean }): Promise<EngineDatabase>;
   /** Hourly usage in [from, to), plus wake-ups, for the usage sync. */
   usage(req: { id: string; from: string; to: string }): Promise<EngineUsage>;
+  /** The database's IP allowlist in the engine. */
+  getIpAllowlist(id: string): Promise<EngineAllowlist>;
+  /** Replaces the list (empty: removes it, every address allowed). The engine checks the entries again. Repeatable. */
+  setIpAllowlist(req: { id: string; entries: string[] }): Promise<EngineAllowlist>;
+  /** Addresses blocked on this database right now (not the blocks of every database: those are other customers' too). */
+  networkBlocks(id: string): Promise<EngineBlock[]>;
+  /** Lifts every block of the address (an IP, or the network part of an IPv6 /64), on the engine that holds the database. */
+  unblockAddress(req: { id: string; ip: string }): Promise<{ unblocked: boolean }>;
+  /** The networks the engine of a region trusts (`--trusted-networks`): they skip lists, blocks and counting. */
+  trustedNetworks(region: string): Promise<string[]>;
   /**
    * Only for engines whose export is not a download link of their own: the archive of an export, produced as a
    * stream by this service and served at a signed `/downloads/` link. Absent on the fake.

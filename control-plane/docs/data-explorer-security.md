@@ -179,6 +179,16 @@ The test suite does exactly this (`tests/helpers/engine-proc.ts`, `bootstrap()`)
 * Connections: one driver client per database (it authenticates as that database's user), at most `DATA_ENGINE_MAX_CLIENTS` (100) open (the least recently used idle one is closed first; if all are busy the request gets 503), each with a pool of at most `DATA_ENGINE_POOL_MAX` (5) connections, each closed after `DATA_ENGINE_POOL_IDLE_MS` (30 s) unused, `minPoolSize` 0, and the whole client (including its monitoring connection) is closed after `DATA_ENGINE_CLIENT_IDLE_CLOSE_MS` (60 s) without a request for that database.
 * How this interacts with sleep and keep awake: the engine wakes and keeps a database open only for commands that name it, and closes it after its idle time (`--idle-secs`). A connection is to the engine, not to a database, and the driver's monitoring sends `hello` to `admin`. Verified on the real engine: with a client connected and sending heartbeats every 500 ms, the database written through it was closed by the engine 5 s after the write (`writer_close` / `release` in the engine log). So an open browser tab, an idle pool or the monitoring connection keep nothing awake; only actual Data Explorer requests do, like any client's. The dashboard never polls. "Keep awake" is unchanged: a pinned database stays awake whatever the explorer does; browsing an unpinned database keeps it awake only while requests come, then it sleeps after the engine's idle time.
 
+## IP allowlists and blocks (engine network-limits)
+
+The Data Explorer signs in as `cp_<hex>` on `db_<hex>`, so a database's IP allowlist applies to it **unless the engine
+trusts the control plane's address** (`--trusted-networks`; in production the control plane's Docker network, see
+`infra/`). The Network tab shows a warning when the engine does not (`dataExplorer.trusted: false`). Failed sign-ins of
+the Data Explorer and of the provisioner are counted by the control plane itself and it stops signing in well before
+the engine would block its address (`src/engine/auth-guard.ts`): during a master key rotation, a database not seen yet is
+tried first with the key version that worked last, so a rotation costs about one failed sign-in, not one per database.
+Details and the tests against the real engine: [`network-allowlist.md`](network-allowlist.md).
+
 ## Residual risk (what is not solved)
 
 1. **The control plane still holds the master key**, from which every database's password can be derived, and the provisioner. A compromised control-plane process can therefore still reach every database (as it can erase them with the admin token). What changed: a *bug* in the code can no longer cross databases (the engine refuses), and no credential that reads everything exists in the Data Explorer, in Postgres or in a log. Narrower still would need the engine to accept short-lived per-request tokens.

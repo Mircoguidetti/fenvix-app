@@ -50,5 +50,8 @@ test("every route the service has beyond the contract is one we documented as an
     "GET /v1/organization", "PUT /v1/organization", "POST /v1/organization/leave",
     "GET /v1/organization/members", "PUT /v1/organization/members/:userId", "DELETE /v1/organization/members/:userId",
     "GET /v1/organization/invitations", "POST /v1/organization/invitations", "POST /v1/organization/invitations/:id/revoke",
+    // The IP allowlist and the network blocks of a database (docs/api-extensions.md, "IP allowlist").
+    "GET /v1/databases/:id/ip-allowlist", "PUT /v1/databases/:id/ip-allowlist", "POST /v1/databases/:id/ip-allowlist/reapply",
+    "GET /v1/databases/:id/network/blocks", "POST /v1/databases/:id/network/unblock",
   ].sort());
 });

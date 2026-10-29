@@ -1,9 +1,11 @@
 import { BSON } from "bson";
+import { connect as tcpConnect } from "node:net";
 import { type Document, MongoClient, type MongoClientOptions, MongoServerError } from "mongodb";
 import type { DataSettings } from "../config.ts";
 import { type EngineCredential, type EngineUserKey, engineCredential } from "./credentials.ts";
 import { type CallOptions, type CollectionInfo, type DataClient, DataError, type DataTarget, type FindOptions, targetDbName } from "./data.ts";
 import { READ_OPTIONS } from "./data-fake.ts";
+import { type AuthAttempt, type AuthFailureGuard, AuthGuardRefusal, processAuthGuard } from "./auth-guard.ts";
 
 /** Extra time the client waits after the engine's own maxTimeMS before giving up on a command. */
 const CLIENT_GRACE_MS = 2000;
@@ -11,7 +13,13 @@ const CLIENT_GRACE_MS = 2000;
 /** The master key versions the Data Explorer derives per-database passwords with. Never the provisioner. */
 export interface DataUserKeys { current: EngineUserKey; previous: EngineUserKey | null }
 
-interface Entry { client: MongoClient; lastUsed: number; inFlight: number; region: string; db: string; version: string }
+interface Entry {
+  client: MongoClient; lastUsed: number; inFlight: number; region: string; db: string; version: string;
+  /** Has this client signed in successfully? Until it has, its first command is a sign-in attempt the engine may count. */
+  proven: boolean;
+  /** The attempt in progress on a client that has not signed in yet: the others wait for it instead of trying too. */
+  proving: Promise<void> | null;
+}
 
 /**
  * The Data Explorer's connection to the engine's MongoDB listener, through the official driver.
@@ -35,12 +43,20 @@ export class MongoDataClient implements DataClient {
   private readonly keys: DataUserKeys | null;
   private readonly clients = new Map<string, Entry>();
   /** Database id -> the key version that worked last (during a rotation some users still have the previous one). */
-  private readonly versionOf = new Map<string, string>();
+  private readonly versionOf = new Map<string, { version: string; at: number }>();
+  /**
+   * The key version that worked last on any database. During a rotation most users have the same version, so a database
+   * not seen yet is tried with it first: one failed sign-in for the whole rotation instead of one per database.
+   */
+  private lastGood: { version: string; at: number } | null = null;
   private readonly timer: NodeJS.Timeout;
+  /** Failed sign-ins of this process, so the engine never blocks the control plane's address (auth-guard.ts). */
+  private readonly guard: AuthFailureGuard;
 
-  constructor(cfg: DataSettings, keys: DataUserKeys | null = null) {
+  constructor(cfg: DataSettings, keys: DataUserKeys | null = null, guard: AuthFailureGuard = processAuthGuard) {
     if (cfg.perDatabaseUsers && !keys) throw new Error("per-database users need the master key");
     this.cfg = cfg;
+    this.guard = guard;
     this.keys = cfg.perDatabaseUsers ? keys : null;
     this.timer = setInterval(() => void this.closeIdle(), Math.min(10_000, cfg.clientIdleCloseMs));
     this.timer.unref();
@@ -78,8 +94,10 @@ export class MongoDataClient implements DataClient {
   private credentials(t: DataTarget): EngineCredential[] {
     if (!this.keys) return [];
     const all = [this.keys.current, ...(this.keys.previous ? [this.keys.previous] : [])].map((k) => engineCredential(k, t.id));
-    const known = this.versionOf.get(t.id);
-    return known ? [...all.filter((c) => c.version === known), ...all.filter((c) => c.version !== known)] : all;
+    const mine = this.versionOf.get(t.id);
+    // The newer of "what worked on this database" and "what worked on any database" goes first.
+    const first = mine && (!this.lastGood || mine.at >= this.lastGood.at) ? mine.version : this.lastGood?.version;
+    return first ? [...all.filter((c) => c.version === first), ...all.filter((c) => c.version !== first)] : all;
   }
 
   private async entry(t: DataTarget, cred: EngineCredential | undefined): Promise<Entry> {
@@ -89,7 +107,7 @@ export class MongoDataClient implements DataClient {
     let e = this.clients.get(key);
     if (!e) {
       if (this.clients.size >= this.cfg.maxClients) await this.closeLeastRecentlyUsed();
-      e = { client: new MongoClient(`mongodb://${addr}/`, this.options(cred)), lastUsed: Date.now(), inFlight: 0, region: t.region, db: cred?.authSource ?? "", version: cred?.version ?? "" };
+      e = { client: new MongoClient(`mongodb://${addr}/`, this.options(cred)), lastUsed: Date.now(), inFlight: 0, region: t.region, db: cred?.authSource ?? "", version: cred?.version ?? "", proven: false, proving: null };
       // A pool error must not crash the process, and its message (which can carry the address) is not logged.
       e.client.on("error", () => {});
       this.clients.set(key, e);
@@ -112,8 +130,12 @@ export class MongoDataClient implements DataClient {
     const attempts: (EngineCredential | undefined)[] = creds.length ? creds : [undefined];
     for (let i = 0; ; i++) {
       try {
-        const r = await this.once(t, attempts[i], work, timeoutMs);
-        if (attempts[i]) this.versionOf.set(t.id, attempts[i]!.version);
+        const r = await this.signedIn(t, attempts[i], work, timeoutMs);
+        if (attempts[i]) {
+          const now = Date.now();
+          this.versionOf.set(t.id, { version: attempts[i]!.version, at: now });
+          if (this.lastGood?.version !== attempts[i]!.version) this.lastGood = { version: attempts[i]!.version, at: now };
+        }
         return r;
       } catch (err) {
         // Authentication failed with this key version: during a rotation the user may still have the other one.
@@ -124,8 +146,41 @@ export class MongoDataClient implements DataClient {
     }
   }
 
-  private async once<T>(t: DataTarget, cred: EngineCredential | undefined, work: (db: ReturnType<MongoClient["db"]>) => Promise<T>, timeoutMs: number): Promise<T> {
+  /**
+   * One command on the client of a credential. A client that has not signed in yet signs in with this command: that is
+   * an attempt the engine counts if it fails, so it goes through the guard, one at a time per client. A failed sign-in
+   * on a client that had signed in before (a password or an allowlist changed under it) is counted too.
+   */
+  private async signedIn<T>(t: DataTarget, cred: EngineCredential | undefined, work: (db: ReturnType<MongoClient["db"]>) => Promise<T>, timeoutMs: number): Promise<T> {
     const e = await this.entry(t, cred);
+    const authSource = cred?.authSource ?? this.cfg.authSource;
+    while (!e.proven && e.proving) await e.proving;
+    let attempt: AuthAttempt | null = null;
+    let release: () => void = () => {};
+    if (!e.proven) {
+      try { attempt = this.guard.begin(t.region, authSource, "data"); } catch (x) {
+        if (x instanceof AuthGuardRefusal) throw new DataError("unavailable", "auth-guard");
+        throw x;
+      }
+      e.proving = new Promise<void>((r) => { release = r; });
+    }
+    try {
+      const r = await this.once(e, t, work, timeoutMs);
+      e.proven = true;
+      attempt?.done(true);
+      return r;
+    } catch (err) {
+      const failedSignIn = mapError(err).code === 18;
+      if (attempt) attempt.done(!failedSignIn);
+      else if (failedSignIn) this.guard.failed(t.region, authSource);
+      if (failedSignIn) e.proven = false;
+      throw err;
+    } finally {
+      if (attempt) { e.proving = null; release(); }
+    }
+  }
+
+  private async once<T>(e: Entry, t: DataTarget, work: (db: ReturnType<MongoClient["db"]>) => Promise<T>, timeoutMs: number): Promise<T> {
     e.inFlight++;
     e.lastUsed = Date.now();
     let timer: NodeJS.Timeout | undefined;
@@ -212,6 +267,22 @@ export class MongoDataClient implements DataClient {
         await e.client.close().catch(() => {});
       }
     }
+  }
+
+  async sourceAddress(region: string): Promise<string | null> {
+    const addr = this.cfg.endpoints[region];
+    if (!addr) return null;
+    const i = addr.lastIndexOf(":");
+    const host = addr.slice(0, i).replace(/^\[|\]$/g, "");
+    const port = Number(addr.slice(i + 1));
+    return new Promise((resolve) => {
+      // A bare TCP connection, closed at once: nothing is sent, so the engine counts nothing and wakes nothing.
+      const sock = tcpConnect({ host, port, timeout: this.cfg.connectTimeoutMs });
+      const done = (v: string | null) => { sock.destroy(); resolve(v); };
+      sock.once("connect", () => done(sock.localAddress ?? null));
+      sock.once("timeout", () => done(null));
+      sock.once("error", () => done(null));
+    });
   }
 
   /** Regions with an open client (tests). */

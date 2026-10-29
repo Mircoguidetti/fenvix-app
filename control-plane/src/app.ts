@@ -26,6 +26,7 @@ import { dataRoutes } from "./routes/data.ts";
 import { sessionRoutes } from "./routes/session.ts";
 import { explorerRoutes } from "./routes/explorer.ts";
 import { usersRoutes } from "./routes/users.ts";
+import { networkRoutes } from "./routes/network.ts";
 import { orgRoutes } from "./routes/orgs.ts";
 
 export interface AppOptions {
@@ -180,6 +181,7 @@ export async function buildApp(opts: AppOptions): Promise<App> {
     dataRoutes(v1, deps);
     await v1.register(async (sub) => explorerRoutes(sub, deps));
     await v1.register(async (sub) => usersRoutes(sub, deps));
+    networkRoutes(v1, deps);
     orgRoutes(v1, deps);
   }, { prefix: "/v1" });
 

@@ -12,7 +12,8 @@ config/plans.json    plans, plan limits, unit rates. Ships with NO price, NO rat
 src/config.ts        every setting, from environment variables
 src/app.ts           Fastify app: logging, CORS, error handler, request ids, downloads, route registration
 src/http.ts          authentication, rate limits, idempotency and operation answers around each route
-src/routes/          data.ts (sections 1 and 2), session.ts (section 3), explorer.ts (Data Explorer), users.ts (database users)
+src/routes/          data.ts (sections 1 and 2), session.ts (section 3), explorer.ts (Data Explorer), users.ts (database users),
+                     network.ts (IP allowlist and network blocks, docs/network-allowlist.md)
 src/explorer/        rules.ts: what a browser may send to the Data Explorer (collection names, filters, documents, Extended JSON)
 src/services/        databases, operations (create/fork/restore/export/erase runner), usage, account (billing, keys, settings)
 src/engine/          EngineClient interface, the in-memory fake, and the real adapter (real.ts, admin-http.ts with the route allowlist, names.ts, zip.ts);
@@ -23,6 +24,7 @@ src/auth/            Supabase JWT verification (JWKS) and the Supabase Auth gate
 ../supabase/migrations/0004_data_explorer.sql   Data Explorer: audit log of document writes, API key data access
 ../supabase/migrations/0005_engine_users.sql   the user sweep's view of databases (id, region, state)
 ../supabase/migrations/0007_database_users.sql   database users: API key user access, the connection string's user name
+../supabase/migrations/0009_ip_allowlist.sql   the IP allowlist of each database (the control plane's copy of the engine's list)
 tests/unit, tests/integration, tests/helpers
 ```
 
@@ -30,7 +32,7 @@ tests/unit, tests/integration, tests/helpers
 
 ```bash
 cd control-plane && npm ci
-# a scratch Postgres 15+ (never Supabase): apply the stand-ins and the migrations (0001-0005, 0007)
+# a scratch Postgres 15+ (never Supabase): apply the stand-ins and the migrations (0001-0005, 0007-0009)
 TEST_DATABASE_URL=postgresql://postgres@localhost:5432/cp_scratch bash scripts/prepare-test-db.sh
 npm test                       # typecheck, unit tests, integration tests (needs TEST_DATABASE_URL)
 SEEDED_DATABASE_URL=... node --test tests/integration/seeded.test.ts   # optional: the 3,000 database seed
@@ -135,6 +137,17 @@ engine (as a SCRAM hash). `/v1/databases/{id}/users` lists, creates, resets and 
 service needs migration `0007_database_users.sql` (after 0002 and 0004; safe to repeat): run it before deploying it.
 Everything (roles, permissions, API keys, limits, erase, fork, restore, audit, what is not done) is in
 [`docs/database-users.md`](docs/database-users.md).
+
+## IP allowlist and network limits
+
+Each database can have an IP allowlist (at most 100 IPv4 or IPv6 addresses or networks): the engine of test5
+`network-limits` refuses a sign-in from any other address with the error of a wrong password, and blocks addresses that
+fail to sign in too often. Five routes under `/v1/databases/{id}/ip-allowlist` and `/network/...`
+(`docs/api-extensions.md`); the engine is changed first, then the list is saved (migration `0009_ip_allowlist.sql`, run
+it before deploying this version). The control plane never gets its own address blocked: it limits its own failed
+sign-ins (`src/engine/auth-guard.ts`), and the deployment trusts its Docker network (`--trusted-networks`, `infra/`).
+Everything (rules, roles, order, divergence, blocks, the proofs against the real engine) is in
+[`docs/network-allowlist.md`](docs/network-allowlist.md).
 
 ## Limits worth knowing
 

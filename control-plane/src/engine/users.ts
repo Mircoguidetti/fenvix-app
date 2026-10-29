@@ -4,6 +4,7 @@ import type { DataSettings, EngineUserSettings } from "../config.ts";
 import { type EngineCredential, type EngineUserKey, engineCredential, engineUserName, idFromEngineUserName } from "./credentials.ts";
 import { engineName } from "./names.ts";
 import { EngineError } from "./types.ts";
+import { type AuthAttempt, type AuthFailureGuard, AuthGuardRefusal, processAuthGuard } from "./auth-guard.ts";
 
 /**
  * The per-database engine users: made with the database, dropped with it, checked against Postgres by a sweep.
@@ -111,11 +112,14 @@ function toEngineError(e: unknown, what: string): EngineError {
 export class MongoEngineUsers implements EngineUsers {
   private readonly data: DataSettings;
   private readonly cfg: EngineUserSettings;
-  private readonly clients = new Map<string, MongoClient>();
+  private readonly clients = new Map<string, { client: MongoClient; proven: boolean; proving: Promise<void> | null }>();
+  /** Failed sign-ins of this process (auth-guard.ts): a wrong provisioner password must not get the address blocked. */
+  private readonly guard: AuthFailureGuard;
 
-  constructor(data: DataSettings, cfg: EngineUserSettings) {
+  constructor(data: DataSettings, cfg: EngineUserSettings, guard: AuthFailureGuard = processAuthGuard) {
     this.data = data;
     this.cfg = cfg;
+    this.guard = guard;
   }
 
   private options(): MongoClientOptions {
@@ -142,23 +146,50 @@ export class MongoEngineUsers implements EngineUsers {
     };
   }
 
-  private client(region: string): MongoClient {
+  private client(region: string) {
     const addr = this.data.endpoints[region];
     if (!addr) throw new EngineError("invalid", `there is no engine for region ${region}`);
     let c = this.clients.get(region);
     if (!c) {
-      c = new MongoClient(`mongodb://${addr}/`, this.options());
-      c.on("error", () => {}); // its message can carry the address
+      const client = new MongoClient(`mongodb://${addr}/`, this.options());
+      client.on("error", () => {}); // its message can carry the address
+      c = { client, proven: false, proving: null };
       this.clients.set(region, c);
     }
     return c;
   }
 
+  /**
+   * One command as the provisioner. Until the client has signed in once, a command is a sign-in attempt the engine counts
+   * if it fails: it goes through the guard, one at a time. When the guard says no, the operation is retried later
+   * (unavailable), and the address is never blocked by the engine.
+   */
   private async command(region: string, db: string, cmd: Record<string, unknown>, what: string): Promise<Record<string, unknown>> {
+    const c = this.client(region);
+    const authSource = this.cfg.provisioner.authSource;
+    while (!c.proven && c.proving) await c.proving;
+    let attempt: AuthAttempt | null = null;
+    let release: () => void = () => {};
+    if (!c.proven) {
+      try { attempt = this.guard.begin(region, authSource, "provisioner"); } catch (x) {
+        if (x instanceof AuthGuardRefusal) throw new EngineError("unavailable", `the control plane paused signing in as the provisioner after failed attempts (${what})`);
+        throw x;
+      }
+      c.proving = new Promise<void>((r) => { release = r; });
+    }
     try {
-      return await this.client(region).db(db).command(cmd, { maxTimeMS: this.data.commandTimeoutMs } as never);
+      const r = await c.client.db(db).command(cmd, { maxTimeMS: this.data.commandTimeoutMs } as never);
+      c.proven = true;
+      attempt?.done(true);
+      return r;
     } catch (e) {
+      const failedSignIn = code(e) === 18;
+      if (attempt) attempt.done(!failedSignIn);
+      else if (failedSignIn) this.guard.failed(region, authSource);
+      if (failedSignIn) c.proven = false;
       throw Object.assign(toEngineError(e, what), { engineCode: code(e) });
+    } finally {
+      if (attempt) { c.proving = null; release(); }
     }
   }
 
@@ -318,7 +349,7 @@ export class MongoEngineUsers implements EngineUsers {
   async close(): Promise<void> {
     const all = [...this.clients.values()];
     this.clients.clear();
-    await Promise.all(all.map((c) => c.close().catch(() => {})));
+    await Promise.all(all.map((c) => c.client.close().catch(() => {})));
   }
 }
 

@@ -3,7 +3,8 @@ import { engineName, idFromEngineName, isEngineName } from "./names.ts";
 import { zipStream, type ZipEntry } from "./zip.ts";
 import { signDownload } from "../downloads.ts";
 import type { EngineSettings } from "../config.ts";
-import { type EngineClient, type EngineDatabase, EngineError, type EngineErrorKind, type EngineExport, type EngineUsage } from "./types.ts";
+import { type EngineAllowlist, type EngineBlock, type EngineClient, type EngineDatabase, EngineError, type EngineErrorKind, type EngineExport, type EngineUsage } from "./types.ts";
+import { canonicalAddress } from "./netlist.ts";
 
 /**
  * The real `EngineClient`: it speaks the admin interface of the engine's `control-ops` (`/v1/...` JSON over HTTP, bearer
@@ -111,6 +112,11 @@ export class RealEngine implements EngineClient {
       if (LOST_HISTORY.has(code)) return e("invalid", "The backups needed for that time are no longer available. Choose a later time.");
       if (TRANSIENT_CONFLICTS.has(code)) return e("unavailable", `The database engine is busy with this database (${code}).`);
       return e("conflict", "The database engine could not do this right now.");
+    }
+    if (s === 400 && what === "allowlist") {
+      // The control plane checks every entry with the engine's own rules first (netlist.ts): a refusal here means the two
+      // disagree. Said plainly; the engine's sentence is kept in `detail` for the log.
+      return e("invalid", "The database engine refused the list.");
     }
     if (s === 400) {
       // Only a restore time out of range is the customer's to fix (restoreDatabase words it); everything else is a bug of
@@ -382,6 +388,64 @@ export class RealEngine implements EngineClient {
     buckets.sort((a, b) => a.hour.localeCompare(b.hour));
     wakeUps.sort((a, b) => a.at.localeCompare(b.at));
     return { state: db.state, storageBytes: db.storageBytes, lastActiveAt: db.lastActiveAt, buckets, wakeUps };
+  }
+
+  // ------------------------------------------------------------------ IP allowlist and network limits (docs/network-allowlist.md)
+
+  private allowlist(j: Obj): EngineAllowlist {
+    if (!Array.isArray(j.entries) || !j.entries.every((x) => typeof x === "string")) throw new EngineError("unavailable", "The database engine sent an answer that was not understood.");
+    return { entries: j.entries as string[], enforced: j.enforced !== false };
+  }
+
+  async getIpAllowlist(id: string): Promise<EngineAllowlist> {
+    const region = await this.located(id);
+    return this.allowlist(this.ok(await this.http.call(region, "GET", `/v1/databases/${engineName(id)}/ip-allowlist`), "allowlist"));
+  }
+
+  /** PUT replaces the list; an empty list is a DELETE, so the database's record carries no list at all (as before one was set). */
+  async setIpAllowlist(req: { id: string; entries: string[] }): Promise<EngineAllowlist> {
+    const region = await this.located(req.id);
+    const path = `/v1/databases/${engineName(req.id)}/ip-allowlist`;
+    const res = req.entries.length
+      ? await this.http.call(region, "PUT", path, { entries: req.entries })
+      : await this.http.call(region, "DELETE", path);
+    return this.allowlist(this.ok(res, "allowlist"));
+  }
+
+  private async network(region: string): Promise<Obj> {
+    return this.ok(await this.http.call(region, "GET", "/v1/network"), "network");
+  }
+
+  /**
+   * The engine's state lists every address it tracks, for every database. Only the blocks of this database are kept,
+   * and of each only the address and its end: no other database, no counters, no connections.
+   */
+  async networkBlocks(id: string): Promise<EngineBlock[]> {
+    const region = await this.located(id);
+    const key = engineName(id);
+    const j = await this.network(region);
+    const out: EngineBlock[] = [];
+    for (const b of Array.isArray(j.blocked) ? j.blocked : []) {
+      if (!isObj(b) || b.database !== key || typeof b.ip !== "string" || typeof b.until !== "string") continue;
+      out.push({ ip: b.ip, until: b.until, remainingSecs: typeof b.remaining_secs === "number" ? b.remaining_secs : 0 });
+    }
+    return out;
+  }
+
+  async unblockAddress(req: { id: string; ip: string }): Promise<{ unblocked: boolean }> {
+    const region = await this.located(req.id);
+    // An IPv6 block is shown as its /64; the engine takes any address inside it.
+    const ip = canonicalAddress(req.ip.replace(/\/64$/, ""));
+    if (!ip) throw new EngineError("invalid", "That is not an address.");
+    const j = this.ok(await this.http.call(region, "DELETE", `/v1/network/blocks/${ip}`), "network");
+    return { unblocked: j.unblocked === true };
+  }
+
+  async trustedNetworks(region: string): Promise<string[]> {
+    const j = await this.network(region);
+    const t = isObj(j.config) ? j.config.trusted_networks : undefined;
+    if (!Array.isArray(t) || !t.every((x) => typeof x === "string")) throw new EngineError("unavailable", "The database engine sent an answer that was not understood.");
+    return t as string[];
   }
 }
 

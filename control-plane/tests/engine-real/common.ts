@@ -5,6 +5,7 @@ import type { EngineClient } from "../../src/engine/types.ts";
 import { type EngineUsers, MongoEngineUsers } from "../../src/engine/users.ts";
 import type { Config } from "../../src/config.ts";
 import { type Fixture, type Harness, json, sleep, startHarness } from "../helpers/harness.ts";
+import { AuthFailureGuard } from "../../src/engine/auth-guard.ts";
 import { type EngineEnv, startEngines } from "../helpers/engine-proc.ts";
 
 /**
@@ -73,6 +74,8 @@ export interface WorldOptions {
   wrapUsers?: (u: EngineUsers) => EngineUsers;
   wrapEngine?: (e: EngineClient) => EngineClient;
   engines?: EngineEnv;
+  /** The guard of failed sign-ins (src/engine/auth-guard.ts) for the Data Explorer and the provisioner: one per world. */
+  guard?: AuthFailureGuard;
 }
 
 export async function startWorld(over: Record<string, string | undefined> = {}, o: WorldOptions = {}): Promise<World> {
@@ -80,6 +83,9 @@ export async function startWorld(over: Record<string, string | undefined> = {}, 
   let data!: MongoDataClient;
   let users!: EngineUsers;
   let engine!: EngineClient;
+  // A guard per world, so one test's failed sign-ins are not counted against the next (the engine's counters are reset
+  // by the tests that need it). Production has one per process (processAuthGuard).
+  const guard = o.guard ?? new AuthFailureGuard();
   const h = await startHarness(cpEnv(e, over), {
     engineFactory: (cfg: Config) => {
       const real = new RealEngine({ settings: cfg.engine!, downloadSigningKey: cfg.downloadSigningKey, apiPublicUrl: cfg.apiPublicUrl });
@@ -87,9 +93,9 @@ export async function startWorld(over: Record<string, string | undefined> = {}, 
       return engine;
     },
     // The Data Explorer gets the master key only, exactly as app.ts gives it: never the provisioner.
-    dataFactory: (cfg: Config) => (data = new MongoDataClient(cfg.data, { current: cfg.engineUsers!.current, previous: cfg.engineUsers!.previous })),
+    dataFactory: (cfg: Config) => (data = new MongoDataClient(cfg.data, { current: cfg.engineUsers!.current, previous: cfg.engineUsers!.previous }, guard)),
     usersFactory: (cfg: Config) => {
-      const real = new MongoEngineUsers(cfg.data, cfg.engineUsers!);
+      const real = new MongoEngineUsers(cfg.data, cfg.engineUsers!, guard);
       users = o.wrapUsers ? o.wrapUsers(real) : real;
       return users;
     },

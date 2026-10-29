@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createServer as createTlsServer } from "node:https";
 import { createHash, randomBytes } from "node:crypto";
+import { validateEntries } from "../../src/engine/netlist.ts";
 
 /**
  * A simulated engine admin interface (`control-ops` of Mircoguidetti/test5, branch control-ops), written from its code
@@ -18,6 +19,8 @@ interface Db {
   docs: string[];
   collections: Record<string, string>;
   usage: Map<string, { commands: number; wakes: { at_ms: number; first_request_latency_ms: number }[] }>;
+  /** `ip_allowlist` of the metadata record (network-limits, ctl/allowlist.rs): absent after create and fork. */
+  allowlist: string[] | null;
 }
 interface Export { id: string; database: string; createdMs: number; expiresMs: number; files: { collection: string; kind: "bson" | "metadata"; path: string; body: Buffer }[]; complete: Record<string, { bytes: number; sha256: string }> }
 
@@ -37,6 +40,9 @@ export class SimEngine {
   private lose: { match: RegExp; times: number }[] = [];
   private server!: Server;
   port = 0;
+  /** In-memory blocks of the engine's network guard (network-limits, netguard.rs `state()`); tests add them. */
+  readonly blocked: { ip: string; database: string | null; until: string; remaining_secs: number; strike: number }[] = [];
+  trusted = ["127.0.0.0/8", "::1/128"];
 
   private readonly tls: { key: string; cert: string } | undefined;
 
@@ -79,7 +85,7 @@ export class SimEngine {
   }
 
   private newDb(name: string, via: string): Db {
-    return { name, createdMs: this.now(), createdVia: via, forkedFrom: null, keepAwake: false, awake: false, retention: null, points: [], docs: [], collections: {}, usage: new Map() };
+    return { name, createdMs: this.now(), createdVia: via, forkedFrom: null, keepAwake: false, awake: false, retention: null, points: [], docs: [], collections: {}, usage: new Map(), allowlist: null };
   }
 
   // ---------------------------------------------------------------- http
@@ -142,6 +148,15 @@ export class SimEngine {
       return null;
     };
     if (method === "GET" && a === "health") return J(200, { ok: true });
+    if (method === "GET" && a === "network" && !db) {
+      return J(200, { config: { trusted_networks: this.trusted, auth_fail_max: 10, auth_fail_max_per_db: 5 }, blocked: this.blocked, failing: [{ ip: "192.0.2.200", database: null, failures_in_window: 3 }], connections: [{ ip: "192.0.2.201", open: 2 }], tracked_addresses: 3, totals: {} });
+    }
+    if (method === "DELETE" && a === "network" && db === "blocks" && c) {
+      if (!/^[0-9a-fA-F.:]+$/.test(c)) return E(400, "bad_request", "not an IPv4 or IPv6 address");
+      const before = this.blocked.length;
+      for (let i = this.blocked.length - 1; i >= 0; i--) if (this.blocked[i]!.ip === c || this.blocked[i]!.ip.startsWith(`${c}/`)) this.blocked.splice(i, 1);
+      return J(200, { ip: c, unblocked: this.blocked.length < before });
+    }
     if (method === "POST" && a === "databases" && !db) {
       if (typeof b.name !== "string") return E(400, "bad_request", "body needs a string field name");
       const bad = checkName(b.name); if (bad) return bad;
@@ -171,6 +186,16 @@ export class SimEngine {
         return J(200, { database: db, retention: e!.retention });
       }
       if (method === "POST" && c === "restore") return this.restore(db, e!, b);
+      if (c === "ip-allowlist") {
+        const reply = (extra: Record<string, unknown> = {}) => J(200, { database: db, entries: e!.allowlist ?? [], allow_all: !e!.allowlist?.length, max_entries: 100, enforced: true, ...extra });
+        if (method === "GET") return reply();
+        if (method === "DELETE") { e!.allowlist = null; return reply({ cleared: true }); }
+        if (method === "PUT") {
+          if (Object.keys(b).some((k) => k !== "entries")) return E(400, "invalid_allowlist", "unknown field");
+          try { e!.allowlist = validateEntries(b.entries); } catch (x) { return E(400, "invalid_allowlist", (x as Error).message); }
+          return reply({ connections_deauthenticated: 0 });
+        }
+      }
       void d;
     }
     if (a === "exports" && db) {

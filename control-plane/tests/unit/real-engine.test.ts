@@ -47,6 +47,8 @@ describe("permission boundary: the control plane can only do the operations it i
     ["DELETE", `/v1/databases/${db}`], ["PUT", `/v1/databases/${db}/keep-awake`], ["DELETE", `/v1/databases/${db}/keep-awake`],
     ["GET", `/v1/databases/${db}/usage?from=2026-01-01&to=2026-01-02`], ["PUT", `/v1/databases/${db}/retention`], ["GET", `/v1/databases/${db}/restore-points`],
     ["POST", `/v1/databases/${db}/restore`], ["POST", `/v1/databases/${db}/exports`], ["GET", `/v1/exports/${exp}`], ["GET", `/v1/exports/${exp}/files/${db}/c.bson`],
+    ["GET", `/v1/databases/${db}/ip-allowlist`], ["PUT", `/v1/databases/${db}/ip-allowlist`], ["DELETE", `/v1/databases/${db}/ip-allowlist`],
+    ["GET", "/v1/network"], ["DELETE", "/v1/network/blocks/203.0.113.9"], ["DELETE", "/v1/network/blocks/2001:db8::"],
   ];
   const refused: [string, string][] = [
     ["GET", "/v1/databases"], // would list every customer's databases
@@ -56,6 +58,8 @@ describe("permission boundary: the control plane can only do the operations it i
     ["GET", `/v1/databases/${db}/../${db.replace("0", "1")}`], ["GET", `/v1/databases/${db}%2F..%2Fadmin`], ["GET", `/v2/databases/${db}`],
     ["DELETE", `/v1/databases/${db}/`], ["DELETE", `/v1/databases/${db}x`], ["GET", `/v1/exports/${db}.nothex`], ["GET", `/v1/exports/${exp}/files/orders/c.bson`],
     ["GET", `/v1/exports/${exp}/files/${db}/a/b.bson`], ["PATCH", `/v1/databases/${db}`], ["GET", `//v1/databases/${db}`],
+    ["PUT", "/v1/databases/admin/ip-allowlist"], ["GET", "/v1/databases/orders/ip-allowlist"], ["DELETE", "/v1/network/blocks"],
+    ["DELETE", "/v1/network/blocks/10.0.0.0/8"], ["DELETE", "/v1/network/blocks/..%2F"], ["PUT", "/v1/network"], ["DELETE", "/v1/network"],
   ];
   test("every allowed route is on the list, and the list holds nothing else", () => {
     for (const [m, p] of allowed) assert.doesNotThrow(() => authorize(m, p), `${m} ${p}`);
@@ -110,6 +114,12 @@ async function runEverything(engine: EngineClient, sim: SimEngine): Promise<void
   await engine.setKeepAwake({ id: a, enabled: true });
   await engine.setKeepAwake({ id: a, enabled: false });
   await engine.usage({ id: a, from: new Date(Date.now() - 86400000).toISOString(), to: new Date().toISOString() });
+  await engine.setIpAllowlist({ id: a, entries: ["10.0.0.0/8"] });
+  await engine.getIpAllowlist(a);
+  await engine.setIpAllowlist({ id: a, entries: [] });
+  await engine.networkBlocks(a);
+  await engine.unblockAddress({ id: a, ip: "203.0.113.9" });
+  await engine.trustedNetworks("eu-central-1");
   const e = await engine.exportDatabases({ ids: [a, b], idempotencyKey: randomUUID() });
   const link = await engine.exportDownloadUrl(e.exportId, 900);
   assert.ok(link.url.startsWith("https://api.fenvix.test/v1/downloads/"));
@@ -184,8 +194,85 @@ for (const d of drivers) {
       assert.equal(await kindOf(engine.restoreDatabase({ id: randomUUID(), at: new Date().toISOString(), idempotencyKey: "r" })), "not_found");
       assert.equal(await kindOf(engine.exportDatabases({ ids: [randomUUID()], idempotencyKey: "e" })), "not_found");
     });
+    test("IP allowlist: none after create; set and read back in the engine's form; an empty list clears it; a fork has none; gone with an erase", async () => {
+      const r = mk();
+      await engine.createDatabase(r);
+      assert.deepEqual((await engine.getIpAllowlist(r.id)).entries, []);
+      const set = await engine.setIpAllowlist({ id: r.id, entries: ["10.0.0.0/8", "203.0.113.7/32"] });
+      assert.deepEqual(set.entries, ["10.0.0.0/8", "203.0.113.7/32"]);
+      assert.equal(set.enforced, true);
+      assert.deepEqual((await engine.getIpAllowlist(r.id)).entries, ["10.0.0.0/8", "203.0.113.7/32"]);
+      const f = randomUUID();
+      await engine.forkDatabase({ sourceId: r.id, id: f, workspaceId: WS, name: "copy", idempotencyKey: randomUUID() });
+      assert.deepEqual((await engine.getIpAllowlist(f)).entries, [], "a fork does not inherit the list");
+      assert.deepEqual((await engine.getIpAllowlist(r.id)).entries, ["10.0.0.0/8", "203.0.113.7/32"]);
+      assert.deepEqual((await engine.setIpAllowlist({ id: r.id, entries: [] })).entries, []);
+      assert.deepEqual((await engine.getIpAllowlist(r.id)).entries, []);
+      await engine.setIpAllowlist({ id: f, entries: ["192.0.2.0/24"] });
+      await engine.eraseDatabase({ id: f, idempotencyKey: randomUUID() });
+      assert.equal(await kindOf(engine.getIpAllowlist(f)), "not_found");
+      assert.equal(await kindOf(engine.setIpAllowlist({ id: randomUUID(), entries: [] })), "not_found");
+      assert.equal(await kindOf(engine.setIpAllowlist({ id: r.id, entries: ["10.0.0.1/8"] })), "invalid");
+      assert.deepEqual(await engine.trustedNetworks("eu-central-1"), ["127.0.0.0/8", "::1/128"]);
+    });
   });
 }
+
+describe("real adapter: IP allowlist and network blocks", () => {
+  let sim: SimEngine, engine: EngineClient, stop: () => Promise<void>;
+  before(async () => { ({ sim, engine, stop } = await start()); });
+  after(async () => { await stop(); });
+  const mk = () => ({ id: randomUUID(), workspaceId: WS, name: "orders", region: "eu-central-1", idempotencyKey: randomUUID() });
+
+  test("an empty list is sent as DELETE, so the record carries no list; a list as PUT { entries }", async () => {
+    const r = mk();
+    await engine.createDatabase(r);
+    sim.seen.length = 0;
+    await engine.setIpAllowlist({ id: r.id, entries: ["10.0.0.0/8"] });
+    await engine.setIpAllowlist({ id: r.id, entries: [] });
+    assert.deepEqual(sim.seen, [`PUT /v1/databases/${engineName(r.id)}/ip-allowlist`, `DELETE /v1/databases/${engineName(r.id)}/ip-allowlist`]);
+    assert.equal(sim.dbs.get(engineName(r.id))!.allowlist, null);
+  });
+
+  test("blocks: only this database's, only the address and its end; nothing of other databases, counters or connections", async () => {
+    const r = mk(), o = mk();
+    await engine.createDatabase(r);
+    await engine.createDatabase(o);
+    const until = new Date(Date.now() + 300_000).toISOString();
+    sim.blocked.push(
+      { ip: "203.0.113.9", database: engineName(r.id), until, remaining_secs: 300, strike: 1 },
+      { ip: "2001:db8:1:2::/64", database: engineName(r.id), until, remaining_secs: 299, strike: 2 },
+      { ip: "198.51.100.1", database: engineName(o.id), until, remaining_secs: 300, strike: 1 },
+      { ip: "192.0.2.77", database: null, until, remaining_secs: 300, strike: 1 },
+    );
+    try {
+      assert.deepEqual(await engine.networkBlocks(r.id), [
+        { ip: "203.0.113.9", until, remainingSecs: 300 },
+        { ip: "2001:db8:1:2::/64", until, remainingSecs: 299 },
+      ]);
+      sim.seen.length = 0;
+      assert.deepEqual(await engine.unblockAddress({ id: r.id, ip: "2001:db8:1:2::/64" }), { unblocked: true });
+      assert.deepEqual(sim.seen, ["DELETE /v1/network/blocks/2001:db8:1:2::"], "an IPv6 /64 is lifted by its address");
+      assert.deepEqual(await engine.unblockAddress({ id: r.id, ip: "203.0.113.9" }), { unblocked: true });
+      assert.deepEqual(await engine.networkBlocks(r.id), []);
+      assert.equal(await kindOf(engine.unblockAddress({ id: r.id, ip: "10.0.0.0/8" })), "invalid");
+      assert.equal(await kindOf(engine.unblockAddress({ id: r.id, ip: "../admin" })), "invalid");
+    } finally { sim.blocked.length = 0; }
+  });
+
+  test("a list the engine refuses is invalid, in our words (the engine's sentence is kept for the log only)", async () => {
+    const r = mk();
+    await engine.createDatabase(r);
+    sim.failNext(/ip-allowlist$/, 400, "invalid_allowlist");
+    const e = await engine.setIpAllowlist({ id: r.id, entries: ["10.0.0.0/8"] }).catch((x) => x);
+    assert.ok(e instanceof EngineError && e.kind === "invalid");
+    assert.equal(e.message, "The database engine refused the list.");
+    sim.failNext(/ip-allowlist$/, 503, "internal");
+    assert.equal(await kindOf(engine.setIpAllowlist({ id: r.id, entries: ["10.0.0.0/8"] })), "unavailable");
+    sim.failNext(/network$/, 401, "unauthorized");
+    assert.equal(await kindOf(engine.networkBlocks(r.id)), "unavailable");
+  });
+});
 
 describe("real adapter", () => {
   let sim: SimEngine, engine: EngineClient, stop: () => Promise<void>, cfg: ReturnType<typeof loadConfig>;

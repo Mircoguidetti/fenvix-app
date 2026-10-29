@@ -13,6 +13,9 @@ export const READ_OPTIONS = { promoteValues: false, promoteLongs: false, promote
  * waits `wakeMs`, like the engine opening a tenant from object storage.
  */
 export class FakeDataClient implements DataClient {
+  /** The address the fake "connects" from: loopback, which the engine trusts by default. */
+  source: string | null = "127.0.0.1";
+  async sourceAddress(_region: string): Promise<string | null> { return this.source; }
   /** db name -> collection -> documents (BSON). */
   readonly dbs = new Map<string, Map<string, Buffer[]>>();
   readonly calls: Record<FakeDataOp, number> = { listCollections: 0, estimatedCount: 0, find: 0, findOne: 0, insertOne: 0, replaceOne: 0, deleteOne: 0 };
