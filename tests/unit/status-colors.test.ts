@@ -150,7 +150,6 @@ const MAP: [string, string][] = [
   [".message-error", "danger"],
   [".blocked-until", "danger"],
   [".btn-danger", "danger"],
-  [".dialog-danger", "danger"],
   [".dialog-danger .dialog-actions .btn-primary", "danger"],
   ['input[aria-invalid="true"]', "danger"],
   [".toast-success .toast-icon", "success-on-dark"],
@@ -206,7 +205,7 @@ test("the states in the inventory are wired to the right classes in the componen
   assert.match(src("pages/SignIn.tsx"), /callout callout-success/);
 });
 
-test("every action that cannot be undone has a dialog with the red line and a red confirm button; the buttons that open them are red, except Restore", () => {
+test("every action that cannot be undone has a dialog with a red confirm button and no border; the buttons that open them are red, except Restore", () => {
   const files = ["pages/DatabaseDetail.tsx", "components/BulkBar.tsx", "components/DatabaseUsers.tsx", "components/DataExplorer.tsx", "pages/ApiKeys.tsx", "pages/Members.tsx", "components/OrgSwitcher.tsx", "components/DatabaseNetwork.tsx"];
   let dialogs = 0;
   for (const f of files) {
@@ -216,7 +215,7 @@ test("every action that cannot be undone has a dialog with the red line and a re
       const name = label?.[1] ?? label?.[2] ?? "";
       const destructive = /^(Erase|Delete|Remove|Revoke|Clear|Leave|Restore)\b/.test(name);
       if (destructive) dialogs++;
-      assert.equal(/\bdanger\b/.test(m[1]), destructive, `${f}: dialog "${name}" ${destructive ? "has no" : "should not have the"} danger line`);
+      assert.equal(/\bdanger\b/.test(m[1]), destructive, `${f}: dialog "${name}" ${destructive ? "is not" : "should not be"} marked danger`);
     }
   }
   assert.ok(dialogs >= 10, `only ${dialogs} destructive dialogs found`);
@@ -259,7 +258,7 @@ test("every toast says whether it is a success or an error, except the plain not
   assert.ok(n >= 35, `only ${n} toasts found`);
 });
 
-test("Restore to a point in time: its dialog is destructive (red line, red confirm), the button that opens it stays neutral", () => {
+test("Restore to a point in time: its dialog is destructive (red confirm), the button that opens it stays neutral", () => {
   const detail = src("pages/DatabaseDetail.tsx");
   assert.match(detail, /<ConfirmDialog danger open=\{dialog === "restore"\}[^>]*confirmLabel="Restore database"/);
   assert.match(detail, /<button type="button" className="btn" onClick=\{\(\) => open\("restore"\)\}>/, "the Restore button is not neutral");
@@ -271,4 +270,12 @@ test("Reset password: the button stays neutral, its dialog is not destructive an
   const dialog = /<ConfirmDialog open=\{dialog\?\.kind === "reset"\}[\s\S]*?<\/ConfirmDialog>/.exec(users)?.[0] ?? "";
   assert.ok(dialog, "the reset dialog is not plain (it has the danger option, or is missing)");
   assert.match(dialog, /<p className="once-warning" role="note">\s*<TriangleAlert[^>]*aria-hidden="true" \/>\s*<span>Applications using the old password will stop working\.<\/span>/);
+});
+
+test("dialogs have no border and no coloured line, destructive or not", () => {
+  const dialog = rules().find(([sel]) => sel === ".dialog")?.[1] ?? "";
+  assert.match(dialog, /border:\s*0\s*;/, "the dialog has a border");
+  for (const [sel, body] of rules())
+    if (/\.dialog(-danger|-wide)?\b(?![-\w])/.test(sel) && !/ /.test(sel.replace(/,\s*/g, ",")))
+      assert.ok(!/border(-top|-bottom|-left|-right)?:\s*(?!0)[^;]*(solid|var\()|inset/.test(body), `${sel} draws a border or a line`);
 });

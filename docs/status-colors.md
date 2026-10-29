@@ -63,7 +63,7 @@ white, so on the white content it reads as a sheen rather than a stripe.
    item; the border of the highlighted card (the current plan); the light fill under chart lines (area charts and
    sparklines). Never on text, never behind text, no chrome or bevel. The logo does not use silver and is unchanged.
 5. Primary buttons stay black, except the confirm button of a destructive dialog: that one is filled red
-   (`--danger`, white text, 5.30:1), and the dialog has a red line on top. The button that opens a destructive dialog
+   (`--danger`, white text, 5.30:1). Dialogs have no border and no coloured line. The button that opens a destructive dialog
    is red (red text and border, filled red on hover), except "Restore to a point in time", which stays neutral.
 6. No new dependency: the icons come from `lucide-react`, which was already used.
 
@@ -94,7 +94,7 @@ white, so on the white content it reads as a sheen rather than a stripe.
 | A field with an error | error | red border | the error below it | `input[aria-invalid="true"]` |
 | Load failures (lists, pages, charts, the engine not answering, 403, network errors) | error | red text and icon | alert circle, the message | `.message-error` (`Message role="alert"`) |
 | Erase (database page and bulk bar), Delete user, Delete document, Revoke key, Remove member, Revoke invitation, Clear list | destructive | red text and border; red fill on hover | the word on the button | `.btn-danger` |
-| The dialogs of those actions, Leave organization, and Restore to a point in time | destructive | red line on top; the confirm button filled red with white text | the title and text say what is lost; the button says the action | `.dialog-danger` (`ConfirmDialog danger`) |
+| The dialogs of those actions, Leave organization, and Restore to a point in time | destructive | the confirm button filled red with white text (the dialog itself has no border or line) | the title and text say what is lost; the button says the action | `.dialog-danger` (`ConfirmDialog danger`) |
 | Selected database tab and settings tab | — | silver line under it | the tab is also filled black | `::after` |
 | Selected menu item (sidebar and drawer) | — | silver line under it | the item is also filled and bold | `.nav-link.active::after` |
 | Current plan card (Billing) | — | silver border | "Current plan" | `.plan-current` |
@@ -129,7 +129,8 @@ white, so on the white content it reads as a sheen rather than a stripe.
   amber; that silver is a cool grey gradient that stays visible but quiet; that no other hue appears in the stylesheet
   or the components; that silver is used only on the allowed selectors and never as a text colour; that each state in
   the table above uses its token and no other; that every coloured state has a word or icon; that every destructive
-  dialog (Restore included) has the red line and a red, white-text confirm button and every other dialog has not;
+  dialog (Restore included) has a red, white-text confirm button and every other dialog has not; that no dialog has
+  a border or a coloured line;
   that Restore and Reset password open from neutral buttons and that the Reset password dialog has its amber warning
   with an icon; and that every toast is marked success or error.
 - `scripts/status-colors-checks.mjs` (in `npm run check`, desktop 1440 px and phone 390 px): opens the pages in

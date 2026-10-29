@@ -27,7 +27,7 @@ async function paint(page, selector, pseudo) {
   await el.waitFor();
   return el.evaluate((e, p) => {
     const cs = getComputedStyle(e, p ?? null);
-    return { color: cs.color, bg: cs.backgroundColor, bgImage: cs.backgroundImage, border: cs.borderTopColor, borderLeft: cs.borderLeftColor, shadow: cs.boxShadow, fill: cs.fill, stop: cs.stopColor, text: e.textContent.trim(), svg: !!e.querySelector("svg") };
+    return { color: cs.color, bg: cs.backgroundColor, bgImage: cs.backgroundImage, border: cs.borderTopColor, borderLeft: cs.borderLeftColor, shadow: cs.boxShadow, borderWidth: cs.borderTopWidth + " " + cs.borderRightWidth + " " + cs.borderBottomWidth + " " + cs.borderLeftWidth, fill: cs.fill, stop: cs.stopColor, text: e.textContent.trim(), svg: !!e.querySelector("svg") };
   }, pseudo);
 }
 
@@ -87,6 +87,13 @@ async function fits(page) {
   assert(layout.length === 0, layout[0]);
 }
 
+/** The open dialog has no border and no coloured line (destructive dialogs say so with their red confirm button). */
+async function noBorder(page, what) {
+  const d = await paint(page, "dialog[open]");
+  assert(d.borderWidth === "0px 0px 0px 0px", `the ${what} dialog has a border (${d.borderWidth})`);
+  assert(!d.shadow.includes("inset") && !STATUS.some((c) => d.shadow.includes(c)), `the ${what} dialog has a line (${d.shadow})`);
+}
+
 async function silverLine(page, selector) {
   const after = await paint(page, selector, "::after");
   assert(/linear-gradient/.test(after.bgImage), `${selector} has no silver line (${after.bgImage})`);
@@ -108,7 +115,7 @@ const TESTS = {
     await fits(page);
   },
 
-  async "database: erase is red, its dialog has the red line and a red confirm button; restore opens the same red dialog from a neutral button; the selected tab has the silver line"(page) {
+  async "database: erase is red, its dialog has no border and a red confirm button; restore opens the same red dialog from a neutral button; the selected tab has the silver line"(page) {
     await signIn(page, "databases/db_0001");
     await silverLine(page, '.detail-tabs button[aria-pressed="true"]');
     const tab = await paint(page, '.detail-tabs button[aria-pressed="true"]');
@@ -118,8 +125,7 @@ const TESTS = {
     const fork = await paint(page, "#actions .btn >> nth=0");
     assert(!STATUS.includes(fork.color), "a plain action is coloured");
     await page.getByRole("button", { name: "Erase", exact: true }).click();
-    const dialog = await paint(page, "dialog.dialog-danger[open]");
-    assert(dialog.shadow.includes(DANGER), `the erase dialog has no red line (${dialog.shadow})`);
+    await noBorder(page, "erase");
     const confirm = await paint(page, "dialog[open] .btn-primary");
     assert(confirm.bg === DANGER && confirm.border === DANGER && confirm.color === WHITE && confirm.text === "Erase database", `the erase confirm is ${confirm.bg} / ${confirm.color}`);
     await huesOnPage(page, STATUS);
@@ -129,16 +135,17 @@ const TESTS = {
     const restoreBtn = await paint(page, '#actions .btn:has-text("Restore to a point in time")');
     assert(!STATUS.includes(restoreBtn.color) && !STATUS.includes(restoreBtn.border), `the Restore button is coloured (${restoreBtn.color})`);
     await page.getByRole("button", { name: "Restore to a point in time" }).click();
-    assert((await paint(page, "dialog.dialog-danger[open]")).shadow.includes(DANGER), "the restore dialog has no red line");
+    await noBorder(page, "restore");
     const restore = await paint(page, "dialog[open] .btn-primary");
     assert(restore.bg === DANGER && restore.color === WHITE && restore.text === "Restore database", `the restore confirm is ${restore.bg} / ${restore.color}`);
     await huesOnPage(page, STATUS);
     await fits(page);
     await page.getByRole("button", { name: "Cancel" }).click();
-    // A dialog that changes nothing for good has no red line.
+    // A dialog that changes nothing for good is not marked danger, and has no border either.
     await page.getByRole("button", { name: "Fork" }).click();
     await page.locator("dialog[open]").waitFor();
-    assert(!(await page.locator("dialog.dialog-danger[open]").count()), "the fork dialog has the red line");
+    assert(!(await page.locator("dialog.dialog-danger[open]").count()), "the fork dialog is marked danger");
+    await noBorder(page, "fork");
     assert((await paint(page, "dialog[open] .btn-primary")).bg === BLACK, "the fork confirm is not black");
   },
 
@@ -254,7 +261,7 @@ const TESTS = {
     await huesOnPage(page, STATUS);
     await fits(page);
     await page.locator("table .btn-danger").first().click();
-    assert((await paint(page, "dialog.dialog-danger[open]")).shadow.includes(DANGER), "the revoke dialog has no red line");
+    await noBorder(page, "revoke");
     const revokeConfirm = await paint(page, "dialog[open] .btn-primary");
     assert(revokeConfirm.bg === DANGER && revokeConfirm.color === WHITE, `the revoke confirm is ${revokeConfirm.bg} / ${revokeConfirm.color}`);
   },
@@ -267,7 +274,8 @@ const TESTS = {
     assert(!STATUS.includes(resetPaint.color) && !STATUS.includes(resetPaint.border), `the Reset password button is coloured (${resetPaint.color})`);
     await reset.click();
     await page.getByRole("heading", { name: "Reset this password?" }).waitFor();
-    assert(!(await page.locator("dialog.dialog-danger[open]").count()), "the reset dialog has the red line");
+    assert(!(await page.locator("dialog.dialog-danger[open]").count()), "the reset dialog is marked danger");
+    await noBorder(page, "reset");
     const warn = await paint(page, "dialog[open] .once-warning");
     assert(warn.border === WARNING && warn.svg && warn.text === "Applications using the old password will stop working.", `reset warning: ${warn.border} "${warn.text}"`);
     assert((await paint(page, "dialog[open] .once-warning svg")).color === WARNING, "the reset warning icon is not amber");
@@ -277,7 +285,7 @@ const TESTS = {
     await fits(page);
     await page.getByRole("button", { name: "Cancel" }).click();
     await page.getByRole("button", { name: /^Delete user / }).first().click();
-    assert((await paint(page, "dialog.dialog-danger[open]")).shadow.includes(DANGER), "the delete dialog has no red line");
+    await noBorder(page, "delete");
     const del = await paint(page, "dialog[open] .btn-primary");
     assert(del.bg === DANGER && del.color === WHITE && del.text === "Delete user", `the delete confirm is ${del.bg} / ${del.color}`);
     await fits(page);
