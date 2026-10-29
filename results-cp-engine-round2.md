@@ -100,18 +100,44 @@ Il saltato dell'integrazione è il test dei 3.000 database (serve `SEEDED_DATABA
 
 ## 5. Decisioni che servono a te
 
-1. **Ordine di rilascio**: aggiornare **prima il motore** (`engine-round2`), poi il control plane. Con un motore vecchio lo sblocco del nuovo control plane risponde 503, ma il motore vecchio ha già tolto tutti i blocchi dell'indirizzo (ignora il parametro): il controllo fa vedere l'errore, non lo evita.
-2. **Blocco globale (100 errori)**: il cliente non lo vede e non può toglierlo (giusto: riguarda anche altri clienti); il control plane ora non può più nemmeno mandare lo sblocco globale (rotta rifiutata). Resta solo il supporto, con il token admin a mano. Va bene così, o vuoi una procedura/rotta interna di supporto?
-3. **`dbAdmin` nella lista**: il control plane concede solo `read` e `readWrite`. `dbAdmin` include `dropDatabase` sul database; nessun nostro flusso lo usa. Ti consiglio `read,readWrite` (anche il motore lo propone, D8). Ho messo `read,readWrite,dbAdmin` come chiesto.
+1. **[Deciso: prima il motore, scritto nella checklist di deploy, sezione 8]** **Ordine di rilascio**: aggiornare **prima il motore** (`engine-round2`), poi il control plane. Con un motore vecchio lo sblocco del nuovo control plane risponde 503, ma il motore vecchio ha già tolto tutti i blocchi dell'indirizzo (ignora il parametro): il controllo fa vedere l'errore, non lo evita.
+2. **[Deciso: solo a mano con il token admin, procedura nella checklist, sezione 8]** **Blocco globale (100 errori)**: il cliente non lo vede e non può toglierlo (giusto: riguarda anche altri clienti); il control plane ora non può più nemmeno mandare lo sblocco globale (rotta rifiutata). Resta solo il supporto, con il token admin a mano. Va bene così, o vuoi una procedura/rotta interna di supporto?
+3. **[Deciso: tolto, flag `read,readWrite`, sezione 8]** **`dbAdmin` nella lista**: il control plane concede solo `read` e `readWrite`. `dbAdmin` include `dropDatabase` sul database; nessun nostro flusso lo usa. Ti consiglio `read,readWrite` (anche il motore lo propone, D8). Ho messo `read,readWrite,dbAdmin` come chiesto.
 4. **Protezione del control plane** (`auth-guard.ts`: 3 per database, 8 in tutto): era tarata sulla soglia globale 10. Con 100 è più prudente del necessario; non l'ho cambiata (funziona, e una password del provisioner sbagliata blocca ancora `admin` a 5). Si può alzare il totale se serve, ma non lo consiglio senza motivo.
 5. **Hash del binario** diverso dal riferimento (vedi 1): se serve identità bit per bit, va compilato sulla stessa macchina/percorso del report del motore.
-6. **Profilo production** (MinIO, lease, `--log-commands`) e **pymongo**: non eseguiti, perché richiedono di scaricare MinIO (sorgenti Go) e pymongo (PyPI), che in questa sessione non mi hai autorizzato. Se vuoi, li eseguo.
+6. **[Autorizzato ed eseguito, sezione 8]** **Profilo production** (MinIO, lease, `--log-commands`) e **pymongo**: non eseguiti, perché richiedono di scaricare MinIO (sorgenti Go) e pymongo (PyPI), che in questa sessione non mi hai autorizzato. Se vuoi, li eseguo.
 
 ## 6. Cosa NON ho potuto verificare
-* Profilo production della suite (S3 locale MinIO, lease, porta admin separata, log dei comandi) e il test pymongo: non eseguiti (vedi decisione 6). Quindi il test "b. at run time" (quali comandi arrivano alla porta dati) non è stato rieseguito con questo motore.
+* ~~Profilo production e test pymongo~~: eseguiti nella seconda revisione (sezione 8).
 * S3 vero, AWS, IPv6 da un client vero, più processi del motore o del control plane, carico: nessuna prova.
 * Lo sblocco per database su un motore vecchio: provato solo con il motore simulato (`unblockIgnoresDatabase`), non con un binario vecchio vero.
 
 ## 7. Commit
 * `origin/cp-engine-round2` (da `3281c90`): `52f2195` (Parte 1: codice, documenti, test), `2810895` (Parte 2: test con `--grantable-roles`), e il commit che aggiunge questo report e la riga del README.
 * `origin/infra-grants` (da `8ca5194`): `4509c9b` (Parte 3: costante, flag, test, README, sezione 12 del report).
+
+## 8. Seconda revisione (tue decisioni)
+
+**Cosa ho fatto**
+* **Lista dei ruoli concedibili `read,readWrite`** (senza `dbAdmin`): in `infra/` su `infra-grants` (sezione 12.6 di `infra/report-infra-align.md`). Qui: la suite usa ora `ENGINE_E2E_GRANTABLE_ROLES=read,readWrite` (README del control plane ed esempi aggiornati); il test "0" di `grantable-roles.test.ts` verifica anche che, quando `dbAdmin` non è nella lista, il provisioner riceva **13** per `createUser` con `dbAdmin` sul database cliente.
+* **Checklist di deploy** (`docs/deploy-checklist.md`, che esiste sul branch `infra-grants`, non su `cp-engine-round2`): regola "prima il motore, poi il control plane" (ritorno indietro nell'ordine inverso) e procedura di supporto per togliere un blocco globale a mano, con il token admin letto dal file e passato a `curl` dallo standard input, senza password. La procedura è stata provata su un motore locale con i comandi copiati dalla checklist (cambiati solo percorso del token, indirizzo, senza `sudo`): blocco globale visto (`"database": null`), `{"ip":"127.0.0.1","unblocked":true}`, poi nessun blocco; il token non compare nel log del motore.
+* **MinIO e pymongo** scaricati fuori dal repository, in `/home/user/deps`: pymongo 4.19.0 da PyPI in un venv; MinIO compilato da sorgenti con `go install github.com/minio/minio@latest` (modulo `v0.0.0-20260212201848-7aac2a2c5b7c`, go 1.24.7). MinIO su `127.0.0.1:9000`, regione `eu-central-1`, credenziali di prova casuali in un file `0600` fuori dal repository, passate solo alla suite e al motore. Nessuna variabile `AWS_*` del sandbox usata. Dopo le prove: nessuna delle due credenziali in nessun file dei due checkout (ricerca con `grep -r` dei due valori) né nell'output della suite; nessun bucket rimasto in MinIO (la suite li cancella).
+
+**Numeri** (motore `3bcd7e5`, binario `48b82572…`, `--auth --grantable-roles=read,readWrite`):
+
+| suite engine-real | prima revisione (`read,readWrite,dbAdmin`) | ora (`read,readWrite`) |
+|---|---|---|
+| profilo memory | 89: 87 ok, 2 saltati | **89: 88 ok, 1 saltato, 0 falliti** (pymongo ora eseguito e ok; saltato solo "b. at run time", che esiste solo nel profilo production) |
+| profilo production (MinIO, lease, porta admin su 127.0.0.2, `--log-commands`, requireTLS) | non eseguito | **89: 89 ok, 0 saltati, 0 falliti** |
+
+Nel profilo production passano anche il test pymongo e "b. at run time" (sulla porta dati arrivano solo i comandi ammessi durante un ciclo completo). Unit (140/140) e integrazione (353: 352 ok, 1 saltato) non cambiano: la seconda revisione tocca solo test engine-real, `engine-proc.ts` (commento) e README.
+
+**infra** (dettagli in 12.6): `tsc` ok; jest 176 ok + 1 saltato; `cdk synth` esito 0 con e senza versioni; user data **15.712 byte, margine 672** (dominio lungo 15.792; template con i 3 id a 90 byte 15.846, margine 538).
+
+**Cosa ancora NON ho verificato**
+* AWS e S3 vero (solo MinIO locale), IPv6 da un client vero, più processi del motore o del control plane, carico.
+* La procedura di sblocco globale sul server vero: provata in locale, non con Session Manager, `sudo`, l'indirizzo `172.17.0.1` e `/run/fenvix/admin-token` reali.
+* Lo sblocco per database con un binario vecchio vero (solo con il motore simulato).
+* L'ordine "prima il motore" è scritto, non automatizzato: `fenvix-artifact` non impedisce di aggiornare prima il control plane.
+
+**Commit della seconda revisione**: su `cp-engine-round2` il commit che aggiunge questa sezione (test, README); su `infra-grants` `8fa0287`.

@@ -13,7 +13,7 @@ import { SKIP, type World, cookie, engineHas, startWorld } from "./common.ts";
 
 /**
  * Every user flow of the control plane against the engine of test5 engine-round2 (engine commit 3bcd7e5) started with
- * `--auth --grantable-roles=read,readWrite,dbAdmin`, as the provisioner `fenvix_provisioner` (custom role with createUser,
+ * `--auth --grantable-roles=read,readWrite` (as infra/ starts it), as the provisioner `fenvix_provisioner` (custom role with createUser,
  * dropUser, viewUser, changePassword, changeCustomData, grantRole, revokeRole on admin). One test per item of the brief
  * (results-cp-engine-round2.md, part 2). Off unless ENGINE_E2E_BIN and ENGINE_E2E_GRANTABLE_ROLES are set.
  *
@@ -21,7 +21,7 @@ import { SKIP, type World, cookie, engineHas, startWorld } from "./common.ts";
  * engine as root. Nothing here loosens the engine.
  */
 const REGION = "eu-central-1";
-const skip = SKIP || (GRANTABLE_ROLES ? false : "set ENGINE_E2E_GRANTABLE_ROLES (e.g. read,readWrite,dbAdmin) to run the engine with --grantable-roles");
+const skip = SKIP || (GRANTABLE_ROLES ? false : "set ENGINE_E2E_GRANTABLE_ROLES (e.g. read,readWrite) to run the engine with --grantable-roles");
 
 describe("engine-real: the control plane's user flows with --auth and --grantable-roles (engine-round2)", { skip }, () => {
   let w: World;
@@ -51,7 +51,7 @@ describe("engine-real: the control plane's user flows with --auth and --grantabl
     await w?.close();
   });
 
-  test("0. the flag is in force: the provisioner may not grant dbOwner, a role on admin or its own role (13)", async () => {
+  test("0. the flag is in force: the provisioner may not grant dbOwner, a role on admin, its own role, nor a role left out of the list (13)", async () => {
     const d = await create("gr-flag");
     const db = engineName(d.id);
     const p = provisioner();
@@ -60,6 +60,8 @@ describe("engine-real: the control plane's user flows with --auth and --grantabl
       assert.equal(await code(p.db(db).command({ createUser: "gr_x", pwd, roles })), 13, JSON.stringify(roles));
     }
     assert.equal(await code(p.db("admin").command({ createUser: "gr_x", pwd, roles: [] })), 13, "no user on admin");
+    // A role the engine accepts in the flag but that is not in this deployment's list (infra: read,readWrite).
+    if (!GRANTABLE_ROLES!.split(",").includes("dbAdmin")) assert.equal(await code(p.db(db).command({ createUser: "gr_x", pwd, roles: [{ role: "dbAdmin", db }] })), 13, "dbAdmin is not in the list");
     assert.deepEqual((await usersOn(db)).map((u) => u.user).sort(), ["app", engineUserName(d.id)]);
   });
 

@@ -181,7 +181,7 @@ export interface EngineEnv {
 export const PROVISIONER_ACTIONS = ["createUser", "dropUser", "viewUser", "changePassword", "changeCustomData", "grantRole", "revokeRole"];
 
 /**
- * ENGINE_E2E_GRANTABLE_ROLES (e.g. `read,readWrite,dbAdmin`): every engine of the suite starts with `--grantable-roles=<it>`
+ * ENGINE_E2E_GRANTABLE_ROLES (e.g. `read,readWrite`, as infra/ sets it): every engine of the suite starts with `--grantable-roles=<it>`
  * (engine-round2: what a user without root/clusterAdmin, the provisioner, may grant). Unset: the flag is not passed.
  */
 export const GRANTABLE_ROLES: string | null = process.env.ENGINE_E2E_GRANTABLE_ROLES || null;

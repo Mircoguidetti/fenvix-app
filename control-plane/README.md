@@ -45,7 +45,7 @@ ENGINE_E2E_BIN=<test5 final-engine build>/mongo-server ENGINE_E2E_PROFILE=produc
   ENGINE_E2E_S3_ENDPOINT=http://127.0.0.1:9000 ENGINE_E2E_S3_ACCESS_KEY=<minio user> ENGINE_E2E_S3_SECRET_KEY=<minio password> \
   ENGINE_E2E_S3_REGION=eu-central-1 ENGINE_E2E_PYTHON=<python with pymongo> TEST_DATABASE_URL=... npm run test:engine-real
 # engine-round2 as infra/ starts it: every engine of the suite gets --grantable-roles (and grantable-roles.test.ts runs)
-ENGINE_E2E_BIN=<test5 engine-round2 build>/mongo-server ENGINE_E2E_GRANTABLE_ROLES=read,readWrite,dbAdmin \
+ENGINE_E2E_BIN=<test5 engine-round2 build>/mongo-server ENGINE_E2E_GRANTABLE_ROLES=read,readWrite \
   TEST_DATABASE_URL=... npm run test:engine-real
 ```
 
