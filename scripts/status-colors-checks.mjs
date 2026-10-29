@@ -317,9 +317,8 @@ const TESTS = {
     await fits(page);
   },
 
-  async "settings: the selected tab has the silver line, nothing else is coloured"(page) {
+  async "settings: nothing is coloured (the selected tab is black, with no silver line)"(page) {
     await signIn(page, "settings");
-    if (await page.locator(".settings-tabs .seg-link.active").count()) await silverLine(page, ".settings-tabs .seg-link.active");
     await huesOnPage(page, STATUS);
     await fits(page);
   },

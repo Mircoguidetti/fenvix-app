@@ -95,7 +95,8 @@ white, so on the white content it reads as a sheen rather than a stripe.
 | Load failures (lists, pages, charts, the engine not answering, 403, network errors) | error | red text and icon | alert circle, the message | `.message-error` (`Message role="alert"`) |
 | Erase (database page and bulk bar), Delete user, Delete document, Revoke key, Remove member, Revoke invitation, Clear list | destructive | red text and border; red fill on hover | the word on the button | `.btn-danger` |
 | The dialogs of those actions, Leave organization, and Restore to a point in time | destructive | the confirm button filled red with white text (the dialog itself has no border or line) | the title and text say what is lost; the button says the action | `.dialog-danger` (`ConfirmDialog danger`) |
-| Selected database tab and settings tab | — | silver line under it | the tab is also filled black | `::after` |
+| Selected database tab | — | silver line under it | the tab is also filled black | `::after` |
+| Selected settings tab | — | none (the black fill is enough) | the tab is filled black | — |
 | Selected menu item (sidebar and drawer) | — | silver line under it | the item is also filled and bold | `.nav-link.active::after` |
 | Current plan card (Billing) | — | silver border | "Current plan" | `.plan-current` |
 | Area charts and sparklines | — | silver fill under the line | — | `.silver-stop-*` |

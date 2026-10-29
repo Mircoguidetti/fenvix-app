@@ -101,7 +101,7 @@ html:has(.shell), body:has(.shell) { height: 100%; overflow: hidden; }
 .sidebar-bottom { border-top: 1px solid var(--nav-border); padding-top: 12px; }
 
 .content { flex: 1; min-width: 0; height: 100%; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; }
-.topbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 10px; height: 56px; padding: 0 12px; background: var(--nav-bg); color: var(--nav-text); }
+.topbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 12px; height: calc(68px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) 16px 0; background: var(--nav-bg); color: var(--nav-text); }
 .topbar-logo { display: inline-flex; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 20px 16px 56px; display: flex; flex-direction: column; gap: 20px; outline: none; }
@@ -656,7 +656,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
 
 /* Silver: the line under the selected tab and menu item, the border of the current plan, the fill under chart lines. */
 .detail-tabs button, .settings-tabs .seg-link { position: relative; }
-.detail-tabs button[aria-pressed="true"]::after, .settings-tabs .seg-link.active::after, .nav-link.active::after {
+.detail-tabs button[aria-pressed="true"]::after, .nav-link.active::after {
   content: ""; position: absolute; left: 10px; right: 10px; bottom: 4px; height: 2px; border-radius: 2px; background: var(--silver); pointer-events: none;
 }
 .nav-link { position: relative; }
