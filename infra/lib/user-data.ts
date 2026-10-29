@@ -11,6 +11,7 @@ import {
 } from './control-plane-env';
 import { DOCKER_BRIDGE_IP, DOCKER_BRIDGE_PREFIX, DOCKER_NETWORK, DOCKER_NETWORK_SUBNET, INSTANCE_ID_PLACEHOLDER, PATHS, engineArgs, engineEnvironment } from './engine-command';
 import { MUST_MATCH, ssmPrefix } from './parameters';
+import { ARTIFACT_SCRIPT, ARTIFACTS_ENV_FILE, Arch, CONTROL_PLANE_IMAGE_FILE, ENGINE_RELEASES_DIR, artifactPins, artifactsEnv } from './artifacts';
 
 export { ssmPrefix };
 
@@ -27,6 +28,12 @@ export interface UserDataInput {
   hostedZoneId: string;
   /** The control plane and its TLS terminator run in the first region only (DNS for api.<domain> points there). */
   runControlPlane: boolean;
+  /** Artifacts bucket (lib/artifacts.ts). May be a CDK token (the first region's stack lets CloudFormation name it). */
+  artifactsBucket: string;
+  /** Region of the artifacts bucket (the first region). */
+  artifactsRegion: string;
+  /** Architecture of the instance type: which build of the engine and of the control plane to install. */
+  arch: Arch;
 }
 
 /**
@@ -101,7 +108,8 @@ read -r -s -p "Break-glass root password (from your password manager, 16+ charac
 if [ "${'$'}{#FENVIX_ROOT_PASSWORD}" -lt 16 ]; then echo "fenvix-create-engine-users: the password needs 16 characters or more" >&2; exit 1; fi
 FENVIX_PROVISIONER_PASSWORD="$(aws ssm get-parameter --region '${region}' --name '${prefix}/control-plane/engine-provisioner-password' --with-decryption --query Parameter.Value --output text)"
 export FENVIX_ROOT_PASSWORD FENVIX_PROVISIONER_PASSWORD
-docker run --rm -i --network host -e FENVIX_ROOT_PASSWORD -e FENVIX_PROVISIONER_PASSWORD --entrypoint node '${c.controlPlaneImage}' --input-type=module - <<'JS'
+. ${CONTROL_PLANE_IMAGE_FILE}
+docker run --rm -i --network host -e FENVIX_ROOT_PASSWORD -e FENVIX_PROVISIONER_PASSWORD --entrypoint node "$CONTROL_PLANE_IMAGE" --input-type=module - <<'JS'
 import { MongoClient } from "mongodb";
 const url = "mongodb://127.0.0.1:${c.mongoPort}/";
 const opts = { directConnection: true, serverSelectionTimeoutMS: 10000, tls: true, tlsAllowInvalidHostnames: true };
@@ -130,16 +138,55 @@ JS
 
 /** Where the decompressed boot script is kept on the server (no secret in it), for whoever wants to read what ran. */
 export const BOOT_SCRIPT_PATH = '/opt/fenvix/boot.sh';
-const PAYLOAD_MARK = 'FENVIX_B64';
+const PAYLOAD_MARK = 'FENVIX_B85';
+
+/** Python's base64.b85encode alphabet (RFC 1924): no quote, no backslash, so it is inert in a quoted heredoc. */
+const B85 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~';
+
+/** Same output as Python's base64.b85encode(data) (no padding kept): 5 characters per 4 bytes instead of base64's 4 per 3. */
+export function b85encode(data: Buffer): string {
+  const pad = (4 - (data.length % 4)) % 4;
+  const padded = Buffer.concat([data, Buffer.alloc(pad)]);
+  let out = '';
+  for (let i = 0; i < padded.length; i += 4) {
+    let n = padded.readUInt32BE(i);
+    let chunk = '';
+    for (let j = 0; j < 5; j++) {
+      chunk = B85[n % 85] + chunk;
+      n = Math.floor(n / 85);
+    }
+    out += chunk;
+  }
+  return out.slice(0, out.length - pad);
+}
+
+/** Inverse of b85encode (for tests and for reading a synthesized template). */
+export function b85decode(text: string): Buffer {
+  const pad = (5 - (text.length % 5)) % 5;
+  const t = text + '~'.repeat(pad);
+  const out = Buffer.alloc((t.length / 5) * 4);
+  for (let i = 0; i < t.length; i += 5) {
+    let n = 0;
+    for (let j = 0; j < 5; j++) {
+      const v = B85.indexOf(t[i + j]);
+      if (v < 0) throw new Error(`not base85: ${t[i + j]}`);
+      n = n * 85 + v;
+    }
+    out.writeUInt32BE(n >>> 0, (i / 5) * 4);
+  }
+  return out.subarray(0, out.length - pad);
+}
 
 /**
  * The boot script: everything the server does at first start. It holds no CloudFormation token (it is compressed at
- * synth time); the two deploy-time values arrive as FENVIX_TLS_SECRET_ID and FENVIX_DNS_ZONE_ID from buildUserData.
+ * synth time); the deploy-time values arrive as FENVIX_TLS_SECRET_ID, FENVIX_DNS_ZONE_ID and FENVIX_ARTIFACTS_BUCKET
+ * from buildUserData.
  */
 export function bootScript(i: UserDataInput): string[] {
   const c = i.config;
   if (Token.isUnresolved(i.bucketName)) throw new Error('bucketName must be known at synth time (it goes into the compressed boot script)');
   const prefix = ssmPrefix(c.envName);
+  const pins = artifactPins(c);
   const heredoc = (target: string, body: string, mode = '0644') => [
     `cat > ${target} <<'FENVIX_EOF'`,
     ...body.replace(/\n$/, '').split('\n'),
@@ -180,14 +227,15 @@ export function bootScript(i: UserDataInput): string[] {
             'After=docker.service network-online.target fenvix-engine.service',
             'Requires=docker.service',
             '[Service]',
+            // The image loaded from the artifacts bucket (fenvix-artifact); never pulled from a registry.
+            `EnvironmentFile=${CONTROL_PLANE_IMAGE_FILE}`,
             `ExecStartPre=+${fetch} --group control-plane --env-file /etc/fenvix/control-plane.env --match ${MUST_MATCH.join('=')} ${required('control-plane')} ${required('engine')}`,
             `ExecStartPre=-${docker} network create --subnet=${DOCKER_NETWORK_SUBNET} ${DOCKER_NETWORK}`,
             'ExecStartPre=/usr/local/bin/fenvix-check-network',
-            `ExecStartPre=-${docker} pull ${c.controlPlaneImage}`,
             `ExecStartPre=-${docker} rm -f ${CONTROL_PLANE_CONTAINER}`,
             // No published port: only the TLS terminator reaches it. host-gateway = the Docker bridge, where the engine's
             // admin interface listens; the MongoDB port is reached the same way. IMDS hop limit 1: no AWS credentials here.
-            `ExecStart=${docker} run --rm --name ${CONTROL_PLANE_CONTAINER} --network ${DOCKER_NETWORK} --add-host=host.docker.internal:host-gateway --cap-drop=ALL --security-opt=no-new-privileges --env-file /etc/fenvix/control-plane.static.env --env-file /etc/fenvix/control-plane.env ${c.controlPlaneImage}`,
+            `ExecStart=${docker} run --rm --name ${CONTROL_PLANE_CONTAINER} --network ${DOCKER_NETWORK} --add-host=host.docker.internal:host-gateway --cap-drop=ALL --security-opt=no-new-privileges --env-file /etc/fenvix/control-plane.static.env --env-file /etc/fenvix/control-plane.env \${CONTROL_PLANE_IMAGE}`,
             `ExecStop=${docker} stop ${CONTROL_PLANE_CONTAINER}`,
             'Restart=always',
             'RestartSec=5',
@@ -223,17 +271,18 @@ export function bootScript(i: UserDataInput): string[] {
   return [
     'echo "fenvix bootstrap start $(date -u +%FT%TZ)"',
     '',
-    '# Settings baked in at synth time (no secrets here; secrets come from SSM at service start).',
-    `ENGINE_URL='${c.engineUrl}'`,
-    `ENGINE_SHA256='${c.engineSha256 ?? ''}'`,
-    `CONTROL_PLANE_IMAGE='${c.controlPlaneImage}'`,
-    '',
-    'case "$ENGINE_URL $CONTROL_PLANE_IMAGE" in',
-    '  *example.invalid*|*REPLACE-ME*) echo "FATAL: release location still has the placeholder value. Set engineUrl and controlPlaneImage (infra/README.md) and redeploy." >&2; exit 1;;',
-    'esac',
+    '# Release pins, from the stack settings (no secrets): what fenvix-artifact must install and the SHA-256 it must find.',
+    ...(pins
+      ? [
+          `ENGINE_VERSION='${pins.engineVersion}'`,
+          `ENGINE_SHA256='${pins.engineSha256}'`,
+          ...(i.runControlPlane ? [`CONTROL_PLANE_VERSION='${pins.controlPlaneVersion}'`, `CONTROL_PLANE_SHA256='${pins.controlPlaneSha256}'`] : []),
+        ]
+      : ["ENGINE_VERSION=''"]),
     // The two values CloudFormation filled in (buildUserData): checked before they go into a sourced file.
     `[[ "$FENVIX_TLS_SECRET_ID" =~ ^arn:aws[a-z-]*:secretsmanager:${i.region}:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$ ]] || { echo "FATAL: bad TLS secret id" >&2; exit 1; }`,
     '[[ "$FENVIX_DNS_ZONE_ID" =~ ^Z[A-Z0-9]+$ ]] || { echo "FATAL: bad hosted zone id" >&2; exit 1; }',
+    '[[ "$FENVIX_ARTIFACTS_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || { echo "FATAL: bad artifacts bucket name" >&2; exit 1; }',
     // The instance id, the engine's lease holder (engine-command.ts). IMDSv2: a session token first.
     "IMDS_TOKEN=\"$(curl -fsS --retry 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)\"",
     'INSTANCE_ID="$(curl -fsS --retry 3 -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)"',
@@ -250,11 +299,12 @@ export function bootScript(i: UserDataInput): string[] {
     `install -d -m 0700 -o fenvix -g fenvix ${PATHS.tlsDir}`,
     'install -d -m 0700 -o root -g root /etc/fenvix/proxy',
     '',
-    'ARCH="$(uname -m)"',
-    'URL="${ENGINE_URL//\\{arch\\}/$ARCH}"',
-    `curl --fail --silent --show-error --location --retry 5 --output ${PATHS.engineBinary} "$URL"`,
-    `if [ -n "$ENGINE_SHA256" ]; then echo "$ENGINE_SHA256  ${PATHS.engineBinary}" | sha256sum -c -; fi`,
-    `chmod 0755 ${PATHS.engineBinary}`,
+    // Release artifacts: from the private bucket with the instance role, each checked against its pinned SHA-256.
+    `install -d -m 0755 ${ENGINE_RELEASES_DIR}`,
+    `[ "$(uname -m)" = '${i.arch}' ] || { echo "FATAL: this server is $(uname -m), the stack was made for ${i.arch}" >&2; exit 1; }`,
+    ...heredoc(ARTIFACTS_ENV_FILE, artifactsEnv({ region: i.region, artifactsRegion: i.artifactsRegion, arch: i.arch, mongoPort: c.mongoPort }).join('\n')),
+    `printf "ARTIFACTS_BUCKET='%s'\\n" "$FENVIX_ARTIFACTS_BUCKET" >> ${ARTIFACTS_ENV_FILE}`,
+    ...heredoc('/usr/local/bin/fenvix-artifact', ARTIFACT_SCRIPT, '0755'),
     '',
     // certbot from PyPI: every package pinned with the SHA-256 of its wheels, wheels only (nothing built here).
     ...heredoc('/opt/fenvix/certbot-requirements.txt', ACME_REQUIREMENTS),
@@ -321,20 +371,33 @@ export function bootScript(i: UserDataInput): string[] {
     ...controlPlane,
     '',
     'systemctl daemon-reload',
-    `systemctl enable --now ${services.join(' ')}`,
-    'echo "fenvix bootstrap done $(date -u +%FT%TZ)"',
+    ...(pins
+      ? [
+          // Stops the boot (set -e) with the reason, before any service is enabled, if a download or a SHA-256 check fails.
+          '/usr/local/bin/fenvix-artifact install engine "$ENGINE_VERSION" "$ENGINE_SHA256"',
+          ...(i.runControlPlane ? ['/usr/local/bin/fenvix-artifact install control-plane "$CONTROL_PLANE_VERSION" "$CONTROL_PLANE_SHA256"'] : []),
+          `systemctl enable --now ${services.join(' ')}`,
+          'echo "fenvix bootstrap done $(date -u +%FT%TZ)"',
+        ]
+      : [
+          // First deploy: nothing published yet. Get the certificate (so it can be checked) and start no service.
+          '/usr/local/bin/fenvix-tls',
+          'systemctl enable --now fenvix-tls.timer',
+          'echo "fenvix: NO RELEASE PINNED (engineVersion and the other three settings are empty): certificate done, no service started. Publish the artifacts, set the four settings and deploy again (docs/deploy-checklist.md)."',
+        ]),
   ];
 }
 
 /**
- * EC2 user data (16 KB at most): a short header with the two values only CloudFormation knows, then the boot script
- * gzip-compressed and base64-encoded (it would not fit as plain text), checked against its SHA-256, kept at
+ * EC2 user data (16 KB at most): a short header with the three values only CloudFormation knows, then the boot script
+ * gzip-compressed and base85-encoded (it would not fit as plain text, nor as base64 once the artifact
+ * installer was added: base85 is 5 characters per 4 bytes instead of 4 per 3), checked against its SHA-256, kept at
  * BOOT_SCRIPT_PATH and run. Nothing is downloaded for it and no check is left out: it is the whole of bootScript().
  */
 export function buildUserData(i: UserDataInput): string[] {
   const boot = bootScript(i).join('\n') + '\n';
   const sha = createHash('sha256').update(boot).digest('hex');
-  const b64 = gzipSync(Buffer.from(boot), { level: 9 }).toString('base64');
+  const b85 = b85encode(gzipSync(Buffer.from(boot), { level: 9 }));
   return [
     '#!/bin/bash',
     'set -euo pipefail',
@@ -342,10 +405,12 @@ export function buildUserData(i: UserDataInput): string[] {
     '# Deploy-time values (resource ids, no secrets).',
     `FENVIX_TLS_SECRET_ID='${i.tlsSecretArn}'`,
     `FENVIX_DNS_ZONE_ID='${i.hostedZoneId}'`,
-    `# The boot script (infra/lib/user-data.ts, bootScript), gzip + base64; plain copy on the server: ${BOOT_SCRIPT_PATH}.`,
+    `FENVIX_ARTIFACTS_BUCKET='${i.artifactsBucket}'`,
+    `# The boot script (infra/lib/user-data.ts, bootScript), gzip + base85; plain copy on the server: ${BOOT_SCRIPT_PATH}.`,
     'install -d -m 0755 /opt/fenvix',
-    `base64 -d <<'${PAYLOAD_MARK}' | gunzip > ${BOOT_SCRIPT_PATH}`,
-    ...(b64.match(/.{1,76}/g) ?? []),
+    // python3 is on every Amazon Linux 2023 image (cloud-init itself runs on it); only its standard library is used.
+    `python3 -c 'import base64,sys,zlib; sys.stdout.buffer.write(zlib.decompress(base64.b85decode(sys.stdin.read().strip()), 31))' > ${BOOT_SCRIPT_PATH} <<'${PAYLOAD_MARK}'`,
+    b85,
     PAYLOAD_MARK,
     `echo '${sha}  ${BOOT_SCRIPT_PATH}' | sha256sum -c --quiet -`,
     `. ${BOOT_SCRIPT_PATH}`,
@@ -354,7 +419,7 @@ export function buildUserData(i: UserDataInput): string[] {
 
 /** The boot script back from user data lines (for tests and for reading a synthesized template). */
 export function decodeUserData(userData: string): string {
-  const m = userData.match(new RegExp(`<<'${PAYLOAD_MARK}'[^\\n]*\\n([A-Za-z0-9+/=\\n]+?)\\n${PAYLOAD_MARK}`));
+  const m = userData.match(new RegExp(`<<'${PAYLOAD_MARK}'\\n([^\\n]+)\\n${PAYLOAD_MARK}(\\n|$)`));
   if (!m) throw new Error('no compressed boot script in this user data');
-  return gunzipSync(Buffer.from(m[1].replace(/\n/g, ''), 'base64')).toString('utf8');
+  return gunzipSync(b85decode(m[1])).toString('utf8');
 }

@@ -30,7 +30,7 @@ describe('deploy-policy.json', () => {
   });
 
   test('every resource ARN is in this account, in the chosen regions, or a named fenvix/AWS-public resource', () => {
-    const regions = ['eu-central-1'];
+    const regions = ['eu-west-1'];
     for (const r of stmts.flatMap((s) => arr(s.Resource) as string[]).filter((x) => x !== '*')) {
       const [, , service, region, account, rest] = r.split(':');
       if (['s3', 'route53', 'iam', 'budgets'].includes(service)) {
@@ -47,7 +47,8 @@ describe('deploy-policy.json', () => {
   test('IAM and CloudFormation resources are named fenvix-*', () => {
     for (const s of stmts) {
       for (const r of arr(s.Resource) as string[]) {
-        if (r.includes(':iam::')) expect(r).toMatch(/(role|instance-profile)\/fenvix-\*$/);
+        // Plus (since the artifacts bucket) GitHub's OIDC provider, which has a fixed name: the issuer's host.
+        if (r.includes(':iam::')) expect(r).toMatch(/(role|instance-profile)\/fenvix-\*$|:oidc-provider\/token\.actions\.githubusercontent\.com$/);
         if (r.includes(':cloudformation:')) expect(r).toMatch(/stack\/fenvix-\*\/\*$/);
         if (r.includes(':cloudwatch:')) expect(r).toMatch(/alarm:fenvix-\*$/);
         if (r.includes(':budgets:')) expect(r).toMatch(/budget\/fenvix-\*$/);
@@ -85,7 +86,7 @@ describe('deploy-policy.json', () => {
 
   test('Secrets Manager: only fenvix-* secrets, created with the project tag; the deploy role can never read a secret value', () => {
     const sm = stmts.filter((s) => arr(s.Action).some((a: string) => a.startsWith('secretsmanager:')));
-    for (const s of sm) expect(s.Resource).toBe('arn:aws:secretsmanager:eu-central-1:865859654353:secret:fenvix-*');
+    for (const s of sm) expect(s.Resource).toBe('arn:aws:secretsmanager:eu-west-1:865859654353:secret:fenvix-*');
     const create = sm.find((s) => arr(s.Action).includes('secretsmanager:CreateSecret'));
     expect(create.Condition).toEqual({ StringEquals: { 'aws:RequestTag/project': 'fenvix' } });
     const all = sm.flatMap((s) => arr(s.Action));
@@ -119,6 +120,7 @@ describe('deploy-policy.json', () => {
       'AWS::IAM::Role': 'iam:CreateRole',
       'AWS::IAM::Policy': 'iam:PutRolePolicy',
       'AWS::IAM::InstanceProfile': 'iam:CreateInstanceProfile',
+      'AWS::IAM::OIDCProvider': 'iam:CreateOpenIDConnectProvider',
       'AWS::CloudWatch::Alarm': 'cloudwatch:PutMetricAlarm',
       'AWS::Budgets::Budget': 'budgets:ModifyBudget',
       'AWS::Budgets::BudgetsAction': 'budgets:CreateBudgetAction',

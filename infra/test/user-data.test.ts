@@ -12,12 +12,15 @@ import { INSTANCE_ID_PLACEHOLDER, PATHS } from '../lib/engine-command';
 const config = loadConfig((k) => BASE_CONTEXT[k]);
 const input = {
   config,
-  region: 'eu-central-1',
-  bucketName: 'fenvix-prod-data-865859654353-eu-central-1',
+  region: 'eu-west-1',
+  bucketName: 'fenvix-prod-data-865859654353-eu-west-1',
   requiredParameters: requiredSecretNames('prod'),
-  tlsSecretArn: 'arn:aws:secretsmanager:eu-central-1:865859654353:secret:TlsStore0123ABCD-AbCdEf',
+  tlsSecretArn: 'arn:aws:secretsmanager:eu-west-1:865859654353:secret:TlsStore0123ABCD-AbCdEf',
   hostedZoneId: 'Z0123456789ABC',
   runControlPlane: true,
+  artifactsBucket: 'fenvix-prod-eu-west-1-artifactsbucket1a2b3c4d-0123456789ab',
+  artifactsRegion: 'eu-west-1',
+  arch: 'x86_64' as const,
 };
 /** What the server runs (the compressed part of the user data). */
 const lines = bootScript(input);
@@ -66,28 +69,35 @@ describe('user-data script', () => {
     expect(r.status).toBe(0);
     expect(readFileSync(target, 'utf8')).toBe(script + '\n');
     // A damaged payload is refused (sha256sum fails, set -e stops the boot).
-    const broken = header.replace(/^(H4sI[A-Za-z0-9+/]{10})[A-Za-z0-9+/]/m, (m, a) => a + (m.endsWith('A') ? 'B' : 'A'));
+    const payload = header.split('\n').find((l) => l.length > 1000)!;
+    const at = Math.floor(payload.length / 2);
+    const damaged = payload.slice(0, at) + (payload[at] === 'A' ? 'B' : 'A') + payload.slice(at + 1);
+    const broken = header.replace(payload, damaged);
     writeFileSync(join(dir, 'broken.sh'), broken + '\n');
     expect(spawnSync('bash', [join(dir, 'broken.sh')], { encoding: 'utf8' }).status).not.toBe(0);
   });
 
-  test('only the two deploy-time ids are outside the compressed part, and they are checked before use', () => {
-    const plain = userData.split('\n').filter((l) => !/^[A-Za-z0-9+/=]{1,76}$/.test(l));
+  // Changed on purpose: a third deploy-time id, the artifacts bucket (CloudFormation names it).
+  test('only the three deploy-time ids are outside the compressed part, and they are checked before use', () => {
+    const plain = userData.split('\n').filter((l) => l.length < 1000);
     expect(plain.filter((l) => /^FENVIX_[A-Z_]+=/.test(l))).toEqual([
       `FENVIX_TLS_SECRET_ID='${input.tlsSecretArn}'`,
       `FENVIX_DNS_ZONE_ID='${input.hostedZoneId}'`,
+      `FENVIX_ARTIFACTS_BUCKET='${input.artifactsBucket}'`,
     ]);
-    const checks = lines.filter((l) => l.includes('FENVIX_TLS_SECRET_ID" =~') || l.includes('FENVIX_DNS_ZONE_ID" =~'));
-    expect(checks).toHaveLength(2);
+    const checks = lines.filter((l) => /FENVIX_(TLS_SECRET_ID|DNS_ZONE_ID|ARTIFACTS_BUCKET)" =~/.test(l));
+    expect(checks).toHaveLength(3);
     // The values arrive through the environment here (never pasted into the script), so a bad one cannot run anything.
     const f = join(dir, 'ids.sh');
     writeFileSync(f, [...checks, 'echo OK'].join('\n') + '\n');
-    const run = (secret: string, zone: string) =>
-      spawnSync('bash', [f], { encoding: 'utf8', env: { ...process.env, FENVIX_TLS_SECRET_ID: secret, FENVIX_DNS_ZONE_ID: zone } });
+    const run = (secret: string, zone: string, bucket = input.artifactsBucket) =>
+      spawnSync('bash', [f], { encoding: 'utf8', env: { ...process.env, FENVIX_TLS_SECRET_ID: secret, FENVIX_DNS_ZONE_ID: zone, FENVIX_ARTIFACTS_BUCKET: bucket } });
     expect(run(input.tlsSecretArn, 'Z0123456789ABC').stdout).toBe('OK\n');
-    expect(run("arn:aws:secretsmanager:eu-central-1:865859654353:secret:x' y", 'Z0123456789ABC').status).toBe(1);
+    expect(run("arn:aws:secretsmanager:eu-west-1:865859654353:secret:x' y", 'Z0123456789ABC').status).toBe(1);
     expect(run(input.tlsSecretArn, 'Z1 x').status).toBe(1);
     expect(run('arn:aws:secretsmanager:us-east-1:865859654353:secret:x', 'Z0123456789ABC').status).toBe(1);
+    expect(run(input.tlsSecretArn, 'Z0123456789ABC', "b'; rm -rf /").status).toBe(1);
+    expect(run(input.tlsSecretArn, 'Z0123456789ABC', 'Upper-Case').status).toBe(1);
   });
 
   test('every embedded shell script is valid bash', () => {
@@ -98,15 +108,16 @@ describe('user-data script', () => {
     }
   });
 
-  test('stops with a clear message while the placeholder release location is still in use', () => {
-    const f = join(dir, 'ph.sh');
-    const ph = bootScript({ ...input, config: { ...config, engineUrl: 'https://example.invalid/REPLACE-ME/x-{arch}' } });
-    // Run only the guard: everything up to the first dnf call.
-    const guard = ph.slice(0, ph.findIndex((l) => l.startsWith('dnf install')));
-    writeFileSync(f, guard.join('\n') + '\n');
-    const r = spawnSync('bash', [f], { encoding: 'utf8' });
-    expect(r.status).toBe(1);
-    expect(r.stdout + r.stderr).toContain('placeholder');
+  // Changed on purpose: there is no placeholder URL any more. With no release pinned (first deploy) the server gets its
+  // certificate and starts nothing, and says why.
+  test('with no release pinned (first deploy) it gets the certificate, enables no service and says why', () => {
+    const none = loadConfig((k) => ({ ...BASE_CONTEXT, engineVersion: '', engineSha256: '', controlPlaneVersion: '', controlPlaneSha256: '' })[k]);
+    const ph = bootScript({ ...input, config: none });
+    expect(ph.some((l) => l.startsWith('systemctl enable --now fenvix-engine'))).toBe(false);
+    expect(ph.some((l) => l.startsWith('/usr/local/bin/fenvix-artifact install'))).toBe(false);
+    expect(ph).toContain('/usr/local/bin/fenvix-tls');
+    expect(ph).toContain('systemctl enable --now fenvix-tls.timer');
+    expect(ph.join('\n')).toContain('NO RELEASE PINNED');
   });
 
   test('carries no secret: no token, password, key or certificate, and the variables the engine never read are gone', () => {
@@ -129,13 +140,13 @@ describe('user-data script', () => {
     expect(exec).toContain('--tls-mode=requireTLS');
     expect(unit).toContain('RuntimeDirectory=fenvix');
     expect(unit).toContain('RuntimeDirectoryMode=0700');
-    expect(unit).toContain('Environment=AWS_REGION=eu-central-1');
-    expect(unit).toContain('ExecStartPre=+/usr/local/bin/fenvix-fetch-config --region eu-central-1 --prefix /fenvix/prod --group engine --files /run/fenvix --owner fenvix /fenvix/prod/engine/admin-token');
+    expect(unit).toContain('Environment=AWS_REGION=eu-west-1');
+    expect(unit).toContain('ExecStartPre=+/usr/local/bin/fenvix-fetch-config --region eu-west-1 --prefix /fenvix/prod --group engine --files /run/fenvix --owner fenvix /fenvix/prod/engine/admin-token');
     expect(unit).toContain('ExecStartPre=+/usr/local/bin/fenvix-tls');
     expect(unit).toContain('TimeoutStartSec=15min');
     expect(unit).toContain('User=fenvix');
     expect(unit).not.toContain('EnvironmentFile');
-    expect(exec).toContain('--region=eu-central-1');
+    expect(exec).toContain('--region=eu-west-1');
     expect(exec).toContain(`--holder=${INSTANCE_ID_PLACEHOLDER} `);
     expect(exec.startsWith(`ExecStart=${PATHS.engineBinary} `)).toBe(true);
   });
@@ -223,8 +234,8 @@ describe('user-data script', () => {
     const env = written('/etc/fenvix/tls.env');
     expect(env).toContain(`ACME_SERVER='${ACME_DIRECTORY.production}'`);
     expect(env).toContain("ACME_EMAIL='certs@example.com'");
-    expect(env).toContain("ACME_DOMAINS='*.eu-central-1.db.example.com api.example.com'");
-    expect(env).toContain("ACME_RECORDS='eu-central-1.db.example.com=_acme-challenge.eu-central-1.db.example.com api.example.com=_acme-challenge.api.example.com'");
+    expect(env).toContain("ACME_DOMAINS='*.eu-west-1.db.example.com api.example.com'");
+    expect(env).toContain("ACME_RECORDS='eu-west-1.db.example.com=_acme-challenge.eu-west-1.db.example.com api.example.com=_acme-challenge.api.example.com'");
     expect(env).toContain("RESTART_UNITS='fenvix-engine.service fenvix-proxy.service'");
     expect(lines).toContain('chmod 0600 /etc/fenvix/tls.env');
   });
@@ -243,13 +254,13 @@ describe('user-data script', () => {
     expect(otherText).not.toContain('fenvix-control-plane.service');
     expect(otherText).not.toContain('fenvix-proxy.service');
     const env = written('/etc/fenvix/tls.env', other);
-    expect(env).toContain("ACME_DOMAINS='*.eu-central-1.db.example.com'");
+    expect(env).toContain("ACME_DOMAINS='*.eu-west-1.db.example.com'");
     expect(env).not.toContain('api.example.com');
     expect(env).toContain("RESTART_UNITS='fenvix-engine.service'");
   });
 
   test('the engine-user script passes passwords by environment, never on a command line, and prints no engine message', () => {
-    const s = createEngineUsersScript(config, 'eu-central-1');
+    const s = createEngineUsersScript(config, 'eu-west-1');
     expect(s).toContain('read -r -s');
     expect(s).toContain('-e FENVIX_ROOT_PASSWORD -e FENVIX_PROVISIONER_PASSWORD');
     expect(s).not.toMatch(/-e FENVIX_[A-Z_]+=/);
@@ -278,7 +289,7 @@ describe('fenvix-fetch-config (runs the real embedded script against a fake aws 
     mkdirSync(bin, { recursive: true });
   });
   const run = (...args: string[]) =>
-    spawnSync('python3', ['-I', py, '--region', 'eu-central-1', '--prefix', '/fenvix/prod', ...args], {
+    spawnSync('python3', ['-I', py, '--region', 'eu-west-1', '--prefix', '/fenvix/prod', ...args], {
       encoding: 'utf8',
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
     });

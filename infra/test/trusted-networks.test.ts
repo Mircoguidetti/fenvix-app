@@ -25,8 +25,9 @@ import { BASE_CONTEXT } from './helpers';
  */
 const config = loadConfig((k) => BASE_CONTEXT[k]);
 const input = {
-  config, region: 'eu-central-1', bucketName: 'b', requiredParameters: requiredSecretNames('prod'),
-  tlsSecretArn: 'arn:aws:secretsmanager:eu-central-1:865859654353:secret:TlsStore0123ABCD-AbCdEf', hostedZoneId: 'Z0123456789ABC', runControlPlane: true,
+  config, region: 'eu-west-1', bucketName: 'b', requiredParameters: requiredSecretNames('prod'),
+  tlsSecretArn: 'arn:aws:secretsmanager:eu-west-1:865859654353:secret:TlsStore0123ABCD-AbCdEf', hostedZoneId: 'Z0123456789ABC', runControlPlane: true,
+  artifactsBucket: 'fenvix-prod-eu-west-1-artifactsbucket1a2b3c4d-0123456789ab', artifactsRegion: 'eu-west-1', arch: 'x86_64' as const,
 };
 const lines = bootScript(input);
 const script = lines.join('\n');
@@ -50,7 +51,7 @@ const overlap = (a: string, b: string) => { const [a0, a1] = range(a); const [b0
 describe('trusted networks of the engine', () => {
   test('loopback, the default Docker bridge and the control plane\'s Docker network; nothing else', () => {
     expect(TRUSTED_NETWORKS).toEqual(['127.0.0.0/8', '::1/128', DOCKER_BRIDGE_SUBNET, DOCKER_NETWORK_SUBNET]);
-    expect(engineArgs({ config, region: 'eu-central-1', bucketName: 'b', holder: 'i-0123456789abcdef0' }))
+    expect(engineArgs({ config, region: 'eu-west-1', bucketName: 'b', holder: 'i-0123456789abcdef0' }))
       .toContain('--trusted-networks=127.0.0.0/8,::1/128,172.17.0.0/16,172.18.0.0/24');
   });
 

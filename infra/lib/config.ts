@@ -1,3 +1,4 @@
+import { SHA256_RE, VERSION_RE } from './artifacts';
 export const ALLOWED_INSTANCE_TYPES = ['t3.medium', 'c6i.large', 'c7g.large'] as const;
 export type AllowedInstanceType = (typeof ALLOWED_INSTANCE_TYPES)[number];
 
@@ -22,12 +23,32 @@ export interface FenvixConfig {
   /** The engine's control (admin) interface, reachable only from the server's own security group. */
   adminPort: number;
   controlPlanePort: number;
-  /** Engine release URL. `{arch}` is replaced on the instance with `uname -m` (x86_64 or aarch64). */
-  engineUrl: string;
-  /** Optional sha256 of the engine binary; when set the instance refuses a binary that does not match. */
+  /**
+   * Release artifacts (lib/artifacts.ts): version and SHA-256 of the engine binary and of the control-plane image archive,
+   * as the publish workflows print them. All four or none: with none (first deploy, before anything is published) the
+   * server prepares everything and gets its certificate but starts no service. The SHA-256 is the one the server checks;
+   * nothing in the bucket can change it.
+   */
+  engineVersion?: string;
   engineSha256?: string;
-  /** Control-plane container image reference. */
-  controlPlaneImage: string;
+  controlPlaneVersion?: string;
+  controlPlaneSha256?: string;
+  /** GitHub repository (owner/name) whose release workflow may write engine/ in the artifacts bucket, and its branches. */
+  engineRepo: string;
+  engineRepoBranches: string[];
+  /** GitHub repository whose release workflow may write control-plane/, and its branches. */
+  controlPlaneRepo: string;
+  controlPlaneRepoBranches: string[];
+  /**
+   * ARN of the account's GitHub OIDC provider (token.actions.githubusercontent.com) when it exists already (an account
+   * can have only one per URL). Empty: the first region's stack creates it.
+   */
+  githubOidcProviderArn?: string;
+  /**
+   * Name of the artifacts bucket, for regions after the first (the bucket lives in the first region's stack, output
+   * ArtifactsBucketName). Not used by the first region, whose stack creates the bucket.
+   */
+  artifactsBucket?: string;
   /** TLS terminator in front of the control plane (it serves plain HTTP). Public image, pulled without a login. */
   proxyImage: string;
   /**
@@ -102,7 +123,7 @@ export function loadConfig(get: Lookup): FenvixConfig {
 
   const regions = need('regions').split(',').map((r) => r.trim()).filter(Boolean);
   for (const r of regions) {
-    if (!/^[a-z]{2}-[a-z]+-\d$/.test(r)) throw new Error(`"${r}" is not an AWS region name like eu-central-1`);
+    if (!/^[a-z]{2}-[a-z]+-\d$/.test(r)) throw new Error(`"${r}" is not an AWS region name like eu-west-1`);
   }
   if (new Set(regions).size !== regions.length) throw new Error('regions contains a duplicate');
 
@@ -156,13 +177,49 @@ export function loadConfig(get: Lookup): FenvixConfig {
   if (dashboardOrigins.length === 0) throw new Error('dashboardOrigins: give at least one origin, e.g. https://console.fenvix.dev');
   const proxyImage = need('proxyImage');
   if (!/^[A-Za-z0-9._\-/:@]+$/.test(proxyImage)) throw new Error('proxyImage is not a valid image reference');
-  const engineSha256 = val('engineSha256')?.toLowerCase();
-  if (engineSha256 !== undefined && !/^[0-9a-f]{64}$/.test(engineSha256)) throw new Error('engineSha256 must be 64 hex characters');
-
-  const engineUrl = need('engineUrl');
-  if (!/^https:\/\/[^\s'"$`\\]+$/.test(engineUrl)) throw new Error('engineUrl must be an https:// URL without spaces or shell characters');
-  const controlPlaneImage = need('controlPlaneImage');
-  if (!/^[A-Za-z0-9._\-/:@]+$/.test(controlPlaneImage)) throw new Error('controlPlaneImage is not a valid image reference');
+  for (const gone of ['engineUrl', 'controlPlaneImage']) {
+    if (val(gone) !== undefined) {
+      throw new Error(`"${gone}" is no longer used: the server takes the engine and the control plane from the artifacts bucket. Set engineVersion, engineSha256, controlPlaneVersion, controlPlaneSha256 instead (docs/deploy-checklist.md).`);
+    }
+  }
+  const pinKeys = ['engineVersion', 'engineSha256', 'controlPlaneVersion', 'controlPlaneSha256'] as const;
+  const pins = Object.fromEntries(pinKeys.map((k) => [k, val(k)])) as Record<(typeof pinKeys)[number], string | undefined>;
+  const setPins = pinKeys.filter((k) => pins[k] !== undefined);
+  if (setPins.length !== 0 && setPins.length !== pinKeys.length) {
+    throw new Error(`Set all of ${pinKeys.join(', ')} or none of them (none = first deploy, nothing published yet). Missing: ${pinKeys.filter((k) => pins[k] === undefined).join(', ')}`);
+  }
+  for (const k of ['engineVersion', 'controlPlaneVersion'] as const) {
+    if (pins[k] !== undefined && !VERSION_RE.test(pins[k]!)) throw new Error(`${k} must be letters, digits, ".", "_" or "-" (as the publish workflow prints it), got "${pins[k]}"`);
+  }
+  for (const k of ['engineSha256', 'controlPlaneSha256'] as const) {
+    if (pins[k] !== undefined) {
+      pins[k] = pins[k]!.toLowerCase();
+      if (!SHA256_RE.test(pins[k]!)) throw new Error(`${k} must be 64 hex characters`);
+    }
+  }
+  const repo = (key: string) => {
+    const v = need(key);
+    if (!/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(v)) throw new Error(`${key} must be owner/repository, got "${v}"`);
+    return v;
+  };
+  const branches = (key: string) => {
+    const list = need(key).split(',').map((b) => b.trim()).filter(Boolean);
+    for (const b of list) {
+      // No wildcard: the trust policy names each branch exactly.
+      if (!/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(b)) throw new Error(`${key}: "${b}" is not a plain branch name (no wildcards)`);
+    }
+    if (list.length === 0) throw new Error(`${key}: give at least one branch`);
+    return list;
+  };
+  const githubOidcProviderArn = val('githubOidcProviderArn');
+  if (githubOidcProviderArn !== undefined && !/^arn:aws:iam::\d{12}:oidc-provider\/token\.actions\.githubusercontent\.com$/.test(githubOidcProviderArn)) {
+    throw new Error('githubOidcProviderArn must be arn:aws:iam::<account>:oidc-provider/token.actions.githubusercontent.com');
+  }
+  const artifactsBucket = val('artifactsBucket');
+  if (artifactsBucket !== undefined && !/^fenvix-[a-z0-9.-]{1,55}[a-z0-9]$/.test(artifactsBucket)) throw new Error('artifactsBucket must be the ArtifactsBucketName output of the first region (fenvix-...)');
+  if (regions.length > 1 && artifactsBucket === undefined) {
+    throw new Error('More than one region needs artifactsBucket: the ArtifactsBucketName output of the first region, where the artifacts are published.');
+  }
 
   const account = val('account');
   if (account !== undefined && !/^\d{12}$/.test(account)) throw new Error('account must be 12 digits');
@@ -179,9 +236,13 @@ export function loadConfig(get: Lookup): FenvixConfig {
     mongoPort,
     adminPort,
     controlPlanePort,
-    engineUrl,
-    engineSha256,
-    controlPlaneImage,
+    ...pins,
+    engineRepo: repo('engineRepo'),
+    engineRepoBranches: branches('engineRepoBranches'),
+    controlPlaneRepo: repo('controlPlaneRepo'),
+    controlPlaneRepoBranches: branches('controlPlaneRepoBranches'),
+    githubOidcProviderArn,
+    artifactsBucket,
     proxyImage,
     baseDomain,
     dnsZone: dnsZone as DnsZone,

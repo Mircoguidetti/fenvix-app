@@ -8,7 +8,7 @@ import { SECRET_PARAMETERS } from '../lib/parameters';
 import { BASE_CONTEXT } from './helpers';
 
 const config = loadConfig((k) => BASE_CONTEXT[k]);
-const env = Object.fromEntries(controlPlaneEnvironment({ config, region: 'eu-central-1' }));
+const env = Object.fromEntries(controlPlaneEnvironment({ config, region: 'eu-west-1' }));
 
 describe('control-plane container environment', () => {
   test('real engine, on the data port and the admin port of the host', () => {
@@ -19,12 +19,12 @@ describe('control-plane container environment', () => {
       ENGINE_ADMIN_ALLOW_PLAIN_HTTP: 'true',
       DATA_ENGINE_ENDPOINTS: 'host.docker.internal:27018',
       DATA_ENGINE_TLS: 'true',
-      DATA_ENGINE_TLS_SERVER_NAME: 'engine.eu-central-1.db.example.com',
+      DATA_ENGINE_TLS_SERVER_NAME: 'engine.eu-west-1.db.example.com',
       CONNECTION_PORT: '27018',
       CONNECTION_DB_NAME: 'engine',
       HOST_TEMPLATE: '<name>-<workspace>.<region>.db.<BASE_DOMAIN>',
       BASE_DOMAIN: 'example.com',
-      REGIONS: 'eu-central-1',
+      REGIONS: 'eu-west-1',
       API_PUBLIC_URL: 'https://api.example.com/v1',
       DASHBOARD_ORIGINS: 'https://console.fenvix.dev',
       TRUST_PROXY: 'true',
@@ -34,7 +34,7 @@ describe('control-plane container environment', () => {
   });
 
   test('no variable is set twice and no secret is in the list', () => {
-    const names = controlPlaneEnvironment({ config, region: 'eu-central-1' }).map(([k]) => k);
+    const names = controlPlaneEnvironment({ config, region: 'eu-west-1' }).map(([k]) => k);
     expect(new Set(names).size).toBe(names.length);
     const secretVars = SECRET_PARAMETERS.filter((p) => p.name.startsWith('control-plane/')).map((p) => p.becomes);
     for (const s of secretVars) expect(names).not.toContain(s);
@@ -42,8 +42,8 @@ describe('control-plane container environment', () => {
   });
 
   test('a database host of the real format is covered by the certificate name *.<region>.db.<domain>', () => {
-    const host = 'orders-1a2b3c4d.eu-central-1.db.example.com';
-    const wildcard = '*.eu-central-1.db.example.com';
+    const host = 'orders-1a2b3c4d.eu-west-1.db.example.com';
+    const wildcard = '*.eu-west-1.db.example.com';
     expect(host.split('.').slice(1).join('.')).toBe(wildcard.slice(2));
     expect(env.DATA_ENGINE_TLS_SERVER_NAME.split('.').slice(1).join('.')).toBe(wildcard.slice(2));
   });

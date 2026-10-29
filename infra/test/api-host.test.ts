@@ -25,7 +25,7 @@ describe('API host is api.<domain>, never console.<domain>', () => {
       // And the API host is where it must be.
       expect(boot).toContain('\nAPI_PUBLIC_URL=https://api.fenvix.dev/v1\n');
       expect(boot).toContain('https://api.fenvix.dev:443 {');
-      expect(boot).toContain("ACME_DOMAINS='*.eu-central-1.db.fenvix.dev api.fenvix.dev'");
+      expect(boot).toContain("ACME_DOMAINS='*.eu-west-1.db.fenvix.dev api.fenvix.dev'");
     });
   }
 
@@ -43,17 +43,17 @@ describe('API host is api.<domain>, never console.<domain>', () => {
       allStatements(json)
         .filter((s) => s.statement.Sid === 'AcmeDnsChallengeTxtOnly')
         .map((s) => s.statement.Condition['ForAllValues:StringEquals']['route53:ChangeResourceRecordSetsNormalizedRecordNames']);
-    expect(names(db)).toEqual([['_acme-challenge.eu-central-1.db.fenvix.dev', '_acme-challenge-api.db.fenvix.dev']]);
+    expect(names(db)).toEqual([['_acme-challenge.eu-west-1.db.fenvix.dev', '_acme-challenge-api.db.fenvix.dev']]);
     const dom = everything({ ...PROD, dnsZone: 'domain' }).json;
-    expect(names(dom)).toEqual([['_acme-challenge.eu-central-1.db.fenvix.dev', '_acme-challenge.api.fenvix.dev']]);
+    expect(names(dom)).toEqual([['_acme-challenge.eu-west-1.db.fenvix.dev', '_acme-challenge.api.fenvix.dev']]);
     const records = Object.values<any>(dom.Resources).filter((r) => r.Type === 'AWS::Route53::RecordSet').map((r) => r.Properties.Name).sort();
-    expect(records).toEqual(['*.eu-central-1.db.fenvix.dev.', 'api.fenvix.dev.']);
+    expect(records).toEqual(['*.eu-west-1.db.fenvix.dev.', 'api.fenvix.dev.']);
   });
 
   test('the dashboard origin list cannot hold the API origin or a database host', () => {
     expect(() => synth({ ...PROD, dashboardOrigins: 'https://console.fenvix.dev,https://api.fenvix.dev' })).toThrow(/API's own origin/);
     expect(() => synth({ ...PROD, dashboardOrigins: 'https://api.fenvix.dev:443' })).toThrow(/API's own origin/);
-    expect(() => synth({ ...PROD, dashboardOrigins: 'https://orders-1a2b.eu-central-1.db.fenvix.dev' })).toThrow(/database host/);
+    expect(() => synth({ ...PROD, dashboardOrigins: 'https://orders-1a2b.eu-west-1.db.fenvix.dev' })).toThrow(/database host/);
     expect(() => synth({ ...PROD, dashboardOrigins: ' , ' })).toThrow(/dashboardOrigins/);
     expect(() => synth({ ...PROD, dashboardOrigins: 'https://console.fenvix.dev,https://staging-console.fenvix.dev' })).not.toThrow();
   });

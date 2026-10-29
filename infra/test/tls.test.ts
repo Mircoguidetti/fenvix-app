@@ -16,7 +16,7 @@ import { BASE_CONTEXT } from './helpers';
 const hasTools = spawnSync('openssl', ['version']).status === 0 && spawnSync('python3', ['--version']).status === 0 && spawnSync('flock', ['--version']).status === 0;
 const t = hasTools ? test : test.skip;
 const config = loadConfig((k) => BASE_CONTEXT[k]);
-const SECRET = 'arn:aws:secretsmanager:eu-central-1:865859654353:secret:TlsStore-AbCdEf';
+const SECRET = 'arn:aws:secretsmanager:eu-west-1:865859654353:secret:TlsStore-AbCdEf';
 const root = mkdtempSync(join(tmpdir(), 'fenvix-tls-'));
 const work = join(root, 'work');
 const bin = join(root, 'bin');
@@ -26,7 +26,7 @@ const conf = join(root, 'tls.env');
 const outputs: string[] = [];
 
 function writeConf(over: { server?: string; domains?: string } = {}): void {
-  const lines = tlsEnv({ config, region: 'eu-central-1', withApi: true, restartUnits: ['fenvix-engine.service', 'fenvix-proxy.service'] }).map((l) => {
+  const lines = tlsEnv({ config, region: 'eu-west-1', withApi: true, restartUnits: ['fenvix-engine.service', 'fenvix-proxy.service'] }).map((l) => {
     if (over.server && l.startsWith('ACME_SERVER=')) return `ACME_SERVER='${over.server}'`;
     if (over.domains && l.startsWith('ACME_DOMAINS=')) return `ACME_DOMAINS='${over.domains}'`;
     return l;
@@ -134,7 +134,7 @@ describe('fenvix-tls (real script, fake certbot / Secrets Manager / systemctl)',
     const call = readFileSync(join(work, 'certbot-calls'), 'utf8');
     expect(call).toContain(`--server ${ACME_DIRECTORY.production}`);
     expect(call).toContain('-m certs@example.com --server');
-    expect(call).toContain('-d *.eu-central-1.db.example.com -d api.example.com');
+    expect(call).toContain('-d *.eu-west-1.db.example.com -d api.example.com');
     expect(call).toContain('--manual --preferred-challenges dns');
     expect(call).toContain(`--manual-auth-hook ${join(root, 'fenvix-acme-dns-hook')} present`);
     expect(call).toContain('--force-renewal');
@@ -262,7 +262,7 @@ describe('fenvix-tls (real script, fake certbot / Secrets Manager / systemctl)',
   t('a different name list (config changed) means a new certificate', () => {
     expect(run().stdout).toContain('nothing to do');
     const calls = count('certbot-calls');
-    writeConf({ domains: '*.eu-central-1.db.example.com api.example.com extra.example.com' });
+    writeConf({ domains: '*.eu-west-1.db.example.com api.example.com extra.example.com' });
     const r = run();
     expect(r.status).toBe(0);
     expect(count('certbot-calls')).toBe(calls + 1);
@@ -320,11 +320,11 @@ describe('fenvix-acme-dns-hook (real script, fake aws)', () => {
   };
 
   t('present: UPSERT of the TXT record of the wildcard base name in the zone, then waits for Route 53', () => {
-    const r = hook('eu-central-1.db.example.com', 'abc_DEF-123', 'present');
+    const r = hook('eu-west-1.db.example.com', 'abc_DEF-123', 'present');
     expect(r.stderr).toBe('');
     expect(r.status).toBe(0);
     expect(lastBatch()).toEqual({
-      Changes: [{ Action: 'UPSERT', ResourceRecordSet: { Name: '_acme-challenge.eu-central-1.db.example.com', Type: 'TXT', TTL: 60, ResourceRecords: [{ Value: '"abc_DEF-123"' }] } }],
+      Changes: [{ Action: 'UPSERT', ResourceRecordSet: { Name: '_acme-challenge.eu-west-1.db.example.com', Type: 'TXT', TTL: 60, ResourceRecords: [{ Value: '"abc_DEF-123"' }] } }],
     });
     expect(readFileSync(join(work, 'zones'), 'utf8').trim().split('\n').pop()).toBe('Z0123456789ABC');
     expect(readFileSync(join(work, 'waits'), 'utf8')).toContain('route53 wait resource-record-sets-changed --id /change/C0123');
@@ -344,7 +344,7 @@ describe('fenvix-acme-dns-hook (real script, fake aws)', () => {
   t('dnsZone=db: the api challenge goes to the CNAME target inside db.<domain>', () => {
     const dbConf = join(root, 'tls-db.env');
     const c = loadConfig((k) => ({ ...BASE_CONTEXT, dnsZone: 'db' })[k]);
-    writeFileSync(dbConf, [...tlsEnv({ config: c, region: 'eu-central-1', withApi: true, restartUnits: [] }), "ACME_ZONE_ID='Z0DB'"].join('\n') + '\n');
+    writeFileSync(dbConf, [...tlsEnv({ config: c, region: 'eu-west-1', withApi: true, restartUnits: [] }), "ACME_ZONE_ID='Z0DB'"].join('\n') + '\n');
     expect(hook('api.example.com', 'v1', 'present', dbConf).status).toBe(0);
     expect(lastBatch().Changes[0].ResourceRecordSet.Name).toBe('_acme-challenge-api.db.example.com');
   });

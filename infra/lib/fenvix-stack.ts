@@ -9,6 +9,7 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 import { challengeRecords, apiChallengeTarget, zoneName } from './acme';
+import { ARTIFACT_PREFIXES, Arch } from './artifacts';
 import { FenvixConfig, PROJECT_TAG } from './config';
 import { apiHost } from './control-plane-env';
 import { requiredSecretNames, ssmPrefix } from './parameters';
@@ -42,6 +43,16 @@ const BUCKET_DENY_ACTIONS = [
   's3:ListBucketVersions',
   's3:ListBucketMultipartUploads',
 ];
+
+/** Issuer of GitHub Actions OIDC tokens. */
+export const GITHUB_OIDC_HOST = 'token.actions.githubusercontent.com';
+
+/** The `sub` claim GitHub puts in the token of a workflow run on a branch (default claim format). */
+export function publishSubjects(repo: string, branches: string[]): string[] {
+  return branches.map((b) => `repo:${repo}:ref:refs/heads/${b}`);
+}
+
+const instanceType_ = (c: FenvixConfig) => new ec2.InstanceType(c.instanceType);
 
 export class FenvixStack extends Stack {
   /** Pinned so synth never performs an AWS availability-zone lookup (we have no credentials at synth time). */
@@ -170,6 +181,126 @@ export class FenvixStack extends Stack {
       }),
     );
 
+    // ---- Release artifacts: private bucket, read by the instance, written by GitHub Actions (OIDC) -----------
+    // One bucket for every region, in the first region's stack (lib/artifacts.ts). CloudFormation picks its name (stack
+    // name + random suffix), so it cannot be guessed; the server gets it through the user-data header.
+    const arch: Arch = instanceType_(c).architecture === ec2.InstanceArchitecture.ARM_64 ? 'aarch64' : 'x86_64';
+    const engineRolePattern = this.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: `${name}-engine-*` });
+    let artifactsBucketName: string;
+    let artifactsBucketArn: string;
+    if (props.createDns) {
+      const artifacts = new s3.Bucket(this, 'ArtifactsBucket', {
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
+        encryption: s3.BucketEncryption.S3_MANAGED,
+        enforceSSL: true,
+        versioned: true,
+        lifecycleRules: [
+          {
+            // Every version stays under its own key (needed to go back); only overwritten or deleted copies expire.
+            id: 'expire-replaced-copies',
+            noncurrentVersionExpiration: Duration.days(30),
+            abortIncompleteMultipartUploadAfter: Duration.days(1),
+            expiredObjectDeleteMarker: true,
+          },
+        ],
+        // Kept by a stack delete: the running server and a rollback need these files.
+        removalPolicy: RemovalPolicy.RETAIN,
+      });
+      artifactsBucketName = artifacts.bucketName;
+      artifactsBucketArn = artifacts.bucketArn;
+
+      // GitHub's OIDC provider (one per account): the publish roles trust tokens it signs for the named repositories.
+      const providerArn =
+        c.githubOidcProviderArn ??
+        new iam.CfnOIDCProvider(this, 'GithubOidc', {
+          url: `https://${GITHUB_OIDC_HOST}`,
+          clientIdList: ['sts.amazonaws.com'],
+          // Not used by AWS for GitHub (it trusts GitHub's certificate authority), still accepted as GitHub's published values.
+          thumbprintList: ['6938fd4d98bab03faadb97b34396831e3780aea1', '1c58a3a8518e8759bf075b76b750d4f2df264fcd'],
+        }).attrArn;
+
+      // One role per repository, one prefix per role, PutObject only: no read, no list, no delete, no other prefix.
+      const publishers: { id: string; roleName: string; repo: string; branches: string[]; prefix: string }[] = [
+        { id: 'PublishEngineRole', roleName: `${name}-publish-engine`, repo: c.engineRepo, branches: c.engineRepoBranches, prefix: ARTIFACT_PREFIXES.engine },
+        { id: 'PublishControlPlaneRole', roleName: `${name}-publish-control-plane`, repo: c.controlPlaneRepo, branches: c.controlPlaneRepoBranches, prefix: ARTIFACT_PREFIXES.controlPlane },
+      ];
+      const publishRoles = publishers.map((pub) => {
+        const r = new iam.Role(this, pub.id, {
+          roleName: pub.roleName,
+          description: `GitHub Actions of ${pub.repo} (${pub.branches.join(', ')}): write ${pub.prefix} in the artifacts bucket`,
+          maxSessionDuration: Duration.hours(1),
+          assumedBy: new iam.FederatedPrincipal(
+            providerArn,
+            {
+              StringEquals: {
+                [`${GITHUB_OIDC_HOST}:aud`]: 'sts.amazonaws.com',
+                // Exact subjects only (no wildcard): this repository, a run on one of these branches.
+                [`${GITHUB_OIDC_HOST}:sub`]: publishSubjects(pub.repo, pub.branches),
+              },
+            },
+            'sts:AssumeRoleWithWebIdentity',
+          ),
+        });
+        r.addToPolicy(
+          new iam.PolicyStatement({ sid: 'WriteOwnPrefixOnly', actions: ['s3:PutObject'], resources: [`${artifacts.bucketArn}/${pub.prefix}*`] }),
+        );
+        return { ...pub, role: r };
+      });
+
+      // Bucket policy, on top of the roles' own policies: whatever else gets attached to a role later, reads are for the
+      // engine roles of this env and writes for the publisher of that prefix (plus the account root, for recovery).
+      const root = new iam.AccountRootPrincipal().arn;
+      artifacts.addToResourcePolicy(
+        new iam.PolicyStatement({
+          sid: 'ReadOnlyByEngineRoles',
+          effect: iam.Effect.DENY,
+          principals: [new iam.AnyPrincipal()],
+          actions: ['s3:GetObject', 's3:GetObjectVersion', 's3:GetObjectAttributes', 's3:ListBucket', 's3:ListBucketVersions'],
+          resources: [artifacts.bucketArn, artifacts.arnForObjects('*')],
+          conditions: { ArnNotLike: { 'aws:PrincipalArn': [engineRolePattern, root] } },
+        }),
+      );
+      for (const pub of publishRoles) {
+        artifacts.addToResourcePolicy(
+          new iam.PolicyStatement({
+            sid: `WritesTo${pub.id.replace(/Role$/, '')}PrefixByItsPublisherOnly`,
+            effect: iam.Effect.DENY,
+            principals: [new iam.AnyPrincipal()],
+            actions: ['s3:PutObject', 's3:DeleteObject', 's3:DeleteObjectVersion'],
+            resources: [artifacts.arnForObjects(`${pub.prefix}*`)],
+            conditions: { ArnNotEquals: { 'aws:PrincipalArn': [pub.role.roleArn, root] } },
+          }),
+        );
+      }
+      artifacts.addToResourcePolicy(
+        new iam.PolicyStatement({
+          sid: 'OtherWritesByRootOnly',
+          effect: iam.Effect.DENY,
+          principals: [new iam.AnyPrincipal()],
+          actions: ['s3:PutObject', 's3:DeleteObject', 's3:DeleteObjectVersion'],
+          notResources: publishRoles.map((pub) => artifacts.arnForObjects(`${pub.prefix}*`)),
+          conditions: { ArnNotEquals: { 'aws:PrincipalArn': root } },
+        }),
+      );
+
+      new CfnOutput(this, 'ArtifactsBucketName', { value: artifacts.bucketName, description: 'GitHub secret ARTIFACTS_BUCKET of both repositories (docs/deploy-checklist.md)' });
+      for (const pub of publishRoles) {
+        new CfnOutput(this, `${pub.id}Arn`, { value: pub.role.roleArn, description: `GitHub secret AWS_PUBLISH_ROLE_ARN of ${pub.repo}` });
+      }
+    } else {
+      artifactsBucketName = c.artifactsBucket!;
+      artifactsBucketArn = `arn:${this.partition}:s3:::${c.artifactsBucket}`;
+    }
+    // The server reads the two prefixes it installs from, nothing else: no list, no write, no delete.
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ReadReleaseArtifacts',
+        actions: ['s3:GetObject'],
+        resources: [`${artifactsBucketArn}/${ARTIFACT_PREFIXES.engine}*`, `${artifactsBucketArn}/${ARTIFACT_PREFIXES.controlPlane}*`],
+      }),
+    );
+
     // ---- DNS zone, certificate store and the DNS-01 permission ----------------------------------------------
     // Database hosts are <name>-<workspace>.<region>.db.<domain>: two labels before "db", which *.db.<domain> does not
     // cover. Each region's server gets a Let's Encrypt certificate for *.<region>.db.<domain> (and, where the control
@@ -225,7 +356,7 @@ export class FenvixStack extends Stack {
     );
 
     // ---- Engine node -------------------------------------------------------------------------------
-    const instanceType = new ec2.InstanceType(c.instanceType);
+    const instanceType = instanceType_(c);
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
       ...buildUserData({
@@ -236,6 +367,9 @@ export class FenvixStack extends Stack {
         tlsSecretArn: tlsStore.secretArn,
         hostedZoneId: zone.hostedZoneId,
         runControlPlane: props.createDns,
+        artifactsBucket: artifactsBucketName,
+        artifactsRegion: c.regions[0],
+        arch,
       }),
     );
     const instance = new ec2.Instance(this, 'EngineInstance', {

@@ -10,7 +10,7 @@ This folder describes the AWS setup for FENVIX as code. **Nothing here has been 
 | Engine server | One EC2 server (default `t3.medium`) with a small encrypted disk. It runs the FENVIX engine and restarts it if it stops. AWS replaces the host if the host fails. |
 | Control plane | In the **first region** only: the control-plane container (the API the dashboard calls) and, in front of it, a small TLS terminator (Caddy) that serves `https://api.<your domain>`. |
 | Network | A private network (VPC) with one public subnet. Open to the internet: port **27018** (database, TLS required) and **443** (control plane, HTTPS). The engine's admin port (**8443**) is open to nothing: it listens only inside the server, where the control plane reaches it. No SSH; you connect with Session Manager in the browser. Customers reach port 27018 directly (no proxy, no Docker port in front of it), so the engine sees their real address: each database can have an **IP allowlist**, and addresses that keep failing to sign in are blocked for a while. The server's own processes are trusted by the engine (see "Trusted networks"). |
-| Certificate and DNS | One free **Let's Encrypt** certificate per region for `*.<region>.db.<your domain>` (every database host has this form, for example `orders-1a2b3c4d.eu-central-1.db.example.com`) and, in the first region, `api.<your domain>`. The server requests and renews it itself (DNS challenge in Route 53) and keeps a copy in AWS Secrets Manager, so a replaced server does not request a new one. A Route 53 zone (`db.<your domain>` by default) holds the database records. See "The domain and DNS" and "TLS certificate". |
+| Certificate and DNS | One free **Let's Encrypt** certificate per region for `*.<region>.db.<your domain>` (every database host has this form, for example `orders-1a2b3c4d.eu-west-1.db.example.com`) and, in the first region, `api.<your domain>`. The server requests and renews it itself (DNS challenge in Route 53) and keeps a copy in AWS Secrets Manager, so a replaced server does not request a new one. A Route 53 zone (`db.<your domain>` by default) holds the database records. See "The domain and DNS" and "TLS certificate". |
 | Cost guard | A monthly budget with emails at 50%, 80%, 100%, and an automatic action that **stops the engine server at 100%**. |
 
 Everything is tagged `project=fenvix` and `env=<prod|...>`.
@@ -32,7 +32,7 @@ Set them in `cdk.json` (section `context`) or per command with `-c name=value`. 
 
 | Setting | Default | Meaning | Env variable |
 |---|---|---|---|
-| `regions` | `eu-central-1` | Comma list. **One more entry = one more full copy in that region** (needs `hostedZoneId`). | `FENVIX_REGIONS` |
+| `regions` | `eu-west-1` | Comma list. **One more entry = one more full copy in that region** (needs `hostedZoneId`). | `FENVIX_REGIONS` |
 | `account` | `865859654353` | AWS account. Deploy stops if your login is a different account. | `FENVIX_ACCOUNT` |
 | `env` | `prod` | The `env` tag, and part of every name. | `FENVIX_ENV` |
 | `instanceType` | `t3.medium` | `t3.medium`, `c6i.large` or `c7g.large` (c7g is ARM: needs an ARM engine build). | `FENVIX_INSTANCE_TYPE` |
@@ -46,14 +46,17 @@ Set them in `cdk.json` (section `context`) or per command with `-c name=value`. 
 | `acmeEmail` | **required** | Email of the Let's Encrypt account (expiry and incident notices). No default. | `FENVIX_ACME_EMAIL` |
 | `acmeStaging` | `false` | `true` uses the Let's Encrypt **staging** service: for a first trial only, its certificates are **not trusted** (see "TLS certificate"). | `FENVIX_ACME_STAGING` |
 | `dashboardOrigins` | **required** | Web address of the dashboard, e.g. `https://console.fenvix.dev` (comma list if several). The control plane allows these origins (CORS). Never `https://api.<domain>` (the API itself) or a `*.db.<domain>` host: refused. | `FENVIX_DASHBOARD_ORIGINS` |
-| `engineUrl` | placeholder | HTTPS link to the engine binary. `{arch}` becomes `x86_64` or `aarch64`. | `FENVIX_ENGINE_URL` |
-| `engineSha256` | empty | Checksum of the binary; if set, the server refuses any other file. | `FENVIX_ENGINE_SHA256` |
-| `controlPlaneImage` | placeholder | Container image of the control plane, e.g. `ghcr.io/your-org/fenvix-control-plane:1.0.0`. | `FENVIX_CONTROL_PLANE_IMAGE` |
+| `engineVersion` / `engineSha256` | empty | Engine release to install and its SHA-256, as the `release-engine` workflow (Mircoguidetti/test5) prints them. The server refuses a file with another SHA-256. See "Release artifacts". | `FENVIX_ENGINE_VERSION` / `FENVIX_ENGINE_SHA256` |
+| `controlPlaneVersion` / `controlPlaneSha256` | empty | Control-plane image archive to install and its SHA-256, as the `release-control-plane` workflow (this repository) prints them. | `FENVIX_CONTROL_PLANE_VERSION` / `FENVIX_CONTROL_PLANE_SHA256` |
+| `engineRepo` / `engineRepoBranches` | `Mircoguidetti/test5` / `main` | The only repository, and its branches (comma list, no wildcards), whose GitHub Actions may write `engine/` in the artifacts bucket. | `FENVIX_ENGINE_REPO` / `FENVIX_ENGINE_REPO_BRANCHES` |
+| `controlPlaneRepo` / `controlPlaneRepoBranches` | `Mircoguidetti/olvix-app` / `main` | The same for `control-plane/`. | `FENVIX_CONTROL_PLANE_REPO` / `FENVIX_CONTROL_PLANE_REPO_BRANCHES` |
+| `githubOidcProviderArn` | empty | Only if the account already has GitHub's OIDC provider (`token.actions.githubusercontent.com`): its ARN. Empty: the stack creates it. | `FENVIX_GITHUB_OIDC_PROVIDER_ARN` |
+| `artifactsBucket` | empty | Only for a second region: the `ArtifactsBucketName` output of the first region. | `FENVIX_ARTIFACTS_BUCKET` |
 | `proxyImage` | `public.ecr.aws/docker/library/caddy:2.8.4` | Container image of the TLS terminator in front of the control plane. | `FENVIX_PROXY_IMAGE` |
 | `engineRetentionWindowSecs` | `604800` (7 days) | How far back a database can be restored; set by the control plane on every new database. | `FENVIX_ENGINE_RETENTION_WINDOW_SECS` |
 | `mongoPort` / `adminPort` / `controlPlanePort` | `27018` / `8443` / `443` | Database port (open to the internet), engine admin port (open to nothing), control-plane HTTPS port. | `FENVIX_MONGO_PORT` / `FENVIX_ADMIN_PORT` / `FENVIX_CONTROL_PLANE_PORT` |
 
-**Placeholders.** `engineUrl` and `controlPlaneImage` ship with `example.invalid ... REPLACE-ME`. Nothing is downloaded when you build the templates. If a placeholder is still there when the server boots, the server stops with the message "release location still has the placeholder value" (see Step 9) and starts nothing. The engine and the container images must be downloadable **without a login**, because the server's permissions are limited to its own bucket, its own settings, its own certificate copy and its own DNS challenge records. `baseDomain`, `acmeEmail` and `dashboardOrigins` ship empty: `cdk synth` stops with "Missing setting ..." until you set them.
+**Release settings.** The four settings `engineVersion`, `engineSha256`, `controlPlaneVersion`, `controlPlaneSha256` go together: all set, or all empty. All empty is the first deploy: the artifacts bucket does not exist yet, so nothing can be published; the server prepares everything, gets its certificate, starts **no** service and logs `NO RELEASE PINNED`. `engineUrl` and `controlPlaneImage` no longer exist (setting them stops `cdk synth` with a message). `baseDomain`, `acmeEmail` and `dashboardOrigins` ship empty: `cdk synth` stops with "Missing setting ..." until you set them.
 
 ## The secrets (you create them, they are never in the code)
 
@@ -89,7 +92,7 @@ Four different random values are needed (admin token, user key, provisioner pass
 | `fenvix.dev` | landing page and documentation | Vercel (not this stack) |
 | `console.fenvix.dev` | the dashboard (web app) | Vercel (not this stack) |
 | `api.fenvix.dev` | the control-plane API (`https://api.fenvix.dev/v1`) | this stack, first region |
-| `<name>-<ws>.<region>.db.fenvix.dev` | customer databases (for example `orders-1a2b3c4d.eu-central-1.db.fenvix.dev`) | this stack, each region |
+| `<name>-<ws>.<region>.db.fenvix.dev` | customer databases (for example `orders-1a2b3c4d.eu-west-1.db.fenvix.dev`) | this stack, each region |
 
 - **This stack never uses `console.<domain>`** for the API (not in the certificate, the DNS records, the challenge permissions or Caddy). `console.<domain>` appears only in `dashboardOrigins`, the list of browser origins the control plane allows (CORS). `npm test` fails if the API is ever built on `console.<domain>`, and the settings check refuses `https://api.<domain>` or a `*.db.<domain>` host in `dashboardOrigins`.
 - **The dashboard must call `https://api.<domain>/v1`.** Set it in the dashboard's Vercel project (Settings, Environment Variables): `VITE_API_URL=https://api.fenvix.dev/v1` (the dashboard's `.env.example` says the value includes `/v1`), then redeploy the dashboard. Nothing in this folder sets it.
@@ -101,7 +104,7 @@ The names that must work:
 
 | Name | Points to | Who makes it |
 |---|---|---|
-| `*.<region>.db.<domain>` (for example `*.eu-central-1.db.fenvix.dev`) | the server's public IP (`PublicIp` output) | the stack, in Route 53 |
+| `*.<region>.db.<domain>` (for example `*.eu-west-1.db.fenvix.dev`) | the server's public IP (`PublicIp` output) | the stack, in Route 53 |
 | `api.<domain>` (the API; not `console.<domain>`, which is the dashboard on Vercel) | the same IP (first region only) | the stack (option A) or you (option B) |
 | `_acme-challenge.<region>.db.<domain>` (TXT, only while a certificate is requested) | | the server, in Route 53 |
 | `_acme-challenge.api.<domain>` | option A: TXT made by the server; option B: a CNAME you make once | |
@@ -170,21 +173,31 @@ If the control plane were not trusted, a customer's IP allowlist would also appl
 
 The engine release must be `network-limits` (test5 commit `1c9fee7`) or later: an older engine does not know `--trusted-networks` and refuses to start (systemd restarts it every 5 seconds, and `journalctl -u fenvix-engine` shows the engine's error about the unknown argument `--trusted-networks`).
 
+## Release artifacts (engine binary, control-plane image)
+The engine is private and the server must get it without exposing it. Nothing is pulled from a public place and the server has no registry login:
+
+- **Bucket.** The first region's stack creates a private S3 bucket for releases (output `ArtifactsBucketName`; CloudFormation picks the name, with a random suffix). Public access blocked, ACLs off, encrypted, versioned, TLS only, replaced copies expire after 30 days, kept if the stack is deleted. Keys: `engine/<version>/<arch>/engine` and `control-plane/<version>/<arch>/control-plane.tar.gz` (`lib/artifacts.ts`).
+- **Who writes.** Two GitHub Actions workflows, started by hand: `release-engine` in Mircoguidetti/test5 (`cargo build --release --workspace --locked` with a pinned Rust toolchain) and `release-control-plane` in this repository (`docker build`, then `docker save | gzip`). Each logs in to AWS with GitHub's OIDC token for 15 minutes, as a role the stack made for it: trusted only by that repository on the branches of `engineRepoBranches` / `controlPlaneRepoBranches`, allowed only `s3:PutObject` under its own prefix. A version is never overwritten. No long-lived AWS key exists anywhere.
+- **Who reads.** The server, with its own role: `s3:GetObject` on the two prefixes, nothing else. The bucket policy repeats it: reads only by the engine roles, each prefix written only by its publisher.
+- **The check.** The server installs a file only if its SHA-256 is the one in the stack settings (`engineSha256`, `controlPlaneSha256`); nothing stored in the bucket can change what is expected. A mismatch stops the boot before any service starts, with `SHA-256 MISMATCH for <key>: expected ..., got ...`.
+- **Updates.** `sudo fenvix-artifact update engine <version> <sha256>` (or `control-plane`) on the server: download, check, ordered restart (the engine closes its databases cleanly on SIGTERM; data, WAL and leases are in S3), health check, and back to the previous version by itself if the new one does not come up. `sudo fenvix-artifact rollback engine` goes back by hand; `sudo fenvix-artifact current` shows what runs. Then put the same version in the stack settings, so that a replaced server installs it too. The full steps: `docs/deploy-checklist.md`.
+- **The binary's name** is in `ENGINE_BINARY_NAME` (`lib/engine-command.ts`) only. The object in the bucket is always called `engine`.
+
 ## The boot script and the 16 KB limit
-EC2 accepts at most 16 KB of user data. The boot script (`bootScript()` in `lib/user-data.ts`, with the files of `lib/scripts/` and `lib/acme-requirements.txt`) is about 25 KB, so the user data carries it **gzip-compressed** (about 14 KB in all), checks its SHA-256 before running it, and keeps a readable copy at `/opt/fenvix/boot.sh` on the server. Nothing is downloaded for it and nothing is left out. `npm test` checks the size and that the compressed part decodes to the exact script.
+EC2 accepts at most 16 KB of user data. The boot script (`bootScript()` in `lib/user-data.ts`, with the files of `lib/scripts/`, `lib/acme-requirements.txt` and the artifact installer of `lib/artifacts.ts`) is about 32 KB, so the user data carries it **gzip-compressed and base85-encoded** (about 15.6 KB in all; base64 no longer fits once the artifact installer was added), checks its SHA-256 before running it, and keeps a readable copy at `/opt/fenvix/boot.sh` on the server. It is decoded with the Python 3 standard library, which every Amazon Linux 2023 image has (cloud-init runs on it). Nothing is downloaded for it and nothing is left out. `npm test` checks the size, with a long domain too, and that the compressed part decodes to the exact script. If it ever grows past 16 KB, the next step is to keep the boot script in the artifacts bucket under `boot/` with its SHA-256 fixed in the user data.
 
 ## Deploy, step by step
 
-You need: a web browser, the AWS login of the account `865859654353`, your domain, and about an hour. These steps use **AWS CloudShell** (a terminal inside the AWS console that already has Node.js and the AWS tools), so nothing is installed on your computer.
+You need: a web browser, the AWS login of the account `865859654353`, your domain, and about an hour. The exact order of the first deploy, with every parameter, check and way back, is in `docs/deploy-checklist.md`. These steps use **AWS CloudShell** (a terminal inside the AWS console that already has Node.js and the AWS tools), so nothing is installed on your computer.
 
 ### Step 1. Choose the region
-AWS console, top right: choose **Europe (Frankfurt) eu-central-1**. Every step below happens in this region.
+AWS console, top right: choose **Europe (Ireland) eu-west-1**. Every step below happens in this region.
 
 ### Step 2. Create the secrets (with your own login, before the deploy role)
 1. Click the `>_` icon in the bottom bar of the console (CloudShell). Wait for the prompt.
 2. Paste these lines **one block at a time**. They make random values and store them directly; the values never appear on screen. Each command prints something like `{ "Version": 1, "Tier": "Standard" }`.
    ```
-   R=eu-central-1; P=/fenvix/prod
+   R=eu-west-1; P=/fenvix/prod
    put() { aws ssm put-parameter --region "$R" --type SecureString --name "$1" --value "$2" --tags Key=project,Value=fenvix Key=env,Value=prod; }
    ```
    ```
@@ -228,16 +241,16 @@ npm ci
 If CloudShell says `node` is too old, run `nvm install 22` first. If the repository is private, `git clone` asks for a login and will fail for a password: ask your engineer for a read-only access token, or download the `infra-align` branch as a zip on your computer and upload it with CloudShell menu Actions, Upload file, then `unzip` it.
 
 ### Step 5. Fill in the settings
-Get from your engineers: the HTTPS link of the engine binary (with `{arch}` where the CPU name goes), its SHA-256, and the control-plane image name. Whatever the file in the link is called, the server saves it as `/opt/fenvix/bin/mongo-server`. Then:
+The release settings stay empty for the first deploy (the bucket they come from is made by it): `docs/deploy-checklist.md` has the exact order (stack with a staging certificate, then the artifacts, then the real certificate). Then:
 ```
 export FENVIX_BUDGET_EMAIL="you@yourcompany.com"
 export BASE_DOMAIN="fenvix.dev"
 export FENVIX_ACME_EMAIL="ops@yourcompany.com"
 export FENVIX_ACME_STAGING="true"    # first trial only; "false" (or remove the line) for the real certificate
 export FENVIX_DASHBOARD_ORIGINS="https://console.fenvix.dev"
-export FENVIX_ENGINE_URL="https://.../fenvix-engine-{arch}"
-export FENVIX_ENGINE_SHA256="<64 characters>"
-export FENVIX_CONTROL_PLANE_IMAGE="ghcr.io/your-org/fenvix-control-plane:1.0.0"
+# after the artifacts are published (docs/deploy-checklist.md, phase 3):
+# export FENVIX_ENGINE_VERSION="..."  FENVIX_ENGINE_SHA256="..."
+# export FENVIX_CONTROL_PLANE_VERSION="..."  FENVIX_CONTROL_PLANE_SHA256="..."
 ```
 If you created the Route 53 zone by hand ("The domain and DNS"): `export FENVIX_HOSTED_ZONE_ID="Z..."`. Option A only: `export FENVIX_DNS_ZONE="domain"`.
 (These last until you close CloudShell. Set them again if it restarts.)
@@ -255,7 +268,7 @@ npx cdk deploy --all --require-approval broadening
 ```
 Read the table it shows (roles, security group). Type `y`. No `cdk bootstrap` is needed: the stack uses no uploaded files.
 
-The deploy does not wait for the certificate: the server requests it when it starts. It takes 10 to 20 minutes. At the end it prints `BucketName`, `InstanceId`, `PublicIp`, `SecretsPath`, `TlsSecret`, `DatabaseHosts` (`*.eu-central-1.db.<domain>`), `ControlPlaneUrl` (`https://api.<domain>/v1`: the value of the dashboard's `VITE_API_URL` on Vercel, see "Addresses"), with option B `ApiRecordToCreate` and `ApiChallengeRecordToCreate` (make them now if you have not, "The domain and DNS"), and, if the stack created the zone, `NameServers` (put them at your DNS provider now: option B as `NS` records named `db`, option A as the domain's name servers).
+The deploy does not wait for the certificate: the server requests it when it starts. It takes 10 to 20 minutes. At the end it prints `BucketName`, `InstanceId`, `PublicIp`, `SecretsPath`, `TlsSecret`, `DatabaseHosts` (`*.eu-west-1.db.<domain>`), `ControlPlaneUrl` (`https://api.<domain>/v1`: the value of the dashboard's `VITE_API_URL` on Vercel, see "Addresses"), with option B `ApiRecordToCreate` and `ApiChallengeRecordToCreate` (make them now if you have not, "The domain and DNS"), and, if the stack created the zone, `NameServers` (put them at your DNS provider now: option B as `NS` records named `db`, option A as the domain's name servers).
 
 ### Step 8. Switch on the cost tracking (once)
 Billing console, Cost allocation tags, activate the user tags `project` and `env`. (Optional but useful: it lets Cost Explorer split costs per tag from the next day on. The budget itself already works per region without it.)
@@ -269,7 +282,9 @@ Billing console, Cost allocation tags, activate the user tags `project` and `env
    sudo journalctl -u fenvix-engine -n 30 --no-pager
    ```
    Expected: the log ends with `fenvix bootstrap done`; the three services are `active (running)`; the engine log shows `fenvix-tls: requesting a certificate ...`, `fenvix-tls: certificate kept in Secrets Manager`, `fenvix-tls: certificate installed` and `admin interface listening on 172.17.0.1:8443 (bearer token required)` and `mongo-server listening on 0.0.0.0:27018 (idle close after 60 s, holder i-..., lease ttl 30 s)` (the holder is the instance id). The first start can take a few minutes (the DNS challenge).
-   - "release location still has the placeholder value": Step 5 was skipped. Set the variables, run `npx cdk deploy --all` again (AWS replaces the server; no data is lost, it lives in S3).
+   - "NO RELEASE PINNED": the first deploy, as expected; no service runs yet. Publish the artifacts and deploy again with the four release settings (`docs/deploy-checklist.md`).
+   - "SHA-256 MISMATCH for ...": the file in the bucket is not the one the settings name (wrong version or hash pasted, or a different build). Nothing was started. Fix the setting and deploy again.
+   - "cannot download s3://...": that version was not published for this CPU (`x86_64` or `aarch64`), or the name is mistyped.
    - "missing SSM parameters: ...": the names listed are missing or misspelled. Fix them in Parameter Store (Step 2), then `sudo systemctl restart fenvix-engine fenvix-control-plane fenvix-proxy`.
    - "... must hold the same value as ...": the two admin tokens differ. Put the same value in both (Step 2), then restart as above.
    - "fenvix-tls: the certificate request failed ... no valid certificate installed": Let's Encrypt could not validate. The lines above it say which name; usually the DNS delegation or the `_acme-challenge.api` CNAME is missing or not yet visible ("The domain and DNS", check 5), or a CAA record forbids Let's Encrypt. Fix it; the server tries again by itself every 20 minutes.
@@ -307,19 +322,20 @@ Running the script again is safe: it says the users exist and sets the provision
 ```
 D=fenvix.dev
 curl -s https://api.$D/healthz
-openssl s_client -connect check.eu-central-1.db.$D:27018 -servername check.eu-central-1.db.$D </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -enddate
+openssl s_client -connect check.eu-west-1.db.$D:27018 -servername check.eu-west-1.db.$D </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -enddate
 timeout 5 bash -c "echo > /dev/tcp/$(dig +short api.$D | head -1)/8443" && echo OPEN || echo CLOSED
 ```
-Expected: `{"ok":true}`; a subject with `*.eu-central-1.db.fenvix.dev` and a Let's Encrypt issuer (for example `O = Let's Encrypt, CN = R12`; with staging, an issuer starting with `(STAGING)`); `CLOSED` (the admin port is not reachable from the internet). If `dig` is missing, use the `PublicIp` printed in Step 7 instead of `$(dig ...)`.
+Expected: `{"ok":true}`; a subject with `*.eu-west-1.db.fenvix.dev` and a Let's Encrypt issuer (for example `O = Let's Encrypt, CN = R12`; with staging, an issuer starting with `(STAGING)`); `CLOSED` (the admin port is not reachable from the internet). If `dig` is missing, use the `PublicIp` printed in Step 7 instead of `$(dig ...)`.
 
 ### Certificate renewal
 Automatic, see "TLS certificate": checked twice a day, renewed when less than 30 days are left, engine and TLS terminator restarted once only when the certificate changed. The engine has `rotateCertificates` (it reloads the files without a restart), but with `--auth` the engine allows that command only to a user with every privilege (`__system`), which no user here has, not even `fenvix_root`; so the server restarts it instead (a few seconds; drivers reconnect). To check now: `sudo systemctl start fenvix-tls.service`, then `sudo journalctl -u fenvix-tls -n 20 --no-pager`.
 
 ### Adding a region later
 1. You need an existing Route 53 zone: set `FENVIX_HOSTED_ZONE_ID` (if the first deploy created the zone, its id is in Route 53, Hosted zones).
-2. Change one line: `"regions": "eu-central-1,us-east-1"` in `cdk.json`.
-3. In `deploy-policy.json` every ARN that contains `eu-central-1` needs a twin with the new region, and the `aws:RequestedRegion` lists need the new region. Update the inline policy in IAM.
-4. Repeat Step 2 (secrets) in the new region, then `npx cdk deploy --all`. The new region gets its own engine, bucket, certificate (only `*.<region>.db.<domain>`), certificate copy in Secrets Manager and `*.<region>.db.<domain>` record; its server may write only its own `_acme-challenge.<region>.db.<domain>` TXT record. The control plane stays in the first region and manages **only the first region's engine** (reaching another region's admin port is not built; see `results-infra.md`).
+2. Change one line: `"regions": "eu-west-1,us-east-1"` in `cdk.json`.
+3. In `deploy-policy.json` every ARN that contains `eu-west-1` needs a twin with the new region, and the `aws:RequestedRegion` lists need the new region. Update the inline policy in IAM.
+4. Set `artifactsBucket` to the first region's `ArtifactsBucketName` output (the releases stay in one bucket; the new server reads them across regions).
+5. Repeat Step 2 (secrets) in the new region, then `npx cdk deploy --all`. The new region gets its own engine, bucket, certificate (only `*.<region>.db.<domain>`), certificate copy in Secrets Manager and `*.<region>.db.<domain>` record; its server may write only its own `_acme-challenge.<region>.db.<domain>` TXT record. The control plane stays in the first region and manages **only the first region's engine** (reaching another region's admin port is not built; see `results-infra.md`).
 
 ## If the budget stops the server
 At 100% the budget stops the engine server (the data is safe in S3). To resume: raise `budgetAmount`, deploy, and in EC2 console select the instance, Instance state, Start. Services start by themselves. Budget data is updated a few times a day, so the stop can come some hours late.
@@ -328,9 +344,10 @@ At 100% the budget stops the engine server (the data is safe in S3). To resume: 
 
 Do this in order. Data is deleted for good in step 3.
 
-1. In CloudShell: `npx cdk destroy --all`. This removes the server, network, roles, alarm, budget, DNS records, the certificate copy in Secrets Manager and (if the stack created it) the hosted zone. The **S3 bucket stays**. Secrets Manager keeps a deleted secret for a recovery period: if you deploy again within it and the deploy fails with "already scheduled for deletion", run `aws secretsmanager delete-secret --region eu-central-1 --secret-id fenvix-prod-tls-eu-central-1 --force-delete-without-recovery` and deploy again.
+1. In CloudShell: `npx cdk destroy --all`. This removes the server, network, roles (also the two publish roles and GitHub's OIDC provider, if the stack made it), alarm, budget, DNS records, the certificate copy in Secrets Manager and (if the stack created it) the hosted zone. The **S3 buckets stay** (data and artifacts). Secrets Manager keeps a deleted secret for a recovery period: if you deploy again within it and the deploy fails with "already scheduled for deletion", run `aws secretsmanager delete-secret --region eu-west-1 --secret-id fenvix-prod-tls-eu-west-1 --force-delete-without-recovery` and deploy again.
 2. Option A: point the domain's name servers back at GoDaddy's (with the website records there) before step 1 finishes, or the domain stops resolving. Option B: delete the `db` NS records, `api` (A) and `_acme-challenge.api` (CNAME) at your DNS provider (not `console`: that is the dashboard on Vercel), and the `db.<domain>` zone in Route 53 if you created it by hand.
 3. Delete the bucket (customer data!): S3 console, open `fenvix-prod-data-...`. The bucket policy blocks everyone except the engine role and the account root user. Either sign in as the root user, or first remove the policy: Permissions, Bucket policy, Delete. Then *Empty* (it also removes old versions), then *Delete*.
+   The artifacts bucket (`fenvix-prod-eu-west-1-artifactsbucket...`, only release files): same way, its policy also lets only the root user in.
 4. Systems Manager, Parameter Store: delete the parameters under `/fenvix/prod/`.
 5. IAM: delete the role `fenvix-deployer`.
 6. Next day: Billing, Bills, check that no charges are left (an Elastic IP, hosted zone or secret left behind costs a few dollars a month).

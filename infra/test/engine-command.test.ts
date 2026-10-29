@@ -5,7 +5,7 @@ import { DOCKER_BRIDGE_IP, ENGINE_BINARY_NAME, engineArgs, engineEnvironment, IN
 import { BASE_CONTEXT } from './helpers';
 
 const config = loadConfig((k) => BASE_CONTEXT[k]);
-const args = engineArgs({ config, region: 'eu-central-1', bucketName: 'fenvix-prod-data-865859654353-eu-central-1', holder: 'i-0123456789abcdef0' });
+const args = engineArgs({ config, region: 'eu-west-1', bucketName: 'fenvix-prod-data-865859654353-eu-west-1', holder: 'i-0123456789abcdef0' });
 
 describe('engine command line (flags of the final engine, Mircoguidetti/test5 @ 41ed169, and --trusted-networks of network-limits @ 1c9fee7; see lib/engine-command.ts)', () => {
   test('exactly the production flags, in one place', () => {
@@ -17,8 +17,8 @@ describe('engine command line (flags of the final engine, Mircoguidetti/test5 @ 
       '--tls-mode=requireTLS',
       `--tls-certificate-key-file=${PATHS.enginePem}`,
       '--store=s3',
-      '--bucket=fenvix-prod-data-865859654353-eu-central-1',
-      '--region=eu-central-1',
+      '--bucket=fenvix-prod-data-865859654353-eu-west-1',
+      '--region=eu-west-1',
       '--holder=i-0123456789abcdef0',
       '--idle-secs=60',
       '--retention-window-secs=604800',
@@ -62,6 +62,6 @@ describe('engine command line (flags of the final engine, Mircoguidetti/test5 @ 
   });
 
   test('the region reaches the engine through the flag and the environment (same value), nothing else', () => {
-    expect(engineEnvironment('eu-central-1')).toEqual({ AWS_REGION: 'eu-central-1', AWS_DEFAULT_REGION: 'eu-central-1' });
+    expect(engineEnvironment('eu-west-1')).toEqual({ AWS_REGION: 'eu-west-1', AWS_DEFAULT_REGION: 'eu-west-1' });
   });
 });

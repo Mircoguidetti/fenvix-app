@@ -39,6 +39,6 @@ describe('cdk-nag AwsSolutions pack', () => {
   });
 
   test('no unsuppressed findings (with BASE_DOMAIN and two regions)', () => {
-    expect(run(true, { baseDomain: 'example.com', regions: 'eu-central-1,us-east-1', hostedZoneId: 'Z0123456789ABC' })).toEqual([]);
+    expect(run(true, { baseDomain: 'example.com', regions: 'eu-west-1,us-east-1', hostedZoneId: 'Z0123456789ABC', artifactsBucket: 'fenvix-prod-eu-west-1-artifactsbucket1a2b3c4d-0123456789ab' })).toEqual([]);
   });
 });
