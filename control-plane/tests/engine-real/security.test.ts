@@ -254,7 +254,9 @@ describe("engine-real: one engine user per database", { skip: SKIP }, () => {
     await sleep(10);
   });
 
-  test("ENGINE GAP (reported, not ours to fix): the provisioner can create a root user, because createUser does not check grantRole", { todo: "the engine must require grantRole on each granted role's database (as mongod does); until then the provisioner's password is as strong as root" }, async () => {
+  // Was a `todo` (engine gap) until the final engine: createUser now requires grantRole on each granted role's database
+  // and the possession of cluster-wide privileges, so this is a regular test. More cases in final-engine.test.ts (d).
+  test("the provisioner cannot create a root user (the engine checks what a granter may grant)", async () => {
     const p = w.e.clientAs({ ...w.e.provisioner, authSource: "admin" });
     try {
       const r = await p.db("admin").command({ createUser: "gap_check", pwd: randomBytes(18).toString("base64url"), roles: ["root"] }).then(() => "created", (e: { code?: number }) => `refused ${e.code}`);
