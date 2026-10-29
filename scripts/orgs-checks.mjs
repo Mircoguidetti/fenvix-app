@@ -133,6 +133,16 @@ const TESTS = {
     await go(page, "databases/db_0001?tab=users");
     await page.locator("#users td .user-name").first().waitFor();
     assert(!(await page.getByRole("button", { name: "Add user" }).count()), "a member can add database users");
+    // Network: the list read only, no blocked addresses.
+    await go(page, "databases/db_0001?tab=network");
+    await page.locator("#allowlist .net-entry").first().waitFor();
+    for (const name of ["Add", "Save list", "Import", "Clear list", "Apply again"]) {
+      assert(!(await page.getByRole("button", { name, exact: true }).count()), `a member is offered ${name} in Network`);
+    }
+    assert(!(await page.getByRole("button", { name: /^(Remove|Unblock) / }).count()), "a member can remove entries or unblock");
+    await page.locator("#allowlist .readonly-note").getByText("Only an owner or admin can change the IP allowlist.").waitFor();
+    await page.locator("#blocks .readonly-note").getByText("Only an owner or admin can see and unblock blocked addresses.").waitFor();
+    assert(!(await page.getByRole("list", { name: "Blocked addresses" }).count()), "a member sees blocked addresses");
     assert(!(await page.getByRole("button", { name: /^Reset password of/ }).count()), "a member can reset passwords");
     await go(page, "databases/new");
     await page.getByText("Only an owner or admin of this organization can create databases").waitFor();

@@ -13,6 +13,7 @@ import { AreaSeriesChart, TimeBarsChart, WakeTimeline } from "../components/char
 import { useToast } from "../components/Toast";
 import { DataExplorer } from "../components/DataExplorer";
 import { DatabaseUsers } from "../components/DatabaseUsers";
+import { DatabaseNetwork } from "../components/DatabaseNetwork";
 import { PasswordDialog } from "../components/PasswordOnce";
 import { connectionParts } from "../data/connection";
 import { useAsync } from "../lib/useAsync";
@@ -43,7 +44,8 @@ function DatabaseDetail({ id }: { id: string }) {
   const navigate = useNavigate();
   const { canManage } = useOrg();
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") === "data" ? "data" : params.get("tab") === "users" ? "users" : "overview";
+  const tabParam = params.get("tab");
+  const tab = tabParam === "data" || tabParam === "users" || tabParam === "network" ? tabParam : "overview";
   const db = useAsync(() => client.getDatabase(id), [id]);
   const [range, setRange] = useState<UsageRange>("7d");
   const usage = useAsync(() => client.getUsage(id, range), [id, range]);
@@ -171,10 +173,14 @@ function DatabaseDetail({ id }: { id: string }) {
         <button type="button" aria-pressed={tab === "users"} onClick={() => setParams({ tab: "users" }, { replace: true })}>
           Users
         </button>
+        <button type="button" aria-pressed={tab === "network"} onClick={() => setParams({ tab: "network" }, { replace: true })}>
+          Network
+        </button>
       </div>
 
       {tab === "data" && <DataExplorer db={d} />}
       {tab === "users" && <DatabaseUsers db={d} />}
+      {tab === "network" && <DatabaseNetwork db={d} />}
 
       {tab === "overview" && (
         <>

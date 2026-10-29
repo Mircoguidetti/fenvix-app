@@ -575,3 +575,22 @@ textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflo
 .gate-who { overflow-wrap: anywhere; }
 .btn-link { background: transparent; border: 0; padding: 0; color: var(--nav-text); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font: inherit; }
 .btn-link:focus-visible { outline-color: var(--nav-text); }
+
+/* Network tab: the IP allowlist and the blocked addresses. Long IPv6 networks wrap instead of widening the page. */
+.net { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.net-summary { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.net-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; }
+.net-row { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 8px 12px; border-top: 1px solid var(--border); min-width: 0; flex-wrap: wrap; }
+.net-row:first-child { border-top: 0; }
+.net-entry { min-width: 0; overflow-wrap: anywhere; word-break: break-all; font-size: 13.5px; }
+.net-block { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 180px; }
+.net-add { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.net-add .field { flex: 1 1 220px; }
+.net-callout-text { margin: 0; overflow-wrap: anywhere; }
+.error-list { display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; overflow-wrap: anywhere; }
+.error-list ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.detail-tabs { max-width: 100%; overflow-x: auto; }
+@media (max-width: 520px) {
+  .net-add .btn { flex: 1 1 100%; justify-content: center; }
+  .net-row .btn { margin-left: auto; }
+}

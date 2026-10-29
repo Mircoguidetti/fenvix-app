@@ -16,6 +16,8 @@ const SCREENS = [
   ["create-database", "databases/new"],
   ["database-users", "databases/db_0001?tab=users"],
   ["database-users-empty", "databases/db_0002?tab=users"],
+  ["database-network", "databases/db_0001?tab=network"],
+  ["database-network-empty", "databases/db_0002?tab=network"],
   ["usage", "usage"],
   ["usage-by-tag", "usage?by=tag&key=customer"],
   ["billing", "billing"],
