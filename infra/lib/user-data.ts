@@ -1,156 +1,425 @@
+import { createHash } from 'crypto';
+import { Token } from 'aws-cdk-lib';
+import { gunzipSync, gzipSync } from 'zlib';
+import { ACME_REQUIREMENTS, DNS_HOOK_SCRIPT, TLS_SCRIPT, tlsEnv } from './acme';
 import { FenvixConfig } from './config';
+import {
+  CONTROL_PLANE_CONTAINER,
+  CONTROL_PLANE_INTERNAL_PORT,
+  apiHost,
+  controlPlaneEnvironment,
+} from './control-plane-env';
+import { DOCKER_BRIDGE_IP, DOCKER_BRIDGE_PREFIX, DOCKER_NETWORK, DOCKER_NETWORK_SUBNET, INSTANCE_ID_PLACEHOLDER, PATHS, engineArgs, engineEnvironment } from './engine-command';
+import { MUST_MATCH, ssmPrefix } from './parameters';
+import { ARTIFACT_SCRIPT, ARTIFACTS_ENV_FILE, Arch, CONTROL_PLANE_IMAGE_FILE, ENGINE_RELEASES_DIR, artifactPins, artifactsEnv } from './artifacts';
+
+export { ssmPrefix };
 
 export interface UserDataInput {
   config: FenvixConfig;
   region: string;
-  /** Bucket name; may be a CDK token. */
+  /** Bucket name. Must be known at synth time (it is inside the compressed part of the boot script). */
   bucketName: string;
-  /** Names (under the SSM prefix) that must exist, or the services refuse to start. */
+  /** Full SSM names that must exist, or the services refuse to start (lib/parameters.ts). */
   requiredParameters: string[];
-  /** ACM certificate ARN when a domain is configured; passed to the engine only as information. */
-  certificateArn?: string;
+  /** Secrets Manager secret that keeps the Let's Encrypt certificate and key. May be a CDK token. */
+  tlsSecretArn: string;
+  /** Route 53 zone the DNS-01 challenge records go to. May be a CDK token. */
+  hostedZoneId: string;
+  /** The control plane and its TLS terminator run in the first region only (DNS for api.<domain> points there). */
+  runControlPlane: boolean;
+  /** Artifacts bucket (lib/artifacts.ts). May be a CDK token (the first region's stack lets CloudFormation name it). */
+  artifactsBucket: string;
+  /** Region of the artifacts bucket (the first region). */
+  artifactsRegion: string;
+  /** Architecture of the instance type: which build of the engine and of the control plane to install. */
+  arch: Arch;
 }
 
-export function ssmPrefix(envName: string): string {
-  return `/fenvix/${envName}`;
-}
+/**
+ * Run before the control plane and its TLS terminator start: the Docker network they share must have the subnet the
+ * engine trusts (engine-command.ts). `docker network create` does nothing to a network that already exists, so one made
+ * earlier with another subnet would make the engine count and block the control plane: the unit stops instead.
+ */
+export const CHECK_NETWORK = [
+  '#!/bin/bash',
+  `got="$(/usr/bin/docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' ${DOCKER_NETWORK})"`,
+  `[ "$got" = "${DOCKER_NETWORK_SUBNET}" ] && exit 0`,
+  `echo "fenvix: Docker network ${DOCKER_NETWORK} has subnet '$got', the engine trusts ${DOCKER_NETWORK_SUBNET}: docker network rm ${DOCKER_NETWORK}, then restart the units" >&2`,
+  'exit 1',
+].join('\n');
 
-// Turns every SecureString under one SSM path into KEY=value lines.
-// systemd format (quoted, escaped) for the engine, raw format for `docker --env-file`.
+// Reads the parameters under /fenvix/<env> at every service start. The engine gets one file per parameter of its
+// group (0600, owned by the service user); the control plane gets a docker env file (0600, root). Values are never
+// printed. A missing required parameter stops the service with its name.
 export const FETCH_CONFIG = String.raw`#!/usr/bin/env python3
-import json, subprocess, sys, os
-region, prefix, out_systemd, out_docker, group, env_prefix, *required = sys.argv[1:]
-def fetch(path):
-    r = subprocess.run(["aws", "ssm", "get-parameters-by-path", "--region", region, "--path", path,
-                        "--with-decryption", "--recursive", "--output", "json"], capture_output=True, text=True)
-    if r.returncode != 0:
-        sys.exit("fenvix-fetch-config: cannot read " + path + ": " + r.stderr.strip())
-    return json.loads(r.stdout)["Parameters"]
-params = fetch(prefix + "/" + group)
-found = {p["Name"] for p in params}
-missing = [n for n in required if n not in found]
+import argparse, json, os, pwd, subprocess, sys
+ap = argparse.ArgumentParser()
+for o in ("--region", "--prefix", "--group"):
+    ap.add_argument(o, required=True)
+ap.add_argument("--files"); ap.add_argument("--owner"); ap.add_argument("--env-file")
+ap.add_argument("--match", action="append", default=[])
+ap.add_argument("required", nargs="*")
+a = ap.parse_args()
+def die(msg):
+    sys.exit("fenvix-fetch-config: " + msg)
+r = subprocess.run(["aws", "ssm", "get-parameters-by-path", "--region", a.region, "--path", a.prefix,
+                    "--with-decryption", "--recursive", "--output", "json"], capture_output=True, text=True)
+if r.returncode != 0:
+    die("cannot read " + a.prefix + ": " + r.stderr.strip()[:500])
+values = {p["Name"]: p["Value"] for p in json.loads(r.stdout)["Parameters"]}
+missing = [n for n in a.required if n not in values]
 if missing:
-    sys.exit("fenvix-fetch-config: missing SSM parameters (create them as SecureString in the console): " + ", ".join(missing))
-def key(p):
-    return env_prefix + p["Name"].rsplit("/", 1)[1].upper().replace("-", "_")
-sysd, dock = [], []
-for p in params:
-    v = p["Value"]
+    die("missing SSM parameters (create them as SecureString, infra/README.md): " + ", ".join(missing))
+for m in a.match:
+    x, y = (a.prefix + "/" + s for s in m.split("=", 1))
+    if values.get(x) != values.get(y):
+        die(x + " must hold the same value as " + y)
+base = a.prefix + "/" + a.group + "/"
+group = {n[len(base):]: v for n, v in values.items() if n.startswith(base) and "/" not in n[len(base):]}
+for name, v in group.items():
     if "\n" in v:
-        sys.exit("fenvix-fetch-config: " + p["Name"] + " contains a newline")
-    sysd.append(key(p) + '="' + v.replace("\\", "\\\\").replace('"', '\\"') + '"')
-    dock.append(key(p) + "=" + v)
-for path, lines, in ((out_systemd, sysd), (out_docker, dock)):
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        die(base + name + " contains a newline")
+def write(path, text, uid=-1, gid=-1):
+    fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
-        f.write("\n".join(lines) + "\n")
+        f.write(text)
+    os.chown(path + ".tmp", uid, gid)
+    os.rename(path + ".tmp", path)
+if a.files:
+    u = pwd.getpwnam(a.owner)
+    for name, v in group.items():
+        write(os.path.join(a.files, name), v, u.pw_uid, u.pw_gid)
+if a.env_file:
+    write(a.env_file, "".join(k.upper().replace("-", "_") + "=" + v + "\n" for k, v in sorted(group.items())))
 `;
 
-export function buildUserData(i: UserDataInput): string[] {
-  const c = i.config;
+/**
+ * Run once by an operator (README, Step 10) after the first start. Through the engine's localhost exception it makes
+ * the break-glass root user (password typed in, never stored on the server) and the provisioner the control plane
+ * uses (role with user-management actions only, password from SSM), as control-plane/docs/data-explorer-security.md
+ * says. Uses the control-plane image's MongoDB driver. Prints no password and no engine message (only error codes). Running it again resets the provisioner's password to the SSM value.
+ */
+export function createEngineUsersScript(c: FenvixConfig, region: string): string {
   const prefix = ssmPrefix(c.envName);
+  return String.raw`#!/bin/bash
+set -euo pipefail
+read -r -s -p "Break-glass root password (from your password manager, 16+ characters): " FENVIX_ROOT_PASSWORD; echo
+if [ "${'$'}{#FENVIX_ROOT_PASSWORD}" -lt 16 ]; then echo "fenvix-create-engine-users: the password needs 16 characters or more" >&2; exit 1; fi
+FENVIX_PROVISIONER_PASSWORD="$(aws ssm get-parameter --region '${region}' --name '${prefix}/control-plane/engine-provisioner-password' --with-decryption --query Parameter.Value --output text)"
+export FENVIX_ROOT_PASSWORD FENVIX_PROVISIONER_PASSWORD
+. ${CONTROL_PLANE_IMAGE_FILE}
+docker run --rm -i --network host -e FENVIX_ROOT_PASSWORD -e FENVIX_PROVISIONER_PASSWORD --entrypoint node "$CONTROL_PLANE_IMAGE" --input-type=module - <<'JS'
+import { MongoClient } from "mongodb";
+const url = "mongodb://127.0.0.1:${c.mongoPort}/";
+const opts = { directConnection: true, serverSelectionTimeoutMS: 10000, tls: true, tlsAllowInvalidHostnames: true };
+const root = { username: "fenvix_root", password: process.env.FENVIX_ROOT_PASSWORD };
+const prov = { user: "fenvix_provisioner", pwd: process.env.FENVIX_PROVISIONER_PASSWORD };
+const actions = ["createUser", "dropUser", "viewUser", "changePassword", "changeCustomData", "grantRole", "revokeRole"];
+const say = (m) => console.log("fenvix-create-engine-users: " + m);
+const code = (e) => String((e && (e.codeName || e.code)) || "error");
+const anon = new MongoClient(url, opts);
+try { await anon.db("admin").command({ createUser: root.username, pwd: root.password, roles: ["root"] }); say("root user fenvix_root created"); }
+catch (e) { say("root user not created (" + code(e) + "): it exists already; going on with it"); }
+finally { await anon.close(); }
+const r = new MongoClient(url, { ...opts, auth: root, authSource: "admin", authMechanism: "SCRAM-SHA-256" });
+try {
+  const a = r.db("admin");
+  try { await a.command({ createRole: "fenvix_provisioner", privileges: [{ resource: { db: "", collection: "" }, actions }], roles: [] }); say("role fenvix_provisioner created"); }
+  catch (e) { say("role fenvix_provisioner not created (" + code(e) + "): it exists already"); }
+  try { await a.command({ createUser: prov.user, pwd: prov.pwd, roles: [{ role: "fenvix_provisioner", db: "admin" }], mechanisms: ["SCRAM-SHA-256"] }); say("user fenvix_provisioner created"); }
+  catch { await a.command({ updateUser: prov.user, pwd: prov.pwd, roles: [{ role: "fenvix_provisioner", db: "admin" }] }); say("user fenvix_provisioner existed: password set from SSM"); }
+  say("done");
+} catch (e) { say("failed (" + code(e) + ")"); process.exitCode = 1; }
+finally { await r.close(); }
+JS
+`;
+}
+
+/** Where the decompressed boot script is kept on the server (no secret in it), for whoever wants to read what ran. */
+export const BOOT_SCRIPT_PATH = '/opt/fenvix/boot.sh';
+const PAYLOAD_MARK = 'FENVIX_B85';
+
+/** Python's base64.b85encode alphabet (RFC 1924): no quote, no backslash, so it is inert in a quoted heredoc. */
+const B85 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~';
+
+/** Same output as Python's base64.b85encode(data) (no padding kept): 5 characters per 4 bytes instead of base64's 4 per 3. */
+export function b85encode(data: Buffer): string {
+  const pad = (4 - (data.length % 4)) % 4;
+  const padded = Buffer.concat([data, Buffer.alloc(pad)]);
+  let out = '';
+  for (let i = 0; i < padded.length; i += 4) {
+    let n = padded.readUInt32BE(i);
+    let chunk = '';
+    for (let j = 0; j < 5; j++) {
+      chunk = B85[n % 85] + chunk;
+      n = Math.floor(n / 85);
+    }
+    out += chunk;
+  }
+  return out.slice(0, out.length - pad);
+}
+
+/** Inverse of b85encode (for tests and for reading a synthesized template). */
+export function b85decode(text: string): Buffer {
+  const pad = (5 - (text.length % 5)) % 5;
+  const t = text + '~'.repeat(pad);
+  const out = Buffer.alloc((t.length / 5) * 4);
+  for (let i = 0; i < t.length; i += 5) {
+    let n = 0;
+    for (let j = 0; j < 5; j++) {
+      const v = B85.indexOf(t[i + j]);
+      if (v < 0) throw new Error(`not base85: ${t[i + j]}`);
+      n = n * 85 + v;
+    }
+    out.writeUInt32BE(n >>> 0, (i / 5) * 4);
+  }
+  return out.subarray(0, out.length - pad);
+}
+
+/**
+ * The boot script: everything the server does at first start. It holds no CloudFormation token (it is compressed at
+ * synth time); the deploy-time values arrive as FENVIX_TLS_SECRET_ID, FENVIX_DNS_ZONE_ID and FENVIX_ARTIFACTS_BUCKET
+ * from buildUserData.
+ */
+export function bootScript(i: UserDataInput): string[] {
+  const c = i.config;
+  if (Token.isUnresolved(i.bucketName)) throw new Error('bucketName must be known at synth time (it goes into the compressed boot script)');
+  const prefix = ssmPrefix(c.envName);
+  const pins = artifactPins(c);
   const heredoc = (target: string, body: string, mode = '0644') => [
     `cat > ${target} <<'FENVIX_EOF'`,
     ...body.replace(/\n$/, '').split('\n'),
     'FENVIX_EOF',
     `chmod ${mode} ${target}`,
   ];
-  const required = (group: string) =>
-    i.requiredParameters.filter((p) => p.startsWith(`${prefix}/${group}/`)).join(' ');
+  const required = (group: string) => i.requiredParameters.filter((p) => p.startsWith(`${prefix}/${group}/`)).join(' ');
+  const fetch = `/usr/local/bin/fenvix-fetch-config --region ${i.region} --prefix ${prefix}`;
+  const docker = '/usr/bin/docker';
+  const engineEnv = Object.entries(engineEnvironment(i.region)).map(([k, v]) => `Environment=${k}=${v}`);
+  const cpEnv = controlPlaneEnvironment({ config: c, region: i.region }).map(([k, v]) => `${k}=${v}`);
+  const services = ['fenvix-engine.service', 'fenvix-tls.timer', ...(i.runControlPlane ? ['fenvix-control-plane.service', 'fenvix-proxy.service'] : [])];
+  const restartUnits = ['fenvix-engine.service', ...(i.runControlPlane ? ['fenvix-proxy.service'] : [])];
+
+  const controlPlane = !i.runControlPlane
+    ? []
+    : [
+        ...heredoc('/etc/fenvix/control-plane.static.env', cpEnv.join('\n')),
+        ...heredoc('/usr/local/bin/fenvix-check-network', CHECK_NETWORK, '0755'),
+        ...heredoc(
+          '/etc/fenvix/proxy/Caddyfile',
+          [
+            '{',
+            '\tadmin off',
+            '\tauto_https off',
+            '}',
+            `https://${apiHost(c)}:443 {`,
+            '\ttls /certs/fullchain.pem /certs/key.pem',
+            `\treverse_proxy ${CONTROL_PLANE_CONTAINER}:${CONTROL_PLANE_INTERNAL_PORT}`,
+            '}',
+          ].join('\n'),
+        ),
+        ...heredoc(
+          '/etc/systemd/system/fenvix-control-plane.service',
+          [
+            '[Unit]',
+            'Description=FENVIX control plane (container)',
+            'After=docker.service network-online.target fenvix-engine.service',
+            'Requires=docker.service',
+            '[Service]',
+            // The image loaded from the artifacts bucket (fenvix-artifact); never pulled from a registry.
+            `EnvironmentFile=${CONTROL_PLANE_IMAGE_FILE}`,
+            `ExecStartPre=+${fetch} --group control-plane --env-file /etc/fenvix/control-plane.env --match ${MUST_MATCH.join('=')} ${required('control-plane')} ${required('engine')}`,
+            `ExecStartPre=-${docker} network create --subnet=${DOCKER_NETWORK_SUBNET} ${DOCKER_NETWORK}`,
+            'ExecStartPre=/usr/local/bin/fenvix-check-network',
+            `ExecStartPre=-${docker} rm -f ${CONTROL_PLANE_CONTAINER}`,
+            // No published port: only the TLS terminator reaches it. host-gateway = the Docker bridge, where the engine's
+            // admin interface listens; the MongoDB port is reached the same way. IMDS hop limit 1: no AWS credentials here.
+            `ExecStart=${docker} run --rm --name ${CONTROL_PLANE_CONTAINER} --network ${DOCKER_NETWORK} --add-host=host.docker.internal:host-gateway --cap-drop=ALL --security-opt=no-new-privileges --env-file /etc/fenvix/control-plane.static.env --env-file /etc/fenvix/control-plane.env \${CONTROL_PLANE_IMAGE}`,
+            `ExecStop=${docker} stop ${CONTROL_PLANE_CONTAINER}`,
+            'Restart=always',
+            'RestartSec=5',
+            '[Install]',
+            'WantedBy=multi-user.target',
+          ].join('\n'),
+        ),
+        ...heredoc(
+          '/etc/systemd/system/fenvix-proxy.service',
+          [
+            '[Unit]',
+            'Description=FENVIX TLS terminator for the control plane (container)',
+            'After=docker.service fenvix-control-plane.service',
+            'Requires=docker.service',
+            '[Service]',
+            // A first certificate request can take minutes (DNS changes, validation).
+            'TimeoutStartSec=15min',
+            'ExecStartPre=+/usr/local/bin/fenvix-tls',
+            `ExecStartPre=-${docker} network create --subnet=${DOCKER_NETWORK_SUBNET} ${DOCKER_NETWORK}`,
+            'ExecStartPre=/usr/local/bin/fenvix-check-network',
+            `ExecStartPre=-${docker} pull ${c.proxyImage}`,
+            `ExecStartPre=-${docker} rm -f fenvix-proxy`,
+            `ExecStart=${docker} run --rm --name fenvix-proxy --network ${DOCKER_NETWORK} -p ${c.controlPlanePort}:443 -v /etc/fenvix/proxy/Caddyfile:/etc/caddy/Caddyfile:ro -v ${PATHS.tlsDir}:/certs:ro ${c.proxyImage}`,
+            `ExecStop=${docker} stop fenvix-proxy`,
+            'Restart=always',
+            'RestartSec=5',
+            '[Install]',
+            'WantedBy=multi-user.target',
+          ].join('\n'),
+        ),
+      ];
 
   return [
-    '#!/bin/bash',
-    'set -euo pipefail',
-    'exec > >(tee -a /var/log/fenvix-bootstrap.log) 2>&1',
     'echo "fenvix bootstrap start $(date -u +%FT%TZ)"',
     '',
-    '# Settings baked in at synth time (no secrets here; secrets come from SSM at service start).',
-    `ENGINE_URL='${c.engineUrl}'`,
-    `ENGINE_SHA256='${c.engineSha256 ?? ''}'`,
-    `CONTROL_PLANE_IMAGE='${c.controlPlaneImage}'`,
+    '# Release pins, from the stack settings (no secrets): what fenvix-artifact must install and the SHA-256 it must find.',
+    ...(pins
+      ? [
+          `ENGINE_VERSION='${pins.engineVersion}'`,
+          `ENGINE_SHA256='${pins.engineSha256}'`,
+          ...(i.runControlPlane ? [`CONTROL_PLANE_VERSION='${pins.controlPlaneVersion}'`, `CONTROL_PLANE_SHA256='${pins.controlPlaneSha256}'`] : []),
+        ]
+      : ["ENGINE_VERSION=''"]),
+    // The two values CloudFormation filled in (buildUserData): checked before they go into a sourced file.
+    `[[ "$FENVIX_TLS_SECRET_ID" =~ ^arn:aws[a-z-]*:secretsmanager:${i.region}:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$ ]] || { echo "FATAL: bad TLS secret id" >&2; exit 1; }`,
+    '[[ "$FENVIX_DNS_ZONE_ID" =~ ^Z[A-Z0-9]+$ ]] || { echo "FATAL: bad hosted zone id" >&2; exit 1; }',
+    '[[ "$FENVIX_ARTIFACTS_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || { echo "FATAL: bad artifacts bucket name" >&2; exit 1; }',
+    // The instance id, the engine's lease holder (engine-command.ts). IMDSv2: a session token first.
+    "IMDS_TOKEN=\"$(curl -fsS --retry 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)\"",
+    'INSTANCE_ID="$(curl -fsS --retry 3 -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)"',
+    '[[ "$INSTANCE_ID" =~ ^i-[0-9a-f]{8,17}$ ]] || { echo "FATAL: bad instance id" >&2; exit 1; }',
     '',
-    'case "$ENGINE_URL $CONTROL_PLANE_IMAGE" in',
-    '  *example.invalid*|*REPLACE-ME*) echo "FATAL: release location still has the placeholder value. Set engineUrl and controlPlaneImage (infra/README.md) and redeploy." >&2; exit 1;;',
-    'esac',
-    '',
-    'dnf install -y docker',
+    'dnf install -y docker python3.11 python3.11-pip',
+    // Pin the bridge address the engine's admin interface binds to (it is Docker's default anyway).
+    'install -d /etc/docker',
+    `echo '{"bip": "${DOCKER_BRIDGE_IP}/${DOCKER_BRIDGE_PREFIX}"}' > /etc/docker/daemon.json`,
     'systemctl enable --now docker',
     'id fenvix >/dev/null 2>&1 || useradd --system --home-dir /var/lib/fenvix --shell /sbin/nologin fenvix',
     'install -d -o fenvix -g fenvix /opt/fenvix/bin /var/lib/fenvix',
     'install -d -m 0750 -o root -g fenvix /etc/fenvix',
+    `install -d -m 0700 -o fenvix -g fenvix ${PATHS.tlsDir}`,
+    'install -d -m 0700 -o root -g root /etc/fenvix/proxy',
     '',
-    'ARCH="$(uname -m)"',
-    'URL="${ENGINE_URL//\\{arch\\}/$ARCH}"',
-    'curl --fail --silent --show-error --location --retry 5 --output /opt/fenvix/bin/fenvix-engine "$URL"',
-    'if [ -n "$ENGINE_SHA256" ]; then echo "$ENGINE_SHA256  /opt/fenvix/bin/fenvix-engine" | sha256sum -c -; fi',
-    'chmod 0755 /opt/fenvix/bin/fenvix-engine',
+    // Release artifacts: from the private bucket with the instance role, each checked against its pinned SHA-256.
+    `install -d -m 0755 ${ENGINE_RELEASES_DIR}`,
+    `[ "$(uname -m)" = '${i.arch}' ] || { echo "FATAL: this server is $(uname -m), the stack was made for ${i.arch}" >&2; exit 1; }`,
+    ...heredoc(ARTIFACTS_ENV_FILE, artifactsEnv({ region: i.region, artifactsRegion: i.artifactsRegion, arch: i.arch, mongoPort: c.mongoPort }).join('\n')),
+    `printf "ARTIFACTS_BUCKET='%s'\\n" "$FENVIX_ARTIFACTS_BUCKET" >> ${ARTIFACTS_ENV_FILE}`,
+    ...heredoc('/usr/local/bin/fenvix-artifact', ARTIFACT_SCRIPT, '0755'),
+    '',
+    // certbot from PyPI: every package pinned with the SHA-256 of its wheels, wheels only (nothing built here).
+    ...heredoc('/opt/fenvix/certbot-requirements.txt', ACME_REQUIREMENTS),
+    'python3.11 -m venv /opt/fenvix/certbot',
+    '/opt/fenvix/certbot/bin/pip install --quiet --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /opt/fenvix/certbot-requirements.txt',
+    '/opt/fenvix/certbot/bin/certbot --version',
+    ...heredoc('/etc/fenvix/tls.env', tlsEnv({ config: c, region: i.region, withApi: i.runControlPlane, restartUnits }).join('\n'), '0600'),
+    `printf "TLS_SECRET_ID='%s'\\nACME_ZONE_ID='%s'\\n" "$FENVIX_TLS_SECRET_ID" "$FENVIX_DNS_ZONE_ID" >> /etc/fenvix/tls.env`,
     '',
     ...heredoc('/usr/local/bin/fenvix-fetch-config', FETCH_CONFIG, '0755'),
-    '',
-    '# Non-secret settings for the engine (names are the contract with the engine; see infra/README.md).',
-    ...heredoc(
-      '/etc/fenvix/engine.static.env',
-      [
-        `FENVIX_S3_BUCKET=${i.bucketName}`,
-        `FENVIX_AWS_REGION=${i.region}`,
-        `FENVIX_LISTEN=0.0.0.0:${c.mongoPort}`,
-        `FENVIX_ADMIN_LISTEN=0.0.0.0:${c.adminPort}`,
-        'FENVIX_TLS_MODE=self-signed',
-        ...(c.baseDomain ? [`FENVIX_BASE_DOMAIN=${c.baseDomain}`] : []),
-        ...(i.certificateArn ? [`FENVIX_ACM_CERTIFICATE_ARN=${i.certificateArn}`] : []),
-      ].join('\n'),
-    ),
-    ...heredoc(
-      '/etc/fenvix/control-plane.static.env',
-      [`FENVIX_REGION=${i.region}`, `PORT=8443`, ...(c.baseDomain ? [`BASE_DOMAIN=${c.baseDomain}`] : [])].join('\n'),
-    ),
+    ...heredoc('/usr/local/bin/fenvix-tls', TLS_SCRIPT, '0755'),
+    ...heredoc('/usr/local/bin/fenvix-acme-dns-hook', DNS_HOOK_SCRIPT, '0755'),
+    ...heredoc('/usr/local/bin/fenvix-create-engine-users', createEngineUsersScript(c, i.region), '0755'),
     '',
     ...heredoc(
       '/etc/systemd/system/fenvix-engine.service',
       [
         '[Unit]',
         'Description=FENVIX engine',
-        'After=network-online.target',
-        'Wants=network-online.target',
+        'After=network-online.target docker.service',
+        'Wants=network-online.target docker.service',
         '[Service]',
         'User=fenvix',
-        'EnvironmentFile=/etc/fenvix/engine.static.env',
-        'EnvironmentFile=/etc/fenvix/engine.env',
-        `ExecStartPre=+/usr/local/bin/fenvix-fetch-config ${i.region} ${prefix} /etc/fenvix/engine.env /dev/null engine FENVIX_ ${required('engine')}`,
-        'ExecStart=/opt/fenvix/bin/fenvix-engine',
+        'Group=fenvix',
+        ...engineEnv,
+        'RuntimeDirectory=fenvix',
+        'RuntimeDirectoryMode=0700',
+        // A first certificate request can take minutes (DNS changes, validation).
+        'TimeoutStartSec=15min',
+        `ExecStartPre=+${fetch} --group engine --files /run/fenvix --owner fenvix ${required('engine')}`,
+        'ExecStartPre=+/usr/local/bin/fenvix-tls',
+        `ExecStart=${PATHS.engineBinary} ${engineArgs({ config: c, region: i.region, bucketName: i.bucketName, holder: INSTANCE_ID_PLACEHOLDER }).join(' ')}`,
+        'WorkingDirectory=/var/lib/fenvix',
         'Restart=always',
         'RestartSec=5',
         'LimitNOFILE=65536',
         'NoNewPrivileges=true',
         'ProtectSystem=strict',
+        'ProtectHome=true',
+        'PrivateTmp=true',
         'StateDirectory=fenvix',
         'ReadWritePaths=/var/lib/fenvix',
         '[Install]',
         'WantedBy=multi-user.target',
       ].join('\n'),
     ),
+    `sed -i "s/${INSTANCE_ID_PLACEHOLDER}/$INSTANCE_ID/" /etc/systemd/system/fenvix-engine.service`,
     ...heredoc(
-      '/etc/systemd/system/fenvix-control-plane.service',
+      '/etc/systemd/system/fenvix-tls.service',
       [
         '[Unit]',
-        'Description=FENVIX control plane (container)',
-        'After=docker.service network-online.target',
-        'Requires=docker.service',
+        "Description=FENVIX: renew the Let's Encrypt certificate when due and restart what uses it",
+        'After=network-online.target',
         '[Service]',
-        `ExecStartPre=+/usr/local/bin/fenvix-fetch-config ${i.region} ${prefix} /dev/null /etc/fenvix/control-plane.env control-plane "" ${required('control-plane')}`,
-        `ExecStartPre=/usr/bin/docker pull ${c.controlPlaneImage}`,
-        '-ExecStartPre=/usr/bin/docker rm -f fenvix-control-plane',
-        `ExecStart=/usr/bin/docker run --rm --name fenvix-control-plane --env-file /etc/fenvix/control-plane.static.env --env-file /etc/fenvix/control-plane.env -p ${c.controlPlanePort}:8443 ${c.controlPlaneImage}`,
-        'ExecStop=/usr/bin/docker stop fenvix-control-plane',
-        'Restart=always',
-        'RestartSec=5',
-        '[Install]',
-        'WantedBy=multi-user.target',
+        'Type=oneshot',
+        'TimeoutStartSec=15min',
+        'ExecStart=/usr/local/bin/fenvix-tls --restart-on-change',
       ].join('\n'),
     ),
+    ...heredoc(
+      '/etc/systemd/system/fenvix-tls.timer',
+      ['[Unit]', 'Description=FENVIX: certificate check twice a day', '[Timer]', 'OnCalendar=*-*-* 00,12:00:00 UTC', 'RandomizedDelaySec=1h', 'Persistent=true', '[Install]', 'WantedBy=timers.target'].join('\n'),
+    ),
+    ...controlPlane,
     '',
     'systemctl daemon-reload',
-    'systemctl enable --now fenvix-engine.service fenvix-control-plane.service',
-    'echo "fenvix bootstrap done $(date -u +%FT%TZ)"',
+    ...(pins
+      ? [
+          // Stops the boot (set -e) with the reason, before any service is enabled, if a download or a SHA-256 check fails.
+          '/usr/local/bin/fenvix-artifact install engine "$ENGINE_VERSION" "$ENGINE_SHA256"',
+          ...(i.runControlPlane ? ['/usr/local/bin/fenvix-artifact install control-plane "$CONTROL_PLANE_VERSION" "$CONTROL_PLANE_SHA256"'] : []),
+          `systemctl enable --now ${services.join(' ')}`,
+          'echo "fenvix bootstrap done $(date -u +%FT%TZ)"',
+        ]
+      : [
+          // First deploy: nothing published yet. Get the certificate (so it can be checked) and start no service.
+          '/usr/local/bin/fenvix-tls',
+          'systemctl enable --now fenvix-tls.timer',
+          'echo "fenvix: NO RELEASE PINNED (engineVersion and the other three settings are empty): certificate done, no service started. Publish the artifacts, set the four settings and deploy again (docs/deploy-checklist.md)."',
+        ]),
   ];
+}
+
+/**
+ * EC2 user data (16 KB at most): a short header with the three values only CloudFormation knows, then the boot script
+ * gzip-compressed and base85-encoded (it would not fit as plain text, nor as base64 once the artifact
+ * installer was added: base85 is 5 characters per 4 bytes instead of 4 per 3), checked against its SHA-256, kept at
+ * BOOT_SCRIPT_PATH and run. Nothing is downloaded for it and no check is left out: it is the whole of bootScript().
+ */
+export function buildUserData(i: UserDataInput): string[] {
+  const boot = bootScript(i).join('\n') + '\n';
+  const sha = createHash('sha256').update(boot).digest('hex');
+  const b85 = b85encode(gzipSync(Buffer.from(boot), { level: 9 }));
+  return [
+    '#!/bin/bash',
+    'set -euo pipefail',
+    'exec > >(tee -a /var/log/fenvix-bootstrap.log) 2>&1',
+    '# Deploy-time values (resource ids, no secrets).',
+    `FENVIX_TLS_SECRET_ID='${i.tlsSecretArn}'`,
+    `FENVIX_DNS_ZONE_ID='${i.hostedZoneId}'`,
+    `FENVIX_ARTIFACTS_BUCKET='${i.artifactsBucket}'`,
+    `# The boot script (infra/lib/user-data.ts, bootScript), gzip + base85; plain copy on the server: ${BOOT_SCRIPT_PATH}.`,
+    'install -d -m 0755 /opt/fenvix',
+    // python3 is on every Amazon Linux 2023 image (cloud-init itself runs on it); only its standard library is used.
+    `python3 -c 'import base64,sys,zlib; sys.stdout.buffer.write(zlib.decompress(base64.b85decode(sys.stdin.read().strip()), 31))' > ${BOOT_SCRIPT_PATH} <<'${PAYLOAD_MARK}'`,
+    b85,
+    PAYLOAD_MARK,
+    `echo '${sha}  ${BOOT_SCRIPT_PATH}' | sha256sum -c --quiet -`,
+    `. ${BOOT_SCRIPT_PATH}`,
+  ];
+}
+
+/** The boot script back from user data lines (for tests and for reading a synthesized template). */
+export function decodeUserData(userData: string): string {
+  const m = userData.match(new RegExp(`<<'${PAYLOAD_MARK}'\\n([^\\n]+)\\n${PAYLOAD_MARK}(\\n|$)`));
+  if (!m) throw new Error('no compressed boot script in this user data');
+  return gunzipSync(b85decode(m[1])).toString('utf8');
 }

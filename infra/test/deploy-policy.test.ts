@@ -25,12 +25,12 @@ describe('deploy-policy.json', () => {
   test('Resource "*" is used only where AWS has no resource-level permission', () => {
     const star = stmts.filter((s) => arr(s.Resource).includes('*')).flatMap((s) => arr(s.Action) as string[]);
     for (const a of star) {
-      expect(/^(ec2:Describe|cloudwatch:DescribeAlarms$|cloudformation:ValidateTemplate$|route53:CreateHostedZone$|acm:RequestCertificate$)/.test(a)).toBe(true);
+      expect(/^(ec2:Describe|cloudwatch:DescribeAlarms$|cloudformation:ValidateTemplate$|route53:CreateHostedZone$)/.test(a)).toBe(true);
     }
   });
 
   test('every resource ARN is in this account, in the chosen regions, or a named fenvix/AWS-public resource', () => {
-    const regions = ['eu-central-1'];
+    const regions = ['eu-west-1'];
     for (const r of stmts.flatMap((s) => arr(s.Resource) as string[]).filter((x) => x !== '*')) {
       const [, , service, region, account, rest] = r.split(':');
       if (['s3', 'route53', 'iam', 'budgets'].includes(service)) {
@@ -47,7 +47,8 @@ describe('deploy-policy.json', () => {
   test('IAM and CloudFormation resources are named fenvix-*', () => {
     for (const s of stmts) {
       for (const r of arr(s.Resource) as string[]) {
-        if (r.includes(':iam::')) expect(r).toMatch(/(role|instance-profile)\/fenvix-\*$/);
+        // Plus (since the artifacts bucket) GitHub's OIDC provider, which has a fixed name: the issuer's host.
+        if (r.includes(':iam::')) expect(r).toMatch(/(role|instance-profile)\/fenvix-\*$|:oidc-provider\/token\.actions\.githubusercontent\.com$/);
         if (r.includes(':cloudformation:')) expect(r).toMatch(/stack\/fenvix-\*\/\*$/);
         if (r.includes(':cloudwatch:')) expect(r).toMatch(/alarm:fenvix-\*$/);
         if (r.includes(':budgets:')) expect(r).toMatch(/budget\/fenvix-\*$/);
@@ -79,6 +80,21 @@ describe('deploy-policy.json', () => {
     expect(pass.Condition.StringEquals['iam:PassedToService']).toEqual(['ec2.amazonaws.com', 'budgets.amazonaws.com']);
   });
 
+  test('no ACM permission is left (the certificate comes from Let\'s Encrypt on the server)', () => {
+    expect(actions.filter((a) => a.startsWith('acm:'))).toEqual([]);
+  });
+
+  test('Secrets Manager: only fenvix-* secrets, created with the project tag; the deploy role can never read a secret value', () => {
+    const sm = stmts.filter((s) => arr(s.Action).some((a: string) => a.startsWith('secretsmanager:')));
+    for (const s of sm) expect(s.Resource).toBe('arn:aws:secretsmanager:eu-west-1:865859654353:secret:fenvix-*');
+    const create = sm.find((s) => arr(s.Action).includes('secretsmanager:CreateSecret'));
+    expect(create.Condition).toEqual({ StringEquals: { 'aws:RequestTag/project': 'fenvix' } });
+    const all = sm.flatMap((s) => arr(s.Action));
+    for (const a of ['secretsmanager:GetSecretValue', 'secretsmanager:PutSecretValue', 'secretsmanager:PutResourcePolicy', 'secretsmanager:RestoreSecret']) {
+      expect(all).not.toContain(a);
+    }
+  });
+
   test('regions in cdk.json are covered by the policy', () => {
     const regions = String(cdkJson.context.regions).split(',');
     const text = JSON.stringify(policy);
@@ -104,12 +120,13 @@ describe('deploy-policy.json', () => {
       'AWS::IAM::Role': 'iam:CreateRole',
       'AWS::IAM::Policy': 'iam:PutRolePolicy',
       'AWS::IAM::InstanceProfile': 'iam:CreateInstanceProfile',
+      'AWS::IAM::OIDCProvider': 'iam:CreateOpenIDConnectProvider',
       'AWS::CloudWatch::Alarm': 'cloudwatch:PutMetricAlarm',
       'AWS::Budgets::Budget': 'budgets:ModifyBudget',
       'AWS::Budgets::BudgetsAction': 'budgets:CreateBudgetAction',
       'AWS::Route53::HostedZone': 'route53:CreateHostedZone',
       'AWS::Route53::RecordSet': 'route53:ChangeResourceRecordSets',
-      'AWS::CertificateManager::Certificate': 'acm:RequestCertificate',
+      'AWS::SecretsManager::Secret': 'secretsmanager:CreateSecret',
     };
     const { json } = synth({ baseDomain: 'example.com' });
     const types = new Set(Object.values<any>(json.Resources).map((r) => r.Type));
