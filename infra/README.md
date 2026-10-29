@@ -161,7 +161,7 @@ Risk of option A: a mistake in step 1 takes the website or email down, and the w
 - **Updating certbot.** `python3 -I scripts/gen-acme-requirements.py certbot==X acme==X ...` (every package of the current file, with the new versions) `> lib/acme-requirements.txt`, then check it resolves for both CPUs: `pip download --no-deps --require-hashes --only-binary=:all: --python-version 3.11 --implementation cp --abi cp311 --abi abi3 --abi none --platform manylinux_2_34_x86_64 --platform manylinux_2_28_x86_64 --platform manylinux_2_17_x86_64 --platform manylinux2014_x86_64 -d /tmp/x -r lib/acme-requirements.txt` (and the same with `aarch64`).
 
 ## Trusted networks
-The engine checks each database's IP allowlist and counts failed sign-ins per address (5 on one database or 10 on all of them in 60 s block the address for 5 minutes, doubling up to an hour). Connections from its **trusted networks** skip all of that: they must be exactly the server's own processes, never a network customers can come from. The engine runs with `--trusted-networks=127.0.0.0/8,::1/128,172.17.0.0/16,172.18.0.0/24` (`TRUSTED_NETWORKS` in `lib/engine-command.ts`):
+The engine checks each database's IP allowlist and counts failed sign-ins per address (5 on one database block the address on that database, 100 on all of them block it on every database, within 60 s; for 5 minutes, doubling up to an hour. 100 is the default since engine-round2; it was 10). Connections from its **trusted networks** skip all of that: they must be exactly the server's own processes, never a network customers can come from. The engine runs with `--trusted-networks=127.0.0.0/8,::1/128,172.17.0.0/16,172.18.0.0/24` (`TRUSTED_NETWORKS` in `lib/engine-command.ts`):
 
 | Network | Who connects from it |
 |---|---|
@@ -172,6 +172,17 @@ The engine checks each database's IP allowlist and counts failed sign-ins per ad
 If the control plane were not trusted, a customer's IP allowlist would also apply to the Data Explorer, and the control plane's own failed sign-ins (a provisioner password changed on one side only, a key rotation half done) would be counted: 5 on `admin` block the provisioner, and no database could get its users. The control plane also limits its own failed sign-ins so that this cannot happen even then (control-plane/docs/network-allowlist.md), but the trusted networks are what keeps the Data Explorer out of the lists.
 
 The engine release must be `network-limits` (test5 commit `1c9fee7`) or later: an older engine does not know `--trusted-networks` and refuses to start (systemd restarts it every 5 seconds, and `journalctl -u fenvix-engine` shows the engine's error about the unknown argument `--trusted-networks`).
+
+## Grantable roles
+The control plane makes the users of each customer database through the engine user `fenvix_provisioner` (Step 10): `cp_<id>` with `readWrite` and the customers' users with `readWrite` or `read`, always on the customer database `db_<id>` itself. The engine runs with `--grantable-roles=read,readWrite,dbAdmin` (`GRANTABLE_ROLES` in `lib/engine-command.ts`). With it, a user that holds neither root nor clusterAdmin, so the provisioner:
+
+- may grant only these built-in roles, and only of the database the user is defined on;
+- may not create, change or drop users on `admin`, `local`, `config` (so no second provisioner and no change to root's password);
+- may never grant its own role, a custom role, or a role of another database, and may not create or change roles.
+
+So a stolen provisioner password can still make and drop users on customer databases, but can no longer hand out `dbOwner`, `userAdmin`, a role on `admin` or a copy of itself. root (`fenvix_root`, used only by the Step 10 script) is not limited by the flag. `dbAdmin` is in the list but the control plane does not grant it today. The engine refuses to start if the list holds anything other than `read`, `readWrite`, `dbAdmin`.
+
+The engine release must be `engine-round2` (test5 commit `3bcd7e5`) or later: an older engine does not know `--grantable-roles` and refuses to start (systemd restarts it every 5 seconds; `journalctl -u fenvix-engine` shows the error about the unknown argument `--grantable-roles`).
 
 ## Release artifacts (engine binary, control-plane image)
 The engine is private and the server must get it without exposing it. Nothing is pulled from a public place and the server has no registry login:

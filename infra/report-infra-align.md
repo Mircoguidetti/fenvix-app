@@ -428,3 +428,36 @@ Fonte: AWS Price List API (listino ufficiale, offerte di `eu-west-1`), letta il 
 ### 11.7 Commit
 - olvix-app, `origin/infra-align`, sopra `61e1378`: `51152f7` (codice, test, README, `.github/workflows/release-control-plane.yml`, `docs/deploy-checklist.md`) e il commit che aggiunge questa sezione. Nessun branch nuovo, nessun merge, nessuna PR.
 - test5, `origin/release-pipeline` (nuovo, da `network-limits` @ `628273b`): `34fedce` (`.github/workflows/release-engine.yml`). Le altre branch di test5 non sono state toccate.
+
+## 12. Ruoli concedibili del motore (`--grantable-roles`, test5 `engine-round2` @ `3bcd7e5`) — branch `infra-grants`
+
+Branch `infra-grants`, creato da `origin/infra-align` @ `8ca5194` (punta controllata con `git log -1`). Solo `infra/` modificata. Nessuna attività AWS: nessun deploy, nessuna chiamata con credenziali; `cdk synth` con `env -i` (nessuna variabile `AWS_*`) e proxy verso `127.0.0.1:9`.
+
+### 12.1 Cosa ho cambiato
+- `lib/engine-command.ts`: nuova costante `GRANTABLE_ROLES = ['read', 'readWrite', 'dbAdmin']` accanto a `TRUSTED_NETWORKS`, e `--grantable-roles=read,readWrite,dbAdmin` come ultimo flag di `engineArgs` (l'unico posto che conosce i nomi dei flag del motore). Commento aggiornato: la soglia predefinita per indirizzo è 100 da `engine-round2` (prima 10), letta da `--help` del binario compilato da `3bcd7e5`.
+- Verificato sul codice del motore (`--help` del binario di `3bcd7e5`): il flag esiste, accetta solo `read`, `readWrite`, `dbAdmin`, vuoto = nessun limite. Lo script dello Step 10 (`lib/user-data.ts`, riga 118) crea il ruolo `fenvix_provisioner` con le stesse 7 azioni usate dalla suite engine-real del control plane, dove i flussi del control plane passano con il motore avviato con questo flag (vedi `results-cp-engine-round2.md` sul branch `cp-engine-round2`). Root (`fenvix_root`, Step 10) non è limitato dal flag.
+- `README.md`: nuova sezione "Grantable roles" (cosa può e non può il provisioner, release minima del motore `engine-round2`), soglie dei blocchi corrette nella sezione "Trusted networks" (100 invece di 10).
+
+### 12.2 Test e synth
+- **Prima** (su `8ca5194`): `tsc --noEmit` esito 0; jest **172 passati, 1 saltato**, 173 totali, 12 suite.
+- **Dopo:** `tsc --noEmit` esito 0; jest **176 passati, 1 saltato**, 177 totali, 13 suite.
+- Nuovo `test/grantable-roles.test.ts` (4 test, scritto prima del codice: falliva perché `GRANTABLE_ROLES` non esisteva): elenco esatto e flag passato una volta; solo ruoli che il motore accetta (niente `dbOwner`, `userAdmin`, ruoli di cluster, `ruolo@db`, spazi, duplicati); copre i ruoli che il control plane concede (`readWrite`, `read`, e `USER_ROLE` letto da `control-plane/src/engine/users.ts`); l'unità del motore nello script di avvio contiene il flag esattamente una volta.
+- Cambiato di proposito `test/engine-command.test.ts`: l'elenco esatto dei flag ora termina con `--grantable-roles=read,readWrite,dbAdmin` (comportamento cambiato).
+- `cdk synth --quiet` (CLI vera, `env -i`, proxy morto, nessuna credenziale; impostazioni obbligatorie passate con `-c` con valori di esempio): esito 0 sia senza versioni (primo deploy) sia con le versioni; solo i 2 avvisi W3010 già noti. Nel template: boot script decodificato (base85 + gzip) con `--grantable-roles=read,readWrite,dbAdmin` una volta; nessun `AKIA…`, `-----BEGIN`, `PRIVATE KEY`, `password=`, `MONGO_ADMIN_TOKEN=`.
+
+### 12.3 Limite di 16.384 byte dello user data
+| misura | prima (`8ca5194`) | dopo | margine dopo |
+|---|---|---|---|
+| user data del test (`USER DATA SIZE` di `test/user-data.test.ts`) | 15.693 | **15.718** (+25) | **666 byte** |
+| stesso, dominio lungo | 15.773 | 15.798 | 586 byte |
+| template sintetizzato, 90 byte per ciascuno dei 3 id CloudFormation, senza versioni | 15.827 | 15.853 | 531 byte |
+| idem, con le versioni | 15.824 | 15.849 | 535 byte |
+
+Le misure "prima" del template le ho rifatte su `8ca5194` con gli stessi valori `-c` (stash delle modifiche, synth, ripristino). Il caso peggiore misurato lascia **531 byte**. Nessun controllo tolto.
+
+### 12.4 Cosa NON ho potuto verificare
+- Il motore su AWS con il flag (nessun deploy); l'avvio con `--grantable-roles=read,readWrite,dbAdmin` è provato solo in locale (suite engine-real del control plane, motore in memoria).
+- **Attenzione al rilascio:** un motore più vecchio di `engine-round2` non conosce il flag e non parte. `engineVersion`/`engineSha256` devono indicare una build di `engine-round2` (`3bcd7e5`) o successiva.
+
+### 12.5 Commit
+- olvix-app, `origin/infra-grants` (nuovo, da `origin/infra-align` @ `8ca5194`): un commit con codice, test, README e questa sezione. `infra-align` non toccato.

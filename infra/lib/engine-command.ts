@@ -53,6 +53,17 @@ export const DOCKER_NETWORK_SUBNET = '172.18.0.0/24';
 export const TRUSTED_NETWORKS = ['127.0.0.0/8', '::1/128', DOCKER_BRIDGE_SUBNET, DOCKER_NETWORK_SUBNET];
 
 /**
+ * --grantable-roles (engine-round2): the only roles a user without root or clusterAdmin may grant. That is the
+ * provisioner `fenvix_provisioner`, which makes cp_<id> (readWrite) and the customers' users (readWrite or read) on each
+ * customer database. With it set, such a user may grant only these built-in roles, only of the database the user is
+ * defined on, never on admin/local/config, never its own role or a custom role, and may not create or change roles: a
+ * stolen provisioner password can no longer give dbOwner, userAdmin@admin or a second provisioner. dbAdmin is in the list
+ * as asked, although the control plane never grants it today. The engine accepts only read, readWrite and dbAdmin here
+ * and refuses to start with anything else. root (Step 10) is not limited by it.
+ */
+export const GRANTABLE_ROLES = ['read', 'readWrite', 'dbAdmin'];
+
+/**
  * Stands for the EC2 instance id in the engine unit as written; the boot script replaces it with the id it read from
  * IMDSv2 (checked against ^i-[0-9a-f]+$) before the unit is enabled.
  */
@@ -70,14 +81,17 @@ export interface EngineCommandInput {
 /**
  * The engine's command line: the ONLY place that knows the engine's flag names. The engine reads no FENVIX_*
  * variable: every setting is a clap flag. Checked against the source of the final engine, Mircoguidetti/test5
- * branch final-engine, commit 41ed169, engine crate: src/main.rs (struct Args), src/ctl/mod.rs (CtlArgs), src/tls.rs.
+ * branch final-engine, commit 41ed169, engine crate: src/main.rs (struct Args), src/ctl/mod.rs (CtlArgs), src/tls.rs;
+ * --trusted-networks from network-limits @ 1c9fee7; --grantable-roles and the defaults of the block thresholds from
+ * engine-round2 @ 3bcd7e5 (src/main.rs, src/netguard.rs).
  * If the engine renames a flag, change it here and in test/engine-command.test.ts only.
  *
  * Left at the engine's default on purpose (not passed): --endpoint (empty = AWS), --lease-ttl-secs 30,
  * --replica-set (empty = standalone), --process-lease (off), --ttl-* (no sleeping tenant is woken for expiry),
  * --wal-flush-ms 0 (acknowledged = durable), --writer-poll-secs, --wal-gc-secs, --sst-gc-*, --group-commit-*,
  * --durable-reads true, --max-concurrent-wakes, --retention-interval/prune/usage/pin/export timers, and the network
- * limits of network-limits (--auth-fail-max 10, --auth-fail-max-per-db 5, --auth-fail-window-secs 60, --auth-block-secs
+ * limits of network-limits as engine-round2 sets them (--auth-fail-max 100 since engine-round2, before 10;
+ * --auth-fail-max-per-db 5, --auth-fail-window-secs 60, --auth-block-secs
  * 300, --auth-block-max-secs 3600, --max-conns-per-ip 200, --handshake-timeout-secs 10, --pre-auth-max-message-bytes).
  * Never passed: the test controls (--no-leases, --unsafe-skip-ownership-checks, --ack-before-durable,
  * --no-ctl-recovery, --no-maintenance, --no-ttl, --gc-control-delete-live, --l0-*, --serialize-reads,
@@ -117,6 +131,8 @@ export function engineArgs(i: EngineCommandInput): string[] {
     '--wal-gc-mode=bulk',
     // The server's own processes skip the IP allowlists and are never counted or blocked: see TRUSTED_NETWORKS.
     `--trusted-networks=${TRUSTED_NETWORKS.join(',')}`,
+    // What the provisioner may grant: see GRANTABLE_ROLES.
+    `--grantable-roles=${GRANTABLE_ROLES.join(',')}`,
   ];
 }
 
