@@ -111,6 +111,8 @@ jobs:
           # GitHub OIDC token for AWS STS, exchanged for 15-minute credentials of the publish role.
           tok="$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)"
           echo "::add-mask::$tok"
+          # TEMP DEBUG (remove): identity claims of the token, not a credential
+          python3 -c 'import sys,json,base64;p=sys.argv[1].split(".")[1];p+="="*(-len(p)%4);c=json.loads(base64.urlsafe_b64decode(p));print({k:c.get(k) for k in ("iss","aud","sub","repository","ref","job_workflow_ref")})' "$tok" >&2
           creds="$(aws sts assume-role-with-web-identity --region "$AWS_REGION" --role-arn "$ROLE_ARN" \
             --role-session-name "github-$GITHUB_RUN_ID" --web-identity-token "$tok" --duration-seconds 900 \
             --query Credentials --output json 2>"$err")" || { echo "::error::AWS refused the OIDC token (trust policy: repository, branch)"; scrub "$err"; exit 1; }
