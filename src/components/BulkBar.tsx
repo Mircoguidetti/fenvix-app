@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Download, Tag, Trash2, X } from "lucide-react";
-import { client } from "../data";
+import { client, type OperationProgress } from "../data";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "./Toast";
 import { download } from "../lib/download";
 import { parseTag } from "../lib/tags";
 import { formatCount } from "../lib/format";
+import { OperationNote } from "./OperationNote";
 
 type Action = "add-tag" | "remove-tag" | "erase";
 
@@ -18,6 +19,8 @@ export function BulkBar({ selected, matching, onSelectAll, onClear, onDone }: { 
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<OperationProgress | null>(null);
+  const [exporting, setExporting] = useState(false);
   const n = selected.length;
 
   function close() {
@@ -29,6 +32,8 @@ export function BulkBar({ selected, matching, onSelectAll, onClear, onDone }: { 
 
   async function run(message: string, work: () => Promise<unknown>) {
     setBusy(true);
+    setError(null);
+    setProgress(null);
     try {
       await work();
       toast(message, "success");
@@ -41,12 +46,16 @@ export function BulkBar({ selected, matching, onSelectAll, onClear, onDone }: { 
   }
 
   async function exportSelected() {
+    setExporting(true);
     try {
-      const file = await client.exportDatabases(selected);
+      const file = await client.exportDatabases(selected, { onProgress: setProgress });
       download(file);
       toast(`Export ready: ${file.filename}`, "success");
     } catch (e) {
       toast(e instanceof Error ? e.message : "Export failed.", "error");
+    } finally {
+      setExporting(false);
+      setProgress(null);
     }
   }
 
@@ -86,9 +95,9 @@ export function BulkBar({ selected, matching, onSelectAll, onClear, onDone }: { 
         <button type="button" className="btn btn-sm" onClick={() => run(`${plural(n)} can sleep when idle`, () => client.setKeepAwake(selected, false))}>
           Keep awake off
         </button>
-        <button type="button" className="btn btn-sm" onClick={exportSelected}>
+        <button type="button" className="btn btn-sm" onClick={exportSelected} disabled={exporting}>
           <Download size={15} aria-hidden="true" />
-          Export
+          {exporting ? "Exporting…" : "Export"}
         </button>
         <button type="button" className="btn btn-sm btn-danger" onClick={() => setAction("erase")}>
           <Trash2 size={15} aria-hidden="true" />
@@ -99,12 +108,14 @@ export function BulkBar({ selected, matching, onSelectAll, onClear, onDone }: { 
           Clear selection
         </button>
       </div>
+      <OperationNote progress={exporting ? progress : null} />
 
-      <ConfirmDialog danger open={action === "erase"} title={`Erase ${plural(n)}?`} confirmLabel={`Erase ${plural(n)}`} busy={busy} onConfirm={() => run(`Erased ${plural(n)}`, () => client.eraseDatabases(selected))} onCancel={close}>
+      <ConfirmDialog danger open={action === "erase"} title={`Erase ${plural(n)}?`} confirmLabel={`Erase ${plural(n)}`} busy={busy} onConfirm={() => run(`Erased ${plural(n)}`, () => client.eraseDatabases(selected, { onProgress: setProgress }))} onCancel={close}>
         <p>
           This permanently deletes {plural(n)} and all their data. It cannot be undone.
         </p>
         {error && <p className="error" role="alert">{error}</p>}
+        <OperationNote progress={busy ? progress : null} />
       </ConfirmDialog>
 
       <ConfirmDialog

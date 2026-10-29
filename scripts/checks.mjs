@@ -83,7 +83,13 @@ const TESTS = {
   async "phone top bar keeps its height on long pages, with room around the menu button"(page, vp) {
     if (!isMobile(vp)) return;
     for (const route of ["overview", "databases", "api-keys", "databases/db_0001?tab=network"]) {
-      await signIn(page, route);
+      // Signed in once: the session stays, so the later routes open the dashboard straight away.
+      if (route === "overview") await signIn(page, route);
+      else {
+        await page.goto(BASE + route);
+        await page.locator(".shell").waitFor();
+        await settled(page);
+      }
       const m = await page.evaluate(() => {
         const t = document.querySelector(".topbar").getBoundingClientRect();
         const b = document.querySelector(".menu-btn").getBoundingClientRect();

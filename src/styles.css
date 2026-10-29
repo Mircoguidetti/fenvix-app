@@ -666,3 +666,4 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
 .silver-stop-1 { stop-color: var(--silver-3); stop-opacity: 0.32; }
 .silver-stop-2 { stop-color: var(--silver-1); stop-opacity: 0.22; }
 .silver-stop-3 { stop-color: var(--silver-2); stop-opacity: 0; }
+.op-note { flex-basis: 100%; margin: 0; }

@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useOrg } from "../session/OrgProvider";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
-import { client, type Database } from "../data";
+import { client, type Database, type OperationProgress } from "../data";
 import { Card, PageHeader } from "../components/PageHeader";
 import { CopyButton } from "../components/CopyButton";
 import { useToast } from "../components/Toast";
@@ -10,6 +10,7 @@ import { useAsync } from "../lib/useAsync";
 import { parseTag } from "../lib/tags";
 import { SecretOnce } from "../components/PasswordOnce";
 import { usernameProblem } from "../data/users";
+import { OperationNote } from "../components/OperationNote";
 
 export function CreateDatabasePage() {
   const { canManage } = useOrg();
@@ -39,6 +40,15 @@ function CreateDatabaseForm() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<Database | null>(null);
+  const [progress, setProgress] = useState<OperationProgress | null>(null);
+  // Leaving the page stops the polling; the database is still made in the background.
+  // Made in the effect, so StrictMode's trial unmount does not leave an aborted one behind.
+  const leaving = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const c = new AbortController();
+    leaving.current = c;
+    return () => c.abort();
+  }, []);
 
   const back = (
     <Link to="/databases" className="back-link">
@@ -58,15 +68,18 @@ function CreateDatabaseForm() {
     const userProblem = usernameProblem(appUser);
     if (userProblem) return setError(`Database user: ${userProblem}`);
     setBusy(true);
+    setError(null);
     try {
-      const db = await client.createDatabase({ name, region, tags, appUser });
+      const db = await client.createDatabase({ name, region, tags, appUser }, { onProgress: setProgress, signal: leaving.current?.signal });
       setCreated(db);
       setError(null);
       toast(`Created database ${db.name}`, "success");
     } catch (err) {
+      if (leaving.current?.signal.aborted) return;
       setError(err instanceof Error ? err.message : "Could not create the database.");
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -132,14 +145,20 @@ function CreateDatabaseForm() {
               key:value pairs separated by spaces or commas.
             </p>
           </div>
+          {regions.status === "error" && (
+            <p className="error" role="alert">
+              {regions.message}
+            </p>
+          )}
           {error && (
             <p className="error" role="alert">
               {error}
             </p>
           )}
+          <OperationNote progress={busy ? progress : null} />
           <div className="row-actions">
             <button type="submit" className="btn btn-primary" disabled={busy || !region}>
-              Create database
+              {busy ? "Creating…" : "Create database"}
             </button>
             <Link to="/databases" className="btn">
               Cancel

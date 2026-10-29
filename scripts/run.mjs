@@ -20,6 +20,6 @@ for (let i = 0; i < 50; i++) {
 }
 
 const env = { ...buildEnv, BASE_URL: `http://localhost:${PORT}/` };
-const ok = [["node", ["scripts/checks.mjs"]], ["node", ["scripts/orgs-checks.mjs"]], ["node", ["scripts/network-checks.mjs"]], ["node", ["scripts/status-colors-checks.mjs"]], ["node", ["scripts/screenshots.mjs"]]].map(([c, a]) => spawnSync(c, a, { stdio: "inherit", env }).status === 0);
+const ok = [["node", ["scripts/checks.mjs"]], ["node", ["scripts/orgs-checks.mjs"]], ["node", ["scripts/network-checks.mjs"]], ["node", ["scripts/api-checks.mjs"]], ["node", ["scripts/status-colors-checks.mjs"]], ["node", ["scripts/screenshots.mjs"]]].map(([c, a]) => spawnSync(c, a, { stdio: "inherit", env }).status === 0);
 stop();
 process.exit(ok.every(Boolean) ? 0 : 1);

@@ -1,9 +1,9 @@
-import type { ApiKey, BillingOverview, BulkResult, CreatedApiKey, Database, ExportResult, NewDatabase, DatabaseFilter, DatabaseQuery, GroupedDatabases, Invoice, Overview, Page, Plan, TagBreakdownRow, UsageTrend, Settings, TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport, UsageHistoryPoint } from "./types";
+import type { ApiKey, BillingOverview, BulkResult, CreatedApiKey, Database, ExportResult, NewDatabase, DatabaseFilter, DatabaseQuery, GroupedDatabases, Invoice, OperationOptions, Overview, Page, Plan, TagBreakdownRow, UsageTrend, Settings, TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport, UsageHistoryPoint } from "./types";
 
 /**
  * Everything the dashboard needs from a backend. The screens only talk to this interface.
- * To go live, write an HTTP implementation of `DataClient` and export it from `./index.ts`
- * instead of the mock one.
+ * `./index.ts` picks the implementation: the control plane over HTTP (api-http.ts) when VITE_API_URL is set,
+ * otherwise the mock or Supabase.
  */
 export interface DataClient {
   /** "now" used for relative times. A real client returns the current time. */
@@ -26,16 +26,20 @@ export interface DataClient {
   /** The plans on offer, with the one the workspace is on marked. */
   listPlans(): Promise<Plan[]>;
   listRegions(): Promise<string[]>;
+  /*
+   * The next five are long operations. Each resolves once the work is done and rejects with the reason when it failed;
+   * `options.onProgress` reports the status on the way (a client whose operations are instant may not call it).
+   */
   /** The connection string is on the returned database. Names are unique, lowercase, 3 to 48 characters. */
-  createDatabase(input: NewDatabase): Promise<Database>;
+  createDatabase(input: NewDatabase, options?: OperationOptions): Promise<Database>;
   /** Instant copy under a new name, with the same region and tags. The copy starts asleep. */
-  forkDatabase(id: string, name: string): Promise<Database>;
+  forkDatabase(id: string, name: string, options?: OperationOptions): Promise<Database>;
   /** Rolls the data back to `at` (ISO time, between creation and now). */
-  restoreDatabase(id: string, at: string): Promise<Database>;
+  restoreDatabase(id: string, at: string, options?: OperationOptions): Promise<Database>;
   /** Prepares a download of the data of one or more databases. */
-  exportDatabases(ids: string[]): Promise<ExportResult>;
+  exportDatabases(ids: string[], options?: OperationOptions): Promise<ExportResult>;
   /** Permanently deletes databases and their data. */
-  eraseDatabases(ids: string[]): Promise<BulkResult>;
+  eraseDatabases(ids: string[], options?: OperationOptions): Promise<BulkResult>;
   /** Keeps databases awake (true) or lets them sleep when idle (false). */
   setKeepAwake(ids: string[], enabled: boolean): Promise<BulkResult>;
   /** Replaces the tags of one database. */
