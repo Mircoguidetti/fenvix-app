@@ -62,8 +62,9 @@ white, so on the white content it reads as a sheen rather than a stripe.
 4. Silver only on: the thin line under the selected tab (database tabs, settings tabs) and under the selected menu
    item; the border of the highlighted card (the current plan); the light fill under chart lines (area charts and
    sparklines). Never on text, never behind text, no chrome or bevel. The logo does not use silver and is unchanged.
-5. Primary buttons stay black, also in dialogs that destroy something. A destructive dialog gets a red line on top;
-   the button that opens it is red (red text and border, filled red on hover).
+5. Primary buttons stay black, except the confirm button of a destructive dialog: that one is filled red
+   (`--danger`, white text, 5.30:1), and the dialog has a red line on top. The button that opens a destructive dialog
+   is red (red text and border, filled red on hover), except "Restore to a point in time", which stays neutral.
 6. No new dependency: the icons come from `lucide-react`, which was already used.
 
 ## Where it is applied
@@ -87,12 +88,13 @@ white, so on the white content it reads as a sheen rather than a stripe.
 | Network: unsaved changes to the list | needs attention | amber border | "Unsaved changes" | `.tag-warning` |
 | Network: save dialog, "FENVIX cannot see your address" | warning | amber border and icon | warning triangle | `.once-warning` |
 | Database user: "Copy the password now" | warning | amber border and icon | warning triangle | `.once-warning` |
+| Reset password dialog: "Applications using the old password will stop working." | warning | amber border and icon | warning triangle | `.once-warning` (the dialog is not destructive; its confirm stays black) |
 | Network: blocked addresses | blocked | red text and icon | "Blocked until …", blocked sign | `.blocked-until` |
 | Form and dialog errors everywhere | error | red text | "Error: " written before the message | `.error` |
 | A field with an error | error | red border | the error below it | `input[aria-invalid="true"]` |
 | Load failures (lists, pages, charts, the engine not answering, 403, network errors) | error | red text and icon | alert circle, the message | `.message-error` (`Message role="alert"`) |
 | Erase (database page and bulk bar), Delete user, Delete document, Revoke key, Remove member, Revoke invitation, Clear list | destructive | red text and border; red fill on hover | the word on the button | `.btn-danger` |
-| The dialogs of those actions, and Leave organization | destructive | red line on top; the confirm button stays black | the title and text say what is lost | `.dialog-danger` (`ConfirmDialog danger`) |
+| The dialogs of those actions, Leave organization, and Restore to a point in time | destructive | red line on top; the confirm button filled red with white text | the title and text say what is lost; the button says the action | `.dialog-danger` (`ConfirmDialog danger`) |
 | Selected database tab and settings tab | — | silver line under it | the tab is also filled black | `::after` |
 | Selected menu item (sidebar and drawer) | — | silver line under it | the item is also filled and bold | `.nav-link.active::after` |
 | Current plan card (Billing) | — | silver border | "Current plan" | `.plan-current` |
@@ -108,9 +110,10 @@ white, so on the white content it reads as a sheen rather than a stripe.
 | Counts (databases, awake, asleep, kept awake) and the Overview numbers | Quantities, not states. |
 | The awake/asleep timeline and the "Awake databases" chart | Awake time is a quantity (it drives the bill), not a health signal; rule 3 keeps charts black and grey. |
 | Requests, storage and cost charts | No series means success or error. |
-| Primary buttons, including the confirm button of a destructive dialog | Rule 5: primary buttons stay black. |
+| Primary buttons, including the confirm button of the Reset password dialog | Rule 5: primary buttons stay black; only the confirm of a destructive dialog is red. |
+| The "Restore to a point in time" and "Reset password" buttons | Neutral by choice: Restore opens a red dialog that says what is lost; Reset password opens a plain dialog with an amber warning. |
 | "Remove" next to an entry of the IP allowlist | It only changes the draft; nothing happens until "Save list", and "Discard changes" undoes it. |
-| Restore to a point in time, Reset password, Fork, Export, Unblock, Apply again | Recoverable or constructive actions. Restore does drop later changes; its dialog says so in words. See "Decisions" below. |
+| Fork, Export, Unblock, Apply again | Recoverable or constructive actions. |
 | Save dialog of the IP allowlist | Saving is not destructive; its warning paragraph is amber. |
 | The view-only note ("You have view-only access…", "Only an owner or admin…") | Information about the role, not a state of anything. |
 | Role tags (Owner, Admin, Member), tag chips, "Current plan" tag | Labels, not states. |
@@ -126,9 +129,12 @@ white, so on the white content it reads as a sheen rather than a stripe.
   amber; that silver is a cool grey gradient that stays visible but quiet; that no other hue appears in the stylesheet
   or the components; that silver is used only on the allowed selectors and never as a text colour; that each state in
   the table above uses its token and no other; that every coloured state has a word or icon; that every destructive
-  dialog has the red line and every other dialog has not; and that every toast is marked success or error.
+  dialog (Restore included) has the red line and a red, white-text confirm button and every other dialog has not;
+  that Restore and Reset password open from neutral buttons and that the Reset password dialog has its amber warning
+  with an icon; and that every toast is marked success or error.
 - `scripts/status-colors-checks.mjs` (in `npm run check`, desktop 1440 px and phone 390 px): opens the pages in
-  Chromium and reads the colours the browser actually draws for each state, opens the dialogs, saves an allowlist to
+  Chromium and reads the colours the browser actually draws for each state, opens the dialogs and reads the colour of their confirm buttons (red with white text in Erase, Restore, Revoke
+  and Delete user; black in Fork and Reset password, where it also checks the amber warning), saves an allowlist to
   see the green toast, wakes a sleeping database to see the amber notice, scans every visible element for any
   saturated colour that is not a status colour or that has no word or icon next to it, and checks that nothing leaves
   the screen or overlaps.
