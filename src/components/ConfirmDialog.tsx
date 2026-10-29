@@ -11,6 +11,7 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
   hideCancel,
+  danger,
 }: {
   open: boolean;
   title: string;
@@ -22,6 +23,8 @@ export function ConfirmDialog({
   onCancel: () => void;
   /** For a dialog that only informs: one button, which closes it. */
   hideCancel?: boolean;
+  /** The action cannot be undone (erase, delete, revoke): a red line on top of the dialog. The button stays black. */
+  danger?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -34,7 +37,7 @@ export function ConfirmDialog({
   }, [open]);
 
   return (
-    <dialog ref={ref} className="dialog" aria-labelledby={titleId} onCancel={(e) => (e.preventDefault(), onCancel())} onClose={() => open && onCancel()}>
+    <dialog ref={ref} className={danger ? "dialog dialog-danger" : "dialog"} aria-labelledby={titleId} onCancel={(e) => (e.preventDefault(), onCancel())} onClose={() => open && onCancel()}>
       {open && (
         <form
           onSubmit={(e) => {

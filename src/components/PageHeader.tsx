@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { CircleAlert, TriangleAlert } from "lucide-react";
 
 export function PageHeader({ title, description, actions, back }: { title: ReactNode; description?: ReactNode; actions?: ReactNode; back?: ReactNode }) {
   return (
@@ -32,7 +33,25 @@ export function Card({ title, description, tag, actions, children, id }: { title
   );
 }
 
-export function Message({ children, role = "status" }: { children: ReactNode; role?: "status" | "alert" }) {
+/**
+ * A line of status. role "alert" is an error and shows in red with an icon. tone "warning" is a note that needs
+ * attention and shows an amber icon. Otherwise it is plain grey text.
+ */
+export function Message({ children, role = "status", tone }: { children: ReactNode; role?: "status" | "alert"; tone?: "warning" }) {
+  if (role === "alert")
+    return (
+      <p className="message message-error" role="alert">
+        <CircleAlert size={16} aria-hidden="true" />
+        <span>{children}</span>
+      </p>
+    );
+  if (tone === "warning")
+    return (
+      <p className="message message-warning" role={role}>
+        <TriangleAlert size={16} aria-hidden="true" />
+        <span>{children}</span>
+      </p>
+    );
   return (
     <p className="message" role={role}>
       {children}

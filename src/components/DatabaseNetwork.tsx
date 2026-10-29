@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useOrg } from "../session/OrgProvider";
-import { AlertTriangle, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, Ban, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 import { network } from "../data/network-client";
 import type { IpAllowlist, NetworkBlock } from "../data/network";
 import type { Database } from "../data";
@@ -99,7 +99,7 @@ export function DatabaseNetwork({ db }: { db: Database }) {
       setDraft(r.list);
       setDialog(null);
       const n = imported.entries.length - r.skipped;
-      toast(r.skipped ? `Added ${plural(n, "entry", "entries")}; ${plural(r.skipped, "was", "were")} already in the list` : `Added ${plural(n, "entry", "entries")}`);
+      toast(r.skipped ? `Added ${plural(n, "entry", "entries")}; ${plural(r.skipped, "was", "were")} already in the list` : `Added ${plural(n, "entry", "entries")}`, "success");
     } catch (x) {
       setDialogError(message(x));
     }
@@ -112,7 +112,7 @@ export function DatabaseNetwork({ db }: { db: Database }) {
       setData(await network.setAllowlist(db.id, entries));
       setDraft(null);
       setDialog(null);
-      toast(done);
+      toast(done, "success");
     } catch (e) {
       setDialogError(message(e));
     } finally {
@@ -123,18 +123,18 @@ export function DatabaseNetwork({ db }: { db: Database }) {
   async function reapply() {
     try {
       setData(await network.reapplyAllowlist(db.id));
-      toast("Applied the saved IP allowlist again");
+      toast("Applied the saved IP allowlist again", "success");
     } catch (e) {
-      toast(message(e));
+      toast(message(e), "error");
     }
   }
 
   async function unblock(ip: string) {
     try {
       await network.unblock(db.id, ip);
-      toast(`Unblocked ${ip}`);
+      toast(`Unblocked ${ip}`, "success");
     } catch (e) {
-      toast(message(e));
+      toast(message(e), "error");
     }
     await loadBlocks();
   }
@@ -164,7 +164,7 @@ export function DatabaseNetwork({ db }: { db: Database }) {
           <div className="net">
             <p className="net-summary" role="status">
               <strong>{summary}</strong>
-              {changed && <span className="tag">Unsaved changes</span>}
+              {changed && <span className="tag tag-warning">Unsaved changes</span>}
             </p>
 
             {data.dataExplorer.trusted === false && (
@@ -174,11 +174,14 @@ export function DatabaseNetwork({ db }: { db: Database }) {
               </p>
             )}
             {data.engine.status === "different" && (
-              <div className="callout" role="alert">
-                <p className="net-callout-text">
-                  The database is checking a different list from the saved one
-                  {data.engine.entries && data.engine.entries.length > 0 ? `: ${data.engine.entries.join(", ")}` : ": no list, so every address can connect"}.
-                </p>
+              <div className="callout callout-warning" role="alert">
+                <div className="callout-row">
+                  <AlertTriangle size={16} aria-hidden="true" />
+                  <p className="net-callout-text">
+                    The database is checking a different list from the saved one
+                    {data.engine.entries && data.engine.entries.length > 0 ? `: ${data.engine.entries.join(", ")}` : ": no list, so every address can connect"}.
+                  </p>
+                </div>
                 {canManage && (
                   <div className="row-actions">
                     <button type="button" className="btn" onClick={() => void reapply()}>
@@ -188,8 +191,8 @@ export function DatabaseNetwork({ db }: { db: Database }) {
                 )}
               </div>
             )}
-            {data.engine.status === "unavailable" && <Message>Could not check the list the database is using right now. The saved list is shown.</Message>}
-            {data.engine.enforced === false && <Message>The database server does not check sign-ins at the moment, so the list has no effect yet.</Message>}
+            {data.engine.status === "unavailable" && <Message tone="warning">Could not check the list the database is using right now. The saved list is shown.</Message>}
+            {data.engine.enforced === false && <Message tone="warning">The database server does not check sign-ins at the moment, so the list has no effect yet.</Message>}
 
             {list.length > 0 && (
               <ul className="net-list" aria-label="IP allowlist entries">
@@ -295,7 +298,10 @@ export function DatabaseNetwork({ db }: { db: Database }) {
               <li key={b.ip} className="net-row">
                 <span className="net-block">
                   <span className="mono net-entry">{b.ip}</span>
-                  <span className="muted small">Blocked until {formatDateTime(b.until)}</span>
+                  <span className="small blocked-until">
+                    <Ban size={13} aria-hidden="true" />
+                    Blocked until {formatDateTime(b.until)}
+                  </span>
                 </span>
                 <button type="button" className="btn btn-sm" onClick={() => void unblock(b.ip)} aria-label={`Unblock ${b.ip}`}>
                   Unblock
@@ -327,7 +333,7 @@ export function DatabaseNetwork({ db }: { db: Database }) {
         )}
       </ConfirmDialog>
 
-      <ConfirmDialog open={dialog === "clear"} title="Clear the IP allowlist?" confirmLabel="Clear list" busy={busy} onConfirm={() => void send([], "Cleared the IP allowlist: all IP addresses are allowed")} onCancel={() => setDialog(null)}>
+      <ConfirmDialog danger open={dialog === "clear"} title="Clear the IP allowlist?" confirmLabel="Clear list" busy={busy} onConfirm={() => void send([], "Cleared the IP allowlist: all IP addresses are allowed")} onCancel={() => setDialog(null)}>
         <p>Every IP address will be able to connect to {db.name} again. Users still need their password.</p>
         {dialogError && (
           <p className="error" role="alert">

@@ -9,7 +9,8 @@ const later = <T>(v: T, ms = 120) => new Promise<T>((r) => setTimeout(() => r(st
 
 /**
  * db_0001 has a list and two blocked addresses; db_0002 has none (every address allowed); db_0003's engine holds
- * another list than the saved one (the "different" state); db_0005's engine never answers (the error state).
+ * another list than the saved one (the "different" state); db_0004's server does not trust the Data Explorer yet (the
+ * warning); db_0005's engine never answers (the error state).
  */
 interface Stored { entries: string[]; engine: string[] | null; updatedAt: string | null; updatedBy: IpAllowlist["updatedBy"] }
 const STORE = new Map<string, Stored>([
@@ -35,7 +36,7 @@ function view(db: string): IpAllowlist {
   return {
     entries: s.entries, allowAll: s.entries.length === 0, maxEntries: 100, updatedAt: s.updatedAt, updatedBy: s.updatedBy,
     engine: { status: same ? "in_sync" : "different", ...(same ? {} : { entries: engine }), enforced: true },
-    dataExplorer: { trusted: true },
+    dataExplorer: { trusted: db !== "db_0004" },
   };
 }
 

@@ -82,7 +82,7 @@ export function MembersPage() {
     try {
       await orgs.changeRole(m.userId, next);
       members.reload();
-      toast(`${m.name} is now ${ROLE_NAMES[next].toLowerCase()}`);
+      toast(`${m.name} is now ${ROLE_NAMES[next].toLowerCase()}`, "success");
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not change the role. Try again.");
       members.reload();
@@ -95,7 +95,7 @@ export function MembersPage() {
     setActionError(null);
     try {
       await orgs.removeMember(removing.userId);
-      toast(`Removed ${removing.name}`);
+      toast(`Removed ${removing.name}`, "success");
       setRemoving(null);
       members.reload();
     } catch (err) {
@@ -112,7 +112,7 @@ export function MembersPage() {
     setActionError(null);
     try {
       await orgs.revokeInvitation(revoking.id);
-      toast(`Revoked the invitation for ${revoking.email}`);
+      toast(`Revoked the invitation for ${revoking.email}`, "success");
       setRevoking(null);
       setInvitesVersion((v) => v + 1);
     } catch (err) {
@@ -233,7 +233,7 @@ export function MembersPage() {
                       </td>
                       <td className="actions-cell">
                         {can.remove && (
-                          <button type="button" className="btn btn-sm" onClick={() => setRemoving(m)} aria-label={`Remove ${m.name}`}>
+                          <button type="button" className="btn btn-sm btn-danger" onClick={() => setRemoving(m)} aria-label={`Remove ${m.name}`}>
                             Remove
                           </button>
                         )}
@@ -286,7 +286,7 @@ export function MembersPage() {
                               <button type="button" className="btn btn-sm" onClick={() => void newLink(i)} aria-label={`Copy a new link for ${i.email}`}>
                                 Copy link
                               </button>
-                              <button type="button" className="btn btn-sm" onClick={() => setRevoking(i)} aria-label={`Revoke the invitation for ${i.email}`}>
+                              <button type="button" className="btn btn-sm btn-danger" onClick={() => setRevoking(i)} aria-label={`Revoke the invitation for ${i.email}`}>
                                 Revoke
                               </button>
                             </div>
@@ -305,13 +305,13 @@ export function MembersPage() {
 
       <LinkDialog created={created} onClose={() => setCreated(null)} />
 
-      <ConfirmDialog open={removing !== null} title="Remove this member?" confirmLabel="Remove member" busy={busy} onConfirm={remove} onCancel={() => setRemoving(null)}>
+      <ConfirmDialog danger open={removing !== null} title="Remove this member?" confirmLabel="Remove member" busy={busy} onConfirm={remove} onCancel={() => setRemoving(null)}>
         <p>
           <strong className="break-anywhere">{removing?.name}</strong> will lose access to this organization and its databases.
         </p>
       </ConfirmDialog>
 
-      <ConfirmDialog open={revoking !== null} title="Revoke this invitation?" confirmLabel="Revoke invitation" busy={busy} onConfirm={revoke} onCancel={() => setRevoking(null)}>
+      <ConfirmDialog danger open={revoking !== null} title="Revoke this invitation?" confirmLabel="Revoke invitation" busy={busy} onConfirm={revoke} onCancel={() => setRevoking(null)}>
         <p>
           The link sent to <strong className="break-anywhere">{revoking?.email}</strong> will stop working.
         </p>

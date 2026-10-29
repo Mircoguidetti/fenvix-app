@@ -62,7 +62,7 @@ function CreateDatabaseForm() {
       const db = await client.createDatabase({ name, region, tags, appUser });
       setCreated(db);
       setError(null);
-      toast(`Created database ${db.name}`);
+      toast(`Created database ${db.name}`, "success");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the database.");
     } finally {

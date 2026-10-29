@@ -83,7 +83,7 @@ export function DatabaseUsers({ db }: { db: Database }) {
   const remove = (u: DbUser) =>
     run(async () => {
       await users.deleteUser(db.id, u.username);
-      toast(`Deleted user ${u.username}`);
+      toast(`Deleted user ${u.username}`, "success");
     });
 
   const full = !!list && list.items.length >= list.limit;
@@ -203,7 +203,7 @@ export function DatabaseUsers({ db }: { db: Database }) {
         )}
       </ConfirmDialog>
 
-      <ConfirmDialog open={dialog?.kind === "delete"} title="Delete this user?" confirmLabel="Delete user" busy={busy} onConfirm={() => dialog?.kind === "delete" && remove(dialog.user)} onCancel={() => setDialog(null)}>
+      <ConfirmDialog danger open={dialog?.kind === "delete"} title="Delete this user?" confirmLabel="Delete user" busy={busy} onConfirm={() => dialog?.kind === "delete" && remove(dialog.user)} onCancel={() => setDialog(null)}>
         <p>
           <span className="mono">{dialog?.kind === "delete" ? dialog.user.username : ""}</span> stops working right away, including connections that are open now. Anything using it gets errors until you give it another user. This cannot be undone.
         </p>

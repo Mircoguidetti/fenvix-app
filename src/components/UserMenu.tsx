@@ -49,7 +49,7 @@ export function UserMenu() {
             onClick={async () => {
               setOpen(false);
               await signOut();
-              toast("Signed out");
+              toast("Signed out", "success");
             }}
           >
             <LogOut size={16} aria-hidden="true" />

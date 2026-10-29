@@ -54,7 +54,7 @@ export function OrgSwitcher() {
     if (o.id === current!.id) return;
     org.switchTo(o.id);
     navigate("/overview");
-    toast(`Switched to ${o.name}`);
+    toast(`Switched to ${o.name}`, "success");
   }
 
   async function create() {
@@ -66,7 +66,7 @@ export function OrgSwitcher() {
       await org.refresh(made.id);
       setDialog(null);
       navigate("/overview");
-      toast(`Created ${made.name}`);
+      toast(`Created ${made.name}`, "success");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not create the organization. Try again.");
     } finally {
@@ -82,7 +82,7 @@ export function OrgSwitcher() {
       await org.refresh();
       setDialog(null);
       navigate("/overview");
-      toast(`You left ${left}`);
+      toast(`You left ${left}`, "success");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not leave the organization. Try again.");
     } finally {
@@ -152,7 +152,7 @@ export function OrgSwitcher() {
         <p>You will be its owner. You can invite people from Settings.</p>
       </ConfirmDialog>
 
-      <ConfirmDialog open={dialog === "leave"} title="Leave this organization?" confirmLabel="Leave organization" busy={busy} onConfirm={leave} onCancel={() => setDialog(null)}>
+      <ConfirmDialog danger open={dialog === "leave"} title="Leave this organization?" confirmLabel="Leave organization" busy={busy} onConfirm={leave} onCancel={() => setDialog(null)}>
         <p>
           You will lose access to <strong className="break-anywhere">{current.name}</strong> and its databases. To come back, someone has to invite you again.
         </p>

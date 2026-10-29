@@ -14,7 +14,7 @@ export function CopyButton({ value, label = "Copy", what }: { value: string; lab
   }
   return (
     <>
-      <button type="button" className="btn" onClick={copy} aria-label={`${label} ${what}`}>
+      <button type="button" className={state === "copied" ? "btn copy-done" : "btn"} onClick={copy} aria-label={`${label} ${what}`}>
         {state === "copied" ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
         {state === "copied" ? "Copied" : label}
       </button>

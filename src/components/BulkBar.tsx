@@ -31,7 +31,7 @@ export function BulkBar({ selected, matching, onSelectAll, onClear, onDone }: { 
     setBusy(true);
     try {
       await work();
-      toast(message);
+      toast(message, "success");
       close();
       onDone();
     } catch (e) {
@@ -44,9 +44,9 @@ export function BulkBar({ selected, matching, onSelectAll, onClear, onDone }: { 
     try {
       const file = await client.exportDatabases(selected);
       download(file);
-      toast(`Export ready: ${file.filename}`);
+      toast(`Export ready: ${file.filename}`, "success");
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Export failed.");
+      toast(e instanceof Error ? e.message : "Export failed.", "error");
     }
   }
 
@@ -90,7 +90,7 @@ export function BulkBar({ selected, matching, onSelectAll, onClear, onDone }: { 
           <Download size={15} aria-hidden="true" />
           Export
         </button>
-        <button type="button" className="btn btn-sm" onClick={() => setAction("erase")}>
+        <button type="button" className="btn btn-sm btn-danger" onClick={() => setAction("erase")}>
           <Trash2 size={15} aria-hidden="true" />
           Erase
         </button>
@@ -100,7 +100,7 @@ export function BulkBar({ selected, matching, onSelectAll, onClear, onDone }: { 
         </button>
       </div>
 
-      <ConfirmDialog open={action === "erase"} title={`Erase ${plural(n)}?`} confirmLabel={`Erase ${plural(n)}`} busy={busy} onConfirm={() => run(`Erased ${plural(n)}`, () => client.eraseDatabases(selected))} onCancel={close}>
+      <ConfirmDialog danger open={action === "erase"} title={`Erase ${plural(n)}?`} confirmLabel={`Erase ${plural(n)}`} busy={busy} onConfirm={() => run(`Erased ${plural(n)}`, () => client.eraseDatabases(selected))} onCancel={close}>
         <p>
           This permanently deletes {plural(n)} and all their data. It cannot be undone.
         </p>

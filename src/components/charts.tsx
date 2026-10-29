@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { UsageRange } from "../data";
 import { formatCompact, formatCount } from "../lib/format";
 
@@ -145,11 +145,30 @@ function axis(ticks: { index: number; label: string }[], count: number, inner: {
   ));
 }
 
+/**
+ * The light silver fill under a chart line: mid grey at the top fading through light grey to nothing. A gradient needs
+ * an id, so each chart draws its own. The stops take their colours from the silver tokens in styles.css.
+ */
+function useSilverFill(): [ReactNode, { fill: string }] {
+  const id = `silver-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const defs = (
+    <defs>
+      <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" className="silver-stop-1" />
+        <stop offset="0.55" className="silver-stop-2" />
+        <stop offset="1" className="silver-stop-3" />
+      </linearGradient>
+    </defs>
+  );
+  return [defs, { fill: `url(#${id})` }];
+}
+
 const PAD: Plot = { left: 52, top: 12, right: 14, bottom: 26 };
 
 /** Filled area for the awake count with the fleet total as a thin line above it. */
 export function AwakeAreaChart({ points, range }: { points: { at: string; awake: number; total: number }[]; range: UsageRange }) {
   const [ref, width] = useMeasure<HTMLDivElement>();
+  const [silverDefs, silver] = useSilverFill();
   const height = 220;
   const max = niceMax(Math.max(...points.map((p) => p.awake), 1) * 1.15);
   const left = leftPad(max, formatCompact);
@@ -171,7 +190,8 @@ export function AwakeAreaChart({ points, range }: { points: { at: string; awake:
         summary={`Between ${formatCount(low)} and ${formatCount(peak)} awake, at most ${share}% of the ${formatCount(total)} databases in the fleet.`}
       >
         {grid(max, inner, formatCompact)}
-        <path d={area} className="chart-area" />
+        {silverDefs}
+        <path d={area} className="chart-area" style={silver} />
         <path d={points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i)} ${y(p.awake)}`).join(" ")} className="chart-line" fill="none" />
         {axis(timeTicks(points.map((p) => p.at), range, Math.max(2, Math.floor(inner.w / 80))), points.length - 1, inner, height, false)}
       </Frame>
@@ -182,6 +202,7 @@ export function AwakeAreaChart({ points, range }: { points: { at: string; awake:
 /** A filled area over time, for a value that moves slowly, such as storage. */
 export function AreaSeriesChart({ points, range, valueLabel, axisLabel = valueLabel }: { points: { at: string; value: number }[]; range: UsageRange; valueLabel: (n: number) => string; axisLabel?: (n: number) => string }) {
   const [ref, width] = useMeasure<HTMLDivElement>();
+  const [silverDefs, silver] = useSilverFill();
   const height = 220;
   const max = niceMax(Math.max(...points.map((p) => p.value), 1));
   const left = leftPad(max, axisLabel);
@@ -196,7 +217,8 @@ export function AreaSeriesChart({ points, range, valueLabel, axisLabel = valueLa
     <div ref={ref}>
       <Frame width={width} height={height} label={`From ${valueLabel(first)} to ${valueLabel(last)} over the period.`} summary={`From ${valueLabel(first)} to ${valueLabel(last)} over the period.`}>
         {grid(max, inner, axisLabel)}
-        <path d={`${line} L${x(points.length - 1)} ${y(0)} L${x(0)} ${y(0)} Z`} className="chart-area" />
+        {silverDefs}
+        <path d={`${line} L${x(points.length - 1)} ${y(0)} L${x(0)} ${y(0)} Z`} className="chart-area" style={silver} />
         <path d={line} className="chart-line" fill="none" />
         {axis(timeTicks(points.map((p) => p.at), range, Math.max(2, Math.floor(inner.w / 80))), points.length - 1, inner, height, false)}
       </Frame>
@@ -392,6 +414,7 @@ export function WakeTimeline({ points, range }: { points: { at: string; awake: b
 /** Small line for a number card. No axes, no labels. */
 /** Fills the width it is given. The stroke keeps its weight however far it is stretched. */
 export function Sparkline({ values }: { values: number[] }) {
+  const [silverDefs, silver] = useSilverFill();
   if (values.length < 2) return null;
   const W = 100;
   const H = 30;
@@ -403,7 +426,8 @@ export function Sparkline({ values }: { values: number[] }) {
   const line = values.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
   return (
     <svg className="spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" focusable="false">
-      <path d={`${line} L${W} ${H} L0 ${H} Z`} className="spark-area" />
+      {silverDefs}
+      <path d={`${line} L${W} ${H} L0 ${H} Z`} className="spark-area" style={silver} />
       <path d={line} className="spark-line" fill="none" vectorEffect="non-scaling-stroke" />
     </svg>
   );

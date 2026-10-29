@@ -1,9 +1,26 @@
+import type { ReactNode } from "react";
 import type { DbState } from "../data";
 
-/** Filled dot = awake, hollow dot = asleep. The word always carries the meaning. */
+/**
+ * A state as a pill: a dot and a word. The word always carries the meaning; the colour only repeats it.
+ * "ok" is green (awake, active, paid), "warn" is amber (in progress, waiting), "neutral" stays grey.
+ */
+export type Tone = "ok" | "warn" | "neutral";
+
+export function StatusPill({ tone, children }: { tone: Tone; children: ReactNode }) {
+  const cls = tone === "ok" ? "state state-ok" : tone === "warn" ? "state state-warn" : "state";
+  return (
+    <span className={cls} data-tone={tone}>
+      <span className={`dot ${tone === "neutral" ? "dot-outline" : "dot-filled"}`} aria-hidden="true" />
+      {children}
+    </span>
+  );
+}
+
+/** Filled green dot = awake, hollow grey dot = asleep. */
 export function StateBadge({ state }: { state: DbState }) {
   return (
-    <span className={`state ${state === "awake" ? "state-awake" : "state-asleep"}`}>
+    <span className={`state ${state === "awake" ? "state-awake" : "state-asleep"}`} data-tone={state === "awake" ? "ok" : "neutral"}>
       <span className={`dot ${state === "awake" ? "dot-filled" : "dot-outline"}`} aria-hidden="true" />
       {state === "awake" ? "Awake" : "Asleep"}
     </span>
@@ -11,10 +28,9 @@ export function StateBadge({ state }: { state: DbState }) {
 }
 
 export function KeyStatus({ revoked }: { revoked: boolean }) {
-  return (
-    <span className={`state ${revoked ? "state-asleep" : "state-awake"}`}>
-      <span className={`dot ${revoked ? "dot-outline" : "dot-filled"}`} aria-hidden="true" />
-      {revoked ? "Revoked" : "Active"}
-    </span>
-  );
+  return <StatusPill tone={revoked ? "neutral" : "ok"}>{revoked ? "Revoked" : "Active"}</StatusPill>;
+}
+
+export function InvoiceStatus({ status }: { status: "paid" | "open" }) {
+  return <StatusPill tone={status === "paid" ? "ok" : "warn"}>{status === "paid" ? "Paid" : "Open"}</StatusPill>;
 }

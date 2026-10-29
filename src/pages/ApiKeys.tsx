@@ -78,7 +78,7 @@ function ApiKeysManager() {
         </form>
         {error && <p id="key-error" className="error" role="alert">{error}</p>}
         {created && (
-          <div className="callout" role="status">
+          <div className="callout callout-success" role="status">
             <p><strong>Key “{created.name}” created.</strong> Copy it now. It is never shown again.</p>
             <code className="secret mono">{created.secret}</code>
             <div className="row-actions">
@@ -115,7 +115,7 @@ function ApiKeysManager() {
                   <td data-label="Last used" className="muted">{k.lastUsedAt ? formatRelative(k.lastUsedAt, now) : "Never"}</td>
                   <td className="actions-cell">
                     {!k.revokedAt && (
-                      <button type="button" className="btn btn-sm" onClick={() => setTarget(k)} aria-label={`Revoke key ${k.name}`}>
+                      <button type="button" className="btn btn-sm btn-danger" onClick={() => setTarget(k)} aria-label={`Revoke key ${k.name}`}>
                         Revoke
                       </button>
                     )}
@@ -127,7 +127,7 @@ function ApiKeysManager() {
         </div>
       )}
 
-      <ConfirmDialog open={!!target} title="Revoke this key?" confirmLabel="Revoke key" busy={busy} onConfirm={revoke} onCancel={() => setTarget(null)}>
+      <ConfirmDialog danger open={!!target} title="Revoke this key?" confirmLabel="Revoke key" busy={busy} onConfirm={revoke} onCancel={() => setTarget(null)}>
         <p>
           “{target?.name}” (ending {target?.hint}) will stop working right away. Anything using it will get errors until you give it a new key. This cannot be undone.
         </p>

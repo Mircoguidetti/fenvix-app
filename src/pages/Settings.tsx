@@ -43,7 +43,7 @@ function OrganizationCard() {
     try {
       await orgs.renameOrganization(name.trim());
       await org.refresh();
-      toast("Organization renamed");
+      toast("Organization renamed", "success");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not rename the organization. Try again.");
     } finally {
@@ -107,7 +107,7 @@ export function SettingsPage() {
       await client.saveSettings({ ...form, workspaceName: nameHere ? form.workspaceName.trim() : (org.current?.name ?? form.workspaceName).trim() });
       workspaceChanged();
       setSaved(true);
-      toast("Settings saved");
+      toast("Settings saved", "success");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the settings. Try again.");
     }
@@ -182,7 +182,7 @@ export function SettingsPage() {
             </div>
           </dl>
           <div className="row-actions">
-            <button type="button" className="btn" onClick={async () => (await signOut(), toast("Signed out"))}>
+            <button type="button" className="btn" onClick={async () => (await signOut(), toast("Signed out", "success"))}>
               Sign out
             </button>
             <span className="muted small">Signing out affects this browser only.</span>

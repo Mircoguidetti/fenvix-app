@@ -147,7 +147,7 @@ export function DataExplorer({ db }: { db: Database }) {
     try {
       setEditing({ mode: "edit", item: await waking(() => explorer.getDocument(db.id, current!, item.id), setWakingUp) });
     } catch (e) {
-      toast(message(e));
+      toast(message(e), "error");
     }
   }
 
@@ -175,11 +175,11 @@ export function DataExplorer({ db }: { db: Database }) {
             tries++;
           }
         }, setWakingUp);
-        toast("Document inserted");
+        toast("Document inserted", "success");
       } else {
         // A retry of a save that did land meets a new version and answers 409: nothing is overwritten.
         await waking(() => explorer.replaceDocument(db.id, current, editing.item!.id, typed, editing.item!.version!), setWakingUp);
-        toast("Document saved");
+        toast("Document saved", "success");
       }
       setEditing(null);
       void loadDocs();
@@ -209,7 +209,7 @@ export function DataExplorer({ db }: { db: Database }) {
     setDialogError(null);
     try {
       await waking(() => explorer.deleteDocument(db.id, current, deleting.id, deleting.version!), setWakingUp);
-      toast("Document deleted");
+      toast("Document deleted", "success");
       setDeleting(null);
       void loadDocs();
       void refreshCounts();
@@ -385,7 +385,7 @@ export function DataExplorer({ db }: { db: Database }) {
         />
       )}
 
-      <ConfirmDialog open={deleting !== null} title="Delete this document?" confirmLabel="Delete document" busy={busy} onConfirm={() => void remove()} onCancel={() => setDeleting(null)}>
+      <ConfirmDialog danger open={deleting !== null} title="Delete this document?" confirmLabel="Delete document" busy={busy} onConfirm={() => void remove()} onCancel={() => setDeleting(null)}>
         <p>
           This permanently deletes the document with _id <span className="mono">{deleting ? idSummary(deleting.id) : ""}</span> from {current}. It cannot be undone.
         </p>
@@ -447,7 +447,7 @@ function DocumentRow({ item, onEdit, onDelete, readOnly }: { item: DocumentItem;
             <Pencil size={14} aria-hidden="true" />
             <span className="hide-narrow">Edit</span>
           </button>
-          <button type="button" className="btn btn-sm" onClick={onDelete} disabled={!item.version} aria-label={`Delete document ${idSummary(item.id, 40)}`} title={item.version ? undefined : "Open the whole document (no field list) to delete it"}>
+          <button type="button" className="btn btn-sm btn-danger" onClick={onDelete} disabled={!item.version} aria-label={`Delete document ${idSummary(item.id, 40)}`} title={item.version ? undefined : "Open the whole document (no field list) to delete it"}>
             <Trash2 size={14} aria-hidden="true" />
             <span className="hide-narrow">Delete</span>
           </button>

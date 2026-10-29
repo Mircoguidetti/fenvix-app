@@ -2,6 +2,7 @@ import { Check, Download } from "lucide-react";
 import { client } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
 import { MonthBars } from "../components/charts";
+import { InvoiceStatus } from "../components/StateBadge";
 import { useToast } from "../components/Toast";
 import { useAsync } from "../lib/useAsync";
 import { download } from "../lib/download";
@@ -19,9 +20,9 @@ export function BillingPage() {
   async function getInvoice(id: string, number: string) {
     try {
       download(await client.downloadInvoice(id));
-      toast(`Downloaded invoice ${number}`);
+      toast(`Downloaded invoice ${number}`, "success");
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Download failed.");
+      toast(e instanceof Error ? e.message : "Download failed.", "error");
     }
   }
 
@@ -150,7 +151,7 @@ export function BillingPage() {
                           <td data-label="Issued" className="muted">
                             {formatDate(i.issuedAt)}
                           </td>
-                          <td data-label="Status">{i.status === "paid" ? "Paid" : "Open"}</td>
+                          <td data-label="Status"><InvoiceStatus status={i.status} /></td>
                           <td data-label="Amount" className="num mono">
                             {formatMoney(i.amount, i.currency)}
                           </td>

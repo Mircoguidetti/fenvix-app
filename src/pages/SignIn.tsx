@@ -82,7 +82,7 @@ export function SignInPage() {
         </div>
 
         {sentTo ? (
-          <div className="callout" role="status">
+          <div className="callout callout-success" role="status">
             <p>
               <strong>Check your inbox.</strong> We sent a sign-in link to {sentTo}. It opens this dashboard and works once.
             </p>

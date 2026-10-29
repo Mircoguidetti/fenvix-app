@@ -17,7 +17,7 @@ export function TagEditor({ db, onChanged }: { db: Database; onChanged: () => vo
     setBusy(true);
     try {
       await client.setTags(db.id, next);
-      toast(message);
+      toast(message, "success");
       setError(null);
       onChanged();
       return true;

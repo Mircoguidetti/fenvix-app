@@ -1,5 +1,7 @@
-/* Tokens. Black, white and greys only: no accent hue. The only gradient is the logo mark. */
-/* One fixed theme: near-black navigation, white content. Blacks, whites and greys only. */
+/* Tokens. Black, white and greys for everything. Colour only where it means something: green, red and amber are
+   status colours (see docs/status-colors.md), never decoration. Silver is a detail for accent lines, one highlighted
+   card border and the fill under chart lines; never on or behind text. */
+/* One fixed theme: near-black navigation, white content. */
 :root {
   color-scheme: light;
   --bg: #ffffff;
@@ -22,6 +24,22 @@
   --ink-3: #c6c6cc;
   --shadow: 0 1px 2px rgba(10, 10, 11, 0.05);
   --shadow-lg: 0 10px 30px rgba(10, 10, 11, 0.12);
+
+  /* Status colours, flat. On the light content (bg, page, surface, surface-2): at least 4.5:1, so text may use them. */
+  --success: #067a3a; /* ready, awake, active, done, confirmed */
+  --danger: #d6140a; /* errors, blocked, failed, destructive actions */
+  --warning: #a15c00; /* starting, in progress, needs attention */
+  /* The same meanings on the dark surfaces (navigation, toasts): at least 4.5:1 on nav-bg, nav-hover, nav-active. */
+  --success-on-dark: #3ddc84;
+  --danger-on-dark: #ff6a5c;
+  --warning-on-dark: #ffb020;
+
+  /* Silver: a cool, soft gradient from light grey to white to mid grey. Detail only. */
+  --silver-1: #c4c8ce;
+  --silver-2: #f4f5f7;
+  --silver-3: #7c828b;
+  --silver: linear-gradient(90deg, var(--silver-1) 0%, var(--silver-2) 50%, var(--silver-3) 100%);
+
   --font: "Schibsted Grotesk Variable", "Schibsted Grotesk", system-ui, sans-serif;
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
   --radius: 12px;
@@ -152,7 +170,7 @@ textarea.code { font-variant-ligatures: none; height: auto; padding: 10px 12px; 
 .input-wrap { position: relative; display: flex; align-items: center; }
 .input-wrap svg { position: absolute; left: 12px; color: var(--muted); pointer-events: none; }
 .input-wrap input { padding-left: 36px; }
-input[aria-invalid="true"] { border-width: 2px; border-color: var(--text); }
+input[aria-invalid="true"] { border-width: 2px; }
 .error { font-size: 13.5px; font-weight: 500; }
 .error::before { content: "Error: "; font-weight: 600; }
 .inline-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
@@ -342,7 +360,7 @@ a.btn { text-decoration: none; }
 .kpi-spark { margin-top: auto; padding-top: 8px; }
 .spark { display: block; width: 100%; height: 30px; }
 .spark-line { stroke: var(--text); stroke-width: 1.5; stroke-linejoin: round; }
-.spark-area { fill: rgba(10, 10, 11, 0.07); }
+.spark-area { fill: rgba(10, 10, 11, 0.07); } /* fallback; the charts fill it with the silver gradient */
 
 .chart-area { fill: rgba(10, 10, 11, 0.12); }
 .chart-line { stroke: var(--text); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
@@ -395,7 +413,6 @@ a.btn { text-decoration: none; }
 
 /* ---------------------------------------------------------------- state badge */
 .state { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; height: 24px; padding: 0 9px 0 8px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 12.5px; font-weight: 500; }
-.state-awake { border-color: var(--text); }
 .counts-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); box-shadow: var(--shadow); font-size: 13.5px; }
 .counts-bar b { font-variant-numeric: tabular-nums; }
 .counts-sep { color: var(--border-strong); }
@@ -433,8 +450,6 @@ table.data.dbs tbody tr { height: 58px; }
 .chart-title { font-size: 12.5px; font-weight: 600; letter-spacing: 0.02em; margin: 0 0 6px; }
 .chart-pair { display: grid; grid-template-columns: 1fr; gap: 20px; }
 @media (min-width: 980px) { .chart-pair { grid-template-columns: 1fr 1fr; } }
-.btn-danger { border-color: var(--border-strong); }
-.btn-danger:hover:not(:disabled) { background: var(--text); color: var(--on-text); border-color: var(--text); }
 .empty h2 { font-size: 16px; }
 .facts-fill { flex: 1; align-content: space-between; }
 #tags .inline-form .field.grow { max-width: 420px; }
@@ -451,7 +466,6 @@ table.data.dbs tbody tr { height: 58px; }
 @media (min-width: 760px) { .plans { grid-template-columns: repeat(2, 1fr); } }
 @media (min-width: 1180px) { .plans { grid-template-columns: repeat(4, 1fr); } }
 .plan { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
-.plan-current { border-color: var(--text); box-shadow: inset 0 0 0 1px var(--text); }
 .plan-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
 .plan-head h3 { font-size: 15px; font-weight: 600; margin: 0; }
 .plan-price strong { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
@@ -495,7 +509,7 @@ table.data.dbs tbody tr { height: 58px; }
 .query-more summary { cursor: pointer; font-size: 13.5px; font-weight: 500; width: fit-content; }
 .query-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
 .query input.mono { font-size: 13px; }
-.query input[aria-invalid="true"] { border-color: var(--text); border-width: 2px; }
+.query input[aria-invalid="true"] { border-width: 2px; }
 .doc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .doc { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); min-width: 0; }
 .doc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 6px 4px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
@@ -594,3 +608,56 @@ textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflo
   .net-add .btn { flex: 1 1 100%; justify-content: center; }
   .net-row .btn { margin-left: auto; }
 }
+
+/* ---------------------------------------------------------------- status colours and silver
+   Every use of --success, --danger, --warning and --silver is in this section, so the map in docs/status-colors.md
+   can be checked against one place. Each coloured state also carries a word or an icon. */
+
+/* Green: awake, active, paid, done. */
+.state-ok, .state-awake { border-color: var(--success); }
+.state-ok .dot, .state-awake .dot { border-color: var(--success); background: var(--success); }
+.callout-success { border-color: var(--success); box-shadow: inset 3px 0 0 var(--success); }
+.copy-done svg { color: var(--success); }
+
+/* Amber: starting, in progress, needs attention. */
+.state-warn { border-color: var(--warning); }
+.state-warn .dot { border-color: var(--warning); background: transparent; border-width: 2px; }
+.tag-warning { border-color: var(--warning); }
+.waking { border-color: var(--warning); box-shadow: inset 3px 0 0 var(--warning); }
+.waking svg { color: var(--warning); }
+.once-warning { border-color: var(--warning); box-shadow: inset 3px 0 0 var(--warning); }
+.once-warning svg { color: var(--warning); }
+.callout-warning { border-color: var(--warning); box-shadow: inset 3px 0 0 var(--warning); }
+.callout-warning .callout-row { display: flex; gap: 10px; align-items: flex-start; }
+.callout-warning .callout-row svg { flex: none; margin-top: 3px; color: var(--warning); }
+.message-warning { display: flex; gap: 8px; align-items: flex-start; color: var(--text); }
+.message-warning svg { flex: none; margin-top: 3px; color: var(--warning); }
+
+/* Red: errors, blocked addresses, failures, destructive actions. */
+.error { color: var(--danger); }
+input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-invalid="true"] { border-color: var(--danger); }
+.message-error { display: flex; gap: 8px; align-items: flex-start; color: var(--danger); font-weight: 500; }
+.message-error svg { flex: none; margin-top: 3px; }
+.blocked-until { display: inline-flex; align-items: center; gap: 5px; color: var(--danger); }
+.btn-danger { color: var(--danger); border-color: var(--danger); }
+.btn-danger:hover:not(:disabled) { background: var(--danger); color: var(--on-text); border-color: var(--danger); }
+.btn-danger:focus-visible { outline-color: var(--danger); }
+.dialog-danger { border-top: 0; box-shadow: inset 0 4px 0 var(--danger), var(--shadow-lg); }
+
+/* Toasts sit on black: the same meanings in their dark-surface shades, always with an icon. */
+.toast-icon { flex: none; }
+.toast-success .toast-icon { color: var(--success-on-dark); }
+.toast-error .toast-icon { color: var(--danger-on-dark); }
+.toast-error { box-shadow: inset 3px 0 0 var(--danger-on-dark); }
+
+/* Silver: the line under the selected tab and menu item, the border of the current plan, the fill under chart lines. */
+.detail-tabs button, .settings-tabs .seg-link { position: relative; }
+.detail-tabs button[aria-pressed="true"]::after, .settings-tabs .seg-link.active::after, .nav-link.active::after {
+  content: ""; position: absolute; left: 10px; right: 10px; bottom: 4px; height: 2px; border-radius: 2px; background: var(--silver); pointer-events: none;
+}
+.nav-link { position: relative; }
+.nav-link.active::after { bottom: 3px; }
+.plan-current { border: 2px solid transparent; box-shadow: none; background: linear-gradient(var(--bg), var(--bg)) padding-box, linear-gradient(135deg, var(--silver-3), var(--silver-1) 30%, var(--silver-2) 50%, var(--silver-1) 70%, var(--silver-3)) border-box; }
+.silver-stop-1 { stop-color: var(--silver-3); stop-opacity: 0.32; }
+.silver-stop-2 { stop-color: var(--silver-1); stop-opacity: 0.22; }
+.silver-stop-3 { stop-color: var(--silver-2); stop-opacity: 0; }

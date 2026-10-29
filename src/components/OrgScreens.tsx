@@ -112,7 +112,7 @@ export function InviteScreen({ token }: { token: string }) {
       clearPendingInvite();
       await org.refresh(joined.id);
       navigate("/overview", { replace: true });
-      toast(`You joined ${joined.name}`);
+      toast(`You joined ${joined.name}`, "success");
     } catch (err) {
       setError(err instanceof Error ? err.message : "This invitation link is not valid. Ask the person who invited you for a new link.");
       setBusy(false);

@@ -108,7 +108,7 @@ function DatabaseDetail({ id }: { id: string }) {
   const fork = () =>
     run(async () => {
       const copy = await client.forkDatabase(d.id, field);
-      toast(`Forked ${d.name} as ${copy.name}`);
+      toast(`Forked ${d.name} as ${copy.name}`, "success");
       const first = copy.initialUser;
       if (first?.password) setForked({ id: copy.id, username: first.username, password: first.password, connectionString: first.connectionString });
       else navigate(`/databases/${copy.id}`);
@@ -117,32 +117,32 @@ function DatabaseDetail({ id }: { id: string }) {
     run(async () => {
       if (!field) throw new Error("Choose a date and time.");
       await client.restoreDatabase(d.id, `${field}:00Z`);
-      toast(`Restored ${d.name} to ${formatDateTime(`${field}:00Z`)}`);
+      toast(`Restored ${d.name} to ${formatDateTime(`${field}:00Z`)}`, "success");
       db.reload();
     });
   const erase = () =>
     run(async () => {
       await client.eraseDatabases([d.id]);
-      toast(`Erased ${d.name}`);
+      toast(`Erased ${d.name}`, "success");
       navigate("/databases");
     });
   async function exportData() {
     try {
       const file = await client.exportDatabases([d.id]);
       download(file);
-      toast(`Export ready: ${file.filename}`);
+      toast(`Export ready: ${file.filename}`, "success");
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Export failed.");
+      toast(e instanceof Error ? e.message : "Export failed.", "error");
     }
   }
   async function toggleKeepAwake(on: boolean) {
     setKeepLocal(on);
     try {
       await client.setKeepAwake([d.id], on);
-      toast(on ? `${d.name} will stay awake` : `${d.name} can sleep when idle`);
+      toast(on ? `${d.name} will stay awake` : `${d.name} can sleep when idle`, "success");
       db.reload();
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Could not change keep awake.");
+      toast(e instanceof Error ? e.message : "Could not change keep awake.", "error");
       setKeepLocal(null);
     }
   }
@@ -395,7 +395,7 @@ function DatabaseDetail({ id }: { id: string }) {
         </div>
       </ConfirmDialog>
 
-      <ConfirmDialog open={dialog === "erase"} title="Erase this database?" confirmLabel="Erase database" busy={busy} confirmDisabled={field !== d.name} onConfirm={erase} onCancel={() => setDialog(null)}>
+      <ConfirmDialog danger open={dialog === "erase"} title="Erase this database?" confirmLabel="Erase database" busy={busy} confirmDisabled={field !== d.name} onConfirm={erase} onCancel={() => setDialog(null)}>
         <p>
           This permanently deletes {d.name}, its forks and its history. It cannot be undone.
         </p>

@@ -66,9 +66,9 @@ export function UsagePage() {
     try {
       const file = await client.exportUsageReport({ ...query, page: undefined, pageSize: undefined });
       download(file);
-      toast(`CSV ready: ${file.filename}`);
+      toast(`CSV ready: ${file.filename}`, "success");
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Export failed.");
+      toast(e instanceof Error ? e.message : "Export failed.", "error");
     } finally {
       setExporting(false);
     }
