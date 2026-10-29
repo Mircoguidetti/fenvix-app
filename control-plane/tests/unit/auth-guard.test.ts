@@ -51,12 +51,12 @@ test("across databases, the Data Explorer stops first and the provisioner keeps 
 test("attempts that have not succeeded yet hold their place, so a burst cannot overshoot", () => {
   const c = clock();
   const g = new AuthFailureGuard({ now: c.now });
-  const held = [g.begin("eu", "db_a", "data"), g.begin("eu", "db_a", "data")];
-  assert.throws(() => g.begin("eu", "db_a", "data"), AuthGuardRefusal, "two in flight already use the budget of db_a");
+  const held = Array.from({ length: g.limits.perDatabase }, () => g.begin("eu", "db_a", "data"));
+  assert.throws(() => g.begin("eu", "db_a", "data"), AuthGuardRefusal, "the attempts in flight already use the budget of db_a");
   held[0]!.done(true);
-  const third = g.begin("eu", "db_a", "data");
-  held[1]!.done(false);
-  third.done(false);
+  const next = g.begin("eu", "db_a", "data");
+  for (const h of held.slice(1)) h.done(false);
+  next.done(false);
   assert.throws(() => g.begin("eu", "db_a", "data"), AuthGuardRefusal);
 });
 

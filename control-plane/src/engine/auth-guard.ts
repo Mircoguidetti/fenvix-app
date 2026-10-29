@@ -19,7 +19,7 @@
 export const ENGINE_LIMITS = { perDatabase: 5, total: 10, windowMs: 60_000 } as const;
 
 export interface AuthGuardLimits { perDatabase: number; total: number; reserve: number; windowMs: number }
-export const DEFAULT_LIMITS: AuthGuardLimits = { perDatabase: 2, total: 6, reserve: 2, windowMs: 60_000 };
+export const DEFAULT_LIMITS: AuthGuardLimits = { perDatabase: 3, total: 8, reserve: 2, windowMs: 60_000 };
 
 export type AuthKind = "data" | "provisioner";
 
