@@ -24,7 +24,7 @@ describe('engine command line (flags of the final engine, Mircoguidetti/test5 @ 
       '--retention-window-secs=604800',
       '--wal-gc-mode=bulk',
       '--trusted-networks=127.0.0.0/8,::1/128,172.17.0.0/16,172.18.0.0/24',
-      '--grantable-roles=read,readWrite,dbAdmin',
+      '--grantable-roles=read,readWrite',
     ]);
   });
 

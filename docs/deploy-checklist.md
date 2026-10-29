@@ -256,6 +256,40 @@ Se il certificato vero non arriva (per esempio CAA o DNS), il motore e il contro
 
 Nessun dato si perde in nessuno dei due casi: il server non tiene dati propri.
 
+### Regola: prima il motore, poi il control plane
+Quando una release cambia sia il motore sia il control plane, l'ordine è sempre:
+
+1. **Motore**: `sudo fenvix-artifact update engine <versione> <sha256>`, poi controlla che sia sano (`sudo fenvix-artifact current`, `systemctl status fenvix-engine --no-pager`: `active (running)`).
+2. **Solo dopo, il control plane**: `sudo fenvix-artifact update control-plane <versione> <sha256>`.
+3. Per tornare indietro, l'ordine inverso: prima `sudo fenvix-artifact rollback control-plane`, poi, se serve, `sudo fenvix-artifact rollback engine`.
+
+Perché: il control plane nuovo può usare funzioni che solo il motore nuovo ha. Esempio concreto (motore `engine-round2`, control plane del branch `cp-engine-round2`): lo sblocco di un indirizzo vale per un solo database (`?database=`); un motore più vecchio ignora il parametro e **sblocca l'indirizzo su tutti i database**, anche quelli di altri clienti, prima che il control plane possa accorgersene (il control plane risponde 503, ma l'indirizzo è già sbloccato). Un motore nuovo con il control plane vecchio invece funziona (provato con la suite engine-real del control plane `3281c90` contro `engine-round2`: i flussi passano; gli unici 2 test falliti fissavano il vecchio comportamento del motore). Il motore minimo per l'infrastruttura attuale è `engine-round2` (`3bcd7e5`): un motore più vecchio non conosce `--grantable-roles` e non parte.
+
+Con un deploy dello stack (punto 3 sopra) le due versioni arrivano insieme su un server nuovo: metti nei parametri le versioni nuove solo dopo aver fatto i punti 1 e 2 di questa regola sul server in uso.
+
+### Procedura di supporto: togliere un blocco su tutti i database
+Il motore blocca un indirizzo **su tutti i database** dopo 100 autenticazioni fallite in 60 secondi da quell'indirizzo (su database diversi). Questo blocco il cliente non lo vede nella dashboard e non può toglierlo: riguarda anche altri clienti, e il control plane non manda mai lo sblocco globale (la rotta senza `?database=` è rifiutata dal control plane stesso). Si toglie **solo a mano**, dal server, con il token della porta admin. Il blocco scade comunque da solo (5 minuti, poi il doppio a ogni nuovo blocco, fino a un'ora).
+
+Prima di toglierlo: capisci da dove vengono gli errori (un'applicazione del cliente con una password vecchia ricomincia subito e l'indirizzo si riblocca) e annota nel ticket chi, quando e perché: questa operazione **non** finisce nell'audit del control plane.
+
+1. Session Manager sul server della regione (console EC2, istanza `fenvix-...`, Connect, Session Manager).
+2. Guarda i blocchi. Il token si legge dal file e passa a `curl` dallo standard input, così non compare nella riga di comando né nella cronologia; nessuna password viene digitata:
+   ```bash
+   sudo bash -c 'printf "header = \"Authorization: Bearer %s\"\n" "$(cat /run/fenvix/admin-token)" | curl -sS -K - http://172.17.0.1:8443/v1/network' | python3 -m json.tool
+   ```
+   Nella lista `blocked`, il blocco globale è quello con `"database": null`; `until` e `remaining_secs` dicono quando scade. Un indirizzo IPv6 compare come rete `/64`. (Se hai cambiato `adminPort`, usa quel numero al posto di `8443`.)
+3. Togli il blocco dell'indirizzo (esempio `203.0.113.9`; per un IPv6 `/64` scrivi l'indirizzo senza `/64`, per esempio `2001:db8:1:2::`):
+   ```bash
+   IP=203.0.113.9
+   ```
+   ```bash
+   sudo bash -c 'printf "header = \"Authorization: Bearer %s\"\n" "$(cat /run/fenvix/admin-token)" | curl -sS -K - -X DELETE "http://172.17.0.1:8443/v1/network/blocks/$1"' _ "$IP"
+   ```
+   Risposta attesa: `{"ip":"203.0.113.9","unblocked":true}` (`false`: l'indirizzo non aveva nulla). Attenzione: senza `?database=` il motore toglie **tutto** di quell'indirizzo, cioè il blocco globale, i blocchi sui singoli database e i contatori. Per togliere solo il blocco di un database c'è il pulsante **Unblock** della dashboard (owner o admin del cliente).
+4. Ricontrolla con il comando del punto 2: l'indirizzo non è più in `blocked`.
+
+Non copiare il token altrove, non metterlo in variabili d'ambiente esportate, non incollarlo in un ticket.
+
 ---
 
 ## Cosa costa (eu-west-1, prezzi del listino ufficiale AWS)

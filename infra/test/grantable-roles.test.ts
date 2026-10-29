@@ -9,16 +9,16 @@ import { BASE_CONTEXT } from './helpers';
 /**
  * --grantable-roles of the engine (Mircoguidetti/test5 engine-round2 @ 3bcd7e5): the only roles a user without root or
  * clusterAdmin (the provisioner `fenvix_provisioner`) may grant, and only on the database the user is defined on; never
- * on admin/local/config, never its own role, never a custom role. The engine accepts only read, readWrite and dbAdmin
+ * on admin/local/config, never its own role, never a custom role. The list is read,readWrite: exactly what the control plane grants. The engine accepts only read, readWrite and dbAdmin
  * in the flag and does not start with anything else.
  */
 const config = loadConfig((k) => BASE_CONTEXT[k]);
 const args = engineArgs({ config, region: 'eu-west-1', bucketName: 'b', holder: 'i-0123456789abcdef0' });
 
 describe('grantable roles of the engine', () => {
-  test('exactly read, readWrite, dbAdmin, passed once as --grantable-roles', () => {
-    expect(GRANTABLE_ROLES).toEqual(['read', 'readWrite', 'dbAdmin']);
-    expect(args.filter((a) => a.startsWith('--grantable-roles'))).toEqual(['--grantable-roles=read,readWrite,dbAdmin']);
+  test('exactly read and readWrite (the roles the control plane grants), passed once as --grantable-roles', () => {
+    expect(GRANTABLE_ROLES).toEqual(['read', 'readWrite']);
+    expect(args.filter((a) => a.startsWith('--grantable-roles'))).toEqual(['--grantable-roles=read,readWrite']);
   });
 
   test('only roles the engine accepts in the flag: built-in roles of one database without user administration', () => {
@@ -27,7 +27,8 @@ describe('grantable roles of the engine', () => {
       expect(accepted).toContain(r);
       expect(r).toMatch(/^[A-Za-z]+$/); // no role@db, no space, no empty item
     }
-    for (const never of ['dbOwner', 'userAdmin', 'root', 'clusterAdmin', 'userAdminAnyDatabase', 'readWriteAnyDatabase', 'fenvix_provisioner']) {
+    // dbAdmin is accepted by the engine but not granted by the control plane (it carries dropDatabase): left out on purpose.
+    for (const never of ['dbAdmin', 'dbOwner', 'userAdmin', 'root', 'clusterAdmin', 'userAdminAnyDatabase', 'readWriteAnyDatabase', 'fenvix_provisioner']) {
       expect(GRANTABLE_ROLES).not.toContain(never);
     }
     expect(new Set(GRANTABLE_ROLES).size).toBe(GRANTABLE_ROLES.length);
@@ -51,6 +52,7 @@ describe('grantable roles of the engine', () => {
       tlsSecretArn: 'arn:aws:secretsmanager:eu-west-1:865859654353:secret:TlsStore0123ABCD-AbCdEf', hostedZoneId: 'Z0123456789ABC', runControlPlane: true,
       artifactsBucket: 'fenvix-prod-eu-west-1-artifactsbucket1a2b3c4d-0123456789ab', artifactsRegion: 'eu-west-1', arch: 'x86_64' as const,
     }).join('\n');
-    expect(script.match(/--grantable-roles=read,readWrite,dbAdmin/g)).toHaveLength(1);
+    expect(script.match(/--grantable-roles=read,readWrite(?![,A-Za-z])/g)).toHaveLength(1);
+    expect(script).not.toMatch(/--grantable-roles=[^\s'"]*dbAdmin/);
   });
 });

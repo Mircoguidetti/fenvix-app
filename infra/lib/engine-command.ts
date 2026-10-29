@@ -57,11 +57,12 @@ export const TRUSTED_NETWORKS = ['127.0.0.0/8', '::1/128', DOCKER_BRIDGE_SUBNET,
  * provisioner `fenvix_provisioner`, which makes cp_<id> (readWrite) and the customers' users (readWrite or read) on each
  * customer database. With it set, such a user may grant only these built-in roles, only of the database the user is
  * defined on, never on admin/local/config, never its own role or a custom role, and may not create or change roles: a
- * stolen provisioner password can no longer give dbOwner, userAdmin@admin or a second provisioner. dbAdmin is in the list
- * as asked, although the control plane never grants it today. The engine accepts only read, readWrite and dbAdmin here
+ * stolen provisioner password can no longer give dbOwner, userAdmin@admin or a second provisioner. Exactly the roles the
+ * control plane grants: dbAdmin (accepted by the engine, carries dropDatabase) is left out on purpose because no flow of
+ * the control plane grants it. The engine accepts only read, readWrite and dbAdmin here
  * and refuses to start with anything else. root (Step 10) is not limited by it.
  */
-export const GRANTABLE_ROLES = ['read', 'readWrite', 'dbAdmin'];
+export const GRANTABLE_ROLES = ['read', 'readWrite'];
 
 /**
  * Stands for the EC2 instance id in the engine unit as written; the boot script replaces it with the id it read from

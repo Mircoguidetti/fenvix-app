@@ -460,4 +460,25 @@ Le misure "prima" del template le ho rifatte su `8ca5194` con gli stessi valori 
 - **Attenzione al rilascio:** un motore più vecchio di `engine-round2` non conosce il flag e non parte. `engineVersion`/`engineSha256` devono indicare una build di `engine-round2` (`3bcd7e5`) o successiva.
 
 ### 12.5 Commit
-- olvix-app, `origin/infra-grants` (nuovo, da `origin/infra-align` @ `8ca5194`): un commit con codice, test, README e questa sezione. `infra-align` non toccato.
+- olvix-app, `origin/infra-grants` (nuovo, da `origin/infra-align` @ `8ca5194`): `4509c9b` (codice, test, README e questa sezione) e il commit della sezione 12.6. `infra-align` non toccato.
+
+### 12.6 Seconda revisione (tue decisioni): lista `read,readWrite`, checklist di deploy
+
+**`dbAdmin` tolto.** `GRANTABLE_ROLES = ['read', 'readWrite']`, il flag diventa `--grantable-roles=read,readWrite`: esattamente i ruoli che il control plane concede (`cp_<id>` `readWrite`, utenti dei clienti `readWrite` o `read`). Aggiornati `lib/engine-command.ts` (commento: `dbAdmin` lasciato fuori di proposito, include `dropDatabase`), `test/engine-command.test.ts` (elenco esatto dei flag), `test/grantable-roles.test.ts` (elenco esatto, `dbAdmin` tra i ruoli mai ammessi, nel boot script il flag è `read,readWrite` senza altro dopo e non contiene `dbAdmin`), README (sezione "Grantable roles"). I test aggiornati sono stati eseguiti prima del codice: 4 falliti su 10 nei due file; dopo il codice tutti ok.
+
+**Il motore con `--grantable-roles=read,readWrite`**: provato con la suite engine-real del control plane (branch `cp-engine-round2`, `results-cp-engine-round2.md`), profili memory e production (MinIO locale), compreso un test che il provisioner riceva 13 per `dbAdmin`.
+
+**Checklist di deploy** (`docs/deploy-checklist.md`, sezione "Aggiornare il motore o il control plane"):
+- *Regola: prima il motore, poi il control plane* (ritorno indietro nell'ordine inverso), con il motivo concreto (sblocco per database: un motore vecchio sblocca su tutti i database) e la release minima del motore (`engine-round2`).
+- *Procedura di supporto: togliere un blocco su tutti i database*: solo a mano, dal server, con il token della porta admin letto dal file e passato a `curl` dallo standard input (non compare nella riga di comando); nessuna password. Comandi per vedere i blocchi e togliere quello di un indirizzo (anche IPv6 `/64`), risposta attesa, avvertenza che senza `?database=` si toglie tutto dell'indirizzo, nota che l'operazione non è nell'audit. **Provata** su un motore locale (`3bcd7e5`, `--auth`, `--trusted-networks=`, `--auth-fail-max 3`): i due comandi copiati dalla checklist (cambiati solo il percorso del token, l'indirizzo e tolto `sudo`) → blocco globale `"database": null` visto, `{"ip":"127.0.0.1","unblocked":true}`, poi `blocked` vuoto; il token non compare nel log del motore.
+
+**Numeri dopo la revisione** (stesso metodo di 12.2 e 12.3):
+- `tsc --noEmit` esito 0; jest **176 passati, 1 saltato**, 177 totali, 13 suite (il numero non cambia: test modificati, non aggiunti).
+- `cdk synth --quiet` (`env -i`, proxy morto, nessuna credenziale): esito 0 senza e con versioni, solo i 2 W3010 noti; nel boot script decodificato dal template `--grantable-roles=read,readWrite` una volta, nessun `dbAdmin`; nessun `AKIA…`, `-----BEGIN`, `PRIVATE KEY`, `password=`, `MONGO_ADMIN_TOKEN=`.
+
+| misura | `8ca5194` | `4509c9b` (con `dbAdmin`) | ora (`read,readWrite`) | margine ora |
+|---|---|---|---|---|
+| user data del test | 15.693 | 15.718 | **15.712** | **672 byte** |
+| stesso, dominio lungo | 15.773 | 15.798 | 15.792 | 592 byte |
+| template, 3 id a 90 byte, senza versioni | 15.827 | 15.853 | 15.846 | 538 byte |
+| idem, con versioni | 15.824 | 15.849 | 15.843 | 541 byte |

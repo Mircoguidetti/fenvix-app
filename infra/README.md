@@ -174,13 +174,13 @@ If the control plane were not trusted, a customer's IP allowlist would also appl
 The engine release must be `network-limits` (test5 commit `1c9fee7`) or later: an older engine does not know `--trusted-networks` and refuses to start (systemd restarts it every 5 seconds, and `journalctl -u fenvix-engine` shows the engine's error about the unknown argument `--trusted-networks`).
 
 ## Grantable roles
-The control plane makes the users of each customer database through the engine user `fenvix_provisioner` (Step 10): `cp_<id>` with `readWrite` and the customers' users with `readWrite` or `read`, always on the customer database `db_<id>` itself. The engine runs with `--grantable-roles=read,readWrite,dbAdmin` (`GRANTABLE_ROLES` in `lib/engine-command.ts`). With it, a user that holds neither root nor clusterAdmin, so the provisioner:
+The control plane makes the users of each customer database through the engine user `fenvix_provisioner` (Step 10): `cp_<id>` with `readWrite` and the customers' users with `readWrite` or `read`, always on the customer database `db_<id>` itself. The engine runs with `--grantable-roles=read,readWrite` (`GRANTABLE_ROLES` in `lib/engine-command.ts`). With it, a user that holds neither root nor clusterAdmin, so the provisioner:
 
 - may grant only these built-in roles, and only of the database the user is defined on;
 - may not create, change or drop users on `admin`, `local`, `config` (so no second provisioner and no change to root's password);
 - may never grant its own role, a custom role, or a role of another database, and may not create or change roles.
 
-So a stolen provisioner password can still make and drop users on customer databases, but can no longer hand out `dbOwner`, `userAdmin`, a role on `admin` or a copy of itself. root (`fenvix_root`, used only by the Step 10 script) is not limited by the flag. `dbAdmin` is in the list but the control plane does not grant it today. The engine refuses to start if the list holds anything other than `read`, `readWrite`, `dbAdmin`.
+So a stolen provisioner password can still make and drop users on customer databases, but can no longer hand out `dbOwner`, `userAdmin`, a role on `admin` or a copy of itself. root (`fenvix_root`, used only by the Step 10 script) is not limited by the flag. The list is exactly what the control plane grants: `dbAdmin` (which the engine would also accept, and which carries `dropDatabase`) is left out on purpose. The engine refuses to start if the list holds anything other than `read`, `readWrite`, `dbAdmin`.
 
 The engine release must be `engine-round2` (test5 commit `3bcd7e5`) or later: an older engine does not know `--grantable-roles` and refuses to start (systemd restarts it every 5 seconds; `journalctl -u fenvix-engine` shows the error about the unknown argument `--grantable-roles`).
 
