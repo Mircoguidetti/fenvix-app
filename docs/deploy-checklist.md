@@ -75,7 +75,7 @@ IAM → Identity providers. Se esiste già `token.actions.githubusercontent.com`
 
 ### 1.6 Codice
 ```bash
-git clone https://github.com/Mircoguidetti/olvix-app.git
+git clone https://github.com/Mircoguidetti/fenvix-app.git
 ```
 ```bash
 cd olvix-app && git checkout infra-align && cd infra && npm ci
@@ -94,7 +94,7 @@ Solo se al passo 1.4 il provider esisteva già:
 ```bash
 export FENVIX_GITHUB_OIDC_PROVIDER_ARN="arn:aws:iam::<account>:oidc-provider/token.actions.githubusercontent.com"
 ```
-I quattro parametri degli artefatti (`FENVIX_ENGINE_VERSION`, `FENVIX_ENGINE_SHA256`, `FENVIX_CONTROL_PLANE_VERSION`, `FENVIX_CONTROL_PLANE_SHA256`) restano **vuoti**: il bucket da cui verranno non esiste ancora. Restano ai valori di `cdk.json`: regione `eu-west-1`, `t3.medium`, disco 20 GB, budget 100 USD, repository che possono pubblicare `Mircoguidetti/test5` (motore) e `Mircoguidetti/olvix-app` (control plane), ramo `main` per entrambi.
+I quattro parametri degli artefatti (`FENVIX_ENGINE_VERSION`, `FENVIX_ENGINE_SHA256`, `FENVIX_CONTROL_PLANE_VERSION`, `FENVIX_CONTROL_PLANE_SHA256`) restano **vuoti**: il bucket da cui verranno non esiste ancora. Restano ai valori di `cdk.json`: regione `eu-west-1`, `t3.medium`, disco 20 GB, budget 100 USD, repository che possono pubblicare `Mircoguidetti/fenvix-engine` (motore) e `Mircoguidetti/fenvix-app` (control plane), ramo `main` per entrambi.
 
 ### 1.8 Controllo senza toccare AWS
 ```bash
@@ -139,22 +139,22 @@ Toglie tutto tranne i due bucket (dati e artefatti), che restano per scelta (REA
 ## Fase 2. Artefatti (GitHub Actions, nessun accesso AWS da parte tua)
 
 ### 2.1 Secret dei repository
-In **entrambi** i repository, Settings → Secrets and variables → Actions → New repository secret. I valori vengono dagli output del passo 1.9 e si incollano **solo** lì (GitHub li nasconde anche nei log pubblici di test5):
+In **entrambi** i repository, Settings → Secrets and variables → Actions → New repository secret. I valori vengono dagli output del passo 1.9 e si incollano **solo** lì (GitHub li nasconde anche nei log pubblici di fenvix-engine):
 
 | Repository | `AWS_PUBLISH_ROLE_ARN` | `ARTIFACTS_BUCKET` |
 |---|---|---|
-| `Mircoguidetti/test5` | output `PublishEngineRoleArn` | output `ArtifactsBucketName` |
-| `Mircoguidetti/olvix-app` | output `PublishControlPlaneRoleArn` | output `ArtifactsBucketName` |
+| `Mircoguidetti/fenvix-engine` | output `PublishEngineRoleArn` | output `ArtifactsBucketName` |
+| `Mircoguidetti/fenvix-app` | output `PublishControlPlaneRoleArn` | output `ArtifactsBucketName` |
 
 Non sono credenziali (un ARN non basta per entrare: serve un token OIDC di GitHub, valido solo per quel repository e quel ramo), ma contengono l'id dell'account, che non deve finire nei log pubblici.
 
 ### 2.2 I workflow devono essere sul ramo predefinito
 GitHub mostra "Run workflow" solo per i workflow presenti sul ramo predefinito (`main`), e il ruolo di pubblicazione accetta solo i rami di `engineRepoBranches` / `controlPlaneRepoBranches` (default `main`). Quindi:
-- test5: porta `.github/workflows/release-engine.yml` (ramo `release-pipeline`) su `main`;
+- fenvix-engine: porta `.github/workflows/release-engine.yml` (ramo `release-pipeline`) su `main`;
 - olvix-app: porta `.github/workflows/release-control-plane.yml` (ramo `infra-align`) su `main`.
 
 ### 2.3 Motore
-test5 → Actions → **release-engine** → Run workflow, ramo `main`:
+fenvix-engine → Actions → **release-engine** → Run workflow, ramo `main`:
 - `ref`: il commit del motore da pubblicare (per esempio quello di `network-limits`, `628273b...`, o successivo; serve `network-limits` o più nuovo, README "Trusted networks");
 - `arch`: `x86_64` (il `t3.medium`);
 - `publish`: sì.
@@ -171,7 +171,7 @@ olvix-app → Actions → **release-control-plane** → Run workflow, ramo `main
 
 ### 2.5 Verifica della fase 2
 - I due job sono verdi e il riepilogo riporta le due coppie di valori.
-- Nei log pubblici di test5 non compaiono l'id dell'account, il nome del ruolo o del bucket (sono mascherati: `***`).
+- Nei log pubblici di fenvix-engine non compaiono l'id dell'account, il nome del ruolo o del bucket (sono mascherati: `***`).
 - Il controllo vero del file è del server alla fase 3 (SHA-256 confrontato con i parametri).
 
 ### 2.6 Tornare indietro dalla fase 2

@@ -7,7 +7,7 @@ import { BASE_CONTEXT } from './helpers';
 const config = loadConfig((k) => BASE_CONTEXT[k]);
 const args = engineArgs({ config, region: 'eu-west-1', bucketName: 'fenvix-prod-data-865859654353-eu-west-1', holder: 'i-0123456789abcdef0' });
 
-describe('engine command line (flags of the final engine, Mircoguidetti/test5 @ 41ed169, --trusted-networks of network-limits @ 1c9fee7, --grantable-roles of engine-round2 @ 3bcd7e5; see lib/engine-command.ts)', () => {
+describe('engine command line (flags of the final engine, Mircoguidetti/fenvix-engine @ 41ed169, --trusted-networks of network-limits @ 1c9fee7, --grantable-roles of engine-round2 @ 3bcd7e5; see lib/engine-command.ts)', () => {
   test('exactly the production flags, in one place', () => {
     expect(args).toEqual([
       '--listen=0.0.0.0:27018',

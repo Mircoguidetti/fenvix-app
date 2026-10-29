@@ -7,7 +7,7 @@ import { GRANTABLE_ROLES, engineArgs } from '../lib/engine-command';
 import { BASE_CONTEXT } from './helpers';
 
 /**
- * --grantable-roles of the engine (Mircoguidetti/test5 engine-round2 @ 3bcd7e5): the only roles a user without root or
+ * --grantable-roles of the engine (Mircoguidetti/fenvix-engine engine-round2 @ 3bcd7e5): the only roles a user without root or
  * clusterAdmin (the provisioner `fenvix_provisioner`) may grant, and only on the database the user is defined on; never
  * on admin/local/config, never its own role, never a custom role. The list is read,readWrite: exactly what the control plane grants. The engine accepts only read, readWrite and dbAdmin
  * in the flag and does not start with anything else.

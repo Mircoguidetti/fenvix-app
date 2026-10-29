@@ -2,7 +2,7 @@ import { FenvixConfig } from './config';
 
 /**
  * File name of the engine binary: the ONLY place that holds it (code and tests read it from here). It is the name the
- * engine has in Mircoguidetti/test5 (Cargo package of the final engine); when the engine is renamed, change this line.
+ * engine has in Mircoguidetti/fenvix-engine (Cargo package of the final engine); when the engine is renamed, change this line.
  */
 export const ENGINE_BINARY_NAME = 'mongo-server';
 
@@ -81,7 +81,7 @@ export interface EngineCommandInput {
 
 /**
  * The engine's command line: the ONLY place that knows the engine's flag names. The engine reads no FENVIX_*
- * variable: every setting is a clap flag. Checked against the source of the final engine, Mircoguidetti/test5
+ * variable: every setting is a clap flag. Checked against the source of the final engine, Mircoguidetti/fenvix-engine
  * branch final-engine, commit 41ed169, engine crate: src/main.rs (struct Args), src/ctl/mod.rs (CtlArgs), src/tls.rs;
  * --trusted-networks from network-limits @ 1c9fee7; --grantable-roles and the defaults of the block thresholds from
  * engine-round2 @ 3bcd7e5 (src/main.rs, src/netguard.rs).

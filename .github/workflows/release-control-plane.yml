@@ -46,7 +46,7 @@ env:
 
 jobs:
   build:
-    if: github.repository == 'Mircoguidetti/olvix-app'
+    if: github.repository == 'Mircoguidetti/fenvix-app'
     # aarch64 needs GitHub's arm64 runners (available to this repository only on some plans).
     runs-on: ${{ inputs.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 30

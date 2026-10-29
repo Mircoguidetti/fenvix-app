@@ -8,7 +8,7 @@ import { ENGINE_BINARY_NAME, PATHS } from './engine-command';
  * SHA-256 given as a stack setting (never against anything stored in the bucket).
  *
  * Object keys (one prefix per writer):
- *   engine/<version>/<arch>/engine                               written by the engine repository (Mircoguidetti/test5)
+ *   engine/<version>/<arch>/engine                               written by the engine repository (Mircoguidetti/fenvix-engine)
  *   control-plane/<version>/<arch>/control-plane.tar.gz          written by this repository (docker save | gzip)
  *   boot/                                                       reserved for a boot script too big for user data (not used today)
  * The engine's object is called `engine` whatever the binary is called, so a rename of the binary changes no key: the

@@ -141,8 +141,8 @@ describe('publish roles: limited', () => {
   test('two roles, each trusted only by one repository on its named branches, with the exact sub (no wildcard) and aud', () => {
     expect(roles.map(([, r]) => r.Properties.RoleName).sort()).toEqual(['fenvix-prod-publish-control-plane', 'fenvix-prod-publish-engine']);
     const want: Record<string, string[]> = {
-      'fenvix-prod-publish-engine': ['repo:Mircoguidetti/test5:ref:refs/heads/main'],
-      'fenvix-prod-publish-control-plane': ['repo:Mircoguidetti/olvix-app:ref:refs/heads/main'],
+      'fenvix-prod-publish-engine': ['repo:Mircoguidetti/fenvix-engine:ref:refs/heads/main'],
+      'fenvix-prod-publish-control-plane': ['repo:Mircoguidetti/fenvix-app:ref:refs/heads/main'],
     };
     for (const [, r] of roles) {
       const trust = r.Properties.AssumeRolePolicyDocument.Statement;
@@ -161,9 +161,9 @@ describe('publish roles: limited', () => {
   });
 
   test('more branches are listed one by one; a wildcard branch is refused', () => {
-    expect(publishSubjects('Mircoguidetti/test5', ['main', 'release-pipeline'])).toEqual([
-      'repo:Mircoguidetti/test5:ref:refs/heads/main',
-      'repo:Mircoguidetti/test5:ref:refs/heads/release-pipeline',
+    expect(publishSubjects('Mircoguidetti/fenvix-engine', ['main', 'release-pipeline'])).toEqual([
+      'repo:Mircoguidetti/fenvix-engine:ref:refs/heads/main',
+      'repo:Mircoguidetti/fenvix-engine:ref:refs/heads/release-pipeline',
     ]);
     expect(() => synth({ engineRepoBranches: 'main,*' })).toThrow(/no wildcards/);
     expect(() => synth({ controlPlaneRepoBranches: 'feature/*' })).toThrow(/no wildcards/);

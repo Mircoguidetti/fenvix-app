@@ -17,7 +17,7 @@ import {
 import { BASE_CONTEXT } from './helpers';
 
 /**
- * --trusted-networks of the engine (Mircoguidetti/test5 network-limits @ 1c9fee7): the networks whose connections skip
+ * --trusted-networks of the engine (Mircoguidetti/fenvix-engine network-limits @ 1c9fee7): the networks whose connections skip
  * the per-database IP allowlists, the authentication blocks and the per-address connection limit. Only the processes of
  * the server itself may be in it: loopback, the host's default Docker bridge, and the Docker network of the control plane
  * and its TLS terminator, whose containers reach the engine through the host (host.docker.internal). Never a network
