@@ -101,7 +101,8 @@ html:has(.shell), body:has(.shell) { height: 100%; overflow: hidden; }
 .sidebar-bottom { border-top: 1px solid var(--nav-border); padding-top: 12px; }
 
 .content { flex: 1; min-width: 0; height: 100%; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; }
-.topbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 12px; height: calc(68px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) 16px 0; background: var(--nav-bg); color: var(--nav-text); }
+/* flex-shrink: 0, or the content column squeezes the bar down to the height of the menu button on long pages. */
+.topbar { position: sticky; top: 0; z-index: 30; flex-shrink: 0; display: flex; align-items: center; gap: 12px; height: calc(68px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) 16px 0; background: var(--nav-bg); color: var(--nav-text); }
 .topbar-logo { display: inline-flex; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 20px 16px 56px; display: flex; flex-direction: column; gap: 20px; outline: none; }

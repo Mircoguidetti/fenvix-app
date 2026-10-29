@@ -80,6 +80,21 @@ const search = async (page, text) => {
 const ROUTES = ["overview", "databases", "databases/db_0001", "databases/new", "usage", "usage?by=tag", "billing", "api-keys", "settings"];
 
 const TESTS = {
+  async "phone top bar keeps its height on long pages, with room around the menu button"(page, vp) {
+    if (!isMobile(vp)) return;
+    for (const route of ["overview", "databases", "api-keys", "databases/db_0001?tab=network"]) {
+      await signIn(page, route);
+      const m = await page.evaluate(() => {
+        const t = document.querySelector(".topbar").getBoundingClientRect();
+        const b = document.querySelector(".menu-btn").getBoundingClientRect();
+        return { bar: t.height, above: b.top - t.top, below: t.bottom - b.bottom, long: document.querySelector(".content").scrollHeight > innerHeight };
+      });
+      assert(m.bar >= 68, `${route}: the top bar is ${m.bar}px tall, not 68`);
+      assert(m.above >= 12 && m.below >= 12, `${route}: the menu button has ${m.above}px above and ${m.below}px below`);
+      if (route === "overview") assert(m.long, "overview is not longer than the screen, so it does not test the squeeze");
+    }
+  },
+
   async "sign in and out"(page, vp) {
     await go(page, "databases/db_0001");
     await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
