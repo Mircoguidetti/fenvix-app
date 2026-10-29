@@ -643,6 +643,10 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
 .btn-danger:hover:not(:disabled) { background: var(--danger); color: var(--on-text); border-color: var(--danger); }
 .btn-danger:focus-visible { outline-color: var(--danger); }
 .dialog-danger { border-top: 0; box-shadow: inset 0 4px 0 var(--danger), var(--shadow-lg); }
+/* The confirm button of a destructive dialog is filled red, white text (5.30:1). The button that opens it stays as is. */
+.dialog-danger .dialog-actions .btn-primary { background: var(--danger); border-color: var(--danger); color: var(--on-text); }
+.dialog-danger .dialog-actions .btn-primary:hover:not(:disabled) { background: var(--danger); opacity: 0.88; }
+.dialog-danger .dialog-actions .btn-primary:focus-visible { outline-color: var(--danger); }
 
 /* Toasts sit on black: the same meanings in their dark-surface shades, always with an icon. */
 .toast-icon { flex: none; }

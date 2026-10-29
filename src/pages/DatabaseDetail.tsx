@@ -382,7 +382,7 @@ function DatabaseDetail({ id }: { id: string }) {
         </div>
       </ConfirmDialog>
 
-      <ConfirmDialog open={dialog === "restore"} title="Restore to a point in time" confirmLabel="Restore database" busy={busy} onConfirm={restore} onCancel={() => setDialog(null)}>
+      <ConfirmDialog danger open={dialog === "restore"} title="Restore to a point in time" confirmLabel="Restore database" busy={busy} onConfirm={restore} onCancel={() => setDialog(null)}>
         <p>Rolls {d.name} back to the moment you choose. Changes made after that moment are lost.</p>
         <div className="field">
           <label htmlFor="restore-at">Date and time (UTC)</label>

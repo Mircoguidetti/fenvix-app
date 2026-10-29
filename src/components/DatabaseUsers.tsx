@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useOrg } from "../session/OrgProvider";
-import { KeyRound, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { KeyRound, Plus, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 import { users } from "../data/users-client";
 import { type DbUser, type DbUserRole, type DbUserSecret, ROLE_LABELS, usernameProblem } from "../data/users";
 import type { Database } from "../data";
@@ -195,6 +195,10 @@ export function DatabaseUsers({ db }: { db: Database }) {
       <ConfirmDialog open={dialog?.kind === "reset"} title="Reset this password?" confirmLabel="Reset password" busy={busy} onConfirm={() => dialog?.kind === "reset" && reset(dialog.user)} onCancel={() => setDialog(null)}>
         <p>
           <span className="mono">{dialog?.kind === "reset" ? dialog.user.username : ""}</span> gets a new password, shown once. New connections with the old password are refused from now on. Connections that are already open stay open until they close.
+        </p>
+        <p className="once-warning" role="note">
+          <TriangleAlert size={16} aria-hidden="true" />
+          <span>Applications using the old password will stop working.</span>
         </p>
         {dialogError && (
           <p className="error" role="alert">

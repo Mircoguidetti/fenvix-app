@@ -23,7 +23,7 @@ export function ConfirmDialog({
   onCancel: () => void;
   /** For a dialog that only informs: one button, which closes it. */
   hideCancel?: boolean;
-  /** The action cannot be undone (erase, delete, revoke): a red line on top of the dialog. The button stays black. */
+  /** The action cannot be undone (erase, delete, revoke, restore): a red line on top and a red confirm button. */
   danger?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);

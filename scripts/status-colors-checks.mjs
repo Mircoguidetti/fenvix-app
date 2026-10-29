@@ -18,6 +18,7 @@ const WARNING = "rgb(161, 92, 0)";
 const SUCCESS_DARK = "rgb(61, 220, 132)";
 const DANGER_DARK = "rgb(255, 106, 92)";
 const BLACK = "rgb(10, 10, 11)";
+const WHITE = "rgb(255, 255, 255)";
 const STATUS = [SUCCESS, DANGER, WARNING, SUCCESS_DARK, DANGER_DARK, "rgb(255, 176, 32)"];
 
 /** Computed colours of the first element matching `selector` (optionally of a pseudo-element). */
@@ -107,7 +108,7 @@ const TESTS = {
     await fits(page);
   },
 
-  async "database: erase is red, its dialog has the red line, the confirm button stays black; the selected tab has the silver line"(page) {
+  async "database: erase is red, its dialog has the red line and a red confirm button; restore opens the same red dialog from a neutral button; the selected tab has the silver line"(page) {
     await signIn(page, "databases/db_0001");
     await silverLine(page, '.detail-tabs button[aria-pressed="true"]');
     const tab = await paint(page, '.detail-tabs button[aria-pressed="true"]');
@@ -120,7 +121,17 @@ const TESTS = {
     const dialog = await paint(page, "dialog.dialog-danger[open]");
     assert(dialog.shadow.includes(DANGER), `the erase dialog has no red line (${dialog.shadow})`);
     const confirm = await paint(page, "dialog[open] .btn-primary");
-    assert(confirm.bg === BLACK && confirm.text === "Erase database", `the confirm button is ${confirm.bg}`);
+    assert(confirm.bg === DANGER && confirm.border === DANGER && confirm.color === WHITE && confirm.text === "Erase database", `the erase confirm is ${confirm.bg} / ${confirm.color}`);
+    await huesOnPage(page, STATUS);
+    await fits(page);
+    await page.getByRole("button", { name: "Cancel" }).click();
+    // Restore drops the changes made after the chosen moment: a red dialog, opened from a neutral button.
+    const restoreBtn = await paint(page, '#actions .btn:has-text("Restore to a point in time")');
+    assert(!STATUS.includes(restoreBtn.color) && !STATUS.includes(restoreBtn.border), `the Restore button is coloured (${restoreBtn.color})`);
+    await page.getByRole("button", { name: "Restore to a point in time" }).click();
+    assert((await paint(page, "dialog.dialog-danger[open]")).shadow.includes(DANGER), "the restore dialog has no red line");
+    const restore = await paint(page, "dialog[open] .btn-primary");
+    assert(restore.bg === DANGER && restore.color === WHITE && restore.text === "Restore database", `the restore confirm is ${restore.bg} / ${restore.color}`);
     await huesOnPage(page, STATUS);
     await fits(page);
     await page.getByRole("button", { name: "Cancel" }).click();
@@ -128,6 +139,7 @@ const TESTS = {
     await page.getByRole("button", { name: "Fork" }).click();
     await page.locator("dialog[open]").waitFor();
     assert(!(await page.locator("dialog.dialog-danger[open]").count()), "the fork dialog has the red line");
+    assert((await paint(page, "dialog[open] .btn-primary")).bg === BLACK, "the fork confirm is not black");
   },
 
   async "database: the area under the storage line is the silver fill"(page) {
@@ -243,7 +255,32 @@ const TESTS = {
     await fits(page);
     await page.locator("table .btn-danger").first().click();
     assert((await paint(page, "dialog.dialog-danger[open]")).shadow.includes(DANGER), "the revoke dialog has no red line");
-    assert((await paint(page, "dialog[open] .btn-primary")).bg === BLACK, "the revoke confirm is not black");
+    const revokeConfirm = await paint(page, "dialog[open] .btn-primary");
+    assert(revokeConfirm.bg === DANGER && revokeConfirm.color === WHITE, `the revoke confirm is ${revokeConfirm.bg} / ${revokeConfirm.color}`);
+  },
+
+  async "database users: reset password stays neutral, its dialog is not red and warns in amber with an icon; delete is red"(page) {
+    await signIn(page, "databases/db_0001?tab=users");
+    const reset = page.getByRole("button", { name: /^Reset password of / }).first();
+    await reset.waitFor();
+    const resetPaint = await reset.evaluate((e) => ({ color: getComputedStyle(e).color, border: getComputedStyle(e).borderTopColor }));
+    assert(!STATUS.includes(resetPaint.color) && !STATUS.includes(resetPaint.border), `the Reset password button is coloured (${resetPaint.color})`);
+    await reset.click();
+    await page.getByRole("heading", { name: "Reset this password?" }).waitFor();
+    assert(!(await page.locator("dialog.dialog-danger[open]").count()), "the reset dialog has the red line");
+    const warn = await paint(page, "dialog[open] .once-warning");
+    assert(warn.border === WARNING && warn.svg && warn.text === "Applications using the old password will stop working.", `reset warning: ${warn.border} "${warn.text}"`);
+    assert((await paint(page, "dialog[open] .once-warning svg")).color === WARNING, "the reset warning icon is not amber");
+    const confirm = await paint(page, "dialog[open] .btn-primary");
+    assert(confirm.bg === BLACK && confirm.text === "Reset password", `the reset confirm is ${confirm.bg}`);
+    await huesOnPage(page, STATUS);
+    await fits(page);
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("button", { name: /^Delete user / }).first().click();
+    assert((await paint(page, "dialog.dialog-danger[open]")).shadow.includes(DANGER), "the delete dialog has no red line");
+    const del = await paint(page, "dialog[open] .btn-primary");
+    assert(del.bg === DANGER && del.color === WHITE && del.text === "Delete user", `the delete confirm is ${del.bg} / ${del.color}`);
+    await fits(page);
   },
 
   async "billing: paid is green with its word; the current plan has the silver border and nothing else is coloured"(page) {
