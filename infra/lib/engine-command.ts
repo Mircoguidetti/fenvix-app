@@ -27,6 +27,30 @@ export const PATHS = {
  * security group says. The admin interface is plain HTTP with an all-powerful token, so it never binds 0.0.0.0.
  */
 export const DOCKER_BRIDGE_IP = '172.17.0.1';
+/** Prefix of the default bridge, pinned with DOCKER_BRIDGE_IP as `bip` in /etc/docker/daemon.json (user-data.ts). */
+export const DOCKER_BRIDGE_PREFIX = 16;
+/** The default bridge's network: 172.17.0.1/16 -> 172.17.0.0/16 (test/trusted-networks.test.ts checks the two agree). */
+export const DOCKER_BRIDGE_SUBNET = '172.17.0.0/16';
+
+/**
+ * The user-defined Docker network of the control plane and its TLS terminator (the TLS terminator reaches the control
+ * plane by its container name, which needs a user-defined network). Its subnet is pinned when the network is created
+ * (user-data.ts): without it Docker picks one from its pools, and the engine's trusted networks could not name it. The
+ * control plane reaches the engine through host.docker.internal = DOCKER_BRIDGE_IP, but the connection leaves its
+ * container from its address on THIS network (no address translation between a container and its host), so this is the
+ * network the engine sees the Data Explorer and the provisioner come from.
+ */
+export const DOCKER_NETWORK = 'fenvix';
+export const DOCKER_NETWORK_SUBNET = '172.18.0.0/24';
+
+/**
+ * --trusted-networks: connections from these networks skip the per-database IP allowlists, the authentication blocks
+ * and the per-address connection limit. Only the server's own processes: loopback (the user script of Step 10, run with
+ * --network host), the default bridge, the control plane's network. Never the VPC or any network customers come from:
+ * customers reach the MongoDB port directly (no Docker port publishing and no proxy in front of it), so the engine sees
+ * their real address.
+ */
+export const TRUSTED_NETWORKS = ['127.0.0.0/8', '::1/128', DOCKER_BRIDGE_SUBNET, DOCKER_NETWORK_SUBNET];
 
 /**
  * Stands for the EC2 instance id in the engine unit as written; the boot script replaces it with the id it read from
@@ -52,7 +76,9 @@ export interface EngineCommandInput {
  * Left at the engine's default on purpose (not passed): --endpoint (empty = AWS), --lease-ttl-secs 30,
  * --replica-set (empty = standalone), --process-lease (off), --ttl-* (no sleeping tenant is woken for expiry),
  * --wal-flush-ms 0 (acknowledged = durable), --writer-poll-secs, --wal-gc-secs, --sst-gc-*, --group-commit-*,
- * --durable-reads true, --max-concurrent-wakes, --retention-interval/prune/usage/pin/export timers.
+ * --durable-reads true, --max-concurrent-wakes, --retention-interval/prune/usage/pin/export timers, and the network
+ * limits of network-limits (--auth-fail-max 10, --auth-fail-max-per-db 5, --auth-fail-window-secs 60, --auth-block-secs
+ * 300, --auth-block-max-secs 3600, --max-conns-per-ip 200, --handshake-timeout-secs 10, --pre-auth-max-message-bytes).
  * Never passed: the test controls (--no-leases, --unsafe-skip-ownership-checks, --ack-before-durable,
  * --no-ctl-recovery, --no-maintenance, --no-ttl, --gc-control-delete-live, --l0-*, --serialize-reads,
  * --no-group-commit), --admin-token (a command line is visible to every local user), --log-commands, --store local
@@ -89,6 +115,8 @@ export function engineArgs(i: EngineCommandInput): string[] {
     // WAL cleanup: bulk is the engine's default and the only one that keeps restores exact (slatedb mode loses WAL
     // objects a restore needs). Pinned so that a change of the default cannot change it here.
     '--wal-gc-mode=bulk',
+    // The server's own processes skip the IP allowlists and are never counted or blocked: see TRUSTED_NETWORKS.
+    `--trusted-networks=${TRUSTED_NETWORKS.join(',')}`,
   ];
 }
 

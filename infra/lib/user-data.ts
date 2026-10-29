@@ -9,7 +9,7 @@ import {
   apiHost,
   controlPlaneEnvironment,
 } from './control-plane-env';
-import { DOCKER_BRIDGE_IP, INSTANCE_ID_PLACEHOLDER, PATHS, engineArgs, engineEnvironment } from './engine-command';
+import { DOCKER_BRIDGE_IP, DOCKER_BRIDGE_PREFIX, DOCKER_NETWORK, DOCKER_NETWORK_SUBNET, INSTANCE_ID_PLACEHOLDER, PATHS, engineArgs, engineEnvironment } from './engine-command';
 import { MUST_MATCH, ssmPrefix } from './parameters';
 
 export { ssmPrefix };
@@ -29,8 +29,18 @@ export interface UserDataInput {
   runControlPlane: boolean;
 }
 
-/** Docker network shared by the control plane and its TLS terminator (the control plane publishes no port). */
-const DOCKER_NETWORK = 'fenvix';
+/**
+ * Run before the control plane and its TLS terminator start: the Docker network they share must have the subnet the
+ * engine trusts (engine-command.ts). `docker network create` does nothing to a network that already exists, so one made
+ * earlier with another subnet would make the engine count and block the control plane: the unit stops instead.
+ */
+export const CHECK_NETWORK = [
+  '#!/bin/bash',
+  `got="$(/usr/bin/docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' ${DOCKER_NETWORK})"`,
+  `[ "$got" = "${DOCKER_NETWORK_SUBNET}" ] && exit 0`,
+  `echo "fenvix: Docker network ${DOCKER_NETWORK} has subnet '$got', the engine trusts ${DOCKER_NETWORK_SUBNET}: docker network rm ${DOCKER_NETWORK}, then restart the units" >&2`,
+  'exit 1',
+].join('\n');
 
 // Reads the parameters under /fenvix/<env> at every service start. The engine gets one file per parameter of its
 // group (0600, owned by the service user); the control plane gets a docker env file (0600, root). Values are never
@@ -148,6 +158,7 @@ export function bootScript(i: UserDataInput): string[] {
     ? []
     : [
         ...heredoc('/etc/fenvix/control-plane.static.env', cpEnv.join('\n')),
+        ...heredoc('/usr/local/bin/fenvix-check-network', CHECK_NETWORK, '0755'),
         ...heredoc(
           '/etc/fenvix/proxy/Caddyfile',
           [
@@ -170,7 +181,8 @@ export function bootScript(i: UserDataInput): string[] {
             'Requires=docker.service',
             '[Service]',
             `ExecStartPre=+${fetch} --group control-plane --env-file /etc/fenvix/control-plane.env --match ${MUST_MATCH.join('=')} ${required('control-plane')} ${required('engine')}`,
-            `ExecStartPre=-${docker} network create ${DOCKER_NETWORK}`,
+            `ExecStartPre=-${docker} network create --subnet=${DOCKER_NETWORK_SUBNET} ${DOCKER_NETWORK}`,
+            'ExecStartPre=/usr/local/bin/fenvix-check-network',
             `ExecStartPre=-${docker} pull ${c.controlPlaneImage}`,
             `ExecStartPre=-${docker} rm -f ${CONTROL_PLANE_CONTAINER}`,
             // No published port: only the TLS terminator reaches it. host-gateway = the Docker bridge, where the engine's
@@ -194,7 +206,8 @@ export function bootScript(i: UserDataInput): string[] {
             // A first certificate request can take minutes (DNS changes, validation).
             'TimeoutStartSec=15min',
             'ExecStartPre=+/usr/local/bin/fenvix-tls',
-            `ExecStartPre=-${docker} network create ${DOCKER_NETWORK}`,
+            `ExecStartPre=-${docker} network create --subnet=${DOCKER_NETWORK_SUBNET} ${DOCKER_NETWORK}`,
+            'ExecStartPre=/usr/local/bin/fenvix-check-network',
             `ExecStartPre=-${docker} pull ${c.proxyImage}`,
             `ExecStartPre=-${docker} rm -f fenvix-proxy`,
             `ExecStart=${docker} run --rm --name fenvix-proxy --network ${DOCKER_NETWORK} -p ${c.controlPlanePort}:443 -v /etc/fenvix/proxy/Caddyfile:/etc/caddy/Caddyfile:ro -v ${PATHS.tlsDir}:/certs:ro ${c.proxyImage}`,
@@ -229,7 +242,7 @@ export function bootScript(i: UserDataInput): string[] {
     'dnf install -y docker python3.11 python3.11-pip',
     // Pin the bridge address the engine's admin interface binds to (it is Docker's default anyway).
     'install -d /etc/docker',
-    `echo '{"bip": "${DOCKER_BRIDGE_IP}/16"}' > /etc/docker/daemon.json`,
+    `echo '{"bip": "${DOCKER_BRIDGE_IP}/${DOCKER_BRIDGE_PREFIX}"}' > /etc/docker/daemon.json`,
     'systemctl enable --now docker',
     'id fenvix >/dev/null 2>&1 || useradd --system --home-dir /var/lib/fenvix --shell /sbin/nologin fenvix',
     'install -d -o fenvix -g fenvix /opt/fenvix/bin /var/lib/fenvix',

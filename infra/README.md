@@ -9,7 +9,7 @@ This folder describes the AWS setup for FENVIX as code. **Nothing here has been 
 | Data bucket | One private S3 bucket `fenvix-<env>-data-<account>-<region>`. Encrypted, versioned, old versions deleted after `retentionDays`, HTTPS only, readable only by the engine server. It is **kept** when you delete the stack (it holds customer data). |
 | Engine server | One EC2 server (default `t3.medium`) with a small encrypted disk. It runs the FENVIX engine and restarts it if it stops. AWS replaces the host if the host fails. |
 | Control plane | In the **first region** only: the control-plane container (the API the dashboard calls) and, in front of it, a small TLS terminator (Caddy) that serves `https://api.<your domain>`. |
-| Network | A private network (VPC) with one public subnet. Open to the internet: port **27018** (database, TLS required) and **443** (control plane, HTTPS). The engine's admin port (**8443**) is open to nothing: it listens only inside the server, where the control plane reaches it. No SSH; you connect with Session Manager in the browser. |
+| Network | A private network (VPC) with one public subnet. Open to the internet: port **27018** (database, TLS required) and **443** (control plane, HTTPS). The engine's admin port (**8443**) is open to nothing: it listens only inside the server, where the control plane reaches it. No SSH; you connect with Session Manager in the browser. Customers reach port 27018 directly (no proxy, no Docker port in front of it), so the engine sees their real address: each database can have an **IP allowlist**, and addresses that keep failing to sign in are blocked for a while. The server's own processes are trusted by the engine (see "Trusted networks"). |
 | Certificate and DNS | One free **Let's Encrypt** certificate per region for `*.<region>.db.<your domain>` (every database host has this form, for example `orders-1a2b3c4d.eu-central-1.db.example.com`) and, in the first region, `api.<your domain>`. The server requests and renews it itself (DNS challenge in Route 53) and keeps a copy in AWS Secrets Manager, so a replaced server does not request a new one. A Route 53 zone (`db.<your domain>` by default) holds the database records. See "The domain and DNS" and "TLS certificate". |
 | Cost guard | A monthly budget with emails at 50%, 80%, 100%, and an automatic action that **stops the engine server at 100%**. |
 
@@ -157,6 +157,19 @@ Risk of option A: a mistake in step 1 takes the website or email down, and the w
 - **To check or force a check now:** `sudo systemctl start fenvix-tls.service`, then `sudo journalctl -u fenvix-tls -n 20 --no-pager`. To force a new certificate (rarely needed; remember the weekly limit): `sudo rm /etc/fenvix/tls/fullchain.pem`, write `{}` into the secret (Secrets Manager console, Retrieve secret value, Edit, Plaintext), then `sudo systemctl restart fenvix-engine fenvix-proxy`.
 - **Updating certbot.** `python3 -I scripts/gen-acme-requirements.py certbot==X acme==X ...` (every package of the current file, with the new versions) `> lib/acme-requirements.txt`, then check it resolves for both CPUs: `pip download --no-deps --require-hashes --only-binary=:all: --python-version 3.11 --implementation cp --abi cp311 --abi abi3 --abi none --platform manylinux_2_34_x86_64 --platform manylinux_2_28_x86_64 --platform manylinux_2_17_x86_64 --platform manylinux2014_x86_64 -d /tmp/x -r lib/acme-requirements.txt` (and the same with `aarch64`).
 
+## Trusted networks
+The engine checks each database's IP allowlist and counts failed sign-ins per address (5 on one database or 10 on all of them in 60 s block the address for 5 minutes, doubling up to an hour). Connections from its **trusted networks** skip all of that: they must be exactly the server's own processes, never a network customers can come from. The engine runs with `--trusted-networks=127.0.0.0/8,::1/128,172.17.0.0/16,172.18.0.0/24` (`TRUSTED_NETWORKS` in `lib/engine-command.ts`):
+
+| Network | Who connects from it |
+|---|---|
+| `127.0.0.0/8`, `::1/128` | the server itself (the user script of Step 10 runs with `--network host` against `127.0.0.1`) |
+| `172.17.0.0/16` | Docker's default bridge: its address `172.17.0.1` (`bip` in `/etc/docker/daemon.json`) is where the containers reach the host (`host.docker.internal`) |
+| `172.18.0.0/24` | the Docker network `fenvix` of the control plane and Caddy. The control plane (Data Explorer, provisioner) connects to `host.docker.internal:27018`, but the connection leaves its container from its address on this network (there is no address translation between a container and its host), so this is the address the engine sees. The network is created with this subnet pinned; if a `fenvix` network already exists with another subnet, `fenvix-check-network` stops the control plane and Caddy with a message instead of letting the engine count (and block) them |
+
+If the control plane were not trusted, a customer's IP allowlist would also apply to the Data Explorer, and the control plane's own failed sign-ins (a provisioner password changed on one side only, a key rotation half done) would be counted: 5 on `admin` block the provisioner, and no database could get its users. The control plane also limits its own failed sign-ins so that this cannot happen even then (control-plane/docs/network-allowlist.md), but the trusted networks are what keeps the Data Explorer out of the lists.
+
+The engine release must be `network-limits` (test5 commit `1c9fee7`) or later: an older engine does not know `--trusted-networks` and refuses to start (systemd restarts it every 5 seconds, and `journalctl -u fenvix-engine` shows the engine's error about the unknown argument `--trusted-networks`).
+
 ## The boot script and the 16 KB limit
 EC2 accepts at most 16 KB of user data. The boot script (`bootScript()` in `lib/user-data.ts`, with the files of `lib/scripts/` and `lib/acme-requirements.txt`) is about 25 KB, so the user data carries it **gzip-compressed** (about 14 KB in all), checks its SHA-256 before running it, and keeps a readable copy at `/opt/fenvix/boot.sh` on the server. Nothing is downloaded for it and nothing is left out. `npm test` checks the size and that the compressed part decodes to the exact script.
 
@@ -267,6 +280,11 @@ Billing console, Cost allocation tags, activate the user tags `project` and `env
    sudo ss -ltn | grep -E ':(27018|8443|443) '
    ```
    Expected: `0.0.0.0:27018`, `172.17.0.1:8443` (the admin port, inside the server only) and `0.0.0.0:443`.
+   The control plane's Docker network has the subnet the engine trusts (see "Trusted networks"):
+   ```
+   sudo docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' fenvix
+   ```
+   Expected: `172.18.0.0/24`. And the engine trusts it: `curl -s -H "Authorization: Bearer $(sudo cat /run/fenvix/admin-token)" http://172.17.0.1:8443/v1/network | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["trusted_networks"])'` shows the four networks of "Trusted networks".
 4. The admin port refuses requests without the token (from the server):
    ```
    curl -s -o /dev/null -w '%{http_code}\n' http://172.17.0.1:8443/v1/health

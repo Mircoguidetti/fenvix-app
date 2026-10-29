@@ -313,3 +313,35 @@ Non verificato: che il tarball di `object_store` 0.14.2 scaricato da crates.io (
 
 ### 9.8 Commit
 Su `infra-align`, sopra `2694131`: `7cd2107` (codice, test, README) e il commit che aggiunge questa sezione. Nel README il nome `mongo-server` compare in due frasi (Step 5 e Step 9): da aggiornare insieme a `ENGINE_BINARY_NAME` quando il binario verrà rinominato.
+
+## 10. Reti fidate del motore (`--trusted-networks`, test5 `network-limits` @ `1c9fee7`)
+
+Punta controllata prima di iniziare: `origin/infra-align` = `7036589`. Solo `infra/`. Nessuna attività AWS; le variabili `AWS_*` tolte dall'ambiente in ogni comando (valori mai letti); `cdk synth` con `env -i` e proxy verso `127.0.0.1:9`.
+
+**Perché serve.** Il motore `network-limits` controlla la lista di IP ammessi di ogni database e conta le autenticazioni fallite per indirizzo (5 su un database o 10 su tutti in 60 s bloccano l'indirizzo per 5 minuti, poi il doppio fino a un'ora). Le connessioni dalle reti fidate saltano lista, blocchi e conteggio. Il predefinito del motore è solo il loopback: nel nostro deploy il control plane (Data Explorer e provisioner) gira in un container, quindi senza il flag la lista di un cliente si applicherebbe anche al Data Explorer e gli errori del control plane verrebbero contati (5 errori del provisioner su `admin` lo bloccano: provato sul motore vero in `control-plane/tests/engine-real/network.test.ts`).
+
+### 10.1 Quale rete vede il motore (trovato leggendo `lib/user-data.ts`)
+- La rete del bridge Docker predefinito **era già fissata**: `bip` `172.17.0.1/16` in `/etc/docker/daemon.json`, quindi subnet `172.17.0.0/16`, e `172.17.0.1` (l'indirizzo su cui ascolta la porta admin e a cui punta `host.docker.internal`) è dentro (test).
+- **Ma il container del control plane non è sul bridge predefinito**: è sulla rete Docker definita dall'utente `fenvix` (la stessa di Caddy, che raggiunge il control plane per nome). La sua subnet **non era fissata** (`docker network create fenvix` senza `--subnet`: Docker la sceglie dai suoi pool, di solito `172.18.0.0/16`, non garantito). Il control plane si collega a `host.docker.internal:27018` = `172.17.0.1`, ma il pacchetto parte dal container con il suo indirizzo sulla rete `fenvix` e arriva all'host senza traduzione d'indirizzo (la MASQUERADE di Docker vale solo per il traffico che esce dall'host): **il motore vede l'indirizzo della rete `fenvix`, non `172.17.0.x`**. Fidarsi solo di `172.17.0.0/16` non sarebbe bastato.
+- Correzione: la subnet di `fenvix` ora è fissata nello stesso punto del codice dove è definito il bridge (`lib/engine-command.ts`: `DOCKER_BRIDGE_IP`, `DOCKER_BRIDGE_PREFIX`, `DOCKER_BRIDGE_SUBNET`, `DOCKER_NETWORK`, `DOCKER_NETWORK_SUBNET` = `172.18.0.0/24`, `TRUSTED_NETWORKS`). Le due unità che usano la rete la creano con `--subnet=172.18.0.0/24`; siccome `docker network create` non tocca una rete già esistente, un nuovo script `/usr/local/bin/fenvix-check-network` (ExecStartPre senza `-`) ferma control plane e Caddy con un messaggio chiaro se `fenvix` esiste con un'altra subnet.
+
+### 10.2 Il flag
+`--trusted-networks=127.0.0.0/8,::1/128,172.17.0.0/16,172.18.0.0/24` (ultimo flag di `engineArgs`). Sono tutte reti dell'host: loopback (lo script dello Step 10 usa `--network host` verso `127.0.0.1`), bridge predefinito, rete del control plane e di Caddy. Nessuna rete da cui arrivano i clienti: la porta 27018 non è pubblicata da Docker né dietro un proxy, quindi i clienti arrivano con il loro indirizzo vero (il motore non legge PROXY protocol). Nella rete `fenvix` c'è anche Caddy: un Caddy compromesso salterebbe le liste, ma non ha password dei database (rischio accettato, scritto qui). I test verificano: elenco esatto; `172.17.0.1` dentro `172.17.0.0/16` e `bip` coerente; reti IPv4 private (loopback o `172.16.0.0/12`), nessuna sovrapposta alla VPC `10.40.0.0/24` né tra loro, niente `0.0.0.0/0` o `::/0`; `--subnet` in entrambe le unità; lo script di controllo eseguito con un `docker` finto (subnet giusta: 0; sbagliata o assente: errore con la subnet attesa nel messaggio).
+
+**Compatibilità:** un motore più vecchio di `network-limits` non conosce il flag e non parte (systemd lo riavvia ogni 5 s). La release del motore (`engineUrl`/`engineSha256`) deve essere `network-limits` o successiva: scritto nel README.
+
+### 10.3 Limite di 16 KB dello user data
+Prima: 14.206 byte (test con il dominio di prova; 14.275 con il dominio lungo). Dopo: **14.457 byte** (dominio lungo 14.522); nel template sintetizzato, con i due id CloudFormation come segnaposto, 14.386 byte. Ci stiamo (margine circa 1,9 KB), nessun controllo tolto.
+
+### 10.4 Test e synth
+- Prima (su `7036589`): `tsc --noEmit` esito 0; jest **141 passati, 1 saltato**, 142 totali, 10 suite.
+- Dopo: `tsc --noEmit` esito 0; jest **146 passati, 1 saltato**, 147 totali, 11 suite. Nuovo `test/trusted-networks.test.ts` (5 test, scritto prima del codice: falliva perché le costanti non esistevano). Cambiato di proposito `test/engine-command.test.ts`: l'elenco esatto dei flag ora include `--trusted-networks` (comportamento cambiato).
+- `cdk synth --quiet` con la CLI vera, `env -i` (nessuna variabile AWS) e proxy verso `127.0.0.1:9`: esito 0, template 40,3 KB, solo i 2 avvisi W3010 noti. Nel boot script decodificato dal template: `--trusted-networks=...` una volta, `network create --subnet=172.18.0.0/24 fenvix` due volte, `bip` `172.17.0.1/16`, `--admin-listen=172.17.0.1:8443`; nessun `BEGIN`, `PRIVATE KEY`, `AKIA`, `password=`, `MONGO_ADMIN_TOKEN`; ingressi solo `0.0.0.0/0` su 27018 e 443.
+
+### 10.5 Cosa NON ho potuto verificare
+- Su un server vero: che il traffico dal container della rete `fenvix` verso `172.17.0.1:27018` arrivi davvero al motore con l'indirizzo `172.18.0.x` (ragionamento sul percorso dei pacchetti e sulle regole di Docker; nel sandbox non c'è Docker). La verifica dopo il deploy è nello Step 9 del README e nel campo `dataExplorer.trusted` che il control plane mostra nella scheda Network (falso se il motore non si fida del suo indirizzo).
+- L'avvio di `fenvix-check-network` sotto systemd su AL2023 e l'output reale di `docker network inspect` (il formato `{{range .IPAM.Config}}{{.Subnet}}{{end}}` è quello documentato; provato solo con un `docker` finto).
+- Il comportamento dietro un NAT, IPv6 da un client vero, il carico.
+
+### 10.6 Commit
+Su `infra-align`, sopra `7036589`: un commit con codice, test, README e questa sezione.
