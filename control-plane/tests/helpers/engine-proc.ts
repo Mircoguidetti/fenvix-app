@@ -180,6 +180,13 @@ export interface EngineEnv {
 
 export const PROVISIONER_ACTIONS = ["createUser", "dropUser", "viewUser", "changePassword", "changeCustomData", "grantRole", "revokeRole"];
 
+/**
+ * ENGINE_E2E_GRANTABLE_ROLES (e.g. `read,readWrite,dbAdmin`): every engine of the suite starts with `--grantable-roles=<it>`
+ * (engine-round2: what a user without root/clusterAdmin, the provisioner, may grant). Unset: the flag is not passed.
+ */
+export const GRANTABLE_ROLES: string | null = process.env.ENGINE_E2E_GRANTABLE_ROLES || null;
+const GRANTABLE: string[] = GRANTABLE_ROLES ? [`--grantable-roles=${GRANTABLE_ROLES}`] : [];
+
 export const PROFILE: "memory" | "production" = process.env.ENGINE_E2E_PROFILE === "production" ? "production" : "memory";
 
 /** The local S3-compatible store of the production profile (required there). */
@@ -216,9 +223,9 @@ export async function startEngines(adminBin: string, authBin: string | undefined
   const admin = new EngineProcess({
     bin: adminBin, dataPort, adminPort, tokenFile, ...(fused ? { auth: true, tls: { serverPem: tls.serverPem } } : {}),
     ...(prod ? { s3, adminHost: process.env.ENGINE_E2E_ADMIN_HOST ?? "127.0.0.2", logCommands: true } : {}),
-    ...(so.extraArgs ? { extraArgs: so.extraArgs } : {}),
+    ...(so.extraArgs || GRANTABLE.length ? { extraArgs: [...GRANTABLE, ...(so.extraArgs ?? [])] } : {}),
   });
-  const auth = fused ? admin : new EngineProcess({ bin: authPath, dataPort: authPort, auth: true, tls: { serverPem: tls.serverPem } });
+  const auth = fused ? admin : new EngineProcess({ bin: authPath, dataPort: authPort, auth: true, tls: { serverPem: tls.serverPem }, ...(GRANTABLE.length ? { extraArgs: GRANTABLE } : {}) });
   const root = { username: "bootstrap_root", password: randomBytes(18).toString("base64url") };
   const provisioner = { username: "fenvix_provisioner", password: randomBytes(18).toString("base64url") };
   const userKey = `v1:${randomBytes(32).toString("base64url")}`;

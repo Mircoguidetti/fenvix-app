@@ -9,7 +9,7 @@ import { MongoClient } from "mongodb";
 import { engineUserName } from "../../src/engine/credentials.ts";
 import { engineName } from "../../src/engine/names.ts";
 import { json, sleep } from "../helpers/harness.ts";
-import { EngineProcess, freePort, makeTls } from "../helpers/engine-proc.ts";
+import { EngineProcess, GRANTABLE_ROLES, freePort, makeTls } from "../helpers/engine-proc.ts";
 import { ADMIN_BIN, SKIP, type World, cookie, startWorld } from "./common.ts";
 
 /**
@@ -194,8 +194,9 @@ describe("engine-real: the final engine", { skip: SKIP }, () => {
       assert.equal(await code(p.db("admin").command({ grantRolesToUser: w.e.provisioner.username, roles: [{ role: "root", db: "admin" }] })), 13, "grant root to itself");
       assert.equal(await code(p.db("admin").command({ updateUser: w.e.provisioner.username, roles: [{ role: "readWriteAnyDatabase", db: "admin" }] })), 13, "updateUser itself");
       assert.equal(await code(p.db("admin").command({ createRole: "esc", privileges: [{ resource: { cluster: true }, actions: ["shutdown"] }], roles: [] })), 13, "createRole is not one of its actions");
-      // What the engine's rule still allows (grantRole on any named database): pinned so a change is noticed. The control
-      // plane never asks for these (its roles are a fixed list), but a stolen provisioner password can.
+      // Without --grantable-roles the engine's rule still allows these (grantRole on any named database): pinned so a change
+      // is noticed. The control plane never asks for these (its roles are a fixed list), but a stolen provisioner password
+      // can. With --grantable-roles (engine-round2) every one of them is refused (13).
       const allowed: [string, string, unknown][] = [
         ["dbOwner on a customer database", db, [{ role: "dbOwner", db }]],
         ["userAdmin on admin", db, [{ role: "userAdmin", db: "admin" }]],
@@ -207,7 +208,15 @@ describe("engine-real: the final engine", { skip: SKIP }, () => {
         const name = `y_${randomBytes(4).toString("hex")}`;
         const c = await code(p.db(on).command({ createUser: name, pwd, roles }));
         if (c === 0) made.push({ db: on, user: name });
-        assert.equal(c, 0, `still allowed by the engine: ${what}`);
+        if (GRANTABLE_ROLES) assert.equal(c, 13, `refused with --grantable-roles: ${what}`);
+        else assert.equal(c, 0, `still allowed by the engine without --grantable-roles: ${what}`);
+      }
+      if (GRANTABLE_ROLES) {
+        // engine-round2: no user on admin at all, and no grant or role change on itself.
+        assert.equal(await code(p.db("admin").command({ createUser: `z_${randomBytes(4).toString("hex")}`, pwd, roles: [] })), 13, "no user on admin");
+        assert.equal(await code(p.db("admin").command({ updateUser: w.e.root.username, pwd })), 13, "root's password");
+        assert.equal(made.length, 0);
+        return;
       }
       // readWrite on admin does not open the users collection.
       const rw = made.find((m) => m.user.startsWith("y_") && m.db === db)!;
@@ -396,9 +405,15 @@ describe("engine-real: the final engine", { skip: SKIP }, () => {
     }
   });
 
-  test("h. ENGINE GAP (reported, not ours to fix): with --auth not even root can run rotateCertificates", { todo: "authz.rs has no entry for rotateCertificates (as for tenantAdmin): with --auth only the internal __system user could run it, so a certificate renewal needs an engine restart in production" }, async () => {
+  // Was a `todo` (engine gap) until engine-round2: rotateCertificates now needs the cluster action rotateCertificates
+  // (root, hostManager, clusterAdmin), as in mongod. The control plane still never sends it (point b).
+  test("h. with --auth root can run rotateCertificates (engine-round2); the provisioner cannot", async () => {
     const r = w.e.rootClient();
-    try { assert.equal(await code(r.db("admin").command({ rotateCertificates: 1 })), 0); } finally { await r.close(); }
+    const p = w.e.clientAs({ ...w.e.provisioner, authSource: "admin" });
+    try {
+      assert.equal(await code(r.db("admin").command({ rotateCertificates: 1 })), 0, "root");
+      assert.equal(await code(p.db("admin").command({ rotateCertificates: 1 })), 13, "the provisioner");
+    } finally { await r.close(); await p.close(); }
   });
 });
 
