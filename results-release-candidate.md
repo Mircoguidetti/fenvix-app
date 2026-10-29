@@ -84,7 +84,7 @@ Dettagli e come verificato:
 
 `git diff --name-status origin/main HEAD`: 261 file (154 aggiunti, 107 modificati).
 
-* **Immagini: TROVATE.** 46 PNG in `screenshots/` (18 aggiunti, 28 modificati), tutti binari. Non vengono dal merge né da questo lavoro: vengono da due commit della catena della dashboard, `f0131a1` (db-users, 28 PNG) e `29351aa` (navbar-fix, 38 PNG, compresi `screenshots/sidebar/before|after/`) (`git log origin/main..HEAD -- screenshots`). Non li ho toccati: **decisione 1** sotto. Nessun'altra immagine (ricerca per estensione: png/jpg/gif/webp/svg/ico/pdf/zip/pem/key/…).
+* **Immagini: TROVATE e poi risolte (sezione 11).** Al primo controllo: 46 PNG in `screenshots/` (18 aggiunti, 28 modificati), tutti binari. Non vengono dal merge né da questo lavoro: vengono da due commit della catena della dashboard, `f0131a1` (db-users, 28 PNG) e `29351aa` (navbar-fix, 38 PNG, compresi `screenshots/sidebar/before|after/`) (`git log origin/main..HEAD -- screenshots`). Non li ho toccati: **decisione 1** sotto. Nessun'altra immagine (ricerca per estensione: png/jpg/gif/webp/svg/ico/pdf/zip/pem/key/…).
 * **Segreti: nessuno.** Stessa scansione dei round precedenti:
   * gitleaks 8.30.1 sulla storia `origin/main..HEAD` (48 commit, 47 senza il merge; gitleaks ne riporta 46 analizzati, non ho indagato quale salta) e, separatamente, sui 215 file nuovi o modificati (contenuto attuale, PNG esclusi): 6 segnalazioni `generic-api-key`, **tutte falsi positivi** letti riga per riga: `authSource: "db_0123abcd…"` (nome di database finto, `engine-users.test.ts` righe 48 e 97), l'id di zona inventato `Z0123456789ABC` (`infra/test/user-data.test.ts`, già noto dal report infra), `secretValue: "IDEMPOTENT-SECRET-123"` (marcatore di test, `explorer.test.ts:221`).
   * regex: chiavi AWS (`AKIA|ASIA…`), secret AWS, chiavi private PEM, token GitHub/Slack/Google, JWT, `sk_live_`: 0. URL con password: 4, tutti segnaposto (`postgresql://u:p@`, `https://u:p@`, `mongodb://app:Secret123@` in test, `change-me-local-only` in `control-plane/.env.example`). Valori delle credenziali MinIO: 0.
@@ -106,7 +106,7 @@ Dettagli e come verificato:
 
 ## 9. Decisioni che servono a te
 
-1. **Screenshot nel diff verso main.** Il candidato porta 46 PNG in `screenshots/` (commit `f0131a1` e `29351aa` della catena; main traccia già 41 PNG in `screenshots/`). La regola "nessuna immagine nel diff" oggi **non è rispettata**. Opzioni: (a) li lasci (aggiornano schermate che main ha già); (b) aggiungo su `release-candidate` un commit che riporta `screenshots/` allo stato di main (28 modificati tornano come in main, 18 nuovi tolti), così il diff non ha immagini ma le schermate in main restano vecchie; (c) tolgo `screenshots/` dal repository e la metto in `.gitignore` (si rigenerano con `npm run screenshots`). Non ho scelto io perché cambia cosa finisce in main. Io farei (c).
+1. **[Deciso: (c), eseguito nel commit `19b4266`, sezione 11]** **Screenshot nel diff verso main.** Il candidato porta 46 PNG in `screenshots/` (commit `f0131a1` e `29351aa` della catena; main traccia già 41 PNG in `screenshots/`). La regola "nessuna immagine nel diff" oggi **non è rispettata**. Opzioni: (a) li lasci (aggiornano schermate che main ha già); (b) aggiungo su `release-candidate` un commit che riporta `screenshots/` allo stato di main (28 modificati tornano come in main, 18 nuovi tolti), così il diff non ha immagini ma le schermate in main restano vecchie; (c) tolgo `screenshots/` dal repository e la metto in `.gitignore` (si rigenerano con `npm run screenshots`). Non ho scelto io perché cambia cosa finisce in main. Io farei (c).
 2. **Motore.** Ho usato `engine-round2` (`3bcd7e5`) perché `main-candidate` non ha il report finale. Il codice del motore è identico; se vuoi la conferma formale su `main-candidate` quando è chiuso, si rifà solo la suite engine-real (qui la sola compilazione ha richiesto 10 min 48 s).
 3. **Immagine del control plane.** Non verificata qui (sezione 8). Primo controllo consigliato dopo il merge: lanciare `release-control-plane` con `publish = off` (build e SHA-256, nessun upload). La fiducia AWS accetta solo `main`: per pubblicare va lanciato da `main`.
 
@@ -121,3 +121,36 @@ ENGINE_E2E_BIN=<test5 3bcd7e5>/mongo-server ENGINE_E2E_GRANTABLE_ROLES=read,read
 cd ../infra && npx tsc --noEmit && npx jest && env -i PATH="$PATH" HOME="$HOME" HTTPS_PROXY=http://127.0.0.1:9 npx cdk synth --quiet -c ...
 cd .. && npm run typecheck && npm run test:unit && npm run build && npm run check && git checkout -- screenshots
 ```
+
+## 11. Seconda revisione: `screenshots/` fuori dal repository (tua decisione 1, scelta c)
+
+**Controllo fatto prima di cambiare qualcosa: nessun test, script o configurazione legge le immagini come riferimento.**
+* `git grep` di `screenshots`, `.png`, `toHaveScreenshot`, `toMatchSnapshot`, `pixelmatch`, `looks-same`, `resemble` e `readFileSync(...png` in tutto il repository (`.md` e `package-lock.json` esclusi): non esiste nessun confronto di immagini. Non esiste un `playwright.config.*`. I controlli Playwright (`checks.mjs`, `orgs-checks.mjs`, `network-checks.mjs`, `status-colors-checks.mjs`) scrivono un PNG solo in `/tmp/fail-*.png` quando un controllo fallisce.
+* `scripts/screenshots.mjs` (ultimo passo di `npm run check`, chiamato da `scripts/run.mjs`) crea la cartella con `mkdirSync("screenshots", { recursive: true })`, **cancella** i PNG che trova (`readdirSync` + `rmSync`, riga 29: l'unica lettura della cartella) e li riscrive. I suoi controlli (layout, rendering, axe, testi vietati) girano sulla pagina, non sulle immagini salvate. `scripts/sidebar-shots.mjs` (non fa parte di `npm run check`) scrive e crea da solo la propria cartella (`mkdirSync(OUT)`).
+* Nei documenti `screenshots/` è citata solo in `results-db-users.md:58`, in una frase ("rigenerati"), senza link a un'immagine.
+
+**Commit `19b4266`** "Remove screenshots/ from the repository and ignore it": `git rm -r screenshots` (61 PNG tracciati sul branch) e la riga `screenshots/` in `.gitignore` (62 file, `git show --stat`).
+
+**Test dopo il commit** (su `19b4266`):
+
+| suite | prima (sezione 5) | dopo `19b4266` |
+|---|---|---|
+| control plane `tsc --noEmit` | ok | **ok** |
+| control plane unit | 140/140 | **140/140** |
+| infra `tsc --noEmit` | ok | **ok** |
+| infra jest | 176 ok + 1 saltato (13 suite) | **176 ok + 1 saltato (13 suite)**, user data 15.712 (15.792) |
+| dashboard `tsc --noEmit` | ok | **ok** |
+| dashboard unit | 48/48 | **48/48** |
+| dashboard build | ok | **ok** |
+| dashboard `npm run check` | 94 ok (48 + 10 + 12 + 24), screenshot ok | **94 ok (48 + 10 + 12 + 24), 0 falliti, "screenshots: all checks passed"** |
+
+`npm run check` è partito **senza** la cartella `screenshots/` (`ls` → non esiste) e l'ha ricreata da solo, con 57 PNG. `git status` dopo il check: vuoto. `git check-ignore -v screenshots/overview-desktop.png` → `.gitignore:10:screenshots/`. Ho poi cancellato la cartella generata in locale. Integrazione ed engine-real non li ho ripetuti: il commit tocca solo `screenshots/` e `.gitignore`, che nessuna delle due suite legge (verificato con il `git grep` sopra).
+
+**Binari nel diff rispetto a main** (su `19b4266`, `git diff origin/main HEAD`):
+* Aggiunti o modificati: **nessun binario e nessuna immagine.** Verificato in tre modi: nessuna riga binaria (`- -`) in `--numstat` tra i file A/M; nessun file A/M con estensione png, jpg/jpeg, gif, webp, bmp, ico, svg, tiff, avif, heic, pdf, zip, tar, gz, tgz, 7z, rar, jar, exe, bin, so, dylib, wasm, woff/woff2, ttf, otf, mp4, mov, sqlite, db; `file -b --mime-encoding` su ognuno dei 217 file A/M: nessuno `binary`.
+* Cancellati: i **41 PNG** di `screenshots/` che main traccia (conseguenza voluta della scelta c). Sono gli unici binari del diff.
+* Totale del diff: 135 aggiunti, 82 modificati, 41 cancellati. L'unico file modificato con "screenshots" nel nome è `scripts/screenshots.mjs` (testo).
+* Nota: i PNG dei commit `f0131a1` e `29351aa` restano nella **storia** del branch (non nel diff né nell'albero finale). Con un merge in main entrano nella storia di main come oggetti git. Toglierli dalla storia vorrebbe dire riscriverla (rebase/force-push), che hai escluso: non l'ho fatto.
+
+**Commit di questa revisione**: `19b4266` (rimozione e `.gitignore`) e il commit che aggiunge questa sezione.
+
