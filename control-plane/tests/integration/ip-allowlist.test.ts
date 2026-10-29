@@ -366,6 +366,31 @@ describe("network blocks", () => {
     } finally { h.engine.blocks.length = 0; h.engine.unblocked.length = 0; }
   });
 
+  test("unblocking lifts the address on THIS database only: the same address on another database and its address-wide block stay", async () => {
+    const id = await create("net-unblock-02");
+    const other = await create("net-unblock-03");
+    const until = new Date(Date.now() + 300_000).toISOString();
+    h.engine.blocks.push(
+      { ip: "203.0.113.9", database: id, until }, { ip: "203.0.113.9", database: other, until }, { ip: "203.0.113.9", database: null, until },
+      { ip: "2001:db8:1:2::/64", database: id, until }, { ip: "2001:db8:1:2::/64", database: other, until },
+    );
+    try {
+      const r = await h.as(owner).post(`/databases/${id}/network/unblock`, { ip: "203.0.113.9" });
+      assert.equal(r.statusCode, 200, r.body);
+      assert.deepEqual(json(r), { ip: "203.0.113.9", unblocked: true });
+      const r6 = await h.as(owner).post(`/databases/${id}/network/unblock`, { ip: "2001:db8:1:2::/64" });
+      assert.equal(r6.statusCode, 200, r6.body);
+      assert.deepEqual(json(await h.as(owner).get(blocks(id))).items, []);
+      assert.deepEqual(json(await h.as(owner).get(blocks(other))).items.map((b: { ip: string }) => b.ip).sort(), ["2001:db8:1:2::/64", "203.0.113.9"], "the other database stays blocked");
+      assert.deepEqual(h.engine.blocks.map((b) => [b.ip, b.database]), [["203.0.113.9", other], ["203.0.113.9", null], ["2001:db8:1:2::/64", other]], "and the address-wide block too");
+      // Unblocked again on this database: not blocked here any more, so 404 (the other database's block is not this one's).
+      assert.equal((await h.as(owner).post(`/databases/${id}/network/unblock`, { ip: "203.0.113.9" })).statusCode, 404);
+      const a = await audits(id, "database.network.%");
+      assert.deepEqual(a.map((x) => [x.action, x.metadata]), [["database.network.unblock", { ip: "203.0.113.9" }], ["database.network.unblock", { ip: "2001:db8:1:2::/64" }]]);
+      assert.deepEqual(await audits(other, "database.network.%"), [], "nothing audited on the other database");
+    } finally { h.engine.blocks.length = 0; h.engine.unblocked.length = 0; }
+  });
+
   test("an engine that does not answer: 503 for the blocks, nothing unblocked", async () => {
     const id = await create("net-blocks-down");
     h.engine.failNext("network", "unavailable");

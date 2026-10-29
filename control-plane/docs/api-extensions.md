@@ -139,7 +139,9 @@ contract test lists them as extensions:
 * `GET /databases/{id}/network/blocks` (owner, admin, API keys) -> `{ items: [{ ip, until, remainingSecs }] }`: the
   addresses blocked on this database. Only the address (an IPv6 block is shown as its `/64`) and its end.
 * `POST /databases/{id}/network/unblock` `{ ip }` (owner, admin, API keys) -> `{ ip, unblocked }`. Only an address the
-  previous route lists; anything else is a `404`.
+  previous route lists; anything else is a `404`. It lifts the block on THIS database only (engine
+  `DELETE /v1/network/blocks/{ip}?database=<db>`): the same address stays blocked on other databases, and an
+  address-wide block stays.
 
 Every change is recorded in `audit_log`: `database.ip_allowlist.set` and `.reapply` with `before` and `after`,
 `database.network.unblock` with `ip`.

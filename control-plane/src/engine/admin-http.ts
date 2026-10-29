@@ -25,8 +25,13 @@ const IP = "[0-9a-f.:]{2,39}";
 
 export type RouteClass = "short" | "long";
 
-interface Route { method: string; re: RegExp; cls: RouteClass; what: string }
-const route = (method: string, pattern: string, cls: RouteClass, what: string): Route => ({ method, re: new RegExp(`^/v1/${pattern}$`), cls, what });
+/**
+ * `query`, when set, is the ONLY query string the route may carry (whole string, exact pattern); a request without it,
+ * or with anything else, is refused. Routes without `query` keep their query free (it never names another database).
+ */
+interface Route { method: string; re: RegExp; cls: RouteClass; what: string; query?: RegExp }
+const route = (method: string, pattern: string, cls: RouteClass, what: string, query?: string): Route =>
+  ({ method, re: new RegExp(`^/v1/${pattern}$`), cls, what, ...(query !== undefined ? { query: new RegExp(`^${query}$`) } : {}) });
 
 export const ALLOWED_ROUTES: readonly Route[] = [
   route("POST", "databases", "long", "create"),
@@ -46,13 +51,17 @@ export const ALLOWED_ROUTES: readonly Route[] = [
   route("PUT", `databases/${DB}/ip-allowlist`, "short", "set the IP allowlist"),
   route("DELETE", `databases/${DB}/ip-allowlist`, "short", "clear the IP allowlist"),
   route("GET", "network", "short", "network state (blocks, trusted networks)"),
-  route("DELETE", `network/blocks/${IP}`, "short", "unblock an address"),
+  // Only the block of the pair (address, this database): `?database=` is required, so the control plane can never lift
+  // an address's blocks on every database (the engine's DELETE without the parameter does that).
+  route("DELETE", `network/blocks/${IP}`, "short", "unblock an address on one database", `database=${DB}`),
 ];
 
 /** The class of an allowed request, or a refusal. Never reaches the network for anything else. */
 export function authorize(method: string, target: string): RouteClass {
-  const path = target.split("?")[0]!;
-  const found = ALLOWED_ROUTES.find((r) => r.method === method && r.re.test(path));
+  const q = target.indexOf("?");
+  const path = q < 0 ? target : target.slice(0, q);
+  const query = q < 0 ? null : target.slice(q + 1);
+  const found = ALLOWED_ROUTES.find((r) => r.method === method && r.re.test(path) && (!r.query || (query !== null && r.query.test(query))));
   if (!found) throw new EngineError("invalid", `the control plane is not allowed to call ${method} ${target.replace(/[^\x20-\x7e]/g, "?").slice(0, 120)} on the engine`);
   return found.cls;
 }

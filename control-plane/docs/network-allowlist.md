@@ -74,8 +74,36 @@ Provata solo su Postgres 16 locale usa-e-getta, applicata due volte (`scripts/pr
   con le stesse regole di validazione.
 * **Blocchi**: il control plane legge `GET /v1/network` del motore e tiene **solo** i blocchi del database chiesto, e di
   ognuno solo indirizzo e scadenza (mai nomi utente né password: il motore non li registra; nemmeno contatori,
-  connessioni o altri database). Lo sblocco chiama `DELETE /v1/network/blocks/{ip}` (per un blocco IPv6 mostrato come
-  `/64` manda l'indirizzo di rete).
+  connessioni o altri database). Lo sblocco chiama `DELETE /v1/network/blocks/{ip}?database=db_<hex>` (per un blocco
+  IPv6 mostrato come `/64` manda l'indirizzo di rete): toglie **solo** il blocco di quella coppia (vedi sezione 2.4).
+
+### 2.4 Sblocco per singolo database (branch `cp-engine-round2`, motore `engine-round2` @ `3bcd7e5`)
+* **Prima**: lo sblocco chiamava `DELETE /v1/network/blocks/{ip}` senza parametro, che nel motore toglie **tutti** i
+  blocchi e i contatori dell'indirizzo, su ogni database (anche il blocco globale): un cliente che sbloccava un indirizzo
+  sul suo database lo sbloccava anche sui database degli altri (era la decisione 1 della sezione 7).
+* **Ora**: `DELETE /v1/network/blocks/{ip}?database=db_<hex>` con il nome del database nel motore. Il motore toglie solo
+  il blocco della coppia (indirizzo, database) e i contatori di quella coppia; restano i blocchi dello stesso indirizzo
+  sugli altri database, il blocco globale e il contatore globale dell'indirizzo (D10 del report del motore).
+* **Rotte ammesse** (`src/engine/admin-http.ts`): una rotta può avere una query obbligatoria. Lo sblocco è ammesso solo
+  con esattamente `database=db_<32 hex>`: senza parametro, con `database=admin`, con un nome che il control plane non
+  crea, con parametri in più o ripetuti è rifiutato prima di arrivare in rete (test "permission boundary"). Il control
+  plane quindi non può più mandare lo sblocco su tutti i database, nemmeno per errore. Le altre rotte non sono cambiate.
+* **Motore vecchio**: un motore precedente a `engine-round2` ignora il parametro e sblocca tutto; la sua risposta non ha
+  `database`. L'adattatore lo riconosce e risponde "non disponibile" (503 al cliente, nessun audit `ok`), così non si
+  scambia uno sblocco globale per uno sblocco del database. L'indirizzo però a quel punto è già stato sbloccato ovunque
+  dal motore vecchio: il controllo serve a far vedere l'errore, non a impedirlo (per questo il motore va aggiornato
+  prima del control plane).
+* **Il servizio** (`src/services/network.ts`, invariato) continua a controllare che l'indirizzo sia bloccato **su questo
+  database** prima di chiedere lo sblocco (altrimenti 404): un blocco globale o il blocco di un altro database non si
+  toglie da qui.
+* **Driver fake** (`src/engine/fake.ts`) e motore simulato dei test unitari (`tests/helpers/sim-engine.ts`): stessa
+  semantica (il fake toglie solo i blocchi con `database` uguale al database chiesto; il simulato segue `?database=` come
+  `ctl/allowlist.rs`, e può fingersi un motore vecchio).
+* **Test**: unitari `tests/unit/real-engine.test.ts` (rotte ammesse e rifiutate, solo la coppia, motore vecchio),
+  integrazione `tests/integration/ip-allowlist.test.ts` (stesso indirizzo su due database e globale: resta tutto tranne
+  il blocco del database, audit solo sul database), motore vero `tests/engine-real/network.test.ts` ("unblock on one
+  database": stesso indirizzo bloccato su A e su B, sbloccato su A; B resta bloccato anche con la password giusta,
+  l'audit ha una riga per A e nessuna per B).
 
 ### 2.3 Dashboard: scheda "Network" (`src/components/DatabaseNetwork.tsx`)
 * "IP allowlist" con il testo "Only these addresses can connect to the database. The dashboard's Data Explorer is not
@@ -215,7 +243,7 @@ Limite: il conteggio è per processo; con N istanze del control plane dietro lo 
 * Attenzione al rilascio: un motore più vecchio di `network-limits` non conosce il flag e non parte.
 
 ## 7. Decisioni che servono a te
-1. **Blocchi "su tutti i database"** (10 errori da un indirizzo su più database): non li mostro al cliente, perché
+1. **[Risolto in `cp-engine-round2`, sezione 2.4: lo sblocco ora vale solo per il database.]** **Blocchi "su tutti i database"** (10 errori da un indirizzo su più database; con `engine-round2` la soglia è 100): non li mostro al cliente, perché
    riguardano anche i database di altri clienti; mostro e lascio sbloccare solo i blocchi del suo database. Però lo
    sblocco del motore toglie **tutti** i blocchi e contatori di quell'indirizzo, anche quello globale: un cliente che
    sblocca un indirizzo bloccato sul suo database lo sblocca anche altrove. Alternative: nessuno sblocco self-service

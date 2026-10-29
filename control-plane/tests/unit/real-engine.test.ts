@@ -48,7 +48,7 @@ describe("permission boundary: the control plane can only do the operations it i
     ["GET", `/v1/databases/${db}/usage?from=2026-01-01&to=2026-01-02`], ["PUT", `/v1/databases/${db}/retention`], ["GET", `/v1/databases/${db}/restore-points`],
     ["POST", `/v1/databases/${db}/restore`], ["POST", `/v1/databases/${db}/exports`], ["GET", `/v1/exports/${exp}`], ["GET", `/v1/exports/${exp}/files/${db}/c.bson`],
     ["GET", `/v1/databases/${db}/ip-allowlist`], ["PUT", `/v1/databases/${db}/ip-allowlist`], ["DELETE", `/v1/databases/${db}/ip-allowlist`],
-    ["GET", "/v1/network"], ["DELETE", "/v1/network/blocks/203.0.113.9"], ["DELETE", "/v1/network/blocks/2001:db8::"],
+    ["GET", "/v1/network"], ["DELETE", `/v1/network/blocks/203.0.113.9?database=${db}`], ["DELETE", `/v1/network/blocks/2001:db8::?database=${db}`],
   ];
   const refused: [string, string][] = [
     ["GET", "/v1/databases"], // would list every customer's databases
@@ -60,6 +60,11 @@ describe("permission boundary: the control plane can only do the operations it i
     ["GET", `/v1/exports/${exp}/files/${db}/a/b.bson`], ["PATCH", `/v1/databases/${db}`], ["GET", `//v1/databases/${db}`],
     ["PUT", "/v1/databases/admin/ip-allowlist"], ["GET", "/v1/databases/orders/ip-allowlist"], ["DELETE", "/v1/network/blocks"],
     ["DELETE", "/v1/network/blocks/10.0.0.0/8"], ["DELETE", "/v1/network/blocks/..%2F"], ["PUT", "/v1/network"], ["DELETE", "/v1/network"],
+    // The unblock without `?database=` lifts the address on EVERY database: never sent. Nor for another database, nor with more.
+    ["DELETE", "/v1/network/blocks/203.0.113.9"], ["DELETE", "/v1/network/blocks/203.0.113.9?"], ["DELETE", "/v1/network/blocks/203.0.113.9?database="],
+    ["DELETE", "/v1/network/blocks/203.0.113.9?database=admin"], ["DELETE", "/v1/network/blocks/203.0.113.9?database=orders"],
+    ["DELETE", `/v1/network/blocks/203.0.113.9?database=${db}x`], ["DELETE", `/v1/network/blocks/203.0.113.9?database=${db}&database=admin`],
+    ["DELETE", `/v1/network/blocks/203.0.113.9?all=1&database=${db}`], ["DELETE", `/v1/network/blocks/203.0.113.9?database=${db}#x`],
   ];
   test("every allowed route is on the list, and the list holds nothing else", () => {
     for (const [m, p] of allowed) assert.doesNotThrow(() => authorize(m, p), `${m} ${p}`);
@@ -87,7 +92,8 @@ describe("permission boundary: the control plane can only do the operations it i
     try {
       await runEverything(engine, sim);
       assert.ok(sim.seen.length > 20);
-      for (const line of sim.seen) { const [m, p] = line.split(" ") as [string, string]; assert.doesNotThrow(() => authorize(m, p), line); }
+      // With the query string as sent (a route may require one: the unblock's `?database=`).
+      for (const line of sim.seenQueries) { const [m, p] = line.split(" ") as [string, string]; assert.doesNotThrow(() => authorize(m, p), line); }
     } finally { await stop(); }
   });
 });
@@ -234,6 +240,37 @@ describe("real adapter: IP allowlist and network blocks", () => {
     assert.equal(sim.dbs.get(engineName(r.id))!.allowlist, null);
   });
 
+  test("unblock: only the pair (address, this database); the same address on another database and its address-wide block stay", async () => {
+    const r = mk(), o = mk();
+    await engine.createDatabase(r);
+    await engine.createDatabase(o);
+    const until = new Date(Date.now() + 300_000).toISOString();
+    sim.blocked.push(
+      { ip: "203.0.113.9", database: engineName(r.id), until, remaining_secs: 300, strike: 1 },
+      { ip: "203.0.113.9", database: engineName(o.id), until, remaining_secs: 300, strike: 1 },
+      { ip: "203.0.113.9", database: null, until, remaining_secs: 300, strike: 1 },
+    );
+    try {
+      sim.seenQueries.length = 0;
+      assert.deepEqual(await engine.unblockAddress({ id: r.id, ip: "203.0.113.9" }), { unblocked: true });
+      assert.deepEqual(sim.seenQueries, [`DELETE /v1/network/blocks/203.0.113.9?database=${engineName(r.id)}`]);
+      assert.deepEqual(await engine.networkBlocks(r.id), []);
+      assert.deepEqual((await engine.networkBlocks(o.id)).map((b) => b.ip), ["203.0.113.9"], "the other database stays blocked");
+      assert.ok(sim.blocked.some((b) => b.ip === "203.0.113.9" && b.database === null), "the address-wide block stays");
+      assert.deepEqual(await engine.unblockAddress({ id: r.id, ip: "203.0.113.9" }), { unblocked: false }, "nothing left on this database");
+    } finally { sim.blocked.length = 0; }
+  });
+
+  test("unblock: an engine that ignores ?database= (older than engine-round2) is reported, never taken for a per-database unblock", async () => {
+    const r = mk();
+    await engine.createDatabase(r);
+    sim.blocked.push({ ip: "203.0.113.9", database: engineName(r.id), until: new Date(Date.now() + 300_000).toISOString(), remaining_secs: 300, strike: 1 });
+    sim.unblockIgnoresDatabase = true;
+    try {
+      assert.equal(await kindOf(engine.unblockAddress({ id: r.id, ip: "203.0.113.9" })), "unavailable");
+    } finally { sim.blocked.length = 0; sim.unblockIgnoresDatabase = false; }
+  });
+
   test("blocks: only this database's, only the address and its end; nothing of other databases, counters or connections", async () => {
     const r = mk(), o = mk();
     await engine.createDatabase(r);
@@ -251,8 +288,10 @@ describe("real adapter: IP allowlist and network blocks", () => {
         { ip: "2001:db8:1:2::/64", until, remainingSecs: 299 },
       ]);
       sim.seen.length = 0;
+      sim.seenQueries.length = 0;
       assert.deepEqual(await engine.unblockAddress({ id: r.id, ip: "2001:db8:1:2::/64" }), { unblocked: true });
       assert.deepEqual(sim.seen, ["DELETE /v1/network/blocks/2001:db8:1:2::"], "an IPv6 /64 is lifted by its address");
+      assert.deepEqual(sim.seenQueries, [`DELETE /v1/network/blocks/2001:db8:1:2::?database=${engineName(r.id)}`], "on this database only");
       assert.deepEqual(await engine.unblockAddress({ id: r.id, ip: "203.0.113.9" }), { unblocked: true });
       assert.deepEqual(await engine.networkBlocks(r.id), []);
       assert.equal(await kindOf(engine.unblockAddress({ id: r.id, ip: "10.0.0.0/8" })), "invalid");

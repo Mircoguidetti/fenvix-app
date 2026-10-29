@@ -207,11 +207,12 @@ export class FakeEngine implements EngineClient {
     await this.enter("network");
     this.find(req.id);
     this.unblocked.push(req.ip);
-    // Like the engine: every block and counter of that address (an IPv6 address stands for its /64) goes.
+    // Like the engine (`?database=`): only the block of the address (an IPv6 address stands for its /64) on THIS
+    // database goes; its blocks on other databases and an address-wide block (`database: null`) stay.
     const before = this.blocks.length;
     for (let i = this.blocks.length - 1; i >= 0; i--) {
       const b = this.blocks[i]!;
-      if (b.ip === req.ip || b.ip.startsWith(`${req.ip}/`)) this.blocks.splice(i, 1);
+      if (b.database === req.id && (b.ip === req.ip || b.ip.startsWith(`${req.ip}/`))) this.blocks.splice(i, 1);
     }
     return { unblocked: this.blocks.length < before };
   }

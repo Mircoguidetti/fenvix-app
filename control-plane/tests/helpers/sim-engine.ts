@@ -30,6 +30,10 @@ export class SimEngine {
   readonly exports = new Map<string, Export>();
   /** Every request received: `METHOD path` (without the query). */
   readonly seen: string[] = [];
+  /** The same requests with their query string (`seen` has the path only). */
+  readonly seenQueries: string[] = [];
+  /** Behave like an engine older than engine-round2: `DELETE /v1/network/blocks/{ip}` ignores `?database=`. */
+  unblockIgnoresDatabase = false;
   /** Requests received with a missing or wrong token. */
   unauthorized = 0;
   now = () => Date.now();
@@ -104,6 +108,7 @@ export class SimEngine {
     const path = decodeURIComponent(url.pathname);
     const line = `${req.method} ${path}`;
     this.seen.push(line);
+    this.seenQueries.push(`${line}${url.search}`);
     const fault = this.faults.find((f) => f.times > 0 && f.match.test(line));
     if (fault) { fault.times--; return this.error(res, fault.status, fault.code, "injected fault"); }
     let body: Record<string, unknown> = {};
@@ -153,9 +158,15 @@ export class SimEngine {
     }
     if (method === "DELETE" && a === "network" && db === "blocks" && c) {
       if (!/^[0-9a-fA-F.:]+$/.test(c)) return E(400, "bad_request", "not an IPv4 or IPv6 address");
+      // engine-round2 (ctl/allowlist.rs `unblock`): with `?database=` only the pair goes; without it every block of the address.
+      const only = this.unblockIgnoresDatabase ? null : q.get("database");
+      if (only === "") return E(400, "bad_request", "database must not be empty");
       const before = this.blocked.length;
-      for (let i = this.blocked.length - 1; i >= 0; i--) if (this.blocked[i]!.ip === c || this.blocked[i]!.ip.startsWith(`${c}/`)) this.blocked.splice(i, 1);
-      return J(200, { ip: c, unblocked: this.blocked.length < before });
+      for (let i = this.blocked.length - 1; i >= 0; i--) {
+        const x = this.blocked[i]!;
+        if ((x.ip === c || x.ip.startsWith(`${c}/`)) && (only === null || x.database === only)) this.blocked.splice(i, 1);
+      }
+      return J(200, only === null ? { ip: c, unblocked: this.blocked.length < before } : { ip: c, database: only, unblocked: this.blocked.length < before });
     }
     if (method === "POST" && a === "databases" && !db) {
       if (typeof b.name !== "string") return E(400, "bad_request", "body needs a string field name");

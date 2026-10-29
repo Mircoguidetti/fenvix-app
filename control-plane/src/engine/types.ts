@@ -110,7 +110,10 @@ export interface EngineClient {
   setIpAllowlist(req: { id: string; entries: string[] }): Promise<EngineAllowlist>;
   /** Addresses blocked on this database right now (not the blocks of every database: those are other customers' too). */
   networkBlocks(id: string): Promise<EngineBlock[]>;
-  /** Lifts every block of the address (an IP, or the network part of an IPv6 /64), on the engine that holds the database. */
+  /**
+   * Lifts the block of the address (an IP, or the network part of an IPv6 /64) on THIS database only: its blocks on
+   * other databases and an address-wide block (every database) stay.
+   */
   unblockAddress(req: { id: string; ip: string }): Promise<{ unblocked: boolean }>;
   /** The networks the engine of a region trusts (`--trusted-networks`): they skip lists, blocks and counting. */
   trustedNetworks(region: string): Promise<string[]>;

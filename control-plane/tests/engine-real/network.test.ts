@@ -235,6 +235,33 @@ describe("engine-real: IP allowlist and network limits", { skip: SKIP }, () => {
       assert.deepEqual(a.map((x) => x.metadata), [{ ip: APP }]);
     });
 
+    test("unblock on one database (engine-round2): the same address blocked on A and on B, unblocked on A; B stays blocked, the audit names A only", async () => {
+      const A = await create(w, "net-unblock-a");
+      const B = await create(w, "net-unblock-b");
+      const wrongOf = (d: Created) => { const u = new URL(d.initialUser.connectionString); u.password = "wrong-password-0123456789abcdef"; return u.toString(); };
+      for (const d of [A, B]) for (let i = 0; i < 5; i++) assert.equal(await code(app(w, wrongOf(d)).db(engineName(d.id)).collection("c").findOne({})), 18);
+      const engineBlocks = async () => (await against(T, APP)).blocks.map((b) => b.database).sort();
+      assert.deepEqual(await engineBlocks(), [engineName(A.id), engineName(B.id)].sort(), "blocked on A and on B, not on every database (10 failures, threshold 100)");
+      for (const d of [A, B]) assert.deepEqual(json(await w.h.as(w.u).get(`/databases/${d.id}/network/blocks`)).items.map((x: { ip: string }) => x.ip), [APP]);
+
+      const un = await w.h.as(w.u).post(`/databases/${A.id}/network/unblock`, { ip: APP }, cookie);
+      assert.equal(un.statusCode, 200, un.body);
+      assert.deepEqual(json(un), { ip: APP, unblocked: true });
+
+      assert.deepEqual(await engineBlocks(), [engineName(B.id)], "in the engine only B's block is left");
+      assert.deepEqual(json(await w.h.as(w.u).get(`/databases/${A.id}/network/blocks`)).items, []);
+      assert.deepEqual(json(await w.h.as(w.u).get(`/databases/${B.id}/network/blocks`)).items.map((x: { ip: string }) => x.ip), [APP], "B is still blocked");
+      assert.equal(await code(app(w, A.initialUser.connectionString).db(engineName(A.id)).collection("c").findOne({})), 0, "A: the right password works again");
+      assert.equal(await code(app(w, B.initialUser.connectionString).db(engineName(B.id)).collection("c").findOne({})), 18, "B: even the right password is still refused");
+
+      const audit = async (id: string) => (await w.h.admin.query("select target_id, metadata from public.audit_log where target_id = $1 and action like 'database.network.%'", [id])).rows;
+      assert.deepEqual((await audit(A.id)).map((x) => x.metadata), [{ ip: APP }], "the audit says A");
+      assert.deepEqual(await audit(B.id), [], "and nothing about B");
+      // Clean up for the next tests: B is lifted the same way, by its owner.
+      assert.equal((await w.h.as(w.u).post(`/databases/${B.id}/network/unblock`, { ip: APP }, cookie)).statusCode, 200);
+      assert.deepEqual(await engineBlocks(), []);
+    });
+
     test("(point 4) a wrong provisioner password on a trusted control plane: failures, but nothing is ever counted against it", async () => {
       const bad = await startWorld({ ENGINE_PROVISIONER_PASSWORD: "wrong-provisioner-password-0123" }, { engines: T, guard: new AuthFailureGuard({ perDatabase: 1000, total: 1000, reserve: 0 }) });
       try {
@@ -266,9 +293,15 @@ describe("engine-real: IP allowlist and network limits", { skip: SKIP }, () => {
       } finally { await w.close(); await forget(U, CP); }
     });
 
-    const scenarios: { name: string; run: (w: World) => Promise<void>; env?: Record<string, string> }[] = [
+    /**
+     * `lockout`: what the engine does to the control plane without the guard. engine-round2 raised the address-wide
+     * threshold from 10 to 100 (per database still 5): a wrong provisioner password still blocks it on admin (5 there),
+     * but 18 Data Explorer failures spread over 3 customer databases only block those 3 databases, not admin.
+     */
+    const scenarios: { name: string; run: (w: World) => Promise<void>; env?: Record<string, string>; lockout: "provisioner" | "those databases" }[] = [
       {
         name: "a wrong provisioner password (changed in SSM, not in the engine)",
+        lockout: "provisioner",
         env: { ENGINE_PROVISIONER_PASSWORD: "wrong-provisioner-password-0123" },
         async run(w) {
           for (let i = 0; i < 14; i++) await w.settle(await w.h.as(w.u).post("/databases", { name: `net-pw-${i}`, region: "eu-central-1" }, cookie), 1);
@@ -276,6 +309,7 @@ describe("engine-real: IP allowlist and network limits", { skip: SKIP }, () => {
       },
       {
         name: "customers' allowlists that leave the control plane out, and the Data Explorer used on them",
+        lockout: "those databases",
         async run(w) {
           const ids: string[] = [];
           for (let i = 0; i < 3; i++) ids.push((await create(w, `net-list-${i}`)).id);
@@ -286,17 +320,30 @@ describe("engine-real: IP allowlist and network limits", { skip: SKIP }, () => {
     ];
 
     for (const sc of scenarios) {
-      test(`(point 4) WITHOUT the guard, ${sc.name} blocks the provisioner (on admin, or on every database)`, async () => {
+      test(`(point 4) WITHOUT the guard, ${sc.name} blocks ${sc.lockout === "provisioner" ? "the provisioner (on admin)" : "the control plane on those databases only (engine-round2: not admin, not every database)"}`, async () => {
         await forget(U, CP);
         const w = await startWorld(sc.env ?? {}, { engines: U, guard: new AuthFailureGuard({ perDatabase: 1000, total: 1000, reserve: 0 }) });
         try {
           await sc.run(w);
           const n = await against(U, CP);
           console.log(`NETWORK without guard, ${sc.name}: ${JSON.stringify(n)}`);
-          // The provisioner signs in on admin: 5 failures there block it on admin (the per-database limit), 10 anywhere on
-          // every database. Either way no database can get its users any more.
-          assert.ok(n.blocks.some((b) => b.database === null || b.database === "admin"), `the provisioner is blocked: ${JSON.stringify(n)}`);
+          if (sc.lockout === "provisioner") {
+            // The provisioner signs in on admin: 5 failures there block it on admin (the per-database limit). Then no
+            // database can get its users any more.
+            assert.ok(n.blocks.some((b) => b.database === null || b.database === "admin"), `the provisioner is blocked: ${JSON.stringify(n)}`);
+          } else {
+            // 18 failures (6 rounds x 3 databases), under the address-wide 100: each customer database blocks the control
+            // plane (5 there), admin and the other databases do not.
+            assert.equal(n.blocks.length, 3, JSON.stringify(n));
+            assert.ok(n.blocks.every((b) => b.database !== null && b.database !== "admin" && b.database.startsWith("db_")), JSON.stringify(n));
+          }
         } finally { await w.close(); }
+        if (sc.lockout === "those databases") {
+          // The provisioner is not blocked: a database can still be made, with its users.
+          const fixed = await startWorld({}, { engines: U });
+          try { await create(fixed, "net-after-fix-dbs"); } finally { await fixed.close(); await forget(U, CP); }
+          return;
+        }
         // Even with everything fixed (right password, no list), the provisioner is now locked out: no database can be made.
         const fixed = await startWorld({}, { engines: U });
         try {

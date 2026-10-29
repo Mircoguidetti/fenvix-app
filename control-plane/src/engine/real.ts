@@ -437,7 +437,13 @@ export class RealEngine implements EngineClient {
     // An IPv6 block is shown as its /64; the engine takes any address inside it.
     const ip = canonicalAddress(req.ip.replace(/\/64$/, ""));
     if (!ip) throw new EngineError("invalid", "That is not an address.");
-    const j = this.ok(await this.http.call(region, "DELETE", `/v1/network/blocks/${ip}`), "network");
+    // `?database=`: only the block of this address on THIS database goes; its blocks on other databases and an
+    // address-wide block stay (engine-round2). Without the parameter the engine would lift them all.
+    const key = engineName(req.id);
+    const j = this.ok(await this.http.call(region, "DELETE", `/v1/network/blocks/${ip}?database=${key}`), "network");
+    // An engine older than engine-round2 ignores the parameter and lifts every block of the address: its answer has no
+    // `database`. Said, never taken for a per-database unblock.
+    if (j.database !== key) throw new EngineError("unavailable", "The database engine does not support unblocking an address on one database: update the engine.");
     return { unblocked: j.unblocked === true };
   }
 
