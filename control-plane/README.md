@@ -44,6 +44,9 @@ ENGINE_E2E_BIN=<test5 control-ops or fused build>/mongo-server ENGINE_E2E_AUTH_B
 ENGINE_E2E_BIN=<test5 final-engine build>/mongo-server ENGINE_E2E_PROFILE=production \
   ENGINE_E2E_S3_ENDPOINT=http://127.0.0.1:9000 ENGINE_E2E_S3_ACCESS_KEY=<minio user> ENGINE_E2E_S3_SECRET_KEY=<minio password> \
   ENGINE_E2E_S3_REGION=eu-central-1 ENGINE_E2E_PYTHON=<python with pymongo> TEST_DATABASE_URL=... npm run test:engine-real
+# engine-round2 as infra/ starts it: every engine of the suite gets --grantable-roles (and grantable-roles.test.ts runs)
+ENGINE_E2E_BIN=<test5 engine-round2 build>/mongo-server ENGINE_E2E_GRANTABLE_ROLES=read,readWrite,dbAdmin \
+  TEST_DATABASE_URL=... npm run test:engine-real
 ```
 
 `npm start` runs `node src/server.ts` (Node 22.18 or newer runs TypeScript directly, no build). It needs the environment below. The integration tests create their own users and workspaces with random ids, and connect as `fenvix_control_plane` exactly like production, so they exercise the real grants and policies. They set that role's password to a random value on the scratch database only.
