@@ -78,7 +78,7 @@ IAM → Identity providers. Se esiste già `token.actions.githubusercontent.com`
 git clone https://github.com/Mircoguidetti/fenvix-app.git
 ```
 ```bash
-cd olvix-app && git checkout infra-align && cd infra && npm ci
+cd fenvix-app/infra && npm ci
 ```
 
 ### 1.7 Parametri della fase 1
@@ -148,10 +148,8 @@ In **entrambi** i repository, Settings → Secrets and variables → Actions →
 
 Non sono credenziali (un ARN non basta per entrare: serve un token OIDC di GitHub, valido solo per quel repository e quel ramo), ma contengono l'id dell'account, che non deve finire nei log pubblici.
 
-### 2.2 I workflow devono essere sul ramo predefinito
-GitHub mostra "Run workflow" solo per i workflow presenti sul ramo predefinito (`main`), e il ruolo di pubblicazione accetta solo i rami di `engineRepoBranches` / `controlPlaneRepoBranches` (default `main`). Quindi:
-- fenvix-engine: porta `.github/workflows/release-engine.yml` (ramo `release-pipeline`) su `main`;
-- olvix-app: porta `.github/workflows/release-control-plane.yml` (ramo `infra-align`) su `main`.
+### 2.2 I workflow sono già su `main`
+`release-engine.yml` (fenvix-engine) e `release-control-plane.yml` (fenvix-app) sono già sul ramo `main`, l'unico accettato dai ruoli di pubblicazione. Niente da portare.
 
 ### 2.3 Motore
 fenvix-engine → Actions → **release-engine** → Run workflow, ramo `main`:
@@ -167,7 +165,7 @@ engineSha256=<64 caratteri>
 Annota le due righe (non sono segreti).
 
 ### 2.4 Control plane
-olvix-app → Actions → **release-control-plane** → Run workflow, ramo `main`: `ref` = il commit da pubblicare, `arch` = `x86_64`, `publish` = sì. Nel riepilogo: `controlPlaneVersion=...` e `controlPlaneSha256=...`.
+fenvix-app → Actions → **release-control-plane** → Run workflow, ramo `main`: `ref` = il commit da pubblicare, `arch` = `x86_64`, `publish` = sì. Nel riepilogo: `controlPlaneVersion=...` e `controlPlaneSha256=...`.
 
 ### 2.5 Verifica della fase 2
 - I due job sono verdi e il riepilogo riporta le due coppie di valori.
