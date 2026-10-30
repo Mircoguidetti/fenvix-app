@@ -1,0 +1,478 @@
+# One button to put a new control plane in production (docs/deploy-checklist.md, phase 3).
+#
+# Actions > deploy-control-plane > Run workflow. Three jobs:
+#   checks    infra unit tests. No AWS, no secrets, no approval: a broken build never reaches the Approve button.
+#   release   calls release-control-plane.yml (the same build and the same write-only publish role as a manual
+#             release) and reads back controlPlaneVersion and controlPlaneSha256. It writes one new object in the
+#             private artifacts bucket; nothing in production uses it until a deploy pins that version, so this step
+#             changes nothing that is running (docs/deploy-checklist.md, 2.6). Skipped on a rollback run.
+#   deploy    the only job that can change production. It names the GitHub environment `production`, so it starts
+#             only after the founder clicks Approve, and only then can it read the environment's secrets and get an
+#             OIDC token whose subject is repo:<this repo>:environment:production, the only subject the deploy role
+#             trusts (infra/github-deploy-trust.json).
+#
+# The deploy replaces the server: 5 to 15 minutes without service. Customer data is in S3 and is not touched.
+#
+# The engine is left exactly as it is: the engine version and SHA-256 are read from the running stack's outputs
+# (EngineVersion, EngineSha256) and put back unchanged, so only the control plane moves.
+#
+# What the founder sets once (infra/README.md, Step 3b):
+#   environment `production`, required reviewer: himself
+#   environment secrets:    AWS_DEPLOY_ROLE_ARN, FENVIX_BUDGET_EMAIL, FENVIX_ACME_EMAIL
+#   environment variables:  BASE_DOMAIN, FENVIX_DASHBOARD_ORIGINS, FENVIX_HOSTED_ZONE_ID, FENVIX_ACME_STAGING
+#   repository secrets:     AWS_PUBLISH_ROLE_ARN, ARTIFACTS_BUCKET (already there since phase 2)
+name: deploy-control-plane
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit, tag or branch of this repository to build and put in production
+        required: true
+        type: string
+        default: main
+      rollback_version:
+        description: 'Rollback: a controlPlaneVersion already published (leave empty for a normal deploy)'
+        required: false
+        type: string
+        default: ''
+      rollback_sha256:
+        description: 'Rollback: the controlPlaneSha256 of that version (both fields or neither)'
+        required: false
+        type: string
+        default: ''
+      allow_iam_changes:
+        description: Let the deploy go on when the plan changes IAM permissions or security group rules
+        required: false
+        type: boolean
+        default: false
+      engine_version:
+        description: 'First run only: the engine version in production, when the stack has no EngineVersion output yet'
+        required: false
+        type: string
+        default: ''
+      engine_sha256:
+        description: 'First run only: the SHA-256 of that engine version'
+        required: false
+        type: string
+        default: ''
+
+permissions: {}
+
+# One deploy at a time. A queued run waits instead of racing another one into CloudFormation.
+concurrency:
+  group: deploy-control-plane
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-1
+
+jobs:
+  checks:
+    if: github.repository == 'Mircoguidetti/fenvix-app'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check the inputs
+        env:
+          REF: ${{ inputs.ref }}
+          ROLLBACK_VERSION: ${{ inputs.rollback_version }}
+          ROLLBACK_SHA: ${{ inputs.rollback_sha256 }}
+          ENGINE_VERSION: ${{ inputs.engine_version }}
+          ENGINE_SHA: ${{ inputs.engine_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$ ]] || { echo "::error::ref must be a commit, a tag or a branch name"; exit 1; }
+          pair() { # name1 value1 name2 value2: both empty or both filled
+            if [ -n "$2" ] && [ -z "$4" ]; then echo "::error::$1 is set, so $3 must be set too"; exit 1; fi
+            if [ -z "$2" ] && [ -n "$4" ]; then echo "::error::$3 is set, so $1 must be set too"; exit 1; fi
+          }
+          pair rollback_version "$ROLLBACK_VERSION" rollback_sha256 "$ROLLBACK_SHA"
+          pair engine_version "$ENGINE_VERSION" engine_sha256 "$ENGINE_SHA"
+          for v in "$ROLLBACK_VERSION" "$ENGINE_VERSION"; do
+            [ -z "$v" ] || [[ "$v" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || { echo "::error::\"$v\" is not a version as the release workflow prints it"; exit 1; }
+          done
+          for h in "$ROLLBACK_SHA" "$ENGINE_SHA"; do
+            [ -z "$h" ] || [[ "$h" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::a SHA-256 must be 64 lowercase hex characters"; exit 1; }
+          done
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+
+      - name: Infra tests (no AWS)
+        working-directory: infra
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          npm test
+
+  # Build and publish the image. Reuses the manual release workflow: one build recipe, one publish role, one object key.
+  release:
+    needs: checks
+    if: inputs.rollback_version == ''
+    uses: ./.github/workflows/release-control-plane.yml
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+    with:
+      ref: ${{ inputs.ref }}
+      # The server is a t3.medium (cdk.json, instanceType), so x86_64. The deploy job refuses an aarch64 instance type.
+      arch: x86_64
+      publish: true
+
+  deploy:
+    needs: [checks, release]
+    # `release` is skipped on a rollback run; without this the deploy would be skipped with it.
+    if: ${{ !cancelled() && needs.checks.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # The approval gate, and the only subject the deploy role trusts.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+
+      - name: Install the infra toolchain
+        working-directory: infra
+        run: npm ci
+
+      # The stack settings. Everything that loadConfig() needs, so that the plan is the one the founder would get in
+      # CloudShell. The two addresses are environment secrets, which GitHub blanks out in the log; the rest is public
+      # (a domain, a zone id), which is why those are variables: a mismatch has to be printable.
+      - name: Read the settings and check them
+        id: settings
+        env:
+          BASE_DOMAIN: ${{ vars.BASE_DOMAIN }}
+          DASHBOARD_ORIGINS: ${{ vars.FENVIX_DASHBOARD_ORIGINS }}
+          HOSTED_ZONE_ID: ${{ vars.FENVIX_HOSTED_ZONE_ID }}
+          ACME_STAGING: ${{ vars.FENVIX_ACME_STAGING }}
+          BUDGET_EMAIL: ${{ secrets.FENVIX_BUDGET_EMAIL }}
+          ACME_EMAIL: ${{ secrets.FENVIX_ACME_EMAIL }}
+        run: |
+          set -euo pipefail
+          miss=()
+          [ -n "$BASE_DOMAIN" ] || miss+=("variable BASE_DOMAIN")
+          [ -n "$DASHBOARD_ORIGINS" ] || miss+=("variable FENVIX_DASHBOARD_ORIGINS")
+          [ -n "$BUDGET_EMAIL" ] || miss+=("secret FENVIX_BUDGET_EMAIL")
+          [ -n "$ACME_EMAIL" ] || miss+=("secret FENVIX_ACME_EMAIL")
+          if [ ${#miss[@]} -ne 0 ]; then
+            echo "::error::set these in the production environment (Settings > Environments > production): ${miss[*]}"
+            exit 1
+          fi
+          [ -z "$HOSTED_ZONE_ID" ] || [[ "$HOSTED_ZONE_ID" =~ ^Z[A-Z0-9]+$ ]] || { echo "::error::FENVIX_HOSTED_ZONE_ID is \"$HOSTED_ZONE_ID\"; a Route 53 zone id starts with Z"; exit 1; }
+          # The stack publishes no output for the certificate mode, so this is the only place it can be checked: the
+          # variable has to say what the stack was last deployed with. "true" is right only during the first install
+          # (docs/deploy-checklist.md, phase 3 before phase 4); on a live system it would replace the certificate with
+          # one no driver and no browser trusts.
+          case "${ACME_STAGING:-false}" in
+            false|"") ;;
+            true) echo "::warning::FENVIX_ACME_STAGING is true, so this deploy keeps the Let's Encrypt STAGING certificate, which no driver or browser trusts. That is right only during the first install; after phase 4 set the variable to false.";;
+            *) echo "::error::FENVIX_ACME_STAGING must be \"true\" or \"false\", not \"$ACME_STAGING\""; exit 1;;
+          esac
+          # The image is built for x86_64; a c7g.large server would need aarch64.
+          want="$(node -e 'process.stdout.write(require("./infra/cdk.json").context.instanceType)')"
+          case "$want" in
+            t3.medium|c6i.large) ;;
+            *) echo "::error::cdk.json instanceType is $want, which is not x86_64; this workflow publishes an x86_64 image"; exit 1;;
+          esac
+          env_name="$(node -e 'process.stdout.write(require("./infra/cdk.json").context.env)')"
+          echo "stack=fenvix-${env_name}-${AWS_REGION}" >> "$GITHUB_OUTPUT"
+          echo "settings read for $BASE_DOMAIN (instance $want, stack fenvix-${env_name}-${AWS_REGION})"
+
+      # Short-lived credentials of the deploy role. Same method as release-control-plane.yml: GitHub's OIDC token
+      # straight to STS, no long-lived AWS key anywhere, every value masked before it can reach a log.
+      - name: Log in to AWS (OIDC, one hour, environment-scoped)
+        env:
+          ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          scrub() { sed -E 's/arn:aws[a-z-]*:[^ "]*/<arn>/g; s/[0-9]{12}/<account>/g' "$1" >&2; }
+          err="$(mktemp)"
+          [ -n "$ROLE_ARN" ] || { echo "::error::set the production environment secret AWS_DEPLOY_ROLE_ARN (infra/README.md, Step 3b)"; exit 1; }
+          [[ "$ROLE_ARN" =~ ^arn:aws:iam::([0-9]{12}):role/([A-Za-z0-9+=,.@_-]+)$ ]] || { echo "::error::AWS_DEPLOY_ROLE_ARN is not an IAM role ARN"; exit 1; }
+          echo "::add-mask::${BASH_REMATCH[1]}"
+          echo "::add-mask::${BASH_REMATCH[2]}"
+          tok="$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)"
+          echo "::add-mask::$tok"
+          creds="$(aws sts assume-role-with-web-identity --region "$AWS_REGION" --role-arn "$ROLE_ARN" \
+            --role-session-name "github-deploy-$GITHUB_RUN_ID" --web-identity-token "$tok" --duration-seconds 3600 \
+            --query Credentials --output json 2>"$err")" || { echo "::error::AWS refused the OIDC token (trust policy: repository and environment production)"; scrub "$err"; exit 1; }
+          for f in AccessKeyId SecretAccessKey SessionToken; do echo "::add-mask::$(jq -r ".$f" <<<"$creds")"; done
+          {
+            echo "AWS_ACCESS_KEY_ID=$(jq -r .AccessKeyId <<<"$creds")"
+            echo "AWS_SECRET_ACCESS_KEY=$(jq -r .SecretAccessKey <<<"$creds")"
+            echo "AWS_SESSION_TOKEN=$(jq -r .SessionToken <<<"$creds")"
+          } >> "$GITHUB_ENV"
+          unset creds tok
+
+      # What production is pinned to right now. The engine pins go back in unchanged, so this deploy moves the control
+      # plane only; the control-plane pins are the rollback target printed in the summary.
+      - name: Read what production runs now
+        id: current
+        env:
+          STACK: ${{ steps.settings.outputs.stack }}
+          ENGINE_VERSION_INPUT: ${{ inputs.engine_version }}
+          ENGINE_SHA_INPUT: ${{ inputs.engine_sha256 }}
+          BASE_DOMAIN_VAR: ${{ vars.BASE_DOMAIN }}
+        run: |
+          set -euo pipefail
+          outputs="$(aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$STACK" \
+            --query 'Stacks[0].Outputs' --output json)"
+          get() { jq -r --arg k "$1" '[.[] | select(.OutputKey == $k) | .OutputValue][0] // ""' <<<"$outputs"; }
+          engine_version="$(get EngineVersion)"; engine_sha="$(get EngineSha256)"
+          prev_version="$(get ControlPlaneVersion)"; prev_sha="$(get ControlPlaneSha256)"
+          api_url="$(get ControlPlaneUrl)"
+          # A control-plane release must change the control-plane version and nothing else. The domain is the one
+          # setting the stack publishes, so it is compared here, before cdk diff: a change to it belongs in a deploy
+          # from CloudShell, where someone reads the plan (infra/README.md).
+          if [ -n "$api_url" ] && [ "$api_url" != "https://api.$BASE_DOMAIN_VAR/v1" ]; then
+            echo "::error::BASE_DOMAIN would change the API host: the stack serves $api_url, this run would use https://api.$BASE_DOMAIN_VAR/v1. A control-plane release never changes the domain; fix the variable, or do that deploy from CloudShell."
+            exit 1
+          fi
+          if [ -z "$engine_version" ] || [ -z "$engine_sha" ]; then
+            # The outputs come with this change; a stack deployed before it does not have them yet.
+            if [ -z "$ENGINE_VERSION_INPUT" ] || [ -z "$ENGINE_SHA_INPUT" ]; then
+              echo "::error::this stack has no EngineVersion/EngineSha256 output yet (it was deployed before this workflow existed). Run the workflow once with engine_version and engine_sha256 filled in with the values in use (on the server: sudo fenvix-artifact current). From the next run on they are read automatically."
+              exit 1
+            fi
+            engine_version="$ENGINE_VERSION_INPUT"; engine_sha="$ENGINE_SHA_INPUT"
+            echo "engine pins taken from the inputs (the stack has no output yet)"
+          elif [ -n "$ENGINE_VERSION_INPUT" ] && { [ "$ENGINE_VERSION_INPUT" != "$engine_version" ] || [ "$ENGINE_SHA_INPUT" != "$engine_sha" ]; }; then
+            echo "::error::engine_version/engine_sha256 were given but differ from what the stack runs ($engine_version). This workflow never changes the engine: leave both empty."
+            exit 1
+          fi
+          {
+            echo "engine_version=$engine_version"
+            echo "engine_sha256=$engine_sha"
+            echo "previous_version=$prev_version"
+            echo "previous_sha256=$prev_sha"
+            echo "api_url=${api_url%/v1}"
+          } >> "$GITHUB_OUTPUT"
+          echo "engine stays at $engine_version; control plane is at ${prev_version:-<none>}"
+
+      - name: Choose the control-plane release to pin
+        id: target
+        env:
+          BUILT_VERSION: ${{ needs.release.outputs.version }}
+          BUILT_SHA: ${{ needs.release.outputs.sha256 }}
+          ROLLBACK_VERSION: ${{ inputs.rollback_version }}
+          ROLLBACK_SHA: ${{ inputs.rollback_sha256 }}
+        run: |
+          set -euo pipefail
+          if [ -n "$ROLLBACK_VERSION" ]; then
+            version="$ROLLBACK_VERSION"; sha="$ROLLBACK_SHA"; mode=rollback
+          else
+            version="$BUILT_VERSION"; sha="$BUILT_SHA"; mode=release
+            [ -n "$version" ] && [ -n "$sha" ] || { echo "::error::the release job published nothing (no version or SHA-256)"; exit 1; }
+          fi
+          [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || { echo "::error::\"$version\" is not a version"; exit 1; }
+          [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::the SHA-256 is not 64 hex characters"; exit 1; }
+          { echo "version=$version"; echo "sha256=$sha"; echo "mode=$mode"; } >> "$GITHUB_OUTPUT"
+          echo "$mode: control plane -> $version"
+
+      - name: Check the plan without touching AWS
+        working-directory: infra
+        env:
+          BASE_DOMAIN: ${{ vars.BASE_DOMAIN }}
+          FENVIX_DASHBOARD_ORIGINS: ${{ vars.FENVIX_DASHBOARD_ORIGINS }}
+          FENVIX_HOSTED_ZONE_ID: ${{ vars.FENVIX_HOSTED_ZONE_ID }}
+          FENVIX_ACME_STAGING: ${{ vars.FENVIX_ACME_STAGING }}
+          FENVIX_BUDGET_EMAIL: ${{ secrets.FENVIX_BUDGET_EMAIL }}
+          FENVIX_ACME_EMAIL: ${{ secrets.FENVIX_ACME_EMAIL }}
+          FENVIX_ENGINE_VERSION: ${{ steps.current.outputs.engine_version }}
+          FENVIX_ENGINE_SHA256: ${{ steps.current.outputs.engine_sha256 }}
+          FENVIX_CONTROL_PLANE_VERSION: ${{ steps.target.outputs.version }}
+          FENVIX_CONTROL_PLANE_SHA256: ${{ steps.target.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          npm test
+          npx cdk synth --quiet
+
+      # The plan against the running stack, in the job summary, and the brake: a change to IAM permissions or to the
+      # security group is not part of a control-plane release, so the deploy stops unless it was asked for.
+      - name: Plan (cdk diff) and the IAM / security group brake
+        id: diff
+        working-directory: infra
+        env:
+          BASE_DOMAIN: ${{ vars.BASE_DOMAIN }}
+          FENVIX_DASHBOARD_ORIGINS: ${{ vars.FENVIX_DASHBOARD_ORIGINS }}
+          FENVIX_HOSTED_ZONE_ID: ${{ vars.FENVIX_HOSTED_ZONE_ID }}
+          FENVIX_ACME_STAGING: ${{ vars.FENVIX_ACME_STAGING }}
+          FENVIX_BUDGET_EMAIL: ${{ secrets.FENVIX_BUDGET_EMAIL }}
+          FENVIX_ACME_EMAIL: ${{ secrets.FENVIX_ACME_EMAIL }}
+          FENVIX_ENGINE_VERSION: ${{ steps.current.outputs.engine_version }}
+          FENVIX_ENGINE_SHA256: ${{ steps.current.outputs.engine_sha256 }}
+          FENVIX_CONTROL_PLANE_VERSION: ${{ steps.target.outputs.version }}
+          FENVIX_CONTROL_PLANE_SHA256: ${{ steps.target.outputs.sha256 }}
+          ALLOW_IAM_CHANGES: ${{ inputs.allow_iam_changes }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/cdk-diff.txt"
+          npx cdk diff --all --no-color > "$out" 2>&1 || { cat "$out"; echo "::error::cdk diff failed"; exit 1; }
+          cat "$out"
+          {
+            echo "### Plan for production (cdk diff)"
+            echo
+            echo '```'
+            head -c 60000 "$out"
+            echo '```'
+            [ "$(wc -c < "$out")" -le 60000 ] || echo "_(cut: the whole plan is in the step log above)_"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # cdk prints these headings only when there is something to change there.
+          risky="$(grep -E '(IAM Statement Changes|IAM Policy Changes|Security Group Changes)' "$out" || true)"
+          if [ -n "$risky" ]; then
+            {
+              echo
+              echo "> **The plan changes permissions or network rules.** A control-plane release should only change the"
+              echo "> version and the SHA-256 the server installs. Found:"
+              echo
+              echo '```'
+              echo "$risky"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "$ALLOW_IAM_CHANGES" != "true" ]; then
+              echo "::error::the plan changes IAM permissions or security group rules. Nothing was deployed. Read the plan above; if it is wanted, run the workflow again with allow_iam_changes = true."
+              echo "stopped=iam" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+            echo "::warning::the plan changes IAM permissions or security group rules; going on because allow_iam_changes = true"
+          fi
+
+      - name: Deploy (the server is replaced)
+        working-directory: infra
+        env:
+          BASE_DOMAIN: ${{ vars.BASE_DOMAIN }}
+          FENVIX_DASHBOARD_ORIGINS: ${{ vars.FENVIX_DASHBOARD_ORIGINS }}
+          FENVIX_HOSTED_ZONE_ID: ${{ vars.FENVIX_HOSTED_ZONE_ID }}
+          FENVIX_ACME_STAGING: ${{ vars.FENVIX_ACME_STAGING }}
+          FENVIX_BUDGET_EMAIL: ${{ secrets.FENVIX_BUDGET_EMAIL }}
+          FENVIX_ACME_EMAIL: ${{ secrets.FENVIX_ACME_EMAIL }}
+          FENVIX_ENGINE_VERSION: ${{ steps.current.outputs.engine_version }}
+          FENVIX_ENGINE_SHA256: ${{ steps.current.outputs.engine_sha256 }}
+          FENVIX_CONTROL_PLANE_VERSION: ${{ steps.target.outputs.version }}
+          FENVIX_CONTROL_PLANE_SHA256: ${{ steps.target.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          # --require-approval never: nobody is at the keyboard. The brake above is what reads the plan instead,
+          # and it has already stopped the run if permissions or network rules were about to change.
+          npx cdk deploy --all --require-approval never --no-notices
+
+      # The real health endpoints of the control plane (control-plane/src/app.ts): /healthz says the service answers,
+      # /readyz also says its database answers. Both are served at the root, not under /v1.
+      - name: Check that the API is healthy
+        id: health
+        env:
+          API: ${{ steps.current.outputs.api_url }}
+          BASE_DOMAIN: ${{ vars.BASE_DOMAIN }}
+        run: |
+          set -euo pipefail
+          base="${API:-https://api.$BASE_DOMAIN}"
+          echo "waiting for $base/healthz and $base/readyz (the new server has to boot and start its services)"
+          # Three good answers in a row, 10 s apart: one lucky answer could still come from the old server during the
+          # last moments of the replacement, or from a container that is about to be restarted.
+          ok=""; streak=0
+          for i in $(seq 1 120); do
+            h="$(curl -fsS --max-time 10 "$base/healthz" 2>/dev/null || true)"
+            r="$(curl -fsS --max-time 10 "$base/readyz" 2>/dev/null || true)"
+            if [ "$h" = '{"ok":true}' ] && [ "$r" = '{"ok":true}' ]; then
+              streak=$((streak + 1))
+              if [ "$streak" -ge 3 ]; then ok=yes; echo "healthy after about $((i * 10))s"; break; fi
+            else
+              streak=0
+            fi
+            sleep 10
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::$base/healthz or $base/readyz did not answer {\"ok\":true} three times in a row within 20 minutes. The deploy itself succeeded: look at the server (infra/README.md, Step 9) before rolling back."
+            exit 1
+          fi
+          echo "url=$base" >> "$GITHUB_OUTPUT"
+
+      # Always written, also when a step above failed, because the rollback values are what is needed then.
+      - name: Write the summary
+        if: always()
+        env:
+          MODE: ${{ steps.target.outputs.mode }}
+          NEW_VERSION: ${{ steps.target.outputs.version }}
+          NEW_SHA: ${{ steps.target.outputs.sha256 }}
+          PREV_VERSION: ${{ steps.current.outputs.previous_version }}
+          PREV_SHA: ${{ steps.current.outputs.previous_sha256 }}
+          ENGINE_VERSION: ${{ steps.current.outputs.engine_version }}
+          API: ${{ steps.current.outputs.api_url }}
+          HEALTH_URL: ${{ steps.health.outputs.url }}
+          RESULT: ${{ job.status }}
+          REF: ${{ inputs.ref }}
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Deploy of the control plane: $RESULT"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Kind of run | ${MODE:-not started} |"
+            echo "| Commit asked for | \`$REF\` |"
+            echo "| Control plane now in the stack | \`${NEW_VERSION:-nothing was deployed}\` |"
+            echo "| Engine | \`${ENGINE_VERSION:-unknown}\` (not touched) |"
+            echo "| API | ${HEALTH_URL:-${API:-unknown}} |"
+            echo
+            echo "### The server is replaced"
+            echo
+            echo "A deploy builds a new server and throws the old one away: the API and the databases do not answer for"
+            echo "**5 to 15 minutes**. Nothing is lost: customer data, the write-ahead log and the leases are in S3, and"
+            echo "the public address (Elastic IP) stays the same."
+            echo
+            echo "### Going back"
+            echo
+            if [ -n "$PREV_VERSION" ] && [ -n "$PREV_SHA" ]; then
+              echo "The control plane that was in production before this run:"
+              echo
+              echo '```'
+              echo "rollback_version = $PREV_VERSION"
+              echo "rollback_sha256  = $PREV_SHA"
+              echo '```'
+              echo
+              echo "To go back: [Run workflow]($SERVER/$REPO/actions/workflows/deploy-control-plane.yml), paste those two"
+              echo "values into **rollback_version** and **rollback_sha256**, leave everything else alone, click **Run"
+              echo "workflow** and then **Approve**. It does not build anything: it puts that release, already in the"
+              echo "bucket, back on the server (another 5 to 15 minutes without service)."
+            else
+              echo "This stack had no control-plane version pinned before this run, so there is nothing to go back to:"
+              echo "the state before was \"no control plane running\"."
+            fi
+            if [ -n "$NEW_VERSION" ] && [ -n "$NEW_SHA" ]; then
+              echo
+              echo "<details><summary>The two stack settings of this release (for a deploy from CloudShell)</summary>"
+              echo
+              echo '```'
+              echo "controlPlaneVersion=$NEW_VERSION"
+              echo "controlPlaneSha256=$NEW_SHA"
+              echo '```'
+              echo
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,30 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CannotChangeItsOwnRole",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreateRole", "iam:DeleteRole", "iam:UpdateRole", "iam:UpdateAssumeRolePolicy", "iam:TagRole", "iam:UntagRole",
+        "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:UpdateRoleDescription"
+      ],
+      "Resource": "arn:aws:iam::865859654353:role/fenvix-github-deployer"
+    },
+    {
+      "Sid": "CannotChangeWhoMayLogInFromGithub",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreateOpenIDConnectProvider", "iam:DeleteOpenIDConnectProvider", "iam:UpdateOpenIDConnectProviderThumbprint",
+        "iam:AddClientIDToOpenIDConnectProvider", "iam:RemoveClientIDFromOpenIDConnectProvider",
+        "iam:TagOpenIDConnectProvider", "iam:UntagOpenIDConnectProvider"
+      ],
+      "Resource": "arn:aws:iam::865859654353:oidc-provider/token.actions.githubusercontent.com"
+    },
+    {
+      "Sid": "CannotDeleteTheStack",
+      "Effect": "Deny",
+      "Action": ["cloudformation:DeleteStack"],
+      "Resource": "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-*/*"
+    }
+  ]
+}

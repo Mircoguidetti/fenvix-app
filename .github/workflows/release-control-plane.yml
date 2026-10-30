@@ -6,6 +6,9 @@
 # Run it by hand: Actions > release-control-plane > Run workflow (ref = commit, tag or branch of this repository). The job
 # summary prints the two stack settings to copy: controlPlaneVersion and controlPlaneSha256 (docs/deploy-checklist.md).
 #
+# It is also called by deploy-control-plane.yml (the one-button deploy), which then reads `version` and `sha256` from its
+# outputs and pins them in the stack. Keep this the only place that builds and publishes the control-plane image.
+#
 # AWS: short-lived OIDC credentials of a role that can only write control-plane/ in the bucket. Repository secrets
 # (Settings > Secrets and variables > Actions), values from the stack outputs:
 #   AWS_PUBLISH_ROLE_ARN  output PublishControlPlaneRoleArn
@@ -32,6 +35,34 @@ on:
         required: true
         type: boolean
         default: true
+  # Called by deploy-control-plane.yml so that the one-button deploy builds and publishes with exactly these steps
+  # (same build, same checks, same role, same key) instead of a second copy of them.
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit, tag or branch of this repository to build
+        required: true
+        type: string
+      arch:
+        description: CPU of the server
+        required: false
+        type: string
+        default: x86_64
+      publish:
+        description: Upload to the artifacts bucket
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      version:
+        description: controlPlaneVersion, the stack setting for this release
+        value: ${{ jobs.build.outputs.version }}
+      sha256:
+        description: controlPlaneSha256, the SHA-256 the server checks
+        value: ${{ jobs.build.outputs.sha256 }}
+      key:
+        description: Object key written in the artifacts bucket
+        value: ${{ jobs.build.outputs.key }}
 
 permissions: {}
 
@@ -55,6 +86,10 @@ jobs:
       id-token: write
     env:
       ARCH: ${{ inputs.arch }}
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      sha256: ${{ steps.meta.outputs.sha256 }}
+      key: ${{ steps.meta.outputs.key }}
     steps:
       - name: Check the inputs
         env:
