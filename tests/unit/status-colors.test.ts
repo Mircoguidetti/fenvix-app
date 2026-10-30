@@ -238,9 +238,9 @@ test("every action that cannot be undone has a dialog with a red confirm button 
   assert.match(red, /(^|[;\s])color:\s*var\(--on-text\)/, "the confirm button of a destructive dialog has no white text");
   assert.ok(contrast(T["on-text"], T.danger) >= 4.5, "white on red is below 4.5:1");
   const triggers: [string, RegExp][] = [
-    ["pages/DatabaseDetail.tsx", /className="btn btn-danger" onClick=\{\(\) => open\("erase"\)\}/],
+    ["pages/DatabaseDetail.tsx", /className="action-row action-btn action-erase"[^>]*onClick=\{\(\) => open\("erase"\)\}/],
     ["components/BulkBar.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setAction\("erase"\)\}/],
-    ["components/DatabaseUsers.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => open\(\{ kind: "delete", user: u \}\)\}/],
+    ["components/DatabaseUsers.tsx", /className="icon-btn icon-danger" onClick=\{\(\) => open\(\{ kind: "delete", user: u \}\)\}/],
     ["components/DataExplorer.tsx", /className="btn btn-sm btn-danger" onClick=\{onDelete\}/],
     ["pages/ApiKeys.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setTarget\(k\)\}/],
     ["pages/Members.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setRemoving\(m\)\}/],
@@ -271,12 +271,12 @@ test("every toast says whether it is a success or an error, except the plain not
 test("Restore to a point in time: its dialog is destructive (red confirm), the button that opens it stays neutral", () => {
   const detail = src("pages/DatabaseDetail.tsx");
   assert.match(detail, /<ConfirmDialog danger open=\{dialog === "restore"\}[^>]*confirmLabel="Restore database"/);
-  assert.match(detail, /<button type="button" className="btn" onClick=\{\(\) => open\("restore"\)\}>/, "the Restore button is not neutral");
+  assert.match(detail, /<button type="button" className="action-row action-btn"[^>]*onClick=\{\(\) => open\("restore"\)\}>/, "the Restore button is not neutral");
 });
 
 test("Reset password: the button stays neutral, its dialog is not destructive and warns in amber, with an icon", () => {
   const users = src("components/DatabaseUsers.tsx");
-  assert.match(users, /<button type="button" className="btn btn-sm" onClick=\{\(\) => open\(\{ kind: "reset", user: u \}\)\}/, "the Reset password button is not neutral");
+  assert.match(users, /<button type="button" className="icon-btn" onClick=\{\(\) => open\(\{ kind: "reset", user: u \}\)\}/, "the Reset password button is not neutral");
   const dialog = /<ConfirmDialog open=\{dialog\?\.kind === "reset"\}[\s\S]*?<\/ConfirmDialog>/.exec(users)?.[0] ?? "";
   assert.ok(dialog, "the reset dialog is not plain (it has the danger option, or is missing)");
   assert.match(dialog, /<p className="once-warning" role="note">\s*<TriangleAlert[^>]*aria-hidden="true" \/>\s*<span>Applications using the old password will stop working\.<\/span>/);
