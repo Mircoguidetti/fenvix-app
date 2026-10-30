@@ -68,6 +68,13 @@
       }
     },
     {
+      "Sid": "Ec2RetagExistingProjectResources",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateTags", "ec2:DeleteTags"],
+      "Resource": "arn:aws:ec2:eu-west-1:865859654353:*/*",
+      "Condition": { "StringEquals": { "ec2:ResourceTag/project": "fenvix" } }
+    },
+    {
       "Sid": "Ec2ChangeOrDeleteProjectResources",
       "Effect": "Allow",
       "Action": [
