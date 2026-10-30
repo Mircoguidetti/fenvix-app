@@ -30,7 +30,9 @@ test("every endpoint of the contract is routed", () => {
 test("every route the service has beyond the contract is one we documented as an extension", () => {
   const known = new Set(endpoints.map((e) => `${e.method} /v1${e.path.replace(/\{(\w+)\}/g, ":$1")}`));
   known.add("GET /v1/session/providers/:provider/callback"); // described in the text of section 3, not as its own heading
-  const extra = h.app.routes.filter((r) => !known.has(r)).sort();
+  // The public API (/v1/public/..., /v1/openapi.json) is checked against its own OpenAPI document instead
+  // (public-openapi.test.ts).
+  const extra = h.app.routes.filter((r) => !known.has(r) && !/^\w+ \/v1\/(public\/|openapi\.json$)/.test(r)).sort();
   assert.deepEqual(extra.filter((r) => !/^GET \/(healthz|readyz)$/.test(r)), [
     // The Data Explorer (docs/api-extensions.md, "Data Explorer").
     "DELETE /v1/databases/:id/data/collections/:collection/documents/:docId",

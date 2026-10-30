@@ -1,0 +1,336 @@
+import { after, before, describe, test } from "node:test";
+import assert from "node:assert/strict";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { type Fixture, type Harness, json, startHarness } from "../helpers/harness.ts";
+import { TOKEN_RE } from "../../src/services/apikeys.ts";
+
+/** The public API (docs/public-api.md): keys, authentication, roles, idempotency, rate limits, the endpoints. */
+let h: Harness;
+let owner: Fixture;
+let adminToken: string;
+const PER_KEY = 200;
+const sha = (t: string) => createHash("sha256").update(t).digest("hex");
+
+async function makeKey(who: Fixture | string, role: "admin" | "read_only", extra: Record<string, unknown> = {}, headers?: Record<string, string>) {
+  const r = await h.as(who).post("/public/api-keys", { name: `${role} key`, role, ...extra }, headers);
+  assert.equal(r.statusCode, 201, r.body);
+  return json<{ key: { id: string; prefix: string; role: string; status: string }; token: string }>(r);
+}
+
+before(async () => {
+  h = await startHarness({ RATE_LIMIT_PER_MINUTE: "100000", RATE_LIMIT_ANON_PER_MINUTE: "100000", PUBLIC_API_RATE_LIMIT_PER_MINUTE: String(PER_KEY) });
+  owner = await h.user("Owner");
+  adminToken = (await makeKey(owner, "admin")).token;
+});
+after(async () => { await h.close(); });
+
+describe("API keys", () => {
+  test("created by an owner's session: fvx_ token shown once, only the SHA-256 and a prefix stored", async () => {
+    const r = await h.as(owner).post("/public/api-keys", { name: "ci", role: "read_only" });
+    assert.equal(r.statusCode, 201, r.body);
+    assert.equal(r.headers["pragma"], "no-cache");
+    assert.equal(r.headers["cache-control"], "no-store");
+    const { key, token } = json(r);
+    assert.match(token, TOKEN_RE);
+    assert.equal(key.prefix, token.slice(0, 12));
+    assert.equal(key.role, "read_only");
+    assert.equal(key.status, "active");
+    const row = (await h.admin.query("select * from public.public_api_keys where id = $1", [key.id])).rows[0];
+    assert.equal(row.key_hash, sha(token));
+    assert.equal(row.workspace_id, owner.workspaceId);
+    assert.equal(row.created_by_type, "user");
+    // The token is in no column of the row, and not in the audit log.
+    const all = (await h.admin.query("select row_to_json(k)::text as t from public.public_api_keys k")).rows.map((x) => x.t).join("\n");
+    assert.ok(!all.includes(token) && !all.includes(token.slice(12)));
+    const audit = (await h.admin.query("select action, metadata::text as m from public.audit_log where workspace_id = $1 and target_id = $2", [owner.workspaceId, key.id])).rows;
+    assert.deepEqual(audit.map((a) => a.action), ["api_key.public.create"]);
+    assert.ok(!audit.some((a) => a.m.includes(token)));
+  });
+
+  test("listed with prefix, role and status, never the key; newest first with cursor pages", async () => {
+    const made = [await makeKey(owner, "read_only"), await makeKey(owner, "read_only"), await makeKey(owner, "admin")];
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const r = await h.as(adminToken).get(`/public/api-keys?limit=2${cursor ? `&cursor=${cursor}` : ""}`);
+      assert.equal(r.statusCode, 200, r.body);
+      for (const t of made) assert.ok(!r.body.includes(t.token));
+      for (const k of json(r).items) { assert.ok(!("token" in k) && !("keyHash" in k)); assert.match(k.prefix, /^fvx_.{8}$/); seen.push(k.id); }
+      cursor = json(r).nextCursor;
+      pages++;
+    } while (cursor);
+    assert.ok(pages >= 3);
+    assert.equal(new Set(seen).size, seen.length, "no key twice across pages");
+    assert.deepEqual(seen.slice(0, 3), made.map((m) => m.key.id).reverse());
+  });
+
+  test("revoked: refused at once with 401, recorded as a failed authentication", async () => {
+    const k = await makeKey(owner, "admin");
+    assert.equal((await h.as(k.token).get("/public/organization")).statusCode, 200);
+    const r = await h.as(adminToken).del(`/public/api-keys/${k.key.id}`);
+    assert.equal(r.statusCode, 200, r.body);
+    assert.equal(json(r).status, "revoked");
+    const refused = await h.as(k.token).get("/public/organization");
+    assert.equal(refused.statusCode, 401);
+    assert.equal(json(refused).error.code, "unauthenticated");
+    assert.ok(!refused.body.includes(k.token) && !refused.body.includes(k.key.prefix));
+    const a = (await h.admin.query("select actor_type, actor_id, outcome, metadata from public.audit_log where workspace_id = $1 and action = 'api_key.public.auth_failed' and target_id = $2", [owner.workspaceId, k.key.id])).rows;
+    assert.equal(a.length, 1);
+    assert.equal(a[0].outcome, "denied");
+    assert.equal(a[0].metadata.reason, "revoked");
+    const rev = (await h.admin.query("select action from public.audit_log where workspace_id = $1 and action = 'api_key.public.revoke' and target_id = $2", [owner.workspaceId, k.key.id])).rows;
+    assert.equal(rev.length, 1);
+  });
+
+  test("expired: refused with 401 and listed as expired", async () => {
+    const token = `fvx_${randomBytes(32).toString("base64url")}`;
+    const id = (await h.admin.query(
+      `insert into public.public_api_keys (workspace_id, name, role, key_hash, prefix, created_by_type, created_by, created_at, expires_at)
+       values ($1, 'old', 'admin', $2, $3, 'user', $4, now() - interval '2 days', now() - interval '1 day') returning id`,
+      [owner.workspaceId, sha(token), token.slice(0, 12), owner.userId])).rows[0].id;
+    const r = await h.as(token).get("/public/databases");
+    assert.equal(r.statusCode, 401);
+    const a = (await h.admin.query("select metadata from public.audit_log where action = 'api_key.public.auth_failed' and target_id = $1", [id])).rows;
+    assert.equal(a[0].metadata.reason, "expired");
+    const listed = json(await h.as(adminToken).get("/public/api-keys?limit=100")).items.find((k: { id: string }) => k.id === id);
+    assert.equal(listed.status, "expired");
+  });
+
+  test("an expiry date is kept, and must be in the future", async () => {
+    const at = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    const k = await makeKey(owner, "read_only", { expiresAt: at });
+    assert.equal(new Date(json(await h.as(adminToken).get("/public/api-keys?limit=100")).items.find((x: { id: string }) => x.id === k.key.id).expiresAt).getTime(), new Date(at).getTime());
+    assert.equal(json(await h.as(k.token).get("/public/organization")).apiKey.role, "read_only");
+    const past = await h.as(owner).post("/public/api-keys", { name: "x", role: "admin", expiresAt: "2020-01-01T00:00:00Z" });
+    assert.equal(past.statusCode, 400);
+    assert.equal(json(past).error.field, "expiresAt");
+  });
+
+  test("bad bodies: role, name and unknown fields are refused", async () => {
+    for (const [body, field] of [[{ name: "x", role: "owner" }, "role"], [{ name: "", role: "admin" }, "name"], [{ name: "x", role: "admin", scopes: ["*"] }, "scopes"]] as const) {
+      const r = await h.as(owner).post("/public/api-keys", body);
+      assert.equal(r.statusCode, 400, r.body);
+      assert.equal(json(r).error.field, field);
+    }
+  });
+
+  test("an admin key can make keys; a member's session cannot; a dashboard fnx_ key cannot", async () => {
+    const k = await makeKey(adminToken, "read_only");
+    assert.equal((await h.admin.query("select created_by_type from public.public_api_keys where id = $1", [k.key.id])).rows[0].created_by_type, "api_key");
+    const member = await h.addMember(owner.workspaceId, "Mia", "member");
+    assert.equal((await h.as(member).post("/public/api-keys", { name: "m", role: "admin" })).statusCode, 403);
+    assert.equal((await h.as(member).get("/public/api-keys")).statusCode, 403);
+    const fnx = await h.apiKey(owner.workspaceId);
+    assert.equal((await h.as(fnx).post("/public/api-keys", { name: "m", role: "admin" })).statusCode, 403);
+  });
+});
+
+describe("authentication", () => {
+  test("no key, a malformed key, an unknown key and a dashboard key: 401 in the usual error format, with a request id", async () => {
+    const unknown = `fvx_${randomBytes(32).toString("base64url")}`;
+    for (const headers of [{}, { authorization: "Bearer fvx_short" }, { authorization: `Bearer ${unknown}` }, { authorization: `Bearer ${await h.apiKey(owner.workspaceId)}` }]) {
+      const r = await h.app.fastify.inject({ method: "GET", url: "/v1/public/databases", headers });
+      assert.equal(r.statusCode, 401, JSON.stringify(headers));
+      assert.equal(json(r).error.code, "unauthenticated");
+      assert.equal(typeof json(r).error.message, "string");
+      assert.ok(r.headers["x-request-id"]);
+    }
+    assert.ok(!h.logs.text().includes(unknown), "the key is never logged");
+  });
+
+  test("a public key does not open the dashboard routes", async () => {
+    for (const url of ["/databases", "/overview", "/api-keys", "/settings"]) assert.equal((await h.as(adminToken).get(url)).statusCode, 401, url);
+  });
+
+  test("a key cannot name another organization", async () => {
+    const other = await h.user("Other");
+    const r = await h.as(adminToken).get("/public/databases", { "x-fenvix-workspace": other.workspaceId });
+    assert.equal(r.statusCode, 404);
+  });
+
+  test("every answer carries X-Request-Id, and a valid one sent by the client is kept", async () => {
+    const r = await h.as(adminToken).get("/public/organization", { "x-request-id": "client-req-12345" });
+    assert.equal(r.headers["x-request-id"], "client-req-12345");
+    assert.ok((await h.as(adminToken).get(`/public/databases/${randomUUID()}`)).headers["x-request-id"]);
+    assert.ok((await h.app.fastify.inject({ method: "GET", url: "/v1/public/nothing-here" })).headers["x-request-id"]);
+  });
+
+  test("no key and no part of a key is ever logged", async () => {
+    const k = await makeKey(owner, "admin");
+    await h.as(k.token).get("/public/organization");
+    await h.as(adminToken).del(`/public/api-keys/${k.key.id}`);
+    await h.as(k.token).get("/public/organization");
+    const text = h.logs.text();
+    assert.ok(!text.includes(k.token));
+    assert.ok(!text.includes(k.token.slice(4)));
+    assert.ok(!text.includes(sha(k.token)));
+    assert.ok(text.includes("public API key refused"));
+  });
+});
+
+describe("read-only keys", () => {
+  test("can read, cannot change anything (403), and the refusal is audited", async () => {
+    const ro = (await makeKey(owner, "read_only")).token;
+    const dbId = json(await h.as(adminToken).post("/public/databases", { name: "ro-target", region: "eu-central-1" })).id;
+    const before = JSON.stringify((await h.admin.query("select id, name, engine_state from public.databases where workspace_id = $1 order by id", [owner.workspaceId])).rows);
+    for (const url of ["/public/databases", `/public/databases/${dbId}`, `/public/databases/${dbId}/users`, `/public/databases/${dbId}/ip-allowlist`, "/public/organization"]) {
+      assert.equal((await h.as(ro).get(url)).statusCode, 200, url);
+    }
+    const tries = [
+      () => h.as(ro).post("/public/databases", { name: "ro-new", region: "eu-central-1" }),
+      () => h.as(ro).del(`/public/databases/${dbId}`),
+      () => h.as(ro).post(`/public/databases/${dbId}/users`, { username: "sneaky" }),
+      () => h.as(ro).del(`/public/databases/${dbId}/users/app`),
+      () => h.as(ro).put(`/public/databases/${dbId}/ip-allowlist`, { entries: ["10.0.0.0/8"] }),
+      () => h.as(ro).post("/public/api-keys", { name: "escalate", role: "admin" }),
+      () => h.as(ro).del(`/public/api-keys/${randomUUID()}`),
+      () => h.as(ro).get("/public/api-keys"),
+    ];
+    for (const t of tries) {
+      const r = await t();
+      assert.equal(r.statusCode, 403, r.body);
+      assert.equal(json(r).error.code, "forbidden");
+    }
+    assert.equal(JSON.stringify((await h.admin.query("select id, name, engine_state from public.databases where workspace_id = $1 order by id", [owner.workspaceId])).rows), before);
+    assert.equal(json(await h.as(ro).get(`/public/databases/${dbId}/users`)).items.length, 1);
+    assert.deepEqual(json(await h.as(ro).get(`/public/databases/${dbId}/ip-allowlist`)).entries, []);
+    const denied = (await h.admin.query("select count(*)::int as n from public.audit_log where workspace_id = $1 and action = 'api_key.public.denied'", [owner.workspaceId])).rows[0].n;
+    assert.ok(denied >= tries.length);
+  });
+});
+
+describe("endpoints", () => {
+  test("databases: create (password once), get (status, no password), list with cursors, delete", async () => {
+    const created = await h.as(adminToken).post("/public/databases", { name: "pub-one", region: "eu-central-1", tags: ["env:prod"] });
+    assert.equal(created.statusCode, 201, created.body);
+    const db = json(created);
+    assert.equal(db.status, "ready");
+    assert.equal(db.initialUser.username, "app");
+    assert.equal(typeof db.initialUser.password, "string");
+    assert.ok(db.initialUser.connectionString.includes(db.initialUser.password));
+    assert.ok(created.headers["operation-id"]);
+
+    const got = json(await h.as(adminToken).get(`/public/databases/${db.id}`));
+    assert.equal(got.status, "ready");
+    assert.ok(got.connectionString.includes("<password>"));
+    assert.ok(!JSON.stringify(got).includes(db.initialUser.password));
+    assert.ok(["awake", "asleep"].includes(got.state));
+
+    for (const n of ["pub-two", "pub-three"]) assert.equal((await h.as(adminToken).post("/public/databases", { name: n, region: "eu-central-1" })).statusCode, 201);
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const r = await h.as(adminToken).get(`/public/databases?limit=2${cursor ? `&cursor=${cursor}` : ""}`);
+      assert.equal(r.statusCode, 200, r.body);
+      ids.push(...json(r).items.map((x: { id: string }) => x.id));
+      cursor = json(r).nextCursor;
+    } while (cursor);
+    const total = (await h.admin.query("select count(*)::int as n from public.databases where workspace_id = $1", [owner.workspaceId])).rows[0].n;
+    assert.equal(ids.length, total);
+    assert.equal(new Set(ids).size, ids.length);
+
+    assert.equal((await h.as(adminToken).get("/public/databases?cursor=bm9wZQ")).statusCode, 400);
+    assert.equal((await h.as(adminToken).get("/public/databases?limit=0")).statusCode, 400);
+    assert.equal((await h.as(adminToken).post("/public/databases", { name: "Bad Name!", region: "eu-central-1" })).statusCode, 400);
+
+    const del = await h.as(adminToken).del(`/public/databases/${db.id}`);
+    assert.equal(del.statusCode, 200, del.body);
+    assert.deepEqual(json(del), { id: db.id, deleted: true });
+    assert.equal((await h.as(adminToken).get(`/public/databases/${db.id}`)).statusCode, 404);
+    assert.equal((await h.as(adminToken).del(`/public/databases/${db.id}`)).statusCode, 404);
+    const op = json(await h.as(adminToken).get(`/public/operations/${del.headers["operation-id"]}`));
+    assert.equal(op.status, "succeeded");
+    assert.deepEqual(op.result, { id: db.id, deleted: true });
+  });
+
+  test("database users: create (password once), list with cursors, delete", async () => {
+    const db = json(await h.as(adminToken).post("/public/databases", { name: "pub-users", region: "eu-central-1" })).id;
+    const made = await h.as(adminToken).post(`/public/databases/${db}/users`, { username: "reporting", role: "read" });
+    assert.equal(made.statusCode, 201, made.body);
+    assert.equal(typeof json(made).password, "string");
+    await h.as(adminToken).post(`/public/databases/${db}/users`, { username: "worker" });
+    const p1 = json(await h.as(adminToken).get(`/public/databases/${db}/users?limit=2`));
+    assert.deepEqual(p1.items.map((u: { username: string }) => u.username), ["app", "reporting"]);
+    assert.ok(!JSON.stringify(p1).includes(json(made).password));
+    const p2 = json(await h.as(adminToken).get(`/public/databases/${db}/users?limit=2&cursor=${p1.nextCursor}`));
+    assert.deepEqual(p2.items.map((u: { username: string }) => u.username), ["worker"]);
+    assert.equal(p2.nextCursor, null);
+    const del = await h.as(adminToken).del(`/public/databases/${db}/users/worker`);
+    assert.deepEqual(json(del), { username: "worker", deleted: true });
+    assert.equal((await h.as(adminToken).del(`/public/databases/${db}/users/worker`)).statusCode, 404);
+  });
+
+  test("network allowlist: get and set", async () => {
+    const db = json(await h.as(adminToken).post("/public/databases", { name: "pub-net", region: "eu-central-1" })).id;
+    const set = await h.as(adminToken).put(`/public/databases/${db}/ip-allowlist`, { entries: ["203.0.113.7", "10.0.0.0/8"] });
+    assert.equal(set.statusCode, 200, set.body);
+    assert.deepEqual(json(await h.as(adminToken).get(`/public/databases/${db}/ip-allowlist`)).entries.sort(), ["10.0.0.0/8", "203.0.113.7/32"]);
+    const bad = await h.as(adminToken).put(`/public/databases/${db}/ip-allowlist`, { entries: ["not-an-ip"] });
+    assert.equal(bad.statusCode, 400);
+    assert.equal(json(bad).error.field, "entries[0]");
+  });
+
+  test("organization", async () => {
+    const o = json(await h.as(adminToken).get("/public/organization"));
+    assert.equal(o.id, owner.workspaceId);
+    assert.equal(o.apiKey.role, "admin");
+    assert.equal(typeof o.name, "string");
+  });
+});
+
+describe("idempotency", () => {
+  test("a create repeated with the same key: the same database, Idempotent-Replay, the password not shown again", async () => {
+    const hdr = { "idempotency-key": `idem-${randomUUID()}` };
+    const a = await h.as(adminToken).post("/public/databases", { name: "idem-db", region: "eu-central-1" }, hdr);
+    const b = await h.as(adminToken).post("/public/databases", { name: "idem-db", region: "eu-central-1" }, hdr);
+    assert.equal(a.statusCode, 201, a.body);
+    assert.equal(b.statusCode, 201, b.body);
+    assert.equal(json(a).id, json(b).id);
+    assert.equal(b.headers["idempotent-replay"], "true");
+    assert.equal(typeof json(a).initialUser.password, "string");
+    assert.equal(json(b).initialUser.password, null);
+    const other = await h.as(adminToken).post("/public/databases", { name: "idem-db-2", region: "eu-central-1" }, hdr);
+    assert.equal(other.statusCode, 409);
+    assert.equal((await h.admin.query("select count(*)::int as n from public.databases where workspace_id = $1 and name like 'idem-db%'", [owner.workspaceId])).rows[0].n, 1);
+  });
+
+  test("API key and database user creation never replay their secret: 409, nothing made twice", async () => {
+    const hdr = { "idempotency-key": `idem-${randomUUID()}` };
+    const first = await h.as(adminToken).post("/public/api-keys", { name: "once", role: "read_only" }, hdr);
+    const again = await h.as(adminToken).post("/public/api-keys", { name: "once", role: "read_only" }, hdr);
+    assert.equal(first.statusCode, 201);
+    assert.equal(again.statusCode, 409);
+    assert.ok(!again.body.includes(json(first).token));
+    assert.equal((await h.admin.query("select count(*)::int as n from public.public_api_keys where workspace_id = $1 and name = 'once'", [owner.workspaceId])).rows[0].n, 1);
+
+    const db = json(await h.as(adminToken).post("/public/databases", { name: "idem-users", region: "eu-central-1" })).id;
+    const u = { "idempotency-key": `idem-${randomUUID()}` };
+    assert.equal((await h.as(adminToken).post(`/public/databases/${db}/users`, { username: "batch" }, u)).statusCode, 201);
+    const u2 = await h.as(adminToken).post(`/public/databases/${db}/users`, { username: "batch" }, u);
+    assert.equal(u2.statusCode, 409);
+    assert.ok(!/"password"/.test(u2.body));
+  });
+
+  test("a refused request is replayed as refused; a malformed key is a 400", async () => {
+    const hdr = { "idempotency-key": `idem-${randomUUID()}` };
+    const a = await h.as(adminToken).del(`/public/databases/${randomUUID()}`, hdr);
+    const b = await h.as(adminToken).del(`/public/databases/${randomUUID()}`, hdr);
+    assert.equal(a.statusCode, 404);
+    assert.equal(b.statusCode, 409, "same key, different request");
+    assert.equal((await h.as(adminToken).post("/public/databases", {}, { "idempotency-key": "bad key with spaces" })).statusCode, 400);
+  });
+});
+
+describe("rate limits", () => {
+  test("per key: the key over its limit gets 429 with Retry-After, another key of the same organization does not", async () => {
+    const k1 = (await makeKey(owner, "read_only")).token;
+    const k2 = (await makeKey(owner, "read_only")).token;
+    for (let i = 0; i < PER_KEY; i++) assert.equal((await h.as(k1).get("/public/organization")).statusCode, 200, `request ${i}`);
+    const over = await h.as(k1).get("/public/organization");
+    assert.equal(over.statusCode, 429);
+    assert.equal(json(over).error.code, "rate_limited");
+    assert.ok(Number(over.headers["retry-after"]) >= 1);
+    assert.equal((await h.as(k2).get("/public/organization")).statusCode, 200);
+  });
+});

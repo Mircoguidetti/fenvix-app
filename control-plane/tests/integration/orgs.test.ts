@@ -318,7 +318,10 @@ describe("roles: a member reads, an admin manages members, an owner manages ever
     assert.notEqual(before, beforeWithInvite);
     // Changing routes a member may call: about their own account (create, join, leave), or signing in and out.
     const allowed = new Set(["POST /v1/organizations", "POST /v1/invitations/accept", "POST /v1/organization/leave"]);
-    const changing = h.app.routes.filter((r) => !r.startsWith("GET ") && !r.includes("/session") && !allowed.has(r));
+    // The public API's routes take keys only (a session gets 401; read-only keys are tested in public-api.test.ts),
+    // except /v1/public/api-keys, which a session may call and which stays in here.
+    const keyOnly = (r: string) => r.includes(" /v1/public/") && !r.includes(" /v1/public/api-keys");
+    const changing = h.app.routes.filter((r) => !r.startsWith("GET ") && !r.includes("/session") && !allowed.has(r) && !keyOnly(r));
     assert.ok(changing.length >= 24, `${changing.length} changing routes`);
     const fill = (url: string) => url
       .replace("/v1", "")
@@ -333,6 +336,7 @@ describe("roles: a member reads, an admin manages members, an owner manages ever
       "POST /v1/organization/invitations": { email: "by-member@example.invalid", role: "member" },
       "PUT /v1/settings": { workspaceName: "Member", idleMinutes: 1, emailNotices: false },
       "POST /v1/api-keys": { name: "member key" },
+      "POST /v1/public/api-keys": { name: "member key", role: "admin" },
     };
     const results: string[] = [];
     for (const r of changing) {
