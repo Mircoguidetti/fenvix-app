@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
+import { CircleCheck } from "lucide-react";
 import { Logo } from "../components/Logo";
 import { GitHubMark, GoogleMark } from "../components/marks";
 import { session, type AuthProvider } from "../session";
@@ -83,8 +84,11 @@ export function SignInPage() {
 
         {sentTo ? (
           <div className="callout callout-success" role="status">
-            <p>
-              <strong>Check your inbox.</strong> We sent a sign-in link to {sentTo}. It opens this dashboard and works once.
+            <p className="callout-row">
+              <CircleCheck size={16} aria-hidden="true" />
+              <span>
+                <strong>Check your inbox.</strong> We sent a sign-in link to {sentTo}. It opens this dashboard and works once.
+              </span>
             </p>
             <div className="row-actions">
               <button type="button" className="btn" onClick={() => (setSentTo(null), setEmail(""))}>

@@ -1,12 +1,13 @@
 import type { DataClient } from "./client";
 import type {
-  ApiKey, BillingOverview, BulkResult, CreatedApiKey, Database, DatabaseFilter, DatabaseQuery, ExportResult, GroupedDatabases, Invoice, OperationKind,
+  BillingOverview, BulkResult, Database, DatabaseFilter, DatabaseQuery, ExportResult, GroupedDatabases, Invoice, OperationKind,
   OperationOptions, OperationProgress, OperationStatus, Overview, Page, Plan, Settings, TagBreakdownRow, TagCount, UsageHistoryPoint, UsagePoint,
   UsageQuery, UsageReport, UsageTrend,
 } from "./types";
 import { ExplorerError } from "./explorer.ts";
 import type { HttpOptions, HttpResponse, Method } from "./http.ts";
 import { isUuid } from "./queries.ts";
+import { PAGE_LIMIT, mapCreatedKey, mapPublicKey, mapPublicKeyPage } from "./public-keys.ts";
 
 /**
  * The DataClient on the control plane (docs/control-plane-api.md, control-plane/src/routes/data.ts). Everything the
@@ -19,6 +20,9 @@ import { isUuid } from "./queries.ts";
  *
  * The initial database user's password is only in the FIRST answer to a create or fork (201). When that answer was a
  * 202 or a replay, the finished operation carries `initialUser.password: null` and the screen says to reset it.
+ *
+ * API keys are the public API's (fvx_, under /v1/public/api-keys, control-plane/docs/public-api.md). Those routes take
+ * the same session token and X-Fenvix-Workspace header as the rest: the control plane requires the header there.
  */
 export type Request = <T>(method: Method, path: string, opts?: HttpOptions) => Promise<HttpResponse<T>>;
 
@@ -78,14 +82,17 @@ export function createHttpDataClient(deps: HttpDataDeps): DataClient {
 
   const get = async <T>(path: string) => (await request<T>("GET", path)).data;
 
-  /** A change, with one Idempotency-Key for the action and up to two resends when the answer was lost. */
-  async function write<T>(method: Method, path: string, body?: unknown): Promise<HttpResponse<T>> {
+  /**
+   * A change, with one Idempotency-Key for the action and up to two resends when the answer was lost. `resends: 0` for
+   * answers that hold a secret: a resend can only get a 409, never the secret again.
+   */
+  async function write<T>(method: Method, path: string, body?: unknown, resends = 2): Promise<HttpResponse<T>> {
     const headers = { "Idempotency-Key": newKey() };
     for (let attempt = 0; ; attempt++) {
       try {
         return await request<T>(method, path, { body, headers });
       } catch (e) {
-        if (attempt >= 2 || !retriable(e)) throw e;
+        if (attempt >= resends || !retriable(e)) throw e;
         await sleep(Math.min(5, (e as ExplorerError).retryAfter ?? attempt + 1) * 1000);
       }
     }
@@ -214,10 +221,12 @@ export function createHttpDataClient(deps: HttpDataDeps): DataClient {
     // A download link, not a change: the control plane ignores Idempotency-Key here.
     downloadInvoice: async (id) => (await request<ExportResult>("POST", `/invoices/${enc(id)}/download`)).data,
 
-    listApiKeys: async () => (await get<{ items: ApiKey[] }>("/api-keys")).items,
-    // The control plane makes the secret and shows it in this answer only (a replay is a 409, never the secret again).
-    createApiKey: async (name) => (await write<CreatedApiKey>("POST", "/api-keys", { name })).data,
-    revokeApiKey: async (id) => (await write<ApiKey>("POST", `/api-keys/${enc(id)}/revoke`)).data,
+    listPublicApiKeys: async (cursor) => mapPublicKeyPage(await get<unknown>(`/public/api-keys${query([["limit", PAGE_LIMIT], ["cursor", cursor]])}`)),
+    // The control plane makes the key and shows it in this answer only (a replay is a 409, never the key again), so it
+    // is sent once: a lost answer is reported, not resent.
+    createPublicApiKey: async ({ name, role, expiresAt }) =>
+      mapCreatedKey((await write<unknown>("POST", "/public/api-keys", { name, role, ...(expiresAt ? { expiresAt } : {}) }, 0)).data),
+    revokePublicApiKey: async (id) => mapPublicKey((await write<unknown>("DELETE", `/public/api-keys/${enc(id)}`)).data),
 
     getSettings: () => get<Settings>("/settings"),
     saveSettings: async (next) => (await write<Settings>("PUT", "/settings", next)).data,

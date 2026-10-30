@@ -6,7 +6,7 @@ The dashboard ships with three implementations of `DataClient`, picked in `src/d
 
 ## Conventions
 
-- Base URL `https://api.fenvix.cloud/v1`. JSON in, JSON out, UTF-8. All JSON property names are camelCase, exactly as in the TypeScript types.
+- Base URL `https://api.fenvix.dev/v1`. JSON in, JSON out, UTF-8. All JSON property names are camelCase, exactly as in the TypeScript types.
 - Times are ISO 8601 strings in UTC (`2026-10-26T12:00:00Z`). Months are `YYYY-MM`.
 - Authentication: the dashboard sends the session cookie set by the sign-in endpoints (section 3), `SameSite=Lax`, `HttpOnly`, `Secure`. Scripts send `Authorization: Bearer <API key>`. Every endpoint except those in section 3 needs one of them. All data is scoped to the caller's workspace.
 - A tag is a string `key:value`. Keys and values match `^[a-z0-9][a-z0-9._-]{0,39}$`. A database has at most 20 tags and one value per key.
@@ -57,7 +57,7 @@ interface Database {
   createdAt: string;
   region: string;
   host: string;
-  /** mongodb://app_user:<password>@<name>.db.fenvix.cloud:27017/<db>?tls=true */
+  /** mongodb://app_user:<password>@<name>.db.fenvix.dev:27017/<db>?tls=true */
   connectionString: string;
   tags: string[];
   keepAwake: boolean;
@@ -95,8 +95,8 @@ Response `200`: `{ "items": Database[], "total", "page", "pageSize" }`.
     {
       "id": "db_0013", "name": "acme-labs-prod-01", "state": "asleep", "storageMb": 412,
       "requests24h": 18, "lastActiveAt": "2026-10-25T09:14:00Z", "createdAt": "2026-03-02T08:00:00Z",
-      "region": "eu-west", "host": "acme-labs-prod-01.db.fenvix.cloud",
-      "connectionString": "mongodb://app_user:<password>@acme-labs-prod-01.db.fenvix.cloud:27017/acme_labs_prod_01?tls=true",
+      "region": "eu-west", "host": "acme-labs-prod-01.db.fenvix.dev",
+      "connectionString": "mongodb://app_user:<password>@acme-labs-prod-01.db.fenvix.dev:27017/acme_labs_prod_01?tls=true",
       "tags": ["customer:acme-labs", "env:prod"], "keepAwake": false, "forkedFrom": null, "restoredTo": null
     }
   ],
@@ -397,19 +397,19 @@ Response `200`: `SessionUser`, or `401 unauthenticated` when signed out (the cli
 
 ### `signInWithProvider` — `POST /session/providers/{provider}`
 
-`provider` is `github` or `google`. Body: `{ "returnTo": "https://app.fenvix.cloud/overview" }`.
+`provider` is `github` or `google`. Body: `{ "returnTo": "https://app.fenvix.dev/overview" }`.
 
 Response `200`: `{ "redirectUrl": "https://github.com/login/oauth/authorize?..." }`. The client navigates the browser to `redirectUrl`. The provider sends the user back to the API callback (`GET /session/providers/{provider}/callback`, handled by the server only), which sets the session cookie and redirects to `returnTo`. On return the dashboard calls `getSession`. A cancelled or failed sign-in redirects to `returnTo` with `?error=sign_in_failed`.
 
 ### `requestEmailLink` — `POST /session/email-link`
 
-Body: `{ "email": "you@company.com" }`. Sends a one-time link that opens `https://app.fenvix.cloud/?code=...`. Response `202`: `{}`. The answer is the same whether or not the address has an account. Rate limit: 5 links per address per hour (`429`). `400` for a malformed address. The link works once and expires after 15 minutes.
+Body: `{ "email": "you@company.com" }`. Sends a one-time link that opens `https://app.fenvix.dev/?code=...`. Response `202`: `{}`. The answer is the same whether or not the address has an account. Rate limit: 5 links per address per hour (`429`). `400` for a malformed address. The link works once and expires after 15 minutes.
 
 ### `completeEmailLink` — `POST /session/email-link/complete`
 
 Body: `{ "token": "..." }`. Response `200`: `SessionUser`, and the session cookie is set. `400 validation_failed` with the message "This sign-in link has expired. Request a new one." for a used, expired or unknown token.
 
-The emailed link points at `https://app.fenvix.cloud/?token=<token>`. The dashboard reads the token out of the URL, calls this endpoint, drops the token from the address bar and shows the workspace.
+The emailed link points at `https://app.fenvix.dev/?token=<token>`. The dashboard reads the token out of the URL, calls this endpoint, drops the token from the address bar and shows the workspace.
 
 ### `signOut` — `DELETE /session`
 

@@ -6,7 +6,7 @@ routes with a `curl` example for each one. `tests/integration/public-openapi.tes
 the document or from this guide, or if either describes a route that does not exist.
 
 ```
-Base URL   https://api.fenvix.cloud/v1/public        (API_PUBLIC_URL + "/public")
+Base URL   https://api.fenvix.dev/v1/public        (API_PUBLIC_URL + "/public")
 Auth       Authorization: Bearer fvx_...
 Format     JSON in, JSON out
 ```
@@ -14,7 +14,7 @@ Format     JSON in, JSON out
 The examples use two shell variables:
 
 ```bash
-export FENVIX_API=https://api.fenvix.cloud/v1/public
+export FENVIX_API=https://api.fenvix.dev/v1/public
 export FENVIX_KEY=fvx_...        # never commit a key; read it from your secret store
 ```
 

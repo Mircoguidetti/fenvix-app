@@ -61,10 +61,12 @@ white, so on the white content it reads as a sheen rather than a stripe.
    so none is green or red.
 4. Silver only on: the border of the highlighted card (the current plan); the light fill under chart lines (area charts and
    sparklines). Never on text, never behind text, no chrome or bevel. The logo does not use silver and is unchanged.
-5. Primary buttons stay black, except the confirm button of a destructive dialog: that one is filled red
+5. Notices (confirmations, warnings, the waking note, one-time secrets, read-only notes) have no border and no
+   coloured edge: a light grey fill sets them apart, and only their icon is coloured.
+6. Primary buttons stay black, except the confirm button of a destructive dialog: that one is filled red
    (`--danger`, white text, 5.30:1). Dialogs have no border and no coloured line. The button that opens a destructive dialog
    is red (red text and border, filled red on hover), except "Restore to a point in time", which stays neutral.
-6. No new dependency: the icons come from `lucide-react`, which was already used.
+7. No new dependency: the icons come from `lucide-react`, which was already used.
 
 ## Where it is applied
 
@@ -74,20 +76,20 @@ white, so on the white content it reads as a sheen rather than a stripe.
 | API key status | active | green dot and border | "Active" | `.state-ok` (`KeyStatus`) |
 | Invoice status (Billing) | paid | green dot and border | "Paid" | `.state-ok` (`InvoiceStatus`) |
 | Invoice status (Billing) | open, waiting for payment | amber ring and border | "Open" | `.state-warn` (`InvoiceStatus`) |
-| New API key created | confirmation | green border | "Key … created." | `.callout-success` |
-| Sign-in link sent | confirmation | green border | "Check your inbox." | `.callout-success` |
+| New API key created | confirmation | green icon | tick in a circle, "Key … created." | `.callout-success` |
+| Sign-in link sent | confirmation | green icon | tick in a circle, "Check your inbox." | `.callout-success` |
 | Copy buttons, after copying | done | green tick | "Copied" | `.copy-done` |
 | Toasts after an action that worked | success | green icon (dark-surface shade) | tick in a circle, the message | `.toast-success` |
 | Toasts after an action that failed | error | red icon and a red edge (dark-surface shade) | alert circle, the message | `.toast-error` |
-| Data tab: waking a sleeping database | in progress | amber border and icon | "Waking the database…", spinning icon | `.waking` |
-| Network: Data Explorer not trusted by the server | warning | amber border and icon | warning triangle, the explanation | `.once-warning` |
-| Network: the engine checks a list different from the saved one | warning | amber border and icon | warning triangle, "different list" | `.callout-warning` |
+| Data tab: waking a sleeping database | in progress | amber icon | "Waking the database…", spinning icon | `.waking` |
+| Network: Data Explorer not trusted by the server | warning | amber icon | warning triangle, the explanation | `.once-warning` |
+| Network: the engine checks a list different from the saved one | warning | amber icon | warning triangle, "different list" | `.callout-warning` |
 | Network: the engine's list could not be checked | warning | amber icon | warning triangle, the explanation | `.message-warning` |
 | Network: the server does not check sign-ins yet | warning | amber icon | warning triangle, the explanation | `.message-warning` |
 | Network: unsaved changes to the list | needs attention | amber border | "Unsaved changes" | `.tag-warning` |
-| Network: save dialog, "FENVIX cannot see your address" | warning | amber border and icon | warning triangle | `.once-warning` |
-| Database user: "Copy the password now" | warning | amber border and icon | warning triangle | `.once-warning` |
-| Reset password dialog: "Applications using the old password will stop working." | warning | amber border and icon | warning triangle | `.once-warning` (the dialog is not destructive; its confirm stays black) |
+| Network: save dialog, "FENVIX cannot see your address" | warning | amber icon | warning triangle | `.once-warning` |
+| Database user: "Copy the password now" | warning | amber icon | warning triangle | `.once-warning` |
+| Reset password dialog: "Applications using the old password will stop working." | warning | amber icon | warning triangle | `.once-warning` (the dialog is not destructive; its confirm stays black) |
 | Network: blocked addresses | blocked | red text and icon | "Blocked until …", blocked sign | `.blocked-until` |
 | Form and dialog errors everywhere | error | red text | "Error: " written before the message | `.error` |
 | A field with an error | error | red border | the error below it | `input[aria-invalid="true"]` |
