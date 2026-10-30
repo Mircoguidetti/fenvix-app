@@ -8,14 +8,13 @@
      in the dashboard is this token: text, buttons, the navigation, the sign-in screens. No other near-black. */
   --black: #000000;
   --bg: #ffffff;
-  /* Warm neutrals: a paper-white page under white cards. */
-  --page: #f5f4f0;
-  --surface: #f3f2ee;
-  --surface-2: #f0efeb;
-  --border: #e6e4de;
-  --border-strong: #c6c3bb;
+  --page: #fafafa;
+  --surface: #f6f6f7;
+  --surface-2: #efeff1;
+  --border: #e7e7ea;
+  --border-strong: #c3c3c9;
   --text: var(--black);
-  --muted: #66645e;
+  --muted: #65656b;
   --on-text: #ffffff;
   --nav-bg: var(--black);
   --nav-text: #f4f4f6;
@@ -23,10 +22,10 @@
   --nav-border: #232327;
   --nav-hover: #17171a;
   --nav-active: #202024;
-  --grid: #ebe9e3;
-  --ink-2: #8b8982;
-  --ink-3: #c9c6bf;
-  /* Charts: a soft slate instead of black, like ink on paper. */
+  --grid: #ececef;
+  --ink-2: #8a8a92;
+  --ink-3: #c6c6cc;
+  /* Charts: a soft slate instead of black. */
   --chart: #4a4e55;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.12);
@@ -155,7 +154,7 @@ main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 20px 16px 56px; 
 .dot-outline { background: transparent; }
 
 /* Cards */
-.card { background: var(--bg); box-shadow: none; border: 1px solid transparent; border-radius: var(--radius); padding: 22px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.card { background: var(--bg); box-shadow: var(--shadow); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; }
 .card-head-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .card-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -235,7 +234,7 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; accent-
 .seg button:focus-visible { outline-offset: -3px; }
 
 /* Tables */
-.table-card { background: var(--bg); border: 1px solid transparent; border-radius: var(--radius); overflow: hidden; }
+.table-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
 .table-card.flush { background: transparent; border-radius: 0; border: 0; }
 table { width: 100%; border-collapse: collapse; }
 table.data th, table.data td { padding: 0 16px; height: 48px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--border); }
@@ -316,7 +315,7 @@ table.data tr[data-selected] { background: var(--surface-2); }
 
 /* Groups */
 .groups { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.group { border: 1px solid transparent; border-radius: var(--radius); background: var(--bg); overflow: hidden; }
+.group { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); overflow: hidden; box-shadow: var(--shadow); }
 .group-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; font-size: 14px; font-weight: 400; letter-spacing: 0; }
 .group-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 16px; background: none; border: 0; cursor: pointer; font-weight: 600; text-align: left; min-width: 0; flex: 1 1 200px; }
 .group-toggle:hover { background: var(--surface-2); }
@@ -389,7 +388,7 @@ a.btn { text-decoration: none; }
 .kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 @media (min-width: 720px) { .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (min-width: 1180px) { .kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
-.kpi { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 18px 18px 14px; background: var(--bg); border: 1px solid transparent; border-radius: var(--radius); }
+.kpi { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 18px 18px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
 .kpi-label { font-size: 13.5px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kpi-value { font-family: var(--serif); font-size: clamp(28px, 2.2vw, 34px); white-space: nowrap; font-weight: 400; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: lining-nums; }
 .kpi-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -419,7 +418,7 @@ a.btn { text-decoration: none; }
 .hbars li { display: grid; grid-template-columns: var(--label-w, 150px) minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .hbar-label { min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hbar-label .mono { font-size: 12.5px; }
-.hbar-track { height: 12px; border-radius: 3px; background: transparent; overflow: hidden; }
+.hbar-track { height: 12px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .hbar-fill { display: block; height: 100%; border-radius: 3px; background: var(--chart); }
 .hbar-value { font-size: 12.5px; text-align: right; min-width: 56px; }
 @media (max-width: 560px) {
@@ -449,7 +448,7 @@ a.btn { text-decoration: none; }
 
 /* ---------------------------------------------------------------- state badge */
 .state { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; height: 24px; padding: 0 9px 0 8px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 12.5px; font-weight: 500; }
-.counts-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding: 12px 16px; border: 1px solid transparent; border-radius: var(--radius); background: var(--bg); font-size: 13.5px; }
+.counts-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); box-shadow: var(--shadow); font-size: 13.5px; }
 .counts-bar b { font-variant-numeric: tabular-nums; }
 .counts-sep { color: var(--border-strong); }
 
