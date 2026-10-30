@@ -19,8 +19,8 @@ const gb = (n: number) => `${new Intl.NumberFormat("en-US", { maximumFractionDig
 function Kpi({ label, value, sub, spark }: { label: string; value: string; sub: string; spark: number[] }) {
   return (
     <div className="kpi">
+      <strong className="kpi-value">{value}</strong>
       <span className="kpi-label">{label}</span>
-      <strong className="kpi-value mono">{value}</strong>
       <span className="kpi-sub muted small">{sub}</span>
       <div className="kpi-spark">
         <Sparkline values={spark} />

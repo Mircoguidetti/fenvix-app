@@ -19,6 +19,7 @@ const SUCCESS_DARK = "rgb(61, 220, 132)";
 const DANGER_DARK = "rgb(255, 106, 92)";
 const BLACK = "rgb(0, 0, 0)"; // --black, the landing page's black
 const WHITE = "rgb(255, 255, 255)";
+const CHART = "rgb(74, 78, 85)"; // --chart, the slate of bars and lines
 const STATUS = [SUCCESS, DANGER, WARNING, SUCCESS_DARK, DANGER_DARK, "rgb(255, 176, 32)"];
 
 /** Computed colours of the first element matching `selector` (optionally of a pseudo-element). */
@@ -164,7 +165,7 @@ const TESTS = {
     const want = ["rgb(124, 130, 139) 0.32", "rgb(196, 200, 206) 0.22", "rgb(244, 245, 247) 0"];
     assert(stops.join("|") === want.join("|"), `the stops are not the light silver fill: ${stops.join(", ")}`);
     const line = await paint(page, "#usage .chart-line");
-    assert(!STATUS.includes(line.color) && (await page.locator("#usage .chart-bar").first().evaluate((e) => getComputedStyle(e).fill)) === BLACK, "the charts are not black and grey");
+    assert(!STATUS.includes(line.color) && (await page.locator("#usage .chart-bar").first().evaluate((e) => getComputedStyle(e).fill)) === CHART, "the charts are not slate and grey");
   },
 
   async "network: blocked addresses are red with an icon, a bad entry is a red error, unsaved changes are amber, saving says so in green"(page) {
@@ -307,7 +308,7 @@ const TESTS = {
     await fits(page);
   },
 
-  async "overview and navigation: the selected menu item has no line under it, charts are black, grey and silver"(page, viewport) {
+  async "overview and navigation: the selected menu item has no line under it, charts are slate, grey and silver"(page, viewport) {
     await signIn(page, "overview");
     if (isMobile(viewport)) await page.getByRole("button", { name: "Open navigation" }).click();
     const scope = isMobile(viewport) ? ".drawer" : ".sidebar";
