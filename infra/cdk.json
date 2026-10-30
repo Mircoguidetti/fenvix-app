@@ -25,7 +25,7 @@
     "githubOwnerId": "17613795",
     "engineRepoId": "1433234171",
     "controlPlaneRepoId": "1434576189",
-    "githubOidcProviderArn": "",
+    "githubOidcProviderArn": "arn:aws:iam::865859654353:oidc-provider/token.actions.githubusercontent.com",
     "artifactsBucket": "",
     "proxyImage": "public.ecr.aws/docker/library/caddy:2.8.4",
     "baseDomain": "",
