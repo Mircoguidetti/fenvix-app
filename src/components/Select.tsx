@@ -186,7 +186,8 @@ export function Select({ id, value, options, onChange, disabled, size, className
               onClick={() => pick(i)}
             >
               <span className="select-value">{o.label}</span>
-              {i === selected && <Check size={15} aria-hidden="true" />}
+              {o.hint && <span className="select-hint mono">{o.hint}</span>}
+              {i === selected && !o.hint && <Check size={15} aria-hidden="true" />}
             </li>
           ))}
         </ul>

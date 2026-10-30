@@ -7,6 +7,8 @@ export interface ListOption {
   label: string;
   /** Shown, but cannot be picked. */
   disabled?: boolean;
+  /** A short example shown at the right of the option (for example the form of a value). */
+  hint?: string;
 }
 
 /** Where the highlight moves for a key, or null when the key does not move it. */
