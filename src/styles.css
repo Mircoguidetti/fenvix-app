@@ -93,6 +93,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* Logo: FENVIX in capitals with spaced letters, only here. The mark is drawn in currentColor. */
 .logo { display: inline-flex; align-items: center; gap: 10px; }
 .logo-word { font-size: 17px; font-weight: 600; letter-spacing: 0.16em; }
+/* The mark and the word are white on the dark surfaces and the dark colour on light ones. No other rule colours them:
+   #9db4e0 is only for the icon of the active menu item. */
+.logo { color: var(--text); }
+.sidebar .logo, .drawer .logo, .topbar .logo, .signin-page .logo { color: #ffffff; }
+.logo svg { color: inherit; }
 
 /* Shell: a fixed dark navigation column beside a content column that scrolls on its own. Below 900px the column is a
    top bar and a drawer. With the shell on screen the document itself never scrolls; the sign-in page still does. */
