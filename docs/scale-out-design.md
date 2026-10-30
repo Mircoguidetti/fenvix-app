@@ -195,7 +195,7 @@ Sequenza, guidata dal control plane, con il database D che va dal nodo S al nodo
 - **S muore durante lo spostamento:** il lease scade dopo il suo ttl (30 s), T prende il database con la ripresa del WAL. Nessuna perdita delle scritture confermate (provato con SIGKILL).
 - **Il flush di S non finisce** (L0 pieno): chiusura senza marcatore; T riprende il WAL. Già gestito nel motore.
 - **Il control plane muore a metà:** lo stato `moving` resta. Un controllo periodico lo riprende guardando il lease su S3 (chi lo tiene, se qualcuno).
-- **Prima apertura su T molto lenta:** il client aspetta. Il limite di risvegli in contemporanea del motore (`--max-concurrent-wakes`, 32 nel branch `round3`) evita che uno spostamento di massa intasi il nodo.
+- **Prima apertura su T molto lenta:** il client aspetta. Il limite di risvegli in contemporanea del motore (`--max-concurrent-wakes`, 128 nel branch `round3`) evita che uno spostamento di massa intasi il nodo.
 
 Lavoro nel motore: un comando di amministrazione "rilascia D" con le fasi 3, 4 e 6, e il "non sono io" sulla porta interna. Ordine di grandezza: 1-2 settimane con i test **(stima)**.
 
@@ -222,7 +222,7 @@ Gestione dei crediti, se si resta su t3 nella fase (a):
 
 | segnale | da dove | soglia per aggiungere un nodo | perché |
 |---|---|---|---|
-| ritardo dello scheduler (`schedulingLagMs`, `GET /v1/metrics/databases`) | motore, nuovo | media 5 min > 5 ms, oppure > 10 ms per 1 min | misura direttamente la saturazione della CPU dei thread del motore; vedi sezione 6 e i numeri in `results-round3.md` |
+| ritardo dello scheduler (`schedulingLagMs`, `GET /v1/metrics/databases`) | motore, nuovo | media 5 min > 2 ms, oppure > 10 ms per 1 min | misura direttamente la saturazione della CPU dei thread del motore; vedi sezione 6 e i numeri in `results-round3.md` |
 | CPU del nodo | CloudWatch | > 65% per 10 min | semplice, ma con richieste che aspettano S3 la CPU sale tardi |
 | p99 delle richieste | motore | > 2x il p99 normale del nodo per 5 min | è quello che vede il cliente, ma arriva tardi e dipende anche da S3 |
 | attese nella coda equa (`queuedCommands`, `saturatedMs`) | motore, nuovo | > 0 in modo continuativo | se c'è coda il nodo è già saturo: è il segnale di allarme, non di pianificazione |
@@ -261,11 +261,13 @@ Le richieste S3 non dipendono dal numero di nodi: dipendono dai database e dal l
   - Il costo per richiesta è piccolo (`results-density.md`: 1,3-1,6 ms di CPU per richiesta col 10% di scritture).
   - 100.000 richieste in 10 s sono 10.000/s: circa 15 core **(stima)**, cioè 8 nodi da 2 vCPU già accesi.
   - Con una pianificazione a orario si fa. Con un picco non previsto, i primi secondi si accodano in modo equo (nessun rifiuto); il resto lo assorbono i nodi della warm pool entro 1-2 minuti.
-- **Molti database che si svegliano insieme** (dopo un riavvio, o a mezzanotte): il limite di risvegli in parallelo (32) li mette in fila. La coda equa dà la precedenza ai risvegli.
+- **Molti database che si svegliano insieme** (dopo un riavvio, o a mezzanotte): il limite di risvegli in parallelo (128) li mette in fila. Misurato (`results-round3.md`, 500 database su 2 CPU, MinIO): la prima richiesta arriva con p50 6,1 s e p99 8,6 s, quindi un riavvio di un nodo pieno non è invisibile. La coda equa dà la precedenza ai risvegli.
 - **Un solo database molto caldo:** vive su un nodo solo, quindi il tetto è quello di un nodo. Misure del branch `round3` (`results-round3.md`, "tetto di un solo database"):
-  - letture: limitate dalla CPU del nodo;
-  - scritture durevoli: limitate dal flush su S3 e dal lock di scrittura del database. Le scritture concorrenti si raggruppano in un solo PUT, quindi il ritmo cresce con le connessioni parallele.
-  - Oltre quel tetto servono due cose. Prima, un nodo più grande per *quel* database: è "verticale", ma solo per i clienti Dedicated che lo comprano. Poi lo sharding: un database diviso per intervalli di chiave su più nodi, con un router. È un lavoro grosso, di mesi, e cambia il motore (manifest per intervallo, transazioni tra shard). **Stima onesta:** non va fatto prima di avere un cliente che lo richiede con numeri veri.
+  - letture: ~12.000/s con 2 CPU e ~12.000/s con 4 CPU (**misurato, MinIO**, 1 client con fino a 256 connessioni). Con 4 CPU non salgono: il limite è il client unico o il percorso per connessione del motore, non separato;
+  - scritture: ~2.500-3.400/s in tutte le modalità (immediata, adattiva, rilassata, log locale), con 2 o 4 CPU (**misurato, MinIO**). Il motore usa ~1,3-1,4 core anche con 4 disponibili, e la modalità rilassata, quasi senza richieste S3, ha lo stesso tetto: il limite è il percorso di scrittura serializzato del singolo database, non S3 e non le CPU;
+  - quindi un nodo più grande **non** alza il tetto di scrittura di un database: lo alza solo il lavoro sul motore (scrittura in parallelo) o lo sharding;
+  - in modalità immediata le scritture concorrenti si raggruppano: da 1,0 a 0,06 richieste S3 per scrittura con 64 connessioni.
+  - Oltre quel tetto servono due cose. Prima, un nodo dedicato per *quel* database, così non divide il nodo con altri (un nodo più grande aiuta le letture e i vicini, non il tetto di scrittura misurato). Poi lo sharding: un database diviso per intervalli di chiave su più nodi, con un router. È un lavoro grosso, di mesi, e cambia il motore (manifest per intervallo, transazioni tra shard). **Stima onesta:** non va fatto prima di avere un cliente che lo richiede con numeri veri.
 
 ### Letture distribuite con nodi di sola lettura
 
@@ -273,7 +275,7 @@ Cosa permette il motore attuale (dal codice, `results-round3.md`):
 - **Il lettore slatedb esiste ed è già usato.** Un database si apre come `DbReader` in sola lettura (`FollowLatest`) e passa a scrittore alla prima scrittura.
 - **Mancano tre cose.**
   - Oggi il motore chiede il lease anche per le letture, quindi un secondo processo viene rifiutato con l'errore 134.
-  - Un lettore vede solo i dati già nelle SST o nel WAL che rilegge all'apertura. Senza un modo di seguire il WAL dello scrittore resta indietro fino al prossimo flush della memtable, che può arrivare dopo minuti o ore.
+  - Il lettore di slatedb 0.17 ricarica il manifest a ogni intervallo di poll e riapplica i WAL nuovi, quindi può seguire lo scrittore; ma oggi il poll del lettore è di 1 ora. Va portato a pochi secondi, e ogni poll costa 1 LIST + 1 GET più i WAL nuovi letti (costo **non misurato**). Il poll deve restare sotto i 120 s dopo cui la pulizia cancella le SST non più nel manifest.
   - Mancano un'opzione "sola lettura senza lease" e l'instradamento delle letture `secondaryPreferred` verso quei nodi.
 - **Quindi:** letture distribuite con dati vecchi di qualche secondo sono fattibili con un lavoro medio. Serve un lettore senza lease che ricarichi il manifest e segua il WAL ogni N secondi; con i replica set, i driver mandano già le letture `secondary` ai membri annunciati come secondari.
 - Letture fresche quanto quelle del nodo proprietario: no, non senza un canale di replica dallo scrittore.
@@ -283,7 +285,7 @@ Cosa permette il motore attuale (dal codice, `results-round3.md`):
 1. **Nessuna quota che rifiuti o rallenti il traffico normale.**
 2. **Coda equa, solo a nodo saturo.**
    - Il motore misura ogni 10 ms il ritardo con cui esegue un timer (ritardo dello scheduler). Sotto la soglia (10 ms) ogni comando parte subito.
-   - Sopra la soglia, un comando nuovo aspetta nella coda del suo database e parte quando un altro finisce, a turno tra i database, con i risvegli per primi.
+   - Sopra la soglia girano al massimo 4 comandi per CPU; un comando nuovo aspetta nella coda del suo database e parte quando un altro finisce, a turno tra i database, con i risvegli per primi. Una prima versione senza questo tetto peggiorava il database leggero (p99 410 ms) e per questo è stata cambiata.
    - Un database con 64 connessioni ha gli stessi turni di uno con 1.
 3. **Tetti di sicurezza altissimi** per database: 10.000 comandi in corso e 100.000 al secondo, configurabili.
    - Sono molto sopra quello che un database può ricevere davvero (vedi il tetto misurato), quindi scattano solo con un ciclo infinito o un abuso.
@@ -298,7 +300,19 @@ Cosa permette il motore attuale (dal codice, `results-round3.md`):
    - A livello del server: ritardo dello scheduler e tempo passato in saturazione.
 5. **Con queste metriche il control plane sposta i database pesanti** su un nodo con margine, oppure ne aggiunge uno. Il pesante non viene rallentato: viene spostato.
 
-Risultato del test "50 database pesanti + 1 leggero": **[da completare con i numeri di `results-round3.md`, sezione "Vicino rumoroso"]**.
+Risultato del test "50 database pesanti + 1 leggero" (**misurato, MinIO**, motore su 1 CPU, ogni pesante con 8 connessioni senza pause, il leggero a 2 req/s; `results-round3.md`, sezione "Vicino rumoroso"):
+
+| database pesanti | throughput totale dei pesanti | CPU del motore | ritardo dello scheduler medio | p99 del leggero, coda spenta | p99 del leggero, coda accesa |
+|---|---|---|---|---|---|
+| 5 | ~1.800-1.870 req/s | 80% | 0,7-1,2 ms | 31 ms | 24 ms |
+| 10 | ~1.810-1.990 req/s | 82-86% | 2,0-2,1 ms | 50 ms | 75 ms |
+| 25 | ~1.620-1.790 req/s | 89-90% | 2,7-3,7 ms | 125 ms | 159 ms |
+| 50 | ~1.500-1.600 req/s | 91-92% | 6,8-8,0 ms | 216 ms | 157 ms |
+
+- **Il nodo satura già con 10 database pesanti** (su 1 CPU): da lì il throughput non sale più, crescono solo le latenze.
+- **La coda equa aiuta poco**: con 50 pesanti il p99 del leggero passa da 216 a 157 ms, con 10 e 25 pesanti peggiora un po'. Non sostituisce il margine: un nodo saturo fa aspettare tutti.
+- **Segnale migliore per scalare:** il ritardo dello scheduler. Cresce in modo regolare con il carico (0,7 → 2 → 3,7 → 8 ms) mentre la CPU resta ferma a 80-92% e non dice quanto si è oltre. La soglia giusta da queste misure è **2 ms di media**, raggiunta quando la CPU era all'82-86%; insieme a CPU > 60-70%.
+- **Non misurato:** lo stesso test con più CPU, con sole letture, e su S3 vero.
 
 ## 7. Piano Dedicated e rapporto con il Managed
 
