@@ -39,6 +39,16 @@ export function publicRoutes(app: FastifyInstance, d: Deps): void {
 
   const { read, write } = publicHelpers(app, d, present);
 
+  // Refusals held back by the audit throttle are written as a summary row once a key goes quiet (services/apikeys.ts).
+  const flush = setInterval(() => {
+    keys.auditThrottle(s).flushDue().catch((e) => s.log.error({ err: e instanceof Error ? e.message : String(e) }, "audit summary flush failed"));
+  }, 15_000);
+  flush.unref();
+  app.addHook("onClose", async () => {
+    clearInterval(flush);
+    await keys.auditThrottle(s).flushDue(true).catch(() => 0);
+  });
+
   /** A database id from a path: anything that is not one is a database that does not exist. */
   const dbId = (c: PublicCtx) => {
     if (!isUuid(c.params.id)) throw notFound("That database does not exist.");

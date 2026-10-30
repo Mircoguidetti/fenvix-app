@@ -115,8 +115,19 @@ export async function createKey(s: Services, caller: Caller, body: unknown) {
   const k = parseNewKey(body);
   const token = newToken();
   const key = await s.db.tx(caller.workspaceId, async (c) => {
-    if (caller.actor.type === "api_key") {
-      const creator = (await c.query("select expires_at from public.public_api_keys where workspace_id = $1 and id = $2 and revoked_at is null", [caller.workspaceId, caller.actor.id])).rows[0];
+    // The creator is checked again here, and its row is locked (FOR SHARE) until this key is committed: a demotion,
+    // removal or revoke of the creator either finishes first (then this check fails) or waits for this key and then
+    // revokes it (migration 0010's triggers). The insert trigger of 0010 makes the same check under the same lock.
+    if (caller.actor.type === "user") {
+      const m = await c.query(
+        "select 1 from public.workspace_members where workspace_id = $1 and user_id = $2 and role in ('owner', 'admin') for share",
+        [caller.workspaceId, caller.actor.id]);
+      if (!m.rowCount) throw forbidden("Only an owner or admin of this organization can create API keys.");
+    } else {
+      const creator = (await c.query(
+        `select expires_at from public.public_api_keys
+          where workspace_id = $1 and id = $2 and revoked_at is null and (expires_at is null or expires_at > now()) for share`,
+        [caller.workspaceId, caller.actor.id])).rows[0];
       checkCreator(k, creator);
     }
     // One create at a time per organization, so two at once cannot both take the last place.
@@ -136,6 +147,7 @@ export async function createKey(s: Services, caller: Caller, body: unknown) {
     });
     return viewKey(row);
   });
+  knownKeys(s).add(hashToken(token));
   return { key, token };
 }
 
@@ -170,21 +182,40 @@ export async function revokeKey(s: Services, caller: Caller, id: unknown) {
  * the key is revoked at once rather than left active. Recorded with reason "not_delivered".
  */
 export async function revokeUndelivered(s: Services, caller: Caller, id: string): Promise<void> {
-  await s.db.tx(caller.workspaceId, async (c) => {
-    const row = (await c.query("update public.public_api_keys set revoked_at = coalesce(revoked_at, now()) where workspace_id = $1 and id = $2 returning id", [caller.workspaceId, id])).rows[0];
+  const attempt = () => s.db.tx(caller.workspaceId, async (c) => {
+    // Only a key still active is revoked and recorded; one already revoked (by a trigger, by a person) is left as it is.
+    const row = (await c.query("update public.public_api_keys set revoked_at = now() where workspace_id = $1 and id = $2 and revoked_at is null returning id", [caller.workspaceId, id])).rows[0];
     if (row) await writeAudit(c, auditWho(caller), { action: "api_key.public.revoke", targetType: "public_api_key", targetId: id, metadata: { reason: "not_delivered" } });
   });
+  // The failure that got us here may be a passing one (a dropped connection, a failover): one more try.
+  try { await attempt(); } catch { await new Promise((r) => setTimeout(r, 100)); await attempt(); }
 }
 
 // ---------------------------------------------------------------- audit rows for refusals, at most one a minute
 
+type Summary = (suppressed: number) => Promise<void>;
+interface ThrottleEntry {
+  /** End of the window opened by the last row written; 0 when no row has been written yet. */
+  until: number;
+  /** Refusals held back and not yet in any row. */
+  suppressed: number;
+  /** A row (or a summary) for this subject is being written. */
+  pending: boolean;
+  /** Held back refusals that the pending write carries; given back if it fails. */
+  carried: number;
+  /** Writes a summary row for a subject that went quiet with refusals held back. */
+  summary: Summary | null;
+}
+
 /**
- * Lets one audit row through per subject (a key, or an address) and window; counts the ones it holds back, and hands
- * that count to the next row it lets through (metadata.suppressed). In memory, per instance: with N instances, at most
- * N rows a minute per subject.
+ * Lets one audit row through per subject (a key) and window, and counts the ones it holds back. The count is never
+ * lost: it goes into the next row written for the subject (metadata.suppressed), or, when the subject goes quiet, into a
+ * summary row written by flushDue() once the window has ended. The window starts only when a write has succeeded; a
+ * failed write gives its count back and the next refusal tries again. In memory, per instance: with N instances, at
+ * most N rows a minute per subject.
  */
 export class AuditThrottle {
-  private readonly seen = new Map<string, { until: number; suppressed: number }>();
+  private readonly seen = new Map<string, ThrottleEntry>();
   private readonly windowMs: number;
   private readonly now: () => number;
 
@@ -193,17 +224,60 @@ export class AuditThrottle {
     this.now = now;
   }
 
-  /** Whether to write a row for `subject` now, and how many were held back since the last one written. */
-  take(subject: string): { write: true; suppressed: number } | { write: false } {
+  /**
+   * Whether to write a row for `subject` now, and how many were held back since the last one. After a `write: true`,
+   * call done() with the outcome of the write. `summary` writes the summary row if the subject goes quiet.
+   */
+  begin(subject: string, summary: Summary): { write: true; suppressed: number } | { write: false } {
     const t = this.now();
-    if (this.seen.size > 50_000) for (const [k, v] of this.seen) if (v.until <= t) this.seen.delete(k);
-    const e = this.seen.get(subject);
-    if (e && e.until > t) {
+    const e = this.seen.get(subject) ?? { until: 0, suppressed: 0, pending: false, carried: 0, summary: null };
+    this.seen.set(subject, e);
+    e.summary = summary;
+    if (e.pending || e.until > t) {
       e.suppressed++;
       return { write: false };
     }
-    this.seen.set(subject, { until: t + this.windowMs, suppressed: 0 });
-    return { write: true, suppressed: e?.suppressed ?? 0 };
+    e.pending = true;
+    e.carried = e.suppressed;
+    e.suppressed = 0;
+    return { write: true, suppressed: e.carried };
+  }
+
+  /** The write started by begin() (or by flushDue()) succeeded or failed. Only a success opens a window. */
+  done(subject: string, ok: boolean): void {
+    const e = this.seen.get(subject);
+    if (!e) return;
+    e.pending = false;
+    if (ok) e.until = this.now() + this.windowMs;
+    else e.suppressed += e.carried;
+    e.carried = 0;
+  }
+
+  /**
+   * Writes a summary row for every subject whose window has ended with refusals still held back, and forgets subjects
+   * that have nothing left to say. Returns how many summaries were written. Called on a timer and, with `force`, on
+   * shutdown (routes/public/index.ts).
+   */
+  async flushDue(force = false): Promise<number> {
+    const t = this.now();
+    let written = 0;
+    for (const [subject, e] of [...this.seen]) {
+      // `force` (on shutdown): write what is held back even inside its window, so nothing is lost.
+      if (e.pending || (e.until > t && !(force && e.suppressed > 0))) continue;
+      if (e.suppressed === 0 || !e.summary) { this.seen.delete(subject); continue; }
+      e.pending = true;
+      e.carried = e.suppressed;
+      e.suppressed = 0;
+      let ok = false;
+      try { await e.summary(e.carried); ok = true; written++; } catch { /* given back below, tried again next time */ }
+      this.done(subject, ok);
+    }
+    return written;
+  }
+
+  /** For tests: what is held back for a subject. */
+  heldBack(subject: string): number {
+    return this.seen.get(subject)?.suppressed ?? 0;
   }
 }
 
@@ -213,6 +287,61 @@ export function auditThrottle(s: Services): AuditThrottle {
   let t = throttles.get(s);
   if (!t) { t = new AuditThrottle(); throttles.set(s, t); }
   return t;
+}
+
+/** Writes a throttled audit row: begin, write, done. A failed write is logged and its count kept for the next one. */
+async function throttledAudit(s: Services, subject: string, write: (suppressed: number, summary: boolean) => Promise<void>, what: string): Promise<void> {
+  const th = auditThrottle(s);
+  const t = th.begin(subject, (n) => write(n, true));
+  if (!t.write) return;
+  let ok = false;
+  try { await write(t.suppressed, false); ok = true; } catch (e) {
+    s.log.error({ err: e instanceof Error ? e.message : String(e) }, `could not record ${what} in the audit log`);
+  }
+  th.done(subject, ok);
+}
+
+// ---------------------------------------------------------------- keys known to be valid
+
+/**
+ * Hashes of keys this instance has seen valid (or created) recently. When an address has used up its budget of failed
+ * sign-ins, only these may still be looked up (auth/apikeys.ts), so a flood of made-up keys from one address costs no
+ * database lookups while a working key from the same address keeps working. Only hashes are kept, never keys; an entry
+ * only lets a lookup happen, the lookup still decides (a revoked key is refused at once).
+ */
+export class KnownKeys {
+  private readonly hashes = new Map<string, number>();
+  private readonly ttlMs: number;
+  private readonly now: () => number;
+
+  constructor(ttlMs = 15 * 60_000, now: () => number = Date.now) {
+    this.ttlMs = ttlMs;
+    this.now = now;
+  }
+
+  add(hash: string): void {
+    if (this.hashes.size > 100_000) {
+      const t = this.now();
+      for (const [h, until] of this.hashes) if (until <= t) this.hashes.delete(h);
+    }
+    this.hashes.set(hash, this.now() + this.ttlMs);
+  }
+
+  has(hash: string): boolean {
+    const until = this.hashes.get(hash);
+    return until !== undefined && until > this.now();
+  }
+
+  delete(hash: string): void {
+    this.hashes.delete(hash);
+  }
+}
+
+const known = new WeakMap<Services, KnownKeys>();
+export function knownKeys(s: Services): KnownKeys {
+  let k = known.get(s);
+  if (!k) { k = new KnownKeys(); known.set(s, k); }
+  return k;
 }
 
 // ---------------------------------------------------------------- resolving a key
@@ -245,20 +374,20 @@ export async function resolveKey(s: Services, token: string, now = Date.now()): 
  * number held back since the previous one. Never the key, never its hash.
  */
 export async function auditFailedAuth(s: Services, r: { keyId: string; workspaceId: string; reason: string }, req: { id: string; ip: string; method: string; path: string }) {
-  const t = auditThrottle(s).take(`auth_failed:${r.keyId}`);
-  if (!t.write) return;
-  await s.db.tx(r.workspaceId, (c) => writeAudit(c,
-    { workspaceId: r.workspaceId, actor: { type: "api_key", id: r.keyId }, requestId: req.id, ip: req.ip },
-    { action: "api_key.public.auth_failed", targetType: "public_api_key", targetId: r.keyId, outcome: "denied", metadata: { reason: r.reason, method: req.method, path: req.path, suppressed: t.suppressed } },
-  )).catch((e) => s.log.error({ err: e instanceof Error ? e.message : String(e) }, "could not record a refused API key in the audit log"));
+  await throttledAudit(s, `auth_failed:${r.keyId}`, (suppressed, summary) => s.db.tx(r.workspaceId, (c) => writeAudit(c,
+    { workspaceId: r.workspaceId, actor: { type: "api_key", id: r.keyId }, requestId: summary ? null : req.id, ip: summary ? null : req.ip },
+    {
+      action: "api_key.public.auth_failed", targetType: "public_api_key", targetId: r.keyId, outcome: "denied",
+      metadata: summary ? { summary: true, reason: r.reason, suppressed } : { reason: r.reason, method: req.method, path: req.path, suppressed },
+    })), "a refused API key");
 }
 
 /** A change refused to a read-only key: at most one row a minute per key, like auditFailedAuth. */
 export async function auditDenied(s: Services, caller: Caller, keyId: string, req: { method: string; route: string }) {
-  const t = auditThrottle(s).take(`denied:${keyId}`);
-  if (!t.write) return;
-  await s.db.tx(caller.workspaceId, (c) => writeAudit(c, auditWho(caller), {
-    action: "api_key.public.denied", targetType: "public_api_key", targetId: keyId, outcome: "denied",
-    metadata: { method: req.method, route: req.route, suppressed: t.suppressed },
-  })).catch((e) => s.log.error({ err: e instanceof Error ? e.message : String(e) }, "could not record a refused change in the audit log"));
+  await throttledAudit(s, `denied:${keyId}`, (suppressed, summary) => s.db.tx(caller.workspaceId, (c) => writeAudit(c,
+    summary ? { ...auditWho(caller), requestId: null, ip: null } : auditWho(caller),
+    {
+      action: "api_key.public.denied", targetType: "public_api_key", targetId: keyId, outcome: "denied",
+      metadata: summary ? { summary: true, suppressed } : { method: req.method, route: req.route, suppressed },
+    })), "a refused change");
 }

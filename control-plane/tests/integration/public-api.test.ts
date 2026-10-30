@@ -2,7 +2,7 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { type Fixture, type Harness, json, startHarness } from "../helpers/harness.ts";
-import { TOKEN_RE } from "../../src/services/apikeys.ts";
+import { TOKEN_RE, auditThrottle, revokeUndelivered } from "../../src/services/apikeys.ts";
 
 /** The public API (docs/public-api.md): keys, authentication, roles, idempotency, rate limits, the endpoints. */
 let h: Harness;
@@ -484,6 +484,28 @@ describe("smaller fixes", () => {
     const db = json(await h.as(k.token).post("/public/databases", { name: "netbot-db", region: "eu-central-1" })).id;
     assert.equal((await h.as(k.token).put(`/public/databases/${db}/ip-allowlist`, { entries: ["192.0.2.1"] })).statusCode, 200);
     assert.deepEqual(json(await h.as(adminToken).get(`/public/databases/${db}/ip-allowlist`)).updatedBy, { type: "api_key", id: k.key.id, name: "netbot" });
+  });
+
+  test("audit: a key that goes quiet still gets its held-back refusals written, in a summary row", async () => {
+    const k = await makeKey(owner, "read_only");
+    await h.as(adminToken).del(`/public/api-keys/${k.key.id}`);
+    for (let i = 0; i < 6; i++) assert.equal((await h.as(k.token).get("/public/organization")).statusCode, 401);
+    const rows = async () => (await h.admin.query("select metadata from public.audit_log where action = 'api_key.public.auth_failed' and target_id = $1 order by id", [k.key.id])).rows.map((r) => r.metadata);
+    assert.equal((await rows()).length, 1);
+    // What the timer does once the window has ended (forced here, as on shutdown).
+    await auditThrottle(h.app.deps.s).flushDue(true);
+    const all = await rows();
+    assert.equal(all.length, 2);
+    assert.deepEqual(all[1], { summary: true, reason: "revoked", suppressed: 5 });
+  });
+
+  test("revokeUndelivered leaves an already revoked key (and the audit log) alone", async () => {
+    const k = await makeKey(owner, "read_only");
+    assert.equal((await h.as(adminToken).del(`/public/api-keys/${k.key.id}`)).statusCode, 200);
+    const caller = { workspaceId: owner.workspaceId, actor: { type: "user" as const, id: owner.userId }, role: "owner" as const, requestId: "test-undelivered", ip: "127.0.0.1" };
+    await revokeUndelivered(h.app.deps.s, caller, k.key.id);
+    const reasons = (await h.admin.query("select metadata->>'reason' as r from public.audit_log where action = 'api_key.public.revoke' and target_id = $1", [k.key.id])).rows.map((r) => r.r);
+    assert.deepEqual(reasons, [null], "only the person's revoke, no not_delivered row");
   });
 
   test("unknown query parameters are refused", async () => {

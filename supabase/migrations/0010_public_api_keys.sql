@@ -16,7 +16,10 @@
 --     so the service can refuse them AND record the refused attempt in that workspace's audit log.
 --
 --   * Keys do not outlive their creator: triggers at the end revoke a person's admin keys when they leave the
---     organization or drop below admin, and every key made by a key when that key is revoked.
+--     organization or drop below admin, and every key made by a key when that key is revoked; an insert trigger checks
+--     (and locks) the creator, so a key made at the same moment as such a change cannot slip through.
+--   * Functions: EXECUTE only for fenvix_control_plane on the resolver; nobody (not anon, authenticated or
+--     service_role) on the others, which only triggers run.
 --
 -- Every create, revoke and refused sign-in is recorded in public.audit_log (0002): api_key.public.create,
 -- api_key.public.revoke, api_key.public.auth_failed.
@@ -131,5 +134,66 @@ revoke all on function public.public_api_keys_on_revoke() from public, anon, aut
 drop trigger if exists public_api_keys_cascade_revoke on public.public_api_keys;
 create trigger public_api_keys_cascade_revoke after update of revoked_at on public.public_api_keys
   for each row execute function public.public_api_keys_on_revoke();
+
+-- ---------------------------------------------------------------- who may create a key, checked at insert
+--
+-- The same rules as the service (services/apikeys.ts createKey), so they hold for inserts made anywhere, including
+-- the SQL editor:
+--   * made by a person: they are an owner or admin of the organization;
+--   * made by a key: that key is of the organization, not revoked, not expired; the new key is read_only; and if the
+--     creating key expires, the new one expires too, no later.
+-- The creator's row (membership or key) is locked FOR SHARE until the insert commits. A demotion, a removal or a revoke
+-- of the creator running at the same time either commits first (then this check fails) or waits for the new key to be
+-- committed and then revokes it (the triggers above). So no key outlives its creator, whatever the timing.
+
+create or replace function public.public_api_keys_check_creator() returns trigger
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare creator_expires timestamptz;
+begin
+  if new.created_by_type = 'user' then
+    perform 1 from public.workspace_members m
+     where m.workspace_id = new.workspace_id and m.user_id = new.created_by::uuid and m.role in ('owner', 'admin')
+     for share;
+    if not found then
+      raise exception 'public_api_keys: the creator is not an owner or admin of this organization' using errcode = '42501';
+    end if;
+  else
+    select k.expires_at into creator_expires from public.public_api_keys k
+     where k.workspace_id = new.workspace_id and k.id = new.created_by::uuid
+       and k.revoked_at is null and (k.expires_at is null or k.expires_at > now())
+     for share;
+    if not found then
+      raise exception 'public_api_keys: the creating key is not active in this organization' using errcode = '42501';
+    end if;
+    if new.role <> 'read_only' then
+      raise exception 'public_api_keys: a key can only create read_only keys' using errcode = '42501';
+    end if;
+    if creator_expires is not null and (new.expires_at is null or new.expires_at > creator_expires) then
+      raise exception 'public_api_keys: a key cannot create a key that outlives it' using errcode = '42501';
+    end if;
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists public_api_keys_check_creator on public.public_api_keys;
+create trigger public_api_keys_check_creator before insert on public.public_api_keys
+  for each row execute function public.public_api_keys_check_creator();
+
+-- ---------------------------------------------------------------- who may call the functions
+--
+-- Only the control plane calls fenvix_cp_resolve_public_api_key; nobody calls the others (triggers run them). Supabase
+-- gives service_role EXECUTE on new functions by default; the control plane never uses service_role (README), so it
+-- is taken away too, like anon and authenticated. Firing a trigger does not need EXECUTE.
+do $$
+declare f text;
+begin
+  foreach f in array array[
+    'fenvix_cp_resolve_public_api_key(text)', 'public_api_keys_revoke(uuid, uuid[], text, text)',
+    'public_api_keys_on_membership()', 'public_api_keys_on_revoke()', 'public_api_keys_check_creator()']
+  loop
+    execute format('revoke all on function public.%s from public, anon, authenticated, service_role', f);
+  end loop;
+end $$;
+grant execute on function public.fenvix_cp_resolve_public_api_key(text) to fenvix_control_plane;
 
 notify pgrst, 'reload schema';

@@ -57,11 +57,16 @@ has one role. The role is applied exactly as the dashboard applies an organizati
   is `202 { "operation": {...} }` with `Location` and `Retry-After`; poll `GET /operations/{id}`.
 * **Rate limits.** Each key has its own limit (`PUBLIC_API_RATE_LIMIT_PER_MINUTE`, default 120 a minute), on top of the
   organization's (`RATE_LIMIT_PER_MINUTE`). Over it: `429` with `Retry-After` in seconds. Database user routes have
-  their own, smaller limits (as on the dashboard). Wrong or missing keys count against your address
-  (`RATE_LIMIT_ANON_PER_MINUTE`, default 30); once over it, further wrong keys get `429`. A **valid key is never held
-  back by that address counter**, so failed or anonymous traffic from the same address (a NAT, a shared CI runner)
-  cannot lock out a working key. Fetching `/v1/openapi.json` has its own counter (120 a minute per address) and does
-  not count as a failure.
+  their own, smaller limits (as on the dashboard).
+* **Wrong keys and addresses.** Wrong, malformed or missing keys count against your address
+  (`RATE_LIMIT_ANON_PER_MINUTE`, default 30 a minute, shared with failed dashboard sign-ins). Once an address is over
+  it, a key is refused with `429` **before it is looked up**, so a flood of made-up keys costs no database work. The
+  exception is a key the server instance knows to be valid (it created it, or saw it work in the last 15 minutes):
+  that key is still looked up, on a separate and higher per-address budget (600 a minute), so failed or anonymous
+  traffic from the same address (a NAT, a shared CI runner) does not lock out a working key. The lookup still
+  decides: a revoked key is refused at once and forgotten. A valid key the instance has not seen yet, used for the
+  first time from an address that is locked out, waits like any other key until the minute is over.
+* Fetching `/v1/openapi.json` has its own counter (120 a minute per address) and does not count as a failure.
 
 ## Databases
 
@@ -168,7 +173,8 @@ Create. `role` is `admin` or `read_only`; `expiresAt` is optional (at most 3 yea
 * A key made by a key **expires no later than its creator**: if the creating key expires, `expiresAt` is required
   and must be on or before the creator's expiry (`400`, `field: "expiresAt"`).
 * If the answer cannot be completed after the key was made (the `Idempotency-Key` record could not be saved), the key
-  is revoked at once (audit reason `not_delivered`) and the request fails with `500`: retry it. The same goes for a new
+  is revoked at once (audit reason `not_delivered`; tried twice; nothing is recorded if the key was already revoked)
+  and the request fails with `500`: retry it. The same goes for a new
   database user, which is dropped again.
 
 ```bash
@@ -201,8 +207,11 @@ The first key: until the dashboard has a page for public keys, an owner or admin
   tried a change). Changes made with a key are recorded with `actor_type = 'api_key'` and the key's id, like the
   dashboard's own audit rows.
 * **Audit growth.** `api_key.public.auth_failed` and `api_key.public.denied` are written at most once a minute per
-  key; the refusals held back in between are counted, and the next row says how many in `metadata.suppressed`. The
-  window is kept in memory per instance, so with N instances there are at most N rows a minute per key. A wrong key
+  key. The refusals held back in between are counted and never lost: the next row for the key says how many in
+  `metadata.suppressed`, or, if the key goes quiet, a summary row (`metadata.summary: true`, `metadata.suppressed`)
+  is written once its minute is over (checked every 15 seconds, and on shutdown). The minute starts only when a row
+  was actually written: if writing fails, the count is kept and the next refusal tries again. The window is kept in
+  memory per instance, so with N instances there are at most N rows a minute per key (plus summaries). A wrong key
   that matches no key has no organization to log into: it gets a log line (the reason only) and counts against the
   address.
 * An admin key can create `read_only` keys (so automation can hand out narrower keys), never admin keys. A stolen
@@ -225,11 +234,21 @@ the control plane, an account deletion or the Supabase SQL editor.
   `organization.leave`) with who did it.
 * Nothing is revoked or recorded when the whole organization is deleted: its keys go with it.
 
+**At the same moment.** Creating a key re-checks its creator inside the creating transaction and locks the creator's
+row (`FOR SHARE`: the person's membership, or the creating key) until the new key is committed. An insert trigger
+(`public_api_keys_check_creator`) makes the same checks under the same lock for inserts made anywhere, including the
+SQL editor: a person must be an owner or admin; a creating key must be active (not revoked, not expired), may only
+create `read_only` keys, and a key it creates may not outlive it. So a demotion, removal or revoke running at the same
+time either commits first, and the create is refused (`403` for a person, `401` for a key), or waits for the new key,
+and then revokes it. `tests/integration/public-concurrency.test.ts` runs both orders for a person and for a key.
+
 ## Applying the migration
 
-`supabase/migrations/0010_public_api_keys.sql` is repeatable and changes no existing data: a new table, its policy, four
-new functions and two new triggers (one on the new table, one `after update of role or delete` on
-`public.workspace_members`, which only revokes public API keys).
+`supabase/migrations/0010_public_api_keys.sql` is repeatable and changes no existing data: a new table, its policy, five
+new functions and three new triggers (two on the new table, and one `after update of role or delete` on
+`public.workspace_members`, which only revokes public API keys). `EXECUTE` on the functions is taken from `public`,
+`anon`, `authenticated` and `service_role` (the control plane never uses `service_role`); only `fenvix_control_plane` may
+call `fenvix_cp_resolve_public_api_key`, and the others are run only by the triggers.
 It needs `0002_control_plane.sql` (the role `fenvix_control_plane` and `cp_workspace()`) and `0001_init.sql`. **Apply it
 before deploying the version of the control plane that has the public API**; the old version ignores the table.
 
@@ -243,7 +262,8 @@ before deploying the version of the control plane that has the public API**; the
 
 To undo (before anyone has made a key): `drop trigger workspace_members_revoke_public_keys on public.workspace_members;
 drop table public.public_api_keys; drop function public.public_api_keys_on_membership(), public.public_api_keys_on_revoke(),
-public.public_api_keys_revoke(uuid, uuid[], text, text), public.fenvix_cp_resolve_public_api_key(text);`.
+public.public_api_keys_check_creator(), public.public_api_keys_revoke(uuid, uuid[], text, text),
+public.fenvix_cp_resolve_public_api_key(text);` (dropping the table drops its two triggers).
 
 ## Not in this version
 
