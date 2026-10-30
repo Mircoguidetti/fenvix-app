@@ -61,12 +61,7 @@ async function clickTab(page, name) {
 
 /** Opens a collection in the Data tab: the list on a wide screen, the select on a phone. */
 async function pickCollection(page, vp, name) {
-  if (isMobile(vp)) {
-    await page.locator("#coll-select").waitFor();
-    await choose(page, page.locator("#coll-select"), name);
-  } else {
-    await page.locator(".coll-btn", { hasText: name }).click();
-  }
+  await page.locator(".coll-btn", { hasText: name }).first().click();
   await page.getByRole("heading", { name, exact: true }).waitFor();
 }
 
@@ -361,10 +356,15 @@ const TESTS = {
   async "restore to a point in time"(page) {
     await signIn(page, "databases/db_0001");
     await page.getByRole("button", { name: "Restore to a point in time" }).click();
-    await page.getByLabel("Date and time (UTC)").fill("2026-12-01T10:00");
-    await page.getByRole("button", { name: "Restore database" }).click();
-    await page.getByRole("dialog").getByRole("alert").getByText("in the past").waitFor();
-    await page.getByLabel("Date and time (UTC)").fill("2026-10-20T10:00");
+    const dlg = page.getByRole("dialog", { name: "Restore to a point in time" });
+    // Days after today and before the database existed cannot be chosen; there is no option to restore into a new database.
+    assert(await dlg.getByRole("button", { name: "October 27, 2026" }).isDisabled(), "a day in the future can be chosen");
+    assert(!(await dlg.getByText("new database", { exact: false }).count()), "the restore dialog offers a new database");
+    await dlg.getByRole("button", { name: "UTC", exact: true }).click();
+    await dlg.getByRole("button", { name: "October 20, 2026" }).click();
+    await dlg.getByLabel("Hour", { exact: true }).fill("10");
+    await dlg.getByLabel("Minute", { exact: true }).fill("00");
+    await dlg.getByText("Tue, Oct 20, 10:00 UTC").waitFor();
     await page.getByRole("button", { name: "Restore database" }).click();
     await toast(page, "Restored orders-prod to Oct 20, 10:00 UTC");
     await page.getByText("Restored to").waitFor();
@@ -399,9 +399,9 @@ const TESTS = {
 
   async "keep awake"(page) {
     await signIn(page, "databases/db_0003");
-    await page.getByLabel("Keep awake").check();
+    await page.getByRole("switch", { name: "Keep awake" }).click();
     await toast(page, "orders-staging will stay awake");
-    await page.locator(".facts").getByText("Awake").first().waitFor();
+    await page.locator(".status-facts").getByText("Kept awake").first().waitFor();
     await go(page, "databases");
     await settled(page);
     await clickTab(page, "Kept awake");
@@ -410,7 +410,7 @@ const TESTS = {
     const row = page.locator("tbody tr").filter({ hasText: "orders-staging" });
     await row.getByText("Kept awake").waitFor();
     await go(page, "databases/db_0003");
-    await page.getByLabel("Keep awake").uncheck();
+    await page.getByRole("switch", { name: "Keep awake" }).click();
     await toast(page, "orders-staging can sleep when idle");
     await go(page, "databases?keep=on&q=orders-staging");
     await page.getByText("No databases match these filters").waitFor();
@@ -579,10 +579,10 @@ const TESTS = {
     await eventually(async () => (await page.locator(".doc").count()) === 15, "the filter did not narrow the list to the 15 paid orders");
     assert(!(await page.getByRole("alert").count()), "the filter error stayed after a valid filter");
 
-    await page.locator(".doc").first().getByRole("button", { expanded: false }).first().click();
-    await page.locator(".json-tree").first().getByText(/^ISODate\("2026-09-/).waitFor();
     await page.getByRole("button", { name: "Reset" }).click();
     await eventually(async () => (await page.locator(".doc").count()) === 25, "Reset did not bring back every document");
+    await page.locator(".doc-pick").first().click();
+    await page.locator(".ex-doc .field-value").getByText(/^ISODate\("2026-09-/).first().waitFor();
   },
 
   async "data explorer: documents are shown as text, never as markup"(page, vp) {
@@ -592,13 +592,14 @@ const TESTS = {
     await page.getByRole("heading", { name: "Collections" }).waitFor();
     await pickCollection(page, vp, "notes");
     await eventually(async () => (await page.locator(".doc").count()) === 2, "the notes did not load");
-    for (const t of await page.locator(".doc-toggle").all()) await t.click();
-    await page.locator(".json-tree").first().waitFor();
     const text = await page.locator(".explorer").innerText();
     assert(text.includes("<script>window.__xss = 'script'</script>"), "the <script> in the document is not shown as text");
     assert(text.includes("<img src=x onerror="), "the <img onerror> in the document is not shown as text");
     assert((await page.locator(".explorer script, .explorer img, .explorer iframe, .explorer object").count()) === 0, "markup from a document became an element");
-    await page.getByRole("button", { name: /^Edit document/ }).first().click();
+    await page.locator(".doc-pick").first().click();
+    await page.locator(".ex-doc .field-row").first().waitFor();
+    assert((await page.locator(".ex-doc script, .ex-doc img").count()) === 0, "markup from a document became an element in the fields");
+    await page.getByRole("button", { name: /^Edit as JSON, document/ }).click();
     const editor = page.getByLabel("Document", { exact: true });
     await editor.waitFor();
     assert((await editor.inputValue()).includes("<script>"), "the editor does not hold the raw text");
@@ -616,6 +617,7 @@ const TESTS = {
     await eventually(async () => (await page.locator(".doc").count()) === 1, "customers did not load");
 
     await page.getByRole("button", { name: "Insert document" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Edit as JSON", exact: true }).click();
     const editor = page.getByLabel("Document", { exact: true });
     await editor.fill('{"name": "Contoso"');
     await page.getByRole("alert").getByText("The document is not valid JSON").waitFor();
@@ -625,14 +627,15 @@ const TESTS = {
     await toast(page, "Document inserted");
     await eventually(async () => (await page.locator(".doc").count()) === 2, "the new document is not listed");
 
-    await page.getByRole("button", { name: 'Edit document "contoso"' }).click();
+    await page.getByRole("button", { name: 'Open document "contoso"' }).click();
+    await page.getByRole("button", { name: 'Edit as JSON, document "contoso"' }).click();
     await editor.fill('{"_id": "contoso", "name": "Contoso Ltd", "seats": {"$numberInt": "4"}}');
     await page.getByRole("button", { name: "Save" }).click();
     await toast(page, "Document saved");
-    await page.locator(".doc", { hasText: "Contoso Ltd" }).waitFor();
+    await page.locator(".ex-doc .field-value", { hasText: "Contoso Ltd" }).waitFor();
 
     // Someone else changes the document while it is open here: the save is refused, nothing is overwritten.
-    await page.getByRole("button", { name: 'Edit document "contoso"' }).click();
+    await page.getByRole("button", { name: 'Edit as JSON, document "contoso"' }).click();
     await editor.fill('{"_id": "contoso", "name": "Mine", "seats": {"$numberInt": "9"}}');
     await page.evaluate(() => window.__fenvixExplorerMock.touch("db_0001", "customers", '"contoso"', "name", "Theirs"));
     await page.getByRole("button", { name: "Save" }).click();
@@ -644,7 +647,7 @@ const TESTS = {
     await page.getByRole("button", { name: 'Delete document "contoso"' }).click();
     await page.getByRole("heading", { name: "Delete this document?" }).waitFor();
     await page.getByRole("button", { name: "Cancel" }).click();
-    assert((await page.locator(".doc").count()) === 2, "Cancel deleted the document");
+    assert(await page.locator(".doc-pick").count() === 2, "Cancel deleted the document");
     await page.getByRole("button", { name: 'Delete document "contoso"' }).click();
     await page.getByRole("button", { name: "Delete document", exact: true }).click();
     await toast(page, "Document deleted");
@@ -669,13 +672,13 @@ const TESTS = {
     assert(!/[A-Za-z0-9]{40}/.test(await page.locator("#users table").innerText()), "the list shows something that looks like a password");
 
     // A name the server would refuse is explained before anything is sent.
-    await page.getByRole("button", { name: "Add user" }).click();
-    const add = page.getByRole("dialog", { name: "Add a user" });
+    const add = page.getByRole("region", { name: "New user" });
     await add.getByLabel("User name").fill("Admin!");
     await add.getByRole("button", { name: "Create user" }).click();
     await add.getByRole("alert").getByText("lowercase letters").waitFor();
     await add.getByLabel("User name").fill("check-reader");
-    await choose(page, add.getByLabel("Access"), "read");
+    await add.getByRole("radio", { name: /^Read only/ }).check();
+    assert((await add.getByRole("radio").count()) === 2, "the roles are not exactly Read only and Read and write");
     await add.getByRole("button", { name: "Create user" }).click();
 
     const once = page.getByRole("dialog", { name: "User check-reader created" });
@@ -735,11 +738,11 @@ const TESTS = {
   async "database users: empty and error states"(page) {
     await signIn(page, "databases/db_0002?tab=users");
     await page.getByRole("heading", { name: "No users yet" }).waitFor();
-    await page.getByRole("button", { name: "Add user" }).waitFor();
+    await page.getByRole("button", { name: "Create user" }).waitFor();
     await go(page, "databases/db_0005?tab=users");
     await page.getByRole("alert").getByText("The database engine did not answer").waitFor();
     await page.getByRole("button", { name: "Try again" }).waitFor();
-    assert(await page.getByRole("button", { name: "Add user" }).isDisabled(), "Add user is enabled while the list could not load");
+    assert(await page.getByRole("button", { name: "Create user" }).isDisabled(), "Create user is enabled while the list could not load");
   },
 
   async "sidebar: brand and workspace"(page, vp) {

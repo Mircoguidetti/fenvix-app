@@ -353,37 +353,37 @@ function DatabaseDetail({ id }: { id: string }) {
                 <div className="action-row">
                   <Switch id="keep-awake" checked={keepAwake} onChange={(on) => void toggleKeepAwake(on)} label="Keep awake" help="Never sleeps. First request is never slow." />
                 </div>
-                <button type="button" className="action-row action-btn" onClick={() => open("fork")}>
+                <button type="button" className="action-row action-btn" aria-label="Fork" aria-describedby="act-fork" onClick={() => open("fork")}>
                   <span className="action-text">
                     <span className="action-name">
                       <GitFork size={16} strokeWidth={1.75} aria-hidden="true" /> Fork
                     </span>
-                    <span className="help">Make a copy of this database.</span>
+                    <span id="act-fork" className="help">Make a copy of this database.</span>
                   </span>
                   <ChevronRight size={16} strokeWidth={2} aria-hidden="true" className="action-chev" />
                 </button>
-                <button type="button" className="action-row action-btn" onClick={() => open("restore")}>
+                <button type="button" className="action-row action-btn" aria-label="Restore to a point in time" aria-describedby="act-restore" onClick={() => open("restore")}>
                   <span className="action-text">
                     <span className="action-name">
                       <History size={16} strokeWidth={1.75} aria-hidden="true" /> Restore to a point in time
                     </span>
-                    <span className="help">Go back to how it was.</span>
+                    <span id="act-restore" className="help">Go back to how it was.</span>
                   </span>
                   <ChevronRight size={16} strokeWidth={2} aria-hidden="true" className="action-chev" />
                 </button>
-                <button type="button" className="action-row action-btn" onClick={exportData} disabled={exporting}>
+                <button type="button" className="action-row action-btn" aria-label={exporting ? "Exporting" : "Export"} aria-describedby="act-export" onClick={exportData} disabled={exporting}>
                   <span className="action-text">
                     <span className="action-name">
                       <Download size={16} strokeWidth={1.75} aria-hidden="true" /> {exporting ? "Exporting…" : "Export"}
                     </span>
-                    <span className="help">Download its data.</span>
+                    <span id="act-export" className="help">Download its data.</span>
                   </span>
                   <ChevronRight size={16} strokeWidth={2} aria-hidden="true" className="action-chev" />
                 </button>
-                <button type="button" className="action-row action-btn action-erase" onClick={() => open("erase")}>
+                <button type="button" className="action-row action-btn action-erase" aria-label="Erase" aria-describedby="act-erase" onClick={() => open("erase")}>
                   <span className="action-text">
                     <span className="action-name">Erase</span>
-                    <span className="help">Deletes all its data and users.</span>
+                    <span id="act-erase" className="help">Deletes all its data and users.</span>
                   </span>
                 </button>
                 <OperationNote progress={exporting ? progress : null} />

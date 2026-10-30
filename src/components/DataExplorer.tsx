@@ -428,7 +428,7 @@ export function DataExplorer({ db }: { db: Database }) {
             </div>
           </section>
 
-          <section className="ex-col ex-doc" aria-label="Document">
+          <section className="ex-col ex-doc" aria-label="Selected document">
             {phoneBack("documents", current ?? "Documents")}
             {selected ? (
               <DocumentPanel

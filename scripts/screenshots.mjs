@@ -134,11 +134,9 @@ for (const [vpName, viewport] of VIEWPORTS) {
   await go(page, "databases/db_0001?tab=users");
   await settled(page);
   await page.locator("#users td .user-name").filter({ hasText: /^reporting$/ }).waitFor();
-  await page.getByRole("button", { name: "Add user" }).click();
-  await page.getByRole("dialog", { name: "Add a user" }).waitFor();
   await page.getByLabel("User name").fill("shot-user");
   await check(`database-users-add ${vpName}`);
-  await shot("database-users-add-dialog", true);
+  await shot("database-users-new-user");
   await page.getByRole("button", { name: "Create user" }).click();
   await page.getByRole("dialog", { name: "User shot-user created" }).waitFor();
   await check(`database-users-password ${vpName}`);
