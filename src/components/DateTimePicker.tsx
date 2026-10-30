@@ -144,8 +144,8 @@ export function DateTimePicker({ value, onChange, min, max, minNote }: { value: 
         <div className="dt-grid" ref={grid} role="group" aria-labelledby={`${uid}-m`}>
           {Array.from({ length: cells }, (_, i) => {
             const day = i - first + 1;
-            if (day < 1) return <span key={i} className="dt-day dt-fill" aria-hidden="true">{prevCount + day}</span>;
-            if (day > count) return <span key={i} className="dt-day dt-fill" aria-hidden="true">{day - count}</span>;
+            if (day < 1) return <button key={i} type="button" className="dt-day dt-fill" disabled tabIndex={-1} aria-hidden="true">{prevCount + day}</button>;
+            if (day > count) return <button key={i} type="button" className="dt-day dt-fill" disabled tabIndex={-1} aria-hidden="true">{day - count}</button>;
             const k = key({ year: view.year, month: view.month, day });
             const off = dayOff(view.year, view.month, day);
             const sel = k === selectedKey;

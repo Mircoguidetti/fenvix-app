@@ -210,7 +210,10 @@ export function DataExplorer({ db }: { db: Database }) {
     } catch (e) {
       setDialogError(message(e));
       // Someone else changed it: show the list as it is now, so the next action starts from the latest version.
-      if (e instanceof ExplorerError && e.status === 409) void loadDocs();
+      if (e instanceof ExplorerError && e.status === 409) {
+        void loadDocs();
+        if (editing.item?.id) void afterChange(editing.item.id);
+      }
     } finally {
       setBusy(false);
     }

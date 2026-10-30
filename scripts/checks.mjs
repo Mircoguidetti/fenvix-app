@@ -654,6 +654,64 @@ const TESTS = {
     await eventually(async () => (await page.locator(".doc").count()) === 1, "the document is still listed");
   },
 
+  async "data explorer: add a field, step by step, with the type checked"(page, vp) {
+    await signIn(page, "databases/db_0001?tab=data");
+    await page.getByRole("heading", { name: "Collections" }).waitFor();
+    await pickCollection(page, vp, "customers");
+    await eventually(async () => (await page.locator(".doc-pick").count()) === 1, "customers did not load");
+    await page.locator(".doc-pick").first().click();
+    await page.getByRole("button", { name: "Add field", exact: true }).click();
+    const form = page.locator(".add-field");
+    await form.getByLabel("Name").fill("$bad");
+    await form.getByRole("button", { name: "Add field" }).click();
+    await form.getByRole("alert").getByText('cannot start with "$"').waitFor();
+    await form.getByLabel("Name").fill("total");
+    await choose(page, form.locator("#af-type"), "Number");
+    await form.getByLabel("Value").fill("abc");
+    await form.getByRole("button", { name: "Add field" }).click();
+    await form.getByRole("alert").getByText("not a number").waitFor();
+    await form.getByLabel("Value").fill("42.5");
+    await form.getByRole("button", { name: "Add field" }).click();
+    await toast(page, "Added field total");
+    const row = page.locator(".ex-doc .field-row", { hasText: "total" });
+    await row.waitFor();
+    assert((await row.innerText()).includes("double") && (await row.innerText()).includes("42.5"), `the new field reads: ${await row.innerText()}`);
+    // The date type reads ISO text and keeps it a date.
+    await page.getByRole("button", { name: "Add field", exact: true }).click();
+    await form.getByLabel("Name").fill("seenAt");
+    await choose(page, form.locator("#af-type"), "Date");
+    await form.getByLabel("Value").fill("2026-10-30T17:48:12Z");
+    await form.getByRole("button", { name: "Add field" }).click();
+    await page.locator(".ex-doc .field-row", { hasText: "seenAt" }).getByText('ISODate("2026-10-30T17:48:12.000Z")').waitFor();
+  },
+
+  async "data explorer: query builder"(page, vp) {
+    await signIn(page, "databases/db_0001?tab=data");
+    await page.getByRole("heading", { name: "Collections" }).waitFor();
+    await pickCollection(page, vp, "orders");
+    await page.getByRole("button", { name: "Query builder" }).click();
+    await page.getByRole("region", { name: "Query" }).waitFor();
+    await choose(page, page.locator(".qb-collection .select-btn"), "orders");
+    const row = page.getByRole("group", { name: "Condition 1" });
+    await row.getByLabel("Field").fill("status");
+    await row.getByLabel("Value").fill("paid");
+    await page.getByRole("button", { name: "Run query" }).click();
+    await page.getByText(/^15 documents/).waitFor();
+    // The same filter, as JSON.
+    await page.getByRole("button", { name: "Show as JSON" }).click();
+    assert((await page.getByLabel("Filter as JSON").inputValue()) === '{"status":{"$eq":"paid"}}', `the JSON reads ${await page.getByLabel("Filter as JSON").inputValue()}`);
+    await page.getByLabel("Filter as JSON").fill('{"status": {"$ne": "paid"}}');
+    await page.getByRole("button", { name: "Show as rows" }).click();
+    assert((await page.getByRole("group", { name: "Condition 1" }).getByLabel("Value").inputValue()) === '"paid"', "the rows do not follow the JSON");
+    await page.getByRole("group", { name: "Condition 1" }).getByLabel("Field").fill("");
+    await page.getByRole("button", { name: "Run query" }).click();
+    // An empty row is skipped; a half-written one is explained.
+    await page.getByRole("group", { name: "Condition 1" }).getByLabel("Field").fill("total");
+    await page.getByRole("group", { name: "Condition 1" }).getByLabel("Value").fill("");
+    await page.getByRole("button", { name: "Run query" }).click();
+    await page.getByRole("alert").getByText("Give a value").waitFor();
+  },
+
   async "data explorer: a sleeping database is woken"(page, vp) {
     await signIn(page, "databases");
     await go(page, "databases/db_0003?tab=data");

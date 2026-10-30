@@ -292,7 +292,7 @@ const TESTS = {
     assert(confirm.bg === BLACK && confirm.text === "Reset password", `the reset confirm is ${confirm.bg}`);
     await huesOnPage(page, STATUS);
     await fits(page);
-    await page.getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
     await page.getByRole("button", { name: /^Delete user / }).first().click();
     await noBorder(page, "delete");
     const del = await paint(page, "dialog[open] .btn-primary");
