@@ -47,7 +47,7 @@ function fakeServer(route: (req: Seen, n: number) => Reply) {
 
 const database = (over: Partial<Database> = {}): Database => ({
   id: DB_ID, name: "acme-prod-01", state: "asleep", storageMb: 0, requests24h: 0, lastActiveAt: "2026-10-29T10:00:00Z", createdAt: "2026-10-29T10:00:00Z",
-  region: "eu-west", host: "acme-prod-01.db.fenvix.cloud", connectionString: "mongodb://app:<password>@acme-prod-01.db.fenvix.cloud:27017/acme_prod_01?tls=true",
+  region: "eu-west", host: "acme-prod-01.db.fenvix.dev", connectionString: "mongodb://app:<password>@acme-prod-01.db.fenvix.dev:27017/acme_prod_01?tls=true",
   tags: [], keepAwake: false, forkedFrom: null, restoredTo: null, ...over,
 });
 

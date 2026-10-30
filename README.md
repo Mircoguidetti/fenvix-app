@@ -48,7 +48,7 @@ page says which one, instead of showing a blank page.
    `supabase/migrations/0001_init.sql` and Run. It can be run again safely.
 2. **Auth URLs.** Authentication → URL Configuration. Set *Site URL* to the production address and add
    every address the app is served from to *Redirect URLs*, each with a trailing slash: for example
-   `https://app.fenvix.cloud/`, `http://localhost:5173/`, and for Vercel previews a wildcard such as
+   `https://app.fenvix.dev/`, `http://localhost:5173/`, and for Vercel previews a wildcard such as
    `https://*-<your-team>.vercel.app/`. The app asks the provider to return to the root of the site.
 3. **Providers.** Authentication → Sign In / Providers:
    - **Google**: create an OAuth client (type *Web application*) in Google Cloud Console, add

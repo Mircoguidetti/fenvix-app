@@ -216,7 +216,7 @@ const TESTS = {
     await page.getByRole("button", { name: "Create database" }).click();
     await page.getByRole("link", { name: "Open database" }).waitFor();
     const conn = await page.getByRole("textbox", { name: "Connection string", exact: true }).inputValue();
-    assert(conn.startsWith("mongodb://app:<password>@") && conn.includes("check-create-01.db.fenvix.cloud"), `connection string: ${conn}`);
+    assert(conn.startsWith("mongodb://app:<password>@") && conn.includes("check-create-01.db.fenvix.dev"), `connection string: ${conn}`);
     await page.getByRole("button", { name: "Copy connection string", exact: true }).click();
     await page.getByRole("button", { name: "Copy connection string", exact: true }).filter({ hasText: "Copied" }).waitFor();
     assert((await page.evaluate(() => navigator.clipboard.readText())) === conn, "clipboard does not hold the connection string");
