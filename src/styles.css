@@ -824,7 +824,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
   .select-sm .select-btn { height: var(--touch); font-size: 15px; }
   .select-option { min-height: var(--touch); font-size: 15px; }
   .seg { display: flex; flex-wrap: wrap; width: 100%; }
-  .seg button { flex: 1 1 auto; justify-content: center; min-height: 38px; height: auto; font-size: 14px; padding: 0 10px; }
+  .seg button { flex: 1 1 auto; justify-content: center; min-height: var(--touch); height: auto; font-size: 14px; padding: 0 10px; }
   .row-actions { gap: 8px; }
   .filters-top .search-field { max-width: none; }
   .filters-toggle { display: inline-flex; flex: 0 0 auto; }
@@ -846,9 +846,14 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
   .preview { max-width: none; flex-basis: 100%; }
   .create-layout { gap: 16px; }
   .switch-row { gap: 14px; }
-  .switch { width: 52px; height: 32px; }
-  .switch::after { width: 24px; height: 24px; top: 4px; left: 4px; }
+  .switch { width: 52px; height: var(--touch); background: transparent; }
+  .switch::before { content: ""; position: absolute; left: 0; top: 6px; width: 52px; height: 32px; border-radius: 999px; background: #b9c4da; }
+  .switch[aria-checked="true"]::before { background: var(--black); }
+  .switch::after { width: 24px; height: 24px; top: 10px; left: 4px; }
+  .switch[aria-checked="true"] { background: transparent; }
   .switch[aria-checked="true"]::after { left: 24px; }
+  .select-hit { min-width: var(--touch); }
+  table.dbs .db-name { display: inline-flex; align-items: center; min-height: var(--touch); }
   .card { padding: 18px 16px; }
   .toasts { bottom: calc(12px + var(--safe-b)); }
   .toast-close { width: var(--touch); height: var(--touch); }

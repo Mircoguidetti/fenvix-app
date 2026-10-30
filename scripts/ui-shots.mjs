@@ -1,5 +1,6 @@
 // Redesign check: screenshots of the redesigned screens at six widths, with the phone measurements the brief asks for
-// (no horizontal scroll, touch targets of at least 44px on a phone, axe), and a mockup | real picture at 1440.
+// (no horizontal scroll, touch targets of at least 44px on a phone, axe), and the mockup and real pictures at 1440
+// (scripts/side-by-side.py puts them next to each other).
 // Usage: preview server on :4173 built with VITE_DATA_BACKEND=mock VITE_STYLEGUIDE=1, then
 //   MOCKS=<folder with the .dc.html files and support.js> node scripts/ui-shots.mjs [screen ...]
 import { mkdirSync } from "node:fs";
@@ -80,12 +81,6 @@ for (const [w, h] of SIZES) {
       await m.waitForTimeout(1000);
       await m.screenshot({ path: `${OUT}/${name}-mockup-1440.png` });
       await m.close();
-      const both = await ctx.newPage();
-      await both.setViewportSize({ width: 2900, height: 900 });
-      await both.setContent(`<body style="margin:0;display:flex;gap:20px;background:#888"><figure style="margin:0"><img src="file:///home/user/fenvix-app/${OUT}/${name}-mockup-1440.png"><figcaption style="color:#fff;font:14px sans-serif">mockup</figcaption></figure><figure style="margin:0"><img src="file:///home/user/fenvix-app/${OUT}/${name}-1440.png"><figcaption style="color:#fff;font:14px sans-serif">real</figcaption></figure></body>`);
-      await both.waitForTimeout(300);
-      await both.screenshot({ path: `${OUT}/${name}-side-by-side-1440.png` });
-      await both.close();
     }
   }
 

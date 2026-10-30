@@ -115,7 +115,7 @@ export function DbTable({
                 <Link to={`/databases/${d.id}`} className="row-link mono db-name" title={d.name}>
                   {d.name}
                 </Link>
-                {d.tags.length > 0 && <TagChips tags={d.tags} max={2} onPick={phone ? undefined : onPickTag} />}
+                {d.tags.length > 0 && <TagChips tags={d.tags} max={phone ? d.tags.length : 2} onPick={phone ? undefined : onPickTag} />}
               </td>
               <td data-label="State" className="state-cell">
                 <StateBadge state={d.state} kept={d.keepAwake} />
