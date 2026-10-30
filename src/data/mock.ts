@@ -2,11 +2,13 @@
 import { assertMockCanManage, mockOrgName, mockRole } from "./orgs-mock";
 import type { DataClient } from "./client";
 import type {
-  ApiKey, AwakePoint, BillingOverview, BulkResult, CostPoint, Database, DatabaseFilter, DatabaseGroup, DatabaseSort,
+  AwakePoint, BillingOverview, BulkResult, CostPoint, Database, DatabaseFilter, DatabaseGroup, DatabaseSort,
   DbState, ExportResult, GroupedDatabases, Invoice, Overview, Page, Plan, RequestPoint, Settings, TagBreakdownRow,
   TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport, UsageRow, UsageSort, UsageTrend, WakeUp,
 } from "./types";
 import { simplePdf } from "./pdf";
+import { ExplorerError } from "./explorer";
+import { MAX_ACTIVE_KEYS, PAGE_LIMIT, keyStatus, nameProblem, type PublicApiKey } from "./public-keys";
 import { matchesTagFilter, mergeTags, parseTag, sortTags, splitTag } from "../lib/tags";
 
 const NOW = new Date("2026-10-26T12:00:00Z");
@@ -464,12 +466,24 @@ function usageTrend(month: string, tagKey: string): UsageTrend {
 
 // ---------------------------------------------------------------- keys and settings
 
-let apiKeys: ApiKey[] = [
-  { id: "key_1", name: "Production backend", hint: "a91f", createdAt: ago(90 * DAY), lastUsedAt: ago(4 * MIN), revokedAt: null },
-  { id: "key_2", name: "Deploy pipeline", hint: "3c07", createdAt: ago(41 * DAY), lastUsedAt: ago(19 * HOUR), revokedAt: null },
-  { id: "key_3", name: "Agent runner", hint: "e5d2", createdAt: ago(12 * DAY), lastUsedAt: ago(3 * DAY), revokedAt: null },
-  { id: "key_4", name: "Old laptop", hint: "77b0", createdAt: ago(200 * DAY), lastUsedAt: ago(120 * DAY), revokedAt: ago(100 * DAY) },
+// Public API keys (fvx_), with the rules of control-plane/src/services/apikeys.ts. Newest first, like the API.
+const later = (ms: number) => new Date(NOW.getTime() + ms).toISOString();
+const seedKey = (k: Omit<PublicApiKey, "status">): PublicApiKey => ({ ...k, status: keyStatus(k, NOW) });
+let apiKeys: PublicApiKey[] = [
+  seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b01", name: "Agent runner", role: "read_only", prefix: "fvx_Qm3xT8aL", createdAt: ago(12 * DAY), lastUsedAt: ago(3 * DAY), expiresAt: later(78 * DAY), revokedAt: null }),
+  seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b02", name: "Deploy pipeline", role: "admin", prefix: "fvx_k2Vd9PqW", createdAt: ago(41 * DAY), lastUsedAt: ago(19 * HOUR), expiresAt: null, revokedAt: null }),
+  seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b03", name: "Production backend", role: "admin", prefix: "fvx_7HcR0ZyN", createdAt: ago(90 * DAY), lastUsedAt: ago(4 * MIN), expiresAt: null, revokedAt: null }),
+  seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b04", name: "Quarterly report", role: "read_only", prefix: "fvx_bT5uE1sJ", createdAt: ago(130 * DAY), lastUsedAt: ago(40 * DAY), expiresAt: ago(10 * DAY), revokedAt: null }),
+  seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b05", name: "Old laptop", role: "admin", prefix: "fvx_Lw8gY4nC", createdAt: ago(200 * DAY), lastUsedAt: ago(120 * DAY), expiresAt: null, revokedAt: ago(100 * DAY) }),
 ];
+
+const mockKeyError = (code: string, status: number, message: string, field?: string) => new ExplorerError(code, message, status, field);
+
+/** `fvx_` and 32 random bytes in base64url (43 characters), like the API's keys. */
+function newPublicToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return `fvx_${btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+}
 
 let settings: Settings = { workspaceName: WORKSPACE, idleMinutes: 5, emailNotices: true };
 
@@ -620,24 +634,40 @@ export const mockClient: DataClient = {
     const pdf = simplePdf(["FENVIX", "", `Invoice ${inv.number}`, `Workspace: ${settings.workspaceName}`, `Month: ${inv.month}`, `Issued: ${inv.issuedAt.slice(0, 10)}`, `Amount: ${inv.currency} ${inv.amount.toFixed(2)}`, `Status: ${inv.status}`]);
     return wait<ExportResult>({ filename: `${inv.number}.pdf`, mimeType: "application/pdf", downloadUrl: blobUrl(pdf, "application/pdf") });
   },
-  async listApiKeys() {
+  async listPublicApiKeys(cursor) {
     if (mockRole() === "member") assertMockCanManage();
-    return wait(apiKeys.map((k) => ({ ...k })));
+    const from = cursor ? Number(cursor) : 0;
+    const items = apiKeys.slice(from, from + PAGE_LIMIT).map((k) => ({ ...k, status: keyStatus(k, NOW) }));
+    return wait({ items, nextCursor: from + PAGE_LIMIT < apiKeys.length ? String(from + PAGE_LIMIT) : null });
   },
-  async createApiKey(name) {
+  async createPublicApiKey({ name, role, expiresAt }) {
     assertMockCanManage();
-    const secret = `fnx_${randomHex(32)}`;
-    const key: ApiKey = { id: `key_${randomHex(6)}`, name, hint: secret.slice(-4), createdAt: NOW.toISOString(), lastUsedAt: null, revokedAt: null };
+    const problem = nameProblem(name);
+    if (problem) throw mockKeyError("validation_failed", 400, `Use 1 to 60 characters for the name, on one line.`, "name");
+    if (role !== "admin" && role !== "read_only") throw mockKeyError("validation_failed", 400, "Choose a role: admin or read_only.", "role");
+    if (expiresAt !== null) {
+      const t = new Date(expiresAt).getTime();
+      if (Number.isNaN(t)) throw mockKeyError("validation_failed", 400, "expiresAt must be a date and time, for example 2027-01-31T00:00:00Z.", "expiresAt");
+      if (t <= NOW.getTime() + MIN) throw mockKeyError("validation_failed", 400, "expiresAt must be at least a minute from now.", "expiresAt");
+      if (t > NOW.getTime() + 3 * 365 * DAY) throw mockKeyError("validation_failed", 400, "expiresAt can be at most 1095 days from now.", "expiresAt");
+    }
+    if (apiKeys.filter((k) => keyStatus(k, NOW) === "active").length >= MAX_ACTIVE_KEYS) {
+      throw mockKeyError("conflict", 409, `An organization can have up to ${MAX_ACTIVE_KEYS} active API keys. Revoke one first.`);
+    }
+    const token = newPublicToken();
+    const id = crypto.randomUUID?.() ?? `${randomHex(8)}-${randomHex(4)}-4${randomHex(3)}-8${randomHex(3)}-${randomHex(12)}`;
+    const key: PublicApiKey = { id, name: name.trim(), role, prefix: token.slice(0, 12), status: "active", createdAt: NOW.toISOString(), lastUsedAt: null, expiresAt, revokedAt: null };
     apiKeys = [key, ...apiKeys];
-    return wait({ key: { ...key }, secret });
+    return wait({ key: { ...key }, token });
   },
-  async revokeApiKey(id) {
+  async revokePublicApiKey(id) {
     assertMockCanManage();
     const found = apiKeys.find((k) => k.id === id);
-    if (!found) throw new Error("Key not found");
-    const next = { ...found, revokedAt: NOW.toISOString() };
+    if (!found) throw mockKeyError("not_found", 404, "That API key does not exist.");
+    // Revoking twice changes nothing, as on the API.
+    const next: PublicApiKey = { ...found, revokedAt: found.revokedAt ?? NOW.toISOString(), status: "revoked" };
     apiKeys = apiKeys.map((k) => (k.id === id ? next : k));
-    return wait(next);
+    return wait({ ...next });
   },
   getSettings: () => wait({ ...settings, workspaceName: mockOrgName() ?? settings.workspaceName }),
   async saveSettings(next) {

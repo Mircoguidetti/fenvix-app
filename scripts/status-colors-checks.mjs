@@ -210,7 +210,7 @@ const TESTS = {
   async "network: a list different from the engine's and a Data Explorer the server does not trust are amber warnings with an icon"(page) {
     await signIn(page, "databases/db_0003?tab=network");
     const callout = await paint(page, "#allowlist .callout-warning");
-    assert(callout.border === WARNING && callout.svg && /different list/.test(callout.text), `different list: ${callout.border}`);
+    assert(callout.borderWidth === "0px 0px 0px 0px" && callout.shadow === "none" && callout.svg && /different list/.test(callout.text), `different list: ${callout.borderWidth} ${callout.shadow}`);
     assert((await paint(page, "#allowlist .callout-warning svg")).color === WARNING, "the icon is not amber");
     const apply = await paint(page, "#allowlist .callout-warning .btn");
     assert(!STATUS.includes(apply.color), "Apply again is coloured");
@@ -220,7 +220,7 @@ const TESTS = {
     await page.goto(page.url().replace("db_0003", "db_0004"));
     await settled(page);
     const trust = await paint(page, "#allowlist .once-warning");
-    assert(trust.border === WARNING && trust.svg && /Data Explorer/.test(trust.text), `untrusted explorer: ${trust.border}`);
+    assert(trust.borderWidth === "0px 0px 0px 0px" && trust.shadow === "none" && trust.svg && /Data Explorer/.test(trust.text), `untrusted explorer: ${trust.borderWidth} ${trust.shadow}`);
     assert((await paint(page, "#allowlist .once-warning svg")).color === WARNING, "the icon is not amber");
     await huesOnPage(page, STATUS);
     await fits(page);
@@ -238,7 +238,7 @@ const TESTS = {
     await signIn(page, "databases");
     await go(page, "databases/db_0012?tab=data"); // the mock takes a moment to wake a sleeping database
     const waking = await paint(page, ".waking");
-    assert(waking.border === WARNING && waking.svg && /Waking the database/.test(waking.text), `waking: ${waking.border}`);
+    assert(waking.borderWidth === "0px 0px 0px 0px" && waking.shadow === "none" && waking.svg && /Waking the database/.test(waking.text), `waking: ${waking.borderWidth} ${waking.shadow}`);
     assert((await paint(page, ".waking svg")).color === WARNING, "the waking icon is not amber");
     await huesOnPage(page, STATUS);
     await fits(page);
@@ -259,7 +259,8 @@ const TESTS = {
     await page.getByLabel("Key name").fill("Deploy pipeline");
     await page.getByRole("button", { name: "Create key" }).click();
     const done = await paint(page, ".callout-success");
-    assert(done.border === SUCCESS && /created/.test(done.text), `created: ${done.border}`);
+    assert(done.borderWidth === "0px 0px 0px 0px" && done.shadow === "none" && /created/.test(done.text), `created: ${done.borderWidth} ${done.shadow}`);
+    assert((await paint(page, ".callout-success .callout-row svg")).color === SUCCESS, "the created icon is not green");
     await page.locator(".callout-success").getByRole("button", { name: "Copy new key" }).click();
     const copied = await paint(page, ".copy-done svg");
     assert(copied.color === SUCCESS, `the copied tick is ${copied.color}`);
@@ -282,7 +283,7 @@ const TESTS = {
     assert(!(await page.locator("dialog.dialog-danger[open]").count()), "the reset dialog is marked danger");
     await noBorder(page, "reset");
     const warn = await paint(page, "dialog[open] .once-warning");
-    assert(warn.border === WARNING && warn.svg && warn.text === "Applications using the old password will stop working.", `reset warning: ${warn.border} "${warn.text}"`);
+    assert(warn.borderWidth === "0px 0px 0px 0px" && warn.svg && warn.text === "Applications using the old password will stop working.", `reset warning: ${warn.borderWidth} "${warn.text}"`);
     assert((await paint(page, "dialog[open] .once-warning svg")).color === WARNING, "the reset warning icon is not amber");
     const confirm = await paint(page, "dialog[open] .btn-primary");
     assert(confirm.bg === BLACK && confirm.text === "Reset password", `the reset confirm is ${confirm.bg}`);

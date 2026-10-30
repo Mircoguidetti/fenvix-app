@@ -282,8 +282,13 @@ table.plain th.num, table.plain td.num { text-align: right; }
 .dialog h2 { font-size: 18px; margin-bottom: 8px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
 
-.callout { border: 1px solid var(--border-strong); border-radius: 10px; background: var(--bg); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-.secret { display: block; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow-wrap: anywhere; }
+/* Notices (callouts, warnings, the one-time secret) have no border and no coloured edge: a grey fill sets them apart,
+   and the icon carries the colour. */
+.callout { border: 0; border-radius: 10px; background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.callout-row { display: flex; gap: 10px; align-items: flex-start; margin: 0; }
+.callout-row svg { flex: none; margin-top: 3px; }
+.callout .once-warning { background: var(--bg); }
+.secret { display: block; padding: 10px 12px; border: 0; border-radius: 8px; background: var(--surface-2); overflow-wrap: anywhere; }
 
 @media (prefers-reduced-motion: no-preference) { .nav-link, .btn, .icon-btn { transition: background-color 0.12s; } }
 
@@ -509,7 +514,7 @@ table.data.dbs tbody tr { height: 58px; }
 .detail-tabs { align-self: flex-start; }
 .explorer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
 @media (min-width: 980px) { .explorer { grid-template-columns: 260px minmax(0, 1fr); } .explorer .waking { grid-column: 1 / -1; } }
-.waking { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--text); border-radius: 10px; background: var(--bg); font-weight: 500; }
+.waking { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0; border-radius: 10px; background: var(--surface); font-weight: 500; }
 @media (prefers-reduced-motion: no-preference) { .spin { animation: spin 1.2s linear infinite; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 .explorer-side { gap: 10px; }
@@ -557,7 +562,7 @@ textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflo
 .user-name { display: inline-block; overflow-wrap: anywhere; word-break: break-word; max-width: 320px; }
 .secret-once { max-width: none; }
 .secret-once .field { gap: 8px; }
-.once-warning { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 10px 12px; border: 1px solid var(--text); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13.5px; }
+.once-warning { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 10px 12px; border: 0; border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13.5px; }
 .once-warning svg { flex: none; margin-top: 2px; }
 @media (max-width: 760px) {
   .user-name { max-width: 55vw; min-width: 0; text-align: right; }
@@ -589,7 +594,7 @@ textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflo
 .org-item-text { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.3; }
 .org-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .org-item-role { font-size: 12px; color: var(--muted); font-weight: 400; }
-.readonly-note { border: 1px solid var(--border-strong); background: var(--surface); border-radius: 10px; padding: 10px 14px; font-size: 13.5px; }
+.readonly-note { border: 0; background: var(--surface); border-radius: 10px; padding: 10px 14px; font-size: 13.5px; }
 .break-anywhere { overflow-wrap: anywhere; }
 .settings-tabs { align-self: flex-start; width: fit-content; max-width: 100%; }
 .seg-link { display: inline-flex; align-items: center; height: 36px; padding: 0 16px; background: var(--bg); color: var(--text); text-decoration: none; border-right: 1px solid var(--border-strong); }
@@ -649,20 +654,16 @@ textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflo
 /* Green: awake, active, paid, done. */
 .state-ok, .state-awake { border-color: var(--success); }
 .state-ok .dot, .state-awake .dot { border-color: var(--success); background: var(--success); }
-.callout-success { border-color: var(--success); box-shadow: inset 3px 0 0 var(--success); }
+.callout-success .callout-row svg { color: var(--success); }
 .copy-done svg { color: var(--success); }
 
 /* Amber: starting, in progress, needs attention. */
 .state-warn { border-color: var(--warning); }
 .state-warn .dot { border-color: var(--warning); background: transparent; border-width: 2px; }
 .tag-warning { border-color: var(--warning); }
-.waking { border-color: var(--warning); box-shadow: inset 3px 0 0 var(--warning); }
 .waking svg { color: var(--warning); }
-.once-warning { border-color: var(--warning); box-shadow: inset 3px 0 0 var(--warning); }
 .once-warning svg { color: var(--warning); }
-.callout-warning { border-color: var(--warning); box-shadow: inset 3px 0 0 var(--warning); }
-.callout-warning .callout-row { display: flex; gap: 10px; align-items: flex-start; }
-.callout-warning .callout-row svg { flex: none; margin-top: 3px; color: var(--warning); }
+.callout-warning .callout-row svg { color: var(--warning); }
 .message-warning { display: flex; gap: 8px; align-items: flex-start; color: var(--text); }
 .message-warning svg { flex: none; margin-top: 3px; color: var(--warning); }
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { DbState } from "../data";
+import type { DbState, PublicKeyStatus } from "../data";
 
 /**
  * A state as a pill: a dot and a word. The word always carries the meaning; the colour only repeats it.
@@ -27,8 +27,9 @@ export function StateBadge({ state }: { state: DbState }) {
   );
 }
 
-export function KeyStatus({ revoked }: { revoked: boolean }) {
-  return <StatusPill tone={revoked ? "neutral" : "ok"}>{revoked ? "Revoked" : "Active"}</StatusPill>;
+/** Green for a key that works; expired and revoked keys stay grey: they are over, not waiting for anything. */
+export function KeyStatus({ status }: { status: PublicKeyStatus }) {
+  return <StatusPill tone={status === "active" ? "ok" : "neutral"}>{status === "active" ? "Active" : status === "expired" ? "Expired" : "Revoked"}</StatusPill>;
 }
 
 export function InvoiceStatus({ status }: { status: "paid" | "open" }) {

@@ -168,7 +168,7 @@ const TESTS = {
         () => api.eraseDatabases(["db_0001"]),
         () => api.forkDatabase("db_0001", "member-fork-01"),
         () => api.setKeepAwake(["db_0001"], true),
-        () => api.createApiKey("member key"),
+        () => api.createPublicApiKey({ name: "member key", role: "read_only", expiresAt: null }),
         () => api.saveSettings({ workspaceName: "x", idleMinutes: 1, emailNotices: false }),
       ]) {
         try {

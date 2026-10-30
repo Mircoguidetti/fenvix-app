@@ -136,15 +136,13 @@ test("silver is used only for accent lines, the current plan's border and the fi
 const MAP: [string, string][] = [
   [".state-awake .dot", "success"],
   [".state-ok .dot", "success"],
-  [".callout-success", "success"],
+  [".callout-success .callout-row svg", "success"],
   [".copy-done svg", "success"],
   [".state-warn .dot", "warning"],
   [".tag-warning", "warning"],
-  [".waking", "warning"],
   [".waking svg", "warning"],
-  [".once-warning", "warning"],
   [".once-warning svg", "warning"],
-  [".callout-warning", "warning"],
+  [".callout-warning .callout-row svg", "warning"],
   [".message-warning svg", "warning"],
   [".error", "danger"],
   [".message-error", "danger"],
@@ -165,6 +163,19 @@ test("each state in the inventory uses its token", () => {
     for (const other of [...STATUS, ...STATUS.map((s) => `${s}-on-dark`)].filter((t) => t !== token))
       assert.ok(!found.some(([, body]) => new RegExp(`var\\(--${other}\\)`).test(body)), `${selector} also uses --${other}`);
   }
+});
+
+test("notices have no border and no coloured edge: a grey fill, and the colour only on the icon", () => {
+  const NOTICES = [".callout", ".callout-success", ".callout-warning", ".once-warning", ".waking", ".secret", ".readonly-note"];
+  for (const [sel, body] of rules()) {
+    for (const s of sel.split(",").map((x) => x.trim())) {
+      if (!NOTICES.includes(s)) continue;
+      assert.ok(!/border(-color|-left|-top|-right|-bottom|-width)?\s*:(?!\s*(0|none)\s*(;|$))/.test(body), `${s} draws a border`);
+      assert.ok(!/box-shadow/.test(body), `${s} draws an edge with box-shadow`);
+    }
+  }
+  assert.match(src("pages/ApiKeys.tsx"), /callout callout-success[\s\S]*?<CircleCheck/);
+  assert.match(src("pages/SignIn.tsx"), /callout callout-success[\s\S]*?<CircleCheck/);
 });
 
 test("every coloured state also says it in words or with an icon", () => {
@@ -199,7 +210,7 @@ test("the states in the inventory are wired to the right classes in the componen
   assert.match(net, /className="btn btn-danger" onClick=\{\(\) => open\("clear"\)\}/);
   assert.match(src("components/StateBadge.tsx"), /state === "awake" \? "state-awake"/);
   assert.match(src("components/StateBadge.tsx"), /tone=\{status === "paid" \? "ok" : "warn"\}/);
-  assert.match(src("components/StateBadge.tsx"), /tone=\{revoked \? "neutral" : "ok"\}/);
+  assert.match(src("components/StateBadge.tsx"), /tone=\{status === "active" \? "ok" : "neutral"\}/);
   assert.match(src("pages/Billing.tsx"), /<InvoiceStatus status=\{i\.status\} \/>/);
   assert.match(src("pages/ApiKeys.tsx"), /callout callout-success/);
   assert.match(src("pages/SignIn.tsx"), /callout callout-success/);

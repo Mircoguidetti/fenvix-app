@@ -3,8 +3,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  filterArgs, friendlyError, isUuid, listArgs, mapApiKey, mapDatabase, mapGroup, mapInvoice, mapPage, mapTrend, mapUsageRow, monthStart,
-  newKeySecret, sha256Hex, sparkFrom, usageArgs,
+  filterArgs, friendlyError, isUuid, listArgs, mapDatabase, mapGroup, mapInvoice, mapPage, mapTrend, mapUsageRow, monthStart,
+  sparkFrom, usageArgs,
 } from "../../src/data/queries.ts";
 import { usageCsv, usageCsvName } from "../../src/data/files.ts";
 import { connectionStringFor } from "../../src/data/connection.ts";
@@ -77,11 +77,8 @@ test("groups keep the empty group as null", () => {
   assert.equal(mapGroup({ value: "acme-labs", count: 154, awake: 9, keep_awake: 2, storage_mb: 150912 }).keepAwake, 2);
 });
 
-test("usage rows, keys and invoices map their fields", () => {
+test("usage rows and invoices map their fields", () => {
   assert.equal(mapUsageRow({ id: "customer:acme", name: "customer:acme", tags: [], databases: "154", storage_gb: "147.37", requests: "34100210" }).storageGb, 147.37);
-  const key = mapApiKey({ id: "k", name: "ci", hint: "a91f", createdAt: "2026-07-28T12:00:00Z", lastUsedAt: null, revokedAt: null });
-  assert.equal(key.revokedAt, null);
-  assert.equal(key.hint, "a91f");
   const inv = mapInvoice({ id: "i", number: "FNX-2026-09", month: "2026-09", issuedAt: "2026-10-01T00:00:00Z", amount: "937.17", currency: "USD", status: "paid" });
   assert.equal(inv.amount, 937.17);
   assert.equal(mapInvoice({ status: "open" }).status, "open");
@@ -107,16 +104,6 @@ test("uuid check", () => {
   assert.ok(isUuid("0008233c-d951-4752-8153-6a11cc364546"));
   assert.ok(!isUuid("new"));
   assert.ok(!isUuid("db_0001"));
-});
-
-test("an API key is 32 random bytes in hex, and only its hash is stored", async () => {
-  const secret = newKeySecret(new Uint8Array(32).fill(171));
-  assert.match(secret, /^fnx_[0-9a-f]{64}$/);
-  const hash = await sha256Hex(secret);
-  assert.match(hash, /^[0-9a-f]{64}$/);
-  assert.ok(!hash.includes(secret.slice(4)));
-  assert.equal(await sha256Hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-  assert.notEqual(newKeySecret(new Uint8Array(32).fill(1)), newKeySecret(new Uint8Array(32).fill(2)));
 });
 
 test("errors are turned into sentences, and a database message that is already one is kept", () => {

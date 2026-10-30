@@ -1,4 +1,5 @@
-import type { ApiKey, BillingOverview, BulkResult, CreatedApiKey, Database, ExportResult, NewDatabase, DatabaseFilter, DatabaseQuery, GroupedDatabases, Invoice, OperationOptions, Overview, Page, Plan, TagBreakdownRow, UsageTrend, Settings, TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport, UsageHistoryPoint } from "./types";
+import type { BillingOverview, BulkResult, Database, ExportResult, NewDatabase, DatabaseFilter, DatabaseQuery, GroupedDatabases, Invoice, OperationOptions, Overview, Page, Plan, TagBreakdownRow, UsageTrend, Settings, TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport, UsageHistoryPoint } from "./types";
+import type { CreatedPublicKey, NewPublicKey, PublicApiKey, PublicKeyPage } from "./public-keys";
 
 /**
  * Everything the dashboard needs from a backend. The screens only talk to this interface.
@@ -62,9 +63,16 @@ export interface DataClient {
   listInvoices(page?: number, pageSize?: number): Promise<Page<Invoice>>;
   /** A PDF of one invoice. */
   downloadInvoice(id: string): Promise<ExportResult>;
-  listApiKeys(): Promise<ApiKey[]>;
-  createApiKey(name: string): Promise<CreatedApiKey>;
-  revokeApiKey(id: string): Promise<ApiKey>;
+  /*
+   * Public API keys (fvx_, control-plane/docs/public-api.md, "API keys"): the keys customers use. Owner or admin only.
+   * The dashboard's own fnx_ keys are not offered here.
+   */
+  /** Newest first, up to 100 per page; `cursor` is the previous page's nextCursor. */
+  listPublicApiKeys(cursor?: string | null): Promise<PublicKeyPage>;
+  /** The whole key is in `token`, in this answer only. */
+  createPublicApiKey(input: NewPublicKey): Promise<CreatedPublicKey>;
+  /** Takes effect on the next request made with the key. Keys it created are revoked with it. */
+  revokePublicApiKey(id: string): Promise<PublicApiKey>;
   getSettings(): Promise<Settings>;
   saveSettings(next: Settings): Promise<Settings>;
 }

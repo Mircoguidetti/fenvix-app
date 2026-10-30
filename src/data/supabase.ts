@@ -3,14 +3,15 @@
 // leaves nothing half done. The functions run as the signed-in user, so row level security
 // decides what they can see and change.
 import type { DataClient } from "./client";
-import type { BillingOverview, CreatedApiKey, ExportResult, Overview, Plan, Settings, UsageRange } from "./types";
+import type { BillingOverview, ExportResult, Overview, Plan, Settings, UsageRange } from "./types";
 import { getSupabase } from "../lib/supabaseClient";
 import { blobUrl, usageCsv, usageCsvName } from "./files";
 import { connectionStringFor } from "./connection";
 import { simplePdf } from "./pdf";
+import { PUBLIC_API_NOT_SET_UP } from "./public-keys";
 import {
-  filterArgs, friendlyError, isUuid, listArgs, mapApiKey, mapBreakdown, mapDatabase, mapGroup, mapInvoice, mapPage, mapTag, mapTrend,
-  mapUsagePoint, mapUsageRow, monthStart, newKeySecret, sha256Hex, sparkFrom, usageArgs, type Row,
+  filterArgs, friendlyError, isUuid, listArgs, mapBreakdown, mapDatabase, mapGroup, mapInvoice, mapPage, mapTag, mapTrend,
+  mapUsagePoint, mapUsageRow, monthStart, sparkFrom, usageArgs, type Row,
 } from "./queries";
 
 const REGIONS = ["eu-west", "us-east", "us-west", "ap-south"];
@@ -38,6 +39,8 @@ async function call<T = unknown>(fn: string, args: Record<string, unknown> = {})
 }
 
 const toDatabase = (row: Row) => mapDatabase(row, connectionStringFor);
+
+const noPublicApi = () => new Error(PUBLIC_API_NOT_SET_UP);
 
 function download(filename: string, mimeType: string, content: string): ExportResult {
   return { filename, mimeType, downloadUrl: blobUrl(content, mimeType) };
@@ -232,20 +235,11 @@ export const supabaseClient: DataClient = {
     return { filename: `${String(inv.number)}.pdf`, mimeType: "application/pdf", downloadUrl: blobUrl(pdf, "application/pdf") };
   },
 
-  async listApiKeys() {
-    return ((await call<Row[]>("fenvix_list_api_keys")) ?? []).map(mapApiKey);
-  },
-
-  /** The key is made here and only its hash leaves the browser: the database never sees the key. */
-  async createApiKey(name): Promise<CreatedApiKey> {
-    const secret = newKeySecret(crypto.getRandomValues(new Uint8Array(32)));
-    const key = await call<Row>("fenvix_create_api_key", { p_name: name, p_key_hash: await sha256Hex(secret), p_last4: secret.slice(-4) });
-    return { key: mapApiKey(key), secret };
-  },
-
-  async revokeApiKey(id) {
-    return mapApiKey(await call<Row>("fenvix_revoke_api_key", { p_id: id }));
-  },
+  // Public API keys live in the control plane only: without VITE_API_URL there is nothing to manage them with. The
+  // page says so before calling these (pages/ApiKeys.tsx).
+  listPublicApiKeys: () => Promise.reject(noPublicApi()),
+  createPublicApiKey: () => Promise.reject(noPublicApi()),
+  revokePublicApiKey: () => Promise.reject(noPublicApi()),
 
   async getSettings(): Promise<Settings> {
     const s = await call<Row>("fenvix_settings");
