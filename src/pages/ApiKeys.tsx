@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { TriangleAlert } from "lucide-react";
+import { CircleCheck, TriangleAlert } from "lucide-react";
 import { useOrg } from "../session/OrgProvider";
 import { client, type CreatedPublicKey, type PublicApiKey, type PublicKeyRole } from "../data";
 import {
@@ -257,9 +257,12 @@ function CreatedKey({ created, onDismiss }: { created: CreatedPublicKey; onDismi
   const example = curlExample(exampleApiUrl);
   return (
     <div className="callout callout-success" role="status">
-      <p>
-        <strong>Key “{created.key.name}” created.</strong> {ROLE_LABELS[created.key.role]}
-        {created.key.expiresAt ? `, expires on ${formatDate(created.key.expiresAt)}` : ", does not expire"}.
+      <p className="callout-row">
+        <CircleCheck size={16} aria-hidden="true" />
+        <span>
+          <strong>Key “{created.key.name}” created.</strong> {ROLE_LABELS[created.key.role]}
+          {created.key.expiresAt ? `, expires on ${formatDate(created.key.expiresAt)}` : ", does not expire"}.
+        </span>
       </p>
       <p className="once-warning" role="note">
         <TriangleAlert size={16} aria-hidden="true" />
