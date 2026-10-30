@@ -19,6 +19,7 @@ const P = {
   username: { name: "username", in: "path", required: true, schema: str({ pattern: "^[a-z][a-z0-9_-]{2,31}$" }) },
   cursor: { name: "cursor", in: "query", required: false, schema: str(), description: "The nextCursor of the previous page." },
   limit: { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } },
+  range: { name: "range", in: "query", required: true, schema: str({ enum: ["24h", "7d", "30d"] }), description: "24h: 24 hourly buckets. 7d: 28 six-hourly buckets (UTC 00, 06, 12, 18). 30d: 30 UTC days. The last bucket is the current one." },
   idem: { name: "Idempotency-Key", in: "header", required: false, schema: str({ minLength: 1, maxLength: 255 }), description: "Repeat a request safely for 24 hours. See the Idempotency section." },
 };
 
@@ -48,7 +49,7 @@ export function buildOpenApi(apiPublicUrl: string, regions: string[]) {
     info: {
       title: "Fenvix public API",
       version: "1.0.0",
-      description: "Manage databases, their users and network allowlists, and API keys of your Fenvix organization. "
+      description: "Manage databases, their users and network allowlists, and API keys of your Fenvix organization, and read its usage. "
         + "Every request needs `Authorization: Bearer fvx_...`. Every answer has an `X-Request-Id` header. Guide: docs/public-api.md.",
     },
     servers: [{ url: `${apiPublicUrl}/public` }],
@@ -96,6 +97,36 @@ export function buildOpenApi(apiPublicUrl: string, regions: string[]) {
           admin: true, idem: true, params: [P.id],
           body: obj({ entries: { type: "array", maxItems: 100, items: str({ description: "IPv4 or IPv6 address or CIDR network" }) } }),
           responses: { "200": json(ref("IpAllowlist"), "The new allowlist."), ...changing, "404": err("No such database."), "503": err("The engine did not answer; nothing was changed.") },
+        }),
+      },
+      "/usage": {
+        get: op("getUsage", "Usage of the organization", {
+          description: "Requests and stored bytes of every database of the organization (or of one, with databaseId), per bucket and in total. "
+            + "Copied from the engine by the usage sync; see the Usage section of the guide for what each number means and how fresh it is.",
+          params: [P.range, { name: "databaseId", in: "query", required: false, schema: str({ format: "uuid" }), description: "Only this database (same answer as GET /databases/{id}/usage)." }],
+          responses: { "200": json(ref("Usage"), "The usage."), "400": err("Missing or unknown range."), "404": err("databaseId is not a database of this organization.") },
+        }),
+      },
+      "/databases/{id}/usage": {
+        get: op("getDatabaseUsage", "Usage of a database", {
+          params: [P.id, P.range],
+          responses: { "200": json(ref("Usage"), "The usage. activeDatabases is 0 or 1."), "400": err("Missing or unknown range."), "404": err("No such database in this organization.") },
+        }),
+      },
+      "/usage/export": {
+        get: op("exportUsageCsv", "Monthly usage report as CSV", {
+          description: "The dashboard's monthly report (per database or per tag), as a signed link to a CSV file that works for 15 minutes without a key. The file is built when the link is opened.",
+          params: [
+            { name: "month", in: "query", required: true, schema: str({ pattern: "^\\d{4}-\\d{2}$" }), description: "YYYY-MM (UTC)." },
+            { name: "by", in: "query", required: true, schema: str({ enum: ["database", "tag"] }) },
+            { name: "tagKey", in: "query", required: false, schema: str(), description: "With by=tag: one row per value of this tag key (and (none)). Without it: one row per key:value." },
+            { name: "sort", in: "query", required: false, schema: str({ enum: ["name", "databases", "storageGb", "requests"], default: "requests" }), description: "databases only with by=tag." },
+            { name: "dir", in: "query", required: false, schema: str({ enum: ["asc", "desc"], default: "desc" }) },
+          ],
+          responses: {
+            "200": json(obj({ filename: str(), mimeType: { const: "text/csv" }, downloadUrl: str({ format: "uri" }), expiresAt: dateTime() }), "The link."),
+            "400": err("Bad parameters, or there is no usage for that month."),
+          },
         }),
       },
       "/organization": {
@@ -147,6 +178,20 @@ export function buildOpenApi(apiPublicUrl: string, regions: string[]) {
           databaseId: { type: ["string", "null"] }, createdAt: dateTime(), updatedAt: dateTime(), finishedAt: dateTime(true), error: { oneOf: [{ type: "null" }, { type: "object" }] },
         }),
         OperationWithResult: { allOf: [ref("Operation"), { type: "object", properties: { result: { description: "When succeeded: what the original request would have answered (a database, or { id, deleted })." } }, required: ["result"] }] },
+        Usage: obj({
+          range: str({ enum: ["24h", "7d", "30d"] }), databaseId: { type: ["string", "null"], format: "uuid" },
+          from: dateTime(), to: dateTime(), bucketSeconds: { type: "integer", enum: [3600, 21600, 86400] },
+          totals: obj({
+            requests: { type: "integer", description: "Requests of the range: the sum of the buckets." },
+            storageBytes: { type: "integer", description: "Stored bytes at the end of the range: each database's newest value in the range, added up." },
+          }),
+          items: { type: "array", items: ref("UsageBucket"), description: "Every bucket of the range, oldest first; a bucket without data is zeros." },
+        }),
+        UsageBucket: obj({
+          at: dateTime(), requests: { type: "integer", description: "Requests (database commands) in the bucket." },
+          storageBytes: { type: "integer", description: "Stored bytes: each database's newest value in the bucket, added up." },
+          activeDatabases: { type: "integer", description: "Databases that served at least one request in the bucket." },
+        }),
         ApiKey: obj({
           id: str({ format: "uuid" }), name: str(), role: str({ enum: ["admin", "read_only"] }), prefix: str({ description: "fvx_ and the next 8 characters, to tell keys apart." }),
           status: str({ enum: ["active", "revoked", "expired"] }), createdAt: dateTime(), lastUsedAt: dateTime(true), expiresAt: dateTime(true), revokedAt: dateTime(true),

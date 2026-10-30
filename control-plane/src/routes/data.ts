@@ -7,24 +7,13 @@ import * as usage from "../services/usage.ts";
 import * as account from "../services/account.ts";
 import {
   asObject, parseBool, parseEnum, parseFilter, parseIds, parseInstant, parseIntParam, parseMonth, parseName, parsePaging, parseRemoveTerms,
-  parseTagKey, parseTags, type Obj, isUuid,
+  parseTagKey, parseTags, isUuid,
 } from "../validate.ts";
 import { signDownload } from "../downloads.ts";
 import { DEFAULT_APP_USER, parseUsername } from "../services/db-users.ts";
 
 const SORTS = ["name", "state", "keepAwake", "storageMb", "requests24h", "lastActiveAt"] as const;
 const RANGES = ["24h", "7d", "30d"] as const;
-const USAGE_SORTS = ["name", "databases", "storageGb", "requests"] as const;
-
-function usageQuery(q: Obj) {
-  const by = parseEnum(q.by, ["database", "tag"] as const, "by");
-  const tagKey = q.tagKey === undefined || q.tagKey === "" ? undefined : parseTagKey(q.tagKey, "tagKey");
-  if (tagKey && by !== "tag") throw validation("tagKey can only be used with by=tag.", "tagKey");
-  const sort = parseEnum(q.sort, USAGE_SORTS, "sort", "requests");
-  if (sort === "databases" && by !== "tag") throw validation("Sorting by databases only works with by=tag.", "sort");
-  return { month: parseMonth(q.month), by, tagKey, sort, dir: parseEnum(q.dir, ["asc", "desc"] as const, "dir", "desc") };
-}
-
 export function dataRoutes(app: FastifyInstance, d: Deps): void {
   const { s } = d;
   const { read, write } = routeHelpers(app, d);
@@ -144,11 +133,11 @@ export function dataRoutes(app: FastifyInstance, d: Deps): void {
 
   read("/usage", {}, async ({ caller, q }) => {
     const { page, pageSize } = parsePaging(q, L);
-    return usage.getUsageReport(s, caller, usageQuery(q), page, pageSize);
+    return usage.getUsageReport(s, caller, usage.parseUsageQuery(q), page, pageSize);
   });
 
   read("/usage/export", {}, async ({ caller, q }) => {
-    const uq = usageQuery(q);
+    const uq = usage.parseUsageQuery(q);
     // Build it once now so a month without a report fails here, not when the link is opened.
     const { filename } = await usage.buildUsageCsv(s, caller.workspaceId, uq);
     const exp = Math.floor(Date.now() / 1000) + L.exportUrlTtlSeconds;

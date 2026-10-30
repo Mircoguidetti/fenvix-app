@@ -152,4 +152,5 @@ Every change is recorded in `audit_log`: `database.ip_allowlist.set` and `.reapp
 A separate set of routes for customers' own code, under `/v1/public`, with their own keys (`fvx_`, migration
 `0010_public_api_keys.sql`) and an OpenAPI 3.1 document at `GET /v1/openapi.json`. They are not part of the contract
 document; `contract.test.ts` leaves them to `public-openapi.test.ts`, which checks them against the OpenAPI document.
-Everything is in [`public-api.md`](public-api.md). Nothing changes for the dashboard's routes or its `fnx_` keys.
+Everything is in [`public-api.md`](public-api.md); its usage routes read the same `usage_hourly` and `usage_daily`
+rows on the same buckets as `getUsage` above, and its CSV is the same signed `usage-csv` link. Nothing changes for the dashboard's routes or its `fnx_` keys.
