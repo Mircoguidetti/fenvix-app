@@ -28,6 +28,8 @@ import { explorerRoutes } from "./routes/explorer.ts";
 import { usersRoutes } from "./routes/users.ts";
 import { networkRoutes } from "./routes/network.ts";
 import { orgRoutes } from "./routes/orgs.ts";
+import { PUBLIC_PREFIX, publicRoutes } from "./routes/public/index.ts";
+import { buildOpenApi } from "./routes/public/openapi.ts";
 
 export interface AppOptions {
   cfg: Config;
@@ -184,6 +186,15 @@ export async function buildApp(opts: AppOptions): Promise<App> {
     networkRoutes(v1, deps);
     orgRoutes(v1, deps);
   }, { prefix: "/v1" });
+
+  // The public API (docs/public-api.md): its own routes and authentication (fvx_ keys), and its OpenAPI document.
+  await fastify.register(async (pub) => publicRoutes(pub, deps), { prefix: PUBLIC_PREFIX });
+  const openapi = JSON.stringify(buildOpenApi(cfg.apiPublicUrl, cfg.regions));
+  fastify.get("/v1/openapi.json", async (req, reply) => {
+    // Its own counter: reading the document is not a failed sign-in, and must not use up the address's anon budget.
+    deps.limiter.hit(`spec:${req.ip}`, 120);
+    return reply.header("Content-Type", "application/json; charset=utf-8").header("Cache-Control", "public, max-age=300").send(openapi);
+  });
 
   let usageTimer: NodeJS.Timeout | undefined;
   let usersTimer: NodeJS.Timeout | undefined;

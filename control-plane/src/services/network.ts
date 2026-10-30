@@ -59,6 +59,11 @@ async function author(x: NetCtx, c: Client, saved: Saved | null) {
   } else {
     const k = (await c.query("select name from public.api_keys where workspace_id = $1 and id = $2", [x.caller.workspaceId, saved.updated_by])).rows[0] as { name: string } | undefined;
     name = k?.name ?? null;
+    // A public API key (fvx_, migration 0010; the table may not be there before that migration).
+    if (name === null && (await c.query("select to_regclass('public.public_api_keys') is not null as ok")).rows[0].ok) {
+      const p = (await c.query("select name from public.public_api_keys where workspace_id = $1 and id::text = $2", [x.caller.workspaceId, saved.updated_by])).rows[0] as { name: string } | undefined;
+      name = p?.name ?? null;
+    }
   }
   return { type: saved.updated_by_type, id: saved.updated_by, name };
 }

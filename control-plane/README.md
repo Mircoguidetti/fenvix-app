@@ -13,18 +13,20 @@ src/config.ts        every setting, from environment variables
 src/app.ts           Fastify app: logging, CORS, error handler, request ids, downloads, route registration
 src/http.ts          authentication, rate limits, idempotency and operation answers around each route
 src/routes/          data.ts (sections 1 and 2), session.ts (section 3), explorer.ts (Data Explorer), users.ts (database users),
-                     network.ts (IP allowlist and network blocks, docs/network-allowlist.md)
+                     network.ts (IP allowlist and network blocks, docs/network-allowlist.md),
+                     public/ (the public API under /v1/public and its OpenAPI document, docs/public-api.md)
 src/explorer/        rules.ts: what a browser may send to the Data Explorer (collection names, filters, documents, Extended JSON)
 src/services/        databases, operations (create/fork/restore/export/erase runner), usage, account (billing, keys, settings)
 src/engine/          EngineClient interface, the in-memory fake, and the real adapter (real.ts, admin-http.ts with the route allowlist, names.ts, zip.ts);
                      data.ts (DataClient, the Data Explorer's MongoDB side), data-mongo.ts (official driver), data-fake.ts (in memory)
-src/auth/            Supabase JWT verification (JWKS) and the Supabase Auth gateway
+src/auth/            Supabase JWT verification (JWKS), the Supabase Auth gateway, public API keys (apikeys.ts)
 ../supabase/migrations/0002_control_plane.sql   restricted role, operations, idempotency and audit tables
 ../supabase/migrations/0003_close_dashboard_write_path.sql   closes the dashboard's direct write path (run at cutover)
 ../supabase/migrations/0004_data_explorer.sql   Data Explorer: audit log of document writes, API key data access
 ../supabase/migrations/0005_engine_users.sql   the user sweep's view of databases (id, region, state)
 ../supabase/migrations/0007_database_users.sql   database users: API key user access, the connection string's user name
 ../supabase/migrations/0009_ip_allowlist.sql   the IP allowlist of each database (the control plane's copy of the engine's list)
+../supabase/migrations/0010_public_api_keys.sql   keys of the public API (fvx_): hash and prefix only, service role only
 tests/unit, tests/integration, tests/helpers
 ```
 
@@ -32,7 +34,7 @@ tests/unit, tests/integration, tests/helpers
 
 ```bash
 cd control-plane && npm ci
-# a scratch Postgres 15+ (never Supabase): apply the stand-ins and the migrations (0001-0005, 0007-0009)
+# a scratch Postgres 15+ (never Supabase): apply the stand-ins and the migrations (0001-0005, 0007-0010)
 TEST_DATABASE_URL=postgresql://postgres@localhost:5432/cp_scratch bash scripts/prepare-test-db.sh
 npm test                       # typecheck, unit tests, integration tests (needs TEST_DATABASE_URL)
 SEEDED_DATABASE_URL=... node --test tests/integration/seeded.test.ts   # optional: the 3,000 database seed
@@ -85,6 +87,7 @@ Secrets are marked **secret**. Nothing here has a default for a secret, and no s
 | `USAGE_SYNC_SECONDS` | `0` | how often the engine's usage is copied into Postgres (0 = off) |
 | `HOURLY_RETENTION_DAYS`, `OPERATION_RETENTION_DAYS` | `8`, `90` | housekeeping |
 | `RATE_LIMIT_PER_MINUTE`, `RATE_LIMIT_ANON_PER_MINUTE` | `600`, `30` | per workspace; per address for sign-in, failed authentication, downloads |
+| `PUBLIC_API_RATE_LIMIT_PER_MINUTE` | `120` | per public API key (`fvx_`), on top of the workspace limit |
 | `DB_POOL_MAX`, `DB_STATEMENT_TIMEOUT_MS` | `10`, `30000` | |
 | `DATA_ENGINE_ENDPOINTS` | empty | Data Explorer: the engine's MongoDB listener per region, `region=host:port` or one `host:port` (no `mongodb://`, no user, no options). Empty: the in-memory fake with `ENGINE_DRIVER=fake`, otherwise the Data Explorer answers 503 "not set up" |
 | `ENGINE_USER_KEY` or `ENGINE_USER_KEY_FILE` | **required with `real` and endpoints, secret** | `v<N>:<at least 32 characters>`: master key from which each database's engine password is derived (HMAC-SHA256, never stored). See `docs/data-explorer-security.md`, section 6 |
@@ -151,6 +154,14 @@ it before deploying this version). The control plane never gets its own address 
 sign-ins (`src/engine/auth-guard.ts`), and the deployment trusts its Docker network (`--trusted-networks`, `infra/`).
 Everything (rules, roles, order, divergence, blocks, the proofs against the real engine) is in
 [`docs/network-allowlist.md`](docs/network-allowlist.md).
+
+## Public API
+
+Customers manage databases, database users, IP allowlists and API keys from code under `/v1/public`, with keys
+`Authorization: Bearer fvx_...` (role `admin` or `read_only`, applied like an organization admin or member). The OpenAPI
+3.1 document is `GET /v1/openapi.json`. This version needs migration `0010_public_api_keys.sql` (after 0002; safe to
+repeat): run it before deploying it. Everything (auth, roles, pages, idempotency, rate limits, curl examples, how keys
+are kept, how to apply the migration) is in [`docs/public-api.md`](docs/public-api.md).
 
 ## Limits worth knowing
 

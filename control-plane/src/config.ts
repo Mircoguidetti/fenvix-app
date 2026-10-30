@@ -128,6 +128,8 @@ export interface Config {
   operationRetentionDays: number;
   rateLimitPerMinute: number;
   rateLimitAnonPerMinute: number;
+  /** Requests per minute for each public API key (fvx_), on top of the workspace's limit. docs/public-api.md */
+  publicApiRateLimitPerMinute: number;
   trustProxy: boolean;
   dbPoolMax: number;
   dbStatementTimeoutMs: number;
@@ -390,6 +392,7 @@ export function loadConfig(env: Env = process.env): Config {
     operationRetentionDays: int(env, "OPERATION_RETENTION_DAYS", 90, 1),
     rateLimitPerMinute: int(env, "RATE_LIMIT_PER_MINUTE", 600, 1),
     rateLimitAnonPerMinute: int(env, "RATE_LIMIT_ANON_PER_MINUTE", 30, 1),
+    publicApiRateLimitPerMinute: int(env, "PUBLIC_API_RATE_LIMIT_PER_MINUTE", 120, 1),
     trustProxy: env.TRUST_PROXY === "true",
     dbPoolMax: int(env, "DB_POOL_MAX", 10, 1),
     dbStatementTimeoutMs: int(env, "DB_STATEMENT_TIMEOUT_MS", 30000, 1000),
