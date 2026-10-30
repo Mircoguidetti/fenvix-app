@@ -3,7 +3,6 @@ import { ToastProvider } from "./components/Toast";
 import { SessionProvider, useSession } from "./session/SessionProvider";
 import { SignInPage } from "./pages/SignIn";
 import { Shell } from "./components/Shell";
-import { PageHeader } from "./components/PageHeader";
 import { OverviewPage } from "./pages/Overview";
 import { DatabasesPage } from "./pages/Databases";
 import { CreateDatabasePage } from "./pages/CreateDatabase";
@@ -20,14 +19,16 @@ import { usePendingInvite } from "./lib/invite";
 
 function NotFound() {
   return (
-    <>
-      <PageHeader title="Page not found" description="The page you asked for does not exist." />
-      <p>
-        <Link to="/databases" className="row-link">
-          Back to databases
-        </Link>
-      </p>
-    </>
+    <div className="empty not-found">
+      <span className="nf-code mono" aria-hidden="true">
+        404
+      </span>
+      <h1>Page not found</h1>
+      <p className="muted">The page you asked for does not exist. The link may be old, or the database was erased.</p>
+      <Link to="/databases" className="btn btn-primary">
+        Back to your databases
+      </Link>
+    </div>
   );
 }
 
