@@ -55,7 +55,7 @@ async function measure(page, label, w) {
         if (el.matches("input[type=range]")) box = el;
         const r = box.getBoundingClientRect();
         if (!r.width || !r.height) continue;
-        if (getComputedStyle(el).display === "inline" && el.closest("p, li")) continue; // a link inside a sentence
+        if ((getComputedStyle(el).display === "inline" || el.classList.contains("link-btn")) && el.closest("p, li")) continue; // a link inside a sentence (exempt in WCAG 2.2, 2.5.8)
         if (r.width < 43.5 || r.height < 43.5) small.push(`${el.tagName.toLowerCase()}.${String(el.className).split(" ")[0]} "${(el.getAttribute("aria-label") ?? el.textContent ?? "").trim().slice(0, 24)}" ${Math.round(r.width)}x${Math.round(r.height)}`);
       }
     }

@@ -1171,3 +1171,8 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
   .codebox .btn { min-height: var(--touch); height: var(--touch); }
   .codebox pre { padding-top: 52px; }
 }
+@media (max-width: 640px) {
+  table.responsive td a.row-link, .card a.row-link, dd a.row-link { display: inline-flex; align-items: center; min-height: var(--touch); }
+  .check { min-height: var(--touch); }
+}
+.not-found .nf-code { color: var(--muted-2); }
