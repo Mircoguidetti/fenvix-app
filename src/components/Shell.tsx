@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { ChartColumn, CreditCard, Database, KeyRound, LayoutDashboard, Menu, Settings, Users, X } from "lucide-react";
 import { Logo } from "./Logo";
-import { AccountMenu } from "./AccountMenu";
+import { AccountMenu, useCurrentOrg } from "./AccountMenu";
+import { useFocusTrap } from "../lib/useFocusTrap";
 import { useOrg } from "../session/OrgProvider";
 
 const NAV = [
@@ -48,14 +49,18 @@ function SideNav({ onNavigate }: { onNavigate?: () => void }) {
 export function Shell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const { pathname } = useLocation();
+  const drawer = useRef<HTMLElement>(null);
+  const current = useCurrentOrg();
 
   useEffect(() => setOpen(false), [pathname]);
+  // Widening the window past the breakpoint leaves no drawer behind.
   useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+    const m = window.matchMedia("(min-width: 900px)");
+    const on = () => m.matches && setOpen(false);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  useFocusTrap(drawer, open, () => setOpen(false));
 
   return (
     <div className="shell">
@@ -76,11 +81,11 @@ export function Shell({ children }: { children: ReactNode }) {
       </aside>
 
       {open && <div className="scrim" onClick={() => setOpen(false)} aria-hidden="true" />}
-      <aside className={`drawer ${open ? "drawer-open" : ""}`} aria-label="Navigation drawer" hidden={!open}>
+      <aside ref={drawer} className="drawer" role="dialog" aria-modal="true" aria-label="Navigation drawer" hidden={!open}>
         <div className="sidebar-top">
           <Logo />
           <button type="button" className="icon-btn" onClick={() => setOpen(false)} aria-label="Close navigation">
-            <X size={18} aria-hidden="true" />
+            <X size={20} strokeWidth={1.75} aria-hidden="true" />
           </button>
         </div>
         <SideNav onNavigate={() => setOpen(false)} />
@@ -91,12 +96,13 @@ export function Shell({ children }: { children: ReactNode }) {
 
       <div className="content">
         <header className="topbar">
-          <button type="button" className="icon-btn menu-btn" onClick={() => setOpen(true)} aria-label="Open navigation" aria-expanded={open}>
-            <Menu size={18} aria-hidden="true" />
-          </button>
           <span className="topbar-logo">
             <Logo />
           </span>
+          {current.status === "ready" && <span className="topbar-org">{current.name}</span>}
+          <button type="button" className="icon-btn menu-btn" onClick={() => setOpen(true)} aria-label="Open navigation" aria-expanded={open} style={current.status === "ready" ? undefined : { marginLeft: "auto" }}>
+            <Menu size={20} strokeWidth={1.75} aria-hidden="true" />
+          </button>
         </header>
         <main id="main" tabIndex={-1}>
           <ReadOnlyNote />

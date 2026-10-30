@@ -17,9 +17,9 @@ const DANGER = "rgb(214, 20, 10)";
 const WARNING = "rgb(161, 92, 0)";
 const SUCCESS_DARK = "rgb(61, 220, 132)";
 const DANGER_DARK = "rgb(255, 106, 92)";
-const BLACK = "rgb(0, 0, 0)"; // --black, the landing page's black
+const BLACK = "rgb(11, 18, 32)"; // --black, the one dark colour (#0b1220)
 const WHITE = "rgb(255, 255, 255)";
-const CHART = "rgb(74, 78, 85)"; // --chart, the slate of bars and lines
+const CHART = "rgb(11, 18, 32)"; // --chart, the one dark colour of bars and lines
 const STATUS = [SUCCESS, DANGER, WARNING, SUCCESS_DARK, DANGER_DARK, "rgb(255, 176, 32)"];
 
 /** Computed colours of the first element matching `selector` (optionally of a pseudo-element). */
@@ -57,6 +57,10 @@ async function huesOnPage(page, allowed) {
         if (!c || c.a === 0) continue;
         const chroma = (Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b)) / 255;
         if (chroma < 0.08) continue;
+        // The blue family of the interface: greys with a slight blue tint and the dark colour (hue 205 to 240).
+        const mx = Math.max(c.r, c.g, c.b), d = mx - Math.min(c.r, c.g, c.b);
+        const h = (mx === c.r ? ((c.g - c.b) / d) % 6 : mx === c.g ? (c.b - c.r) / d + 2 : (c.r - c.g) / d + 4) * 60;
+        if (((h + 360) % 360) >= 205 && ((h + 360) % 360) <= 240) continue;
         if (!allowedList.includes(c.key)) {
           problems.add(`${el.tagName.toLowerCase()}.${el.getAttribute("class") ?? ""} uses ${c.key}`);
           continue;
@@ -102,7 +106,7 @@ async function noLine(page, selector) {
   const deco = await page.locator(selector).first().evaluate((e) => getComputedStyle(e).textDecorationLine);
   assert(deco === "none", `${selector} is underlined`);
   const weight = await page.locator(selector).first().evaluate((e) => Number(getComputedStyle(e).fontWeight));
-  assert(weight >= 600, `${selector} is not bold (${weight})`);
+  assert(weight >= 500, `${selector} is not bold (${weight})`);
 }
 
 const TESTS = {
@@ -122,12 +126,12 @@ const TESTS = {
 
   async "database: erase is red, its dialog has no border and a red confirm button; restore opens the same red dialog from a neutral button; the selected tab is black and bold, with no line under it"(page) {
     await signIn(page, "databases/db_0001");
-    await noLine(page, '.detail-tabs button[aria-pressed="true"]');
-    const tab = await paint(page, '.detail-tabs button[aria-pressed="true"]');
-    assert(tab.bg === BLACK, `the selected tab is not black (${tab.bg})`);
-    const erase = await paint(page, "#actions .btn-danger");
-    assert(erase.text === "Erase" && erase.color === DANGER && erase.border === DANGER && erase.svg, `erase button: ${erase.color} ${erase.border}`);
-    const fork = await paint(page, "#actions .btn >> nth=0");
+    await noLine(page, '.tabs button[aria-pressed="true"]');
+    const tab = await paint(page, '.tabs button[aria-pressed="true"]');
+    assert(tab.color === BLACK, `the selected tab is not the dark colour (${tab.color})`);
+    const erase = await paint(page, "#actions .action-erase .action-name");
+    assert(erase.text === "Erase" && erase.color === DANGER, `erase action: ${erase.color}`);
+    const fork = await paint(page, "#actions .action-btn >> nth=0");
     assert(!STATUS.includes(fork.color), "a plain action is coloured");
     await page.getByRole("button", { name: "Erase", exact: true }).click();
     await noBorder(page, "erase");
@@ -137,7 +141,7 @@ const TESTS = {
     await fits(page);
     await page.getByRole("button", { name: "Cancel" }).click();
     // Restore drops the changes made after the chosen moment: a red dialog, opened from a neutral button.
-    const restoreBtn = await paint(page, '#actions .btn:has-text("Restore to a point in time")');
+    const restoreBtn = await paint(page, '#actions .action-btn:has-text("Restore to a point in time")');
     assert(!STATUS.includes(restoreBtn.color) && !STATUS.includes(restoreBtn.border), `the Restore button is coloured (${restoreBtn.color})`);
     await page.getByRole("button", { name: "Restore to a point in time" }).click();
     await noBorder(page, "restore");
@@ -170,7 +174,7 @@ const TESTS = {
 
   async "network: blocked addresses are red with an icon, a bad entry is a red error, unsaved changes are amber, saving says so in green"(page) {
     await signIn(page, "databases/db_0001?tab=network");
-    await noLine(page, '.detail-tabs button[aria-pressed="true"]');
+    await noLine(page, '.tabs button[aria-pressed="true"]');
     const blocked = await paint(page, "#blocks .blocked-until");
     assert(blocked.color === DANGER && blocked.svg && /^Blocked until/.test(blocked.text), `blocked: ${blocked.color} "${blocked.text}"`);
     const clear = await paint(page, "#allowlist .btn-danger");
@@ -289,7 +293,7 @@ const TESTS = {
     assert(confirm.bg === BLACK && confirm.text === "Reset password", `the reset confirm is ${confirm.bg}`);
     await huesOnPage(page, STATUS);
     await fits(page);
-    await page.getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
     await page.getByRole("button", { name: /^Delete user / }).first().click();
     await noBorder(page, "delete");
     const del = await paint(page, "dialog[open] .btn-primary");

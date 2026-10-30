@@ -1,5 +1,10 @@
 /** Tags of a database as small chips. With `onPick` a chip filters the list by that tag. */
-export function TagChips({ tags, max = 2, onPick }: { tags: string[]; max?: number; onPick?: (tag: string) => void }) {
+import { PHONE, useMedia } from "../lib/useMedia";
+
+export function TagChips({ tags, max: maxWanted = 2, onPick }: { tags: string[]; max?: number; onPick?: (tag: string) => void }) {
+  // On a phone every tag is shown: a "+2" button would be a small target, and the tags have room to wrap.
+  const phone = useMedia(PHONE);
+  const max = phone ? tags.length : maxWanted;
   if (tags.length === 0) return <span className="muted">No tags</span>;
   const shown = tags.slice(0, max);
   const rest = tags.slice(max);

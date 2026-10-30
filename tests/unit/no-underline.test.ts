@@ -37,10 +37,11 @@ test("no source writes an underline inline or with <u>", () => {
 });
 
 test("the landing page's black is one token, and no other near-black is written out", () => {
-  assert.match(CSS, /--black:\s*#000000;/);
+  assert.match(CSS, /--black:\s*#0b1220;/);
   for (const t of ["text", "nav-bg", "stack-0"]) assert.match(CSS, new RegExp(`--${t}:\\s*var\\(--black\\);`), `--${t} is not the black token`);
-  // Up to #101010: a black that is not quite black. The greys of hover and selected rows (#17171a, #202024) are lighter.
-  const nearBlack = (r: number, g: number, b: number) => Math.max(r, g, b) <= 0x10 && !(r === 0 && g === 0 && b === 0);
+  // Pure black (#000000) and anything darker than #101010 is out: the one dark colour is the token, #0b1220, and it is
+  // written only where the token is defined (and in the favicon).
+  const nearBlack = (r: number, g: number, b: number) => Math.max(r, g, b) <= 0x10;
   for (const f of [...SOURCES, "index.html", "public/favicon.svg"]) {
     const text = readFileSync(f, "utf8");
     for (const m of text.matchAll(/#([0-9a-f]{6})\b/gi)) {

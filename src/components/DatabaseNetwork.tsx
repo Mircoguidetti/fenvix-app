@@ -6,6 +6,7 @@ import type { IpAllowlist, NetworkBlock } from "../data/network";
 import type { Database } from "../data";
 import { addEntries, MAX_ENTRIES, parseImport, parseNetwork } from "../lib/ip-allowlist";
 import { formatDateTime } from "../lib/format";
+import { connectionParts } from "../data/connection";
 import { Card, Message } from "./PageHeader";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "./Toast";
@@ -143,6 +144,8 @@ export function DatabaseNetwork({ db }: { db: Database }) {
 
   return (
     <>
+      <div className="ov-grid">
+        <div className="ov-main">
       <Card
         id="allowlist"
         title="IP allowlist"
@@ -311,6 +314,25 @@ export function DatabaseNetwork({ db }: { db: Database }) {
           </ul>
         )}
       </Card>
+        </div>
+        <section className="endpoint-card card" aria-labelledby="endpoint-h">
+          <h2 id="endpoint-h">Endpoint</h2>
+          <div className="endpoint-fact">
+            <span className="small faint">Host</span>
+            <span className="mono small">{db.host}</span>
+          </div>
+          <div className="endpoint-pair">
+            <div className="endpoint-fact">
+              <span className="small faint">Port</span>
+              <span className="mono">{connectionParts(db.connectionString).port}</span>
+            </div>
+            <div className="endpoint-fact">
+              <span className="small faint">Encryption</span>
+              <span>TLS, always on</span>
+            </div>
+          </div>
+        </section>
+      </div>
 
       <ConfirmDialog open={dialog === "save"} title="Save the IP allowlist?" confirmLabel="Save list" busy={busy} confirmDisabled={!checked} onConfirm={() => void send(list, "Saved the IP allowlist")} onCancel={() => setDialog(null)}>
         <p>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useOrg } from "../session/OrgProvider";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pencil, Plus, RefreshCw } from "lucide-react";
 import { explorer } from "../data/explorer-client";
 import { type CollectionInfo, type DocumentItem, type DocumentPage, type Ejson, ExplorerError } from "../data/explorer";
 import type { Database } from "../data";
@@ -9,7 +9,12 @@ import { formatCount } from "../lib/format";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Message } from "./PageHeader";
 import { useToast } from "./Toast";
-import { Select } from "./Select";
+import { Segmented } from "./Segmented";
+import { FieldForm } from "./explorer/FieldForm";
+import { NewDocumentDialog } from "./explorer/NewDocumentDialog";
+import { QueryBuilder } from "./explorer/QueryBuilder";
+import { message, newObjectId, waking } from "./explorer/util";
+import { fieldTypeOf, textOf, typeLabel } from "../lib/fieldValue";
 
 /**
  * The Data tab of a database: its collections on the left, the documents of the chosen one on the right.
@@ -18,37 +23,6 @@ import { Select } from "./Select";
  * the characters it is. Requests go to the control plane only when the person does something: nothing polls, so an
  * open tab does not keep the database awake.
  */
-const WAKE_RETRIES = 5;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** Runs a call; while the database wakes (503) it waits as asked and tries again, and tells the page it is waking. */
-async function waking<T>(work: () => Promise<T>, onWaking: (on: boolean) => void, slowMs = 900): Promise<T> {
-  const slow = setTimeout(() => onWaking(true), slowMs);
-  try {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await work();
-      } catch (e) {
-        if (!(e instanceof ExplorerError) || !e.waking || attempt >= WAKE_RETRIES) throw e;
-        onWaking(true);
-        await sleep((e.retryAfter ?? 2) * 1000);
-      }
-    }
-  } finally {
-    clearTimeout(slow);
-    onWaking(false);
-  }
-}
-
-/** A new ObjectId (time, then random), as MongoDB makes them. */
-function newObjectId(): string {
-  const time = Math.floor(Date.now() / 1000).toString(16).padStart(8, "0");
-  const rand = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
-  return time + rand;
-}
-
-const message = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Try again.");
-
 export function DataExplorer({ db }: { db: Database }) {
   const { canManage } = useOrg();
   const toast = useToast();
@@ -67,6 +41,12 @@ export function DataExplorer({ db }: { db: Database }) {
   const [docsError, setDocsError] = useState<string | null>(null);
   const [loadingDocs, setLoadingDocs] = useState(false);
 
+  const [view, setView] = useState<"panels" | "query">("panels");
+  /** Phone and tablet: one column at a time (collections, then documents, then the document). */
+  const [level, setLevel] = useState<"collections" | "documents" | "document">("collections");
+  const [selected, setSelected] = useState<DocumentItem | null>(null);
+  const [fieldBusy, setFieldBusy] = useState(false);
+  const [fieldError, setFieldError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ mode: "insert" | "edit"; item?: DocumentItem } | null>(null);
   const [deleting, setDeleting] = useState<DocumentItem | null>(null);
   const [busy, setBusy] = useState(false);
@@ -117,6 +97,56 @@ export function DataExplorer({ db }: { db: Database }) {
     setPage(1);
     setResult(null);
     setQueryError(null);
+    setSelected(null);
+  }
+
+  async function selectDoc(item: DocumentItem) {
+    setFieldError(null);
+    setLevel("document");
+    if (item.tooLarge || !item.id) return setSelected(item);
+    if (!item.partial && item.document) return setSelected(item);
+    try {
+      setSelected(await waking(() => explorer.getDocument(db.id, current!, item.id), setWakingUp));
+    } catch (e) {
+      setSelected(null);
+      setLevel("documents");
+      toast(message(e), "error");
+    }
+  }
+
+  /** After a change: the document as it is now (with its new version), and the list around it. */
+  async function afterChange(id: string) {
+    void loadDocs();
+    void refreshCounts();
+    try {
+      setSelected(await explorer.getDocument(db.id, current!, id));
+    } catch {
+      setSelected(null);
+    }
+  }
+
+  /** Saves the selected document with one field added or changed. */
+  async function setField(name: string, value: Ejson, mode: "add" | "edit"): Promise<boolean> {
+    const doc = selected?.document;
+    if (!current || !selected?.version || !doc) return false;
+    if (mode === "add" && name in doc) {
+      setFieldError(`The field ${name} is already in this document. Change it with its pencil.`);
+      return false;
+    }
+    setFieldBusy(true);
+    setFieldError(null);
+    try {
+      await waking(() => explorer.replaceDocument(db.id, current, selected.id, { ...doc, [name]: value }, selected.version!), setWakingUp);
+      toast(mode === "add" ? `Added field ${name}` : `Saved ${name}`, "success");
+      await afterChange(selected.id);
+      return true;
+    } catch (e) {
+      setFieldError(message(e));
+      if (e instanceof ExplorerError && e.status === 409) void afterChange(selected.id);
+      return false;
+    } finally {
+      setFieldBusy(false);
+    }
   }
 
   function applyQuery(e: FormEvent) {
@@ -139,17 +169,6 @@ export function DataExplorer({ db }: { db: Database }) {
     setQueryError(null);
     setPage(1);
     setApplied({ filter: "", sort: "", projection: "" });
-  }
-
-  async function openEditor(item: DocumentItem) {
-    setDialogError(null);
-    if (!item.partial && item.document) return setEditing({ mode: "edit", item });
-    // A projected or large document is opened whole before editing, so nothing is lost on save.
-    try {
-      setEditing({ mode: "edit", item: await waking(() => explorer.getDocument(db.id, current!, item.id), setWakingUp) });
-    } catch (e) {
-      toast(message(e), "error");
-    }
   }
 
   async function save(text: string) {
@@ -183,12 +202,18 @@ export function DataExplorer({ db }: { db: Database }) {
         toast("Document saved", "success");
       }
       setEditing(null);
-      void loadDocs();
-      void refreshCounts();
+      if (editing.mode === "edit" && editing.item) void afterChange(editing.item.id);
+      else {
+        void loadDocs();
+        void refreshCounts();
+      }
     } catch (e) {
       setDialogError(message(e));
       // Someone else changed it: show the list as it is now, so the next action starts from the latest version.
-      if (e instanceof ExplorerError && e.status === 409) void loadDocs();
+      if (e instanceof ExplorerError && e.status === 409) {
+        void loadDocs();
+        if (editing.item?.id) void afterChange(editing.item.id);
+      }
     } finally {
       setBusy(false);
     }
@@ -212,6 +237,8 @@ export function DataExplorer({ db }: { db: Database }) {
       await waking(() => explorer.deleteDocument(db.id, current, deleting.id, deleting.version!), setWakingUp);
       toast("Document deleted", "success");
       setDeleting(null);
+      setSelected(null);
+      setLevel("documents");
       void loadDocs();
       void refreshCounts();
     } catch (e) {
@@ -231,6 +258,12 @@ export function DataExplorer({ db }: { db: Database }) {
   }
 
   const currentInfo = collections?.find((c) => c.name === current);
+  const phoneBack = (to: "collections" | "documents", label: string) => (
+    <button type="button" className="ex-back" onClick={() => setLevel(to)}>
+      <ChevronLeft size={16} strokeWidth={1.75} aria-hidden="true" />
+      {label}
+    </button>
+  );
 
   return (
     <div className="explorer">
@@ -241,142 +274,191 @@ export function DataExplorer({ db }: { db: Database }) {
         </p>
       )}
 
-      <section className="explorer-side card" aria-labelledby="collections-h">
-        <div className="card-head">
-          <h2 id="collections-h">Collections</h2>
-          <button type="button" className="icon-btn" onClick={() => void loadCollections()} aria-label="Reload collections">
-            <RefreshCw size={16} aria-hidden="true" />
-          </button>
-        </div>
-        {collError && <Message role="alert">{collError}</Message>}
-        {!collError && collections === null && <Message>Loading collections</Message>}
-        {collections?.length === 0 && (
-          <div className="empty compact">
-            <p>This database has no collections yet.</p>
-            <p className="muted small">Insert a document into a new collection to create one.</p>
-            <NewCollection onCreate={(name) => (setCollections([{ name, type: "collection", browsable: true, estimatedCount: 0 }]), pick(name))} />
-          </div>
-        )}
-        {collections && collections.length > 0 && (
-          <>
-            <label className="sr-only" htmlFor="coll-select">
-              Collection
-            </label>
-            <Select
-              id="coll-select"
-              className="coll-select"
-              value={current ?? ""}
-              onChange={pick}
-              options={collections.map((c) => ({ value: c.name, label: `${c.name} ${c.estimatedCount === null ? "" : `(${formatCount(c.estimatedCount)})`}`.trim(), disabled: !c.browsable }))}
-            />
-            <ul className="coll-list">
-              {collections.map((c) => (
-                <li key={c.name}>
-                  <button type="button" className="coll-btn" aria-current={c.name === current ? "true" : undefined} disabled={!c.browsable} onClick={() => pick(c.name)} title={c.browsable ? c.name : "This name cannot be opened here"}>
-                    <span className="mono ellipsis">{c.name}</span>
-                    <span className="muted small">{c.estimatedCount === null ? "–" : `~${formatCount(c.estimatedCount)}`}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-            <NewCollection onCreate={(name) => (setCollections((cs) => (cs?.some((c) => c.name === name) ? cs : [...(cs ?? []), { name, type: "collection", browsable: true, estimatedCount: 0 }])), pick(name))} />
-          </>
-        )}
-      </section>
+      {collections && collections.length > 0 && (
+        <Segmented
+          label="View"
+          value={view}
+          onChange={setView}
+          options={[
+            { value: "panels", label: "Panels" },
+            { value: "query", label: "Query builder" },
+          ]}
+        />
+      )}
 
-      <section className="explorer-main card" aria-labelledby="documents-h">
-        <div className="card-head">
-          <div className="card-head-main">
-            <h2 id="documents-h">{current ? <span className="mono">{current}</span> : "Documents"}</h2>
-            {currentInfo?.estimatedCount != null && <p className="muted card-desc">About {formatCount(currentInfo.estimatedCount)} documents</p>}
-          </div>
-          {current && canManage && (
-            <button type="button" className="btn btn-sm" onClick={() => (setDialogError(null), setEditing({ mode: "insert" }))}>
-              <Plus size={16} aria-hidden="true" />
-              Insert document
-            </button>
-          )}
-        </div>
-
-        {current && (
-          <form className="query" onSubmit={applyQuery} noValidate>
-            <div className="field grow">
-              <label htmlFor="q-filter">Filter</label>
-              <input id="q-filter" className="mono" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder='{"status": "paid"}' spellCheck={false} autoComplete="off" aria-invalid={queryError?.field === "filter"} aria-describedby={queryError ? "q-error" : "q-help"} />
+      {view === "query" && collections && collections.length > 0 ? (
+        <QueryBuilder dbId={db.id} collections={collections} initial={current} onWaking={setWakingUp} />
+      ) : (
+        <div className="ex-grid" data-level={level}>
+          <section className="ex-col ex-collections" aria-labelledby="collections-h">
+            <div className="ex-head">
+              <h2 id="collections-h">Collections</h2>
+              <button type="button" className="icon-btn" onClick={() => void loadCollections()} aria-label="Reload collections">
+                <RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />
+              </button>
             </div>
-            <details className="query-more" open={!!(sort || projection) || queryError?.field === "sort" || queryError?.field === "projection"}>
-              <summary>Sort and fields</summary>
-              <div className="query-row">
-                <div className="field grow">
-                  <label htmlFor="q-sort">Sort</label>
-                  <input id="q-sort" className="mono" value={sort} onChange={(e) => setSort(e.target.value)} placeholder='{"placedAt": -1}' spellCheck={false} autoComplete="off" aria-invalid={queryError?.field === "sort"} />
+            <div className="ex-body">
+              {collError && <Message role="alert">{collError}</Message>}
+              {!collError && collections === null && <Message>Loading collections</Message>}
+              {collections?.length === 0 && (
+                <div className="empty compact">
+                  <p>This database has no collections yet.</p>
+                  <p className="muted small">Insert a document into a new collection to create one.</p>
+                  <NewCollection onCreate={(name) => (setCollections([{ name, type: "collection", browsable: true, estimatedCount: 0 }]), pick(name), setLevel("documents"))} />
                 </div>
-                <div className="field grow">
-                  <label htmlFor="q-projection">Fields</label>
-                  <input id="q-projection" className="mono" value={projection} onChange={(e) => setProjection(e.target.value)} placeholder='{"status": 1, "total": 1}' spellCheck={false} autoComplete="off" aria-invalid={queryError?.field === "projection"} />
-                </div>
+              )}
+              {collections && collections.length > 0 && (
+                <>
+                  <ul className="coll-list">
+                    {collections.map((c) => (
+                      <li key={c.name}>
+                        <button
+                          type="button"
+                          className="coll-btn"
+                          aria-current={c.name === current ? "true" : undefined}
+                          disabled={!c.browsable}
+                          onClick={() => (pick(c.name), setLevel("documents"))}
+                          title={c.browsable ? c.name : "This name cannot be opened here"}
+                        >
+                          <span className="mono ellipsis">{c.name}</span>
+                          <span className="coll-count">{c.estimatedCount === null ? "–" : `~${formatCount(c.estimatedCount)}`}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <NewCollection onCreate={(name) => (setCollections((cs) => (cs?.some((c) => c.name === name) ? cs : [...(cs ?? []), { name, type: "collection", browsable: true, estimatedCount: 0 }])), pick(name), setLevel("documents"))} />
+                </>
+              )}
+            </div>
+          </section>
+
+          <section className="ex-col ex-docs" aria-labelledby="documents-h">
+            {phoneBack("collections", "Collections")}
+            <div className="ex-head ex-head-docs">
+              <div className="ex-title">
+                <h2 id="documents-h">{current ? <span className="mono">{current}</span> : "Documents"}</h2>
+                {currentInfo?.estimatedCount != null && <p className="small faint">About {formatCount(currentInfo.estimatedCount)} documents</p>}
               </div>
-            </details>
-            <div className="row-actions">
-              <button type="submit" className="btn btn-primary btn-sm">
-                Apply
-              </button>
-              <button type="button" className="btn btn-sm" onClick={resetQuery}>
-                Reset
-              </button>
+              {current && canManage && (
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => (setDialogError(null), setEditing({ mode: "insert" }))}>
+                  <Plus size={16} strokeWidth={2} aria-hidden="true" />
+                  Insert document
+                </button>
+              )}
             </div>
-            {queryError ? (
-              <p id="q-error" className="error" role="alert">
-                {queryError.text}
-              </p>
+            <div className="ex-body ex-body-docs">
+              {current && (
+                <form className="query" onSubmit={applyQuery} noValidate>
+                  <div className="query-line">
+                    <label htmlFor="q-filter" className="sr-only">
+                      Filter
+                    </label>
+                    <input id="q-filter" className="mono" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder='Filter, for example {"status": "paid"}' spellCheck={false} autoComplete="off" autoCapitalize="none" aria-invalid={queryError?.field === "filter"} aria-describedby={queryError ? "q-error" : "q-help"} />
+                    <button type="submit" className="btn btn-sm">
+                      Apply
+                    </button>
+                  </div>
+                  <details className="query-more" open={!!(sort || projection) || queryError?.field === "sort" || queryError?.field === "projection"}>
+                    <summary>Sort and fields</summary>
+                    <div className="query-row">
+                      <div className="field grow">
+                        <label htmlFor="q-sort">Sort</label>
+                        <input id="q-sort" className="mono" value={sort} onChange={(e) => setSort(e.target.value)} placeholder='{"placedAt": -1}' spellCheck={false} autoComplete="off" autoCapitalize="none" aria-invalid={queryError?.field === "sort"} />
+                      </div>
+                      <div className="field grow">
+                        <label htmlFor="q-projection">Fields</label>
+                        <input id="q-projection" className="mono" value={projection} onChange={(e) => setProjection(e.target.value)} placeholder='{"status": 1, "total": 1}' spellCheck={false} autoComplete="off" autoCapitalize="none" aria-invalid={queryError?.field === "projection"} />
+                      </div>
+                    </div>
+                  </details>
+                  <div className="query-foot">
+                    {queryError ? (
+                      <p id="q-error" className="error" role="alert">
+                        {queryError.text}
+                      </p>
+                    ) : (
+                      <p id="q-help" className="help">
+                        Extended JSON. Allowed: $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $and, $or, $not, $exists, $regex.
+                      </p>
+                    )}
+                    {(applied.filter || applied.sort || applied.projection || filter || sort || projection) && (
+                      <button type="button" className="btn btn-quiet btn-xs" onClick={resetQuery}>
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                </form>
+              )}
+
+              {!current && collections && collections.length > 0 && <Message>Choose a collection.</Message>}
+              {current && docsError && <Message role="alert">{docsError}</Message>}
+              {current && !docsError && loadingDocs && !result && <Message>Loading documents</Message>}
+              {current && result && result.items.length === 0 && (
+                <div className="empty compact">
+                  <p>{applied.filter ? "No document matches this filter." : "This collection is empty."}</p>
+                </div>
+              )}
+              {current && result && result.items.length > 0 && (
+                <ol className="doc-list" aria-busy={loadingDocs}>
+                  {result.items.map((item, i) => (
+                    <li key={item.id || `row-${i}`} className="doc" data-selected={selected && selected.id === item.id && item.id ? "" : undefined}>
+                      <button type="button" className="doc-pick" aria-current={selected && selected.id === item.id && item.id ? "true" : undefined} onClick={() => void selectDoc(item)} aria-label={`Open document ${idSummary(item.id, 40)}`}>
+                        <span className="mono ellipsis doc-id">{idSummary(item.id, 40)}</span>
+                        {item.tooLarge ? <span className="small faint">Too large to list ({formatCount(item.sizeBytes ?? 0)} characters)</span> : <CollapsedFields doc={item.document ?? {}} />}
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              {current && result && (result.page > 1 || result.hasMore) && (
+                <nav className="pagination" aria-label="Pages">
+                  <span className="muted small">
+                    Page {result.page}
+                    {result.truncated ? " (shortened: these documents are large)" : ""}
+                  </span>
+                  <div className="row-actions">
+                    <button type="button" className="btn btn-sm" disabled={page <= 1 || loadingDocs} onClick={() => setPage((p) => p - 1)}>
+                      <ChevronLeft size={16} aria-hidden="true" />
+                      Previous
+                    </button>
+                    <button type="button" className="btn btn-sm" disabled={!result.hasMore || loadingDocs} onClick={() => setPage((p) => p + 1)}>
+                      Next
+                      <ChevronRight size={16} aria-hidden="true" />
+                    </button>
+                  </div>
+                </nav>
+              )}
+            </div>
+          </section>
+
+          <section className="ex-col ex-doc" aria-label="Selected document">
+            {phoneBack("documents", current ?? "Documents")}
+            {selected ? (
+              <DocumentPanel
+                key={selected.id}
+                item={selected}
+                readOnly={!canManage}
+                busy={fieldBusy}
+                error={fieldError}
+                onSetField={setField}
+                onEditJson={() => (setDialogError(null), setEditing({ mode: "edit", item: selected }))}
+                onDelete={() => (setDialogError(null), setDeleting(selected))}
+              />
             ) : (
-              <p id="q-help" className="muted small">
-                MongoDB query in Extended JSON. Allowed: $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $and, $or, $not, $exists, $regex.
-              </p>
+              <div className="ex-body ex-empty">
+                <p className="muted">{result && result.items.length > 0 ? "Choose a document to see its fields." : "Documents you open show their fields here."}</p>
+              </div>
             )}
-          </form>
-        )}
+          </section>
+        </div>
+      )}
 
-        {!current && collections && collections.length > 0 && <Message>Choose a collection.</Message>}
-        {current && docsError && <Message role="alert">{docsError}</Message>}
-        {current && !docsError && loadingDocs && !result && <Message>Loading documents</Message>}
-        {current && result && result.items.length === 0 && (
-          <div className="empty compact">
-            <p>{applied.filter ? "No document matches this filter." : "This collection is empty."}</p>
-          </div>
-        )}
-        {current && result && result.items.length > 0 && (
-          <ol className="doc-list" aria-busy={loadingDocs}>
-            {result.items.map((item, i) => (
-              <DocumentRow key={item.id || `row-${i}`} item={item} readOnly={!canManage} onEdit={() => void openEditor(item)} onDelete={() => (setDialogError(null), setDeleting(item))} />
-            ))}
-          </ol>
-        )}
-        {current && result && (result.page > 1 || result.hasMore) && (
-          <nav className="pagination" aria-label="Pages">
-            <span className="muted small">
-              Page {result.page}
-              {result.truncated ? " (shortened: these documents are large)" : ""}
-            </span>
-            <div className="row-actions">
-              <button type="button" className="btn btn-sm" disabled={page <= 1 || loadingDocs} onClick={() => setPage((p) => p - 1)}>
-                <ChevronLeft size={16} aria-hidden="true" />
-                Previous
-              </button>
-              <button type="button" className="btn btn-sm" disabled={!result.hasMore || loadingDocs} onClick={() => setPage((p) => p + 1)}>
-                Next
-                <ChevronRight size={16} aria-hidden="true" />
-              </button>
-            </div>
-          </nav>
-        )}
-      </section>
-
-      {editing && (
+      {editing?.mode === "insert" && <NewDocumentDialog collection={current ?? ""} busy={busy} error={dialogError} onSave={(text) => void save(text)} onCancel={() => setEditing(null)} />}
+      {editing?.mode === "edit" && (
         <EditorDialog
           key={editing.item?.version ?? "new"}
-          title={editing.mode === "insert" ? `Insert into ${current}` : "Edit document"}
-          initial={editing.mode === "insert" ? '{\n  \n}' : pretty(editing.item?.document ?? {})}
+          title="Edit as JSON"
+          initial={pretty(editing.item?.document ?? {})}
           busy={busy}
           error={dialogError}
           conflict={dialogError !== null && /changed this document/.test(dialogError)}
@@ -397,6 +479,113 @@ export function DataExplorer({ db }: { db: Database }) {
         )}
       </ConfirmDialog>
     </div>
+  );
+}
+
+/** The fields of one document, one row each: name, type, value and a pencil; and the form that adds a field. */
+function DocumentPanel({ item, readOnly, busy, error, onSetField, onEditJson, onDelete }: { item: DocumentItem; readOnly: boolean; busy: boolean; error: string | null; onSetField: (name: string, value: Ejson, mode: "add" | "edit") => Promise<boolean>; onEditJson: () => void; onDelete: () => void }) {
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const doc = item.document;
+  return (
+    <>
+      <div className="ex-head ex-head-doc">
+        <div className="ex-title">
+          <p className="small faint">Document</p>
+          <p className="mono doc-title" title={idSummary(item.id, 200)}>
+            {idSummary(item.id, 40)}
+          </p>
+        </div>
+        {!readOnly && (
+          <div className="row-actions">
+            <button type="button" className="btn btn-sm" onClick={onEditJson} disabled={item.tooLarge || !item.id} aria-label={`Edit as JSON, document ${idSummary(item.id, 40)}`}>
+              Edit as JSON
+            </button>
+            <button type="button" className="btn btn-sm btn-danger" onClick={onDelete} disabled={!item.version} aria-label={`Delete document ${idSummary(item.id, 40)}`}>
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="ex-body ex-body-doc">
+        {item.tooLarge || !doc ? (
+          <p className="muted small">This document is too large to show field by field ({formatCount(item.sizeBytes ?? 0)} characters).</p>
+        ) : (
+          <>
+            <ul className="fields" aria-label="Fields">
+              {Object.entries(doc).map(([name, value]) => {
+                const type = fieldTypeOf(value);
+                const d = describe(value);
+                const open = editingField === name;
+                return (
+                  <li key={name} className="field-row" data-editing={open || undefined}>
+                    <span className="mono field-name">{name}</span>
+                    <span className="type-pill" data-type={typeLabel(value)}>
+                      {typeLabel(value)}
+                    </span>
+                    <span className="mono field-value" title={d.kind === "scalar" ? d.text : undefined}>
+                      {d.kind === "scalar" ? d.text : summary(value, 60)}
+                    </span>
+                    {!readOnly && item.version && name !== "_id" && (
+                      <button
+                        type="button"
+                        className="icon-btn field-edit"
+                        disabled={!type}
+                        aria-label={type ? `Edit field ${name}` : `Field ${name} has a type that only the JSON editor changes`}
+                        title={type ? undefined : "Use Edit as JSON for this type"}
+                        aria-expanded={open}
+                        onClick={() => setEditingField(open ? null : name)}
+                      >
+                        <Pencil size={14} strokeWidth={1.75} aria-hidden="true" />
+                      </button>
+                    )}
+                    {open && type && (
+                      <div className="field-row-form">
+                        <FieldForm
+                          idPrefix={`ef-${name}`}
+                          initial={{ name, type, text: textOf(value) }}
+                          lockName
+                          submitLabel="Save field"
+                          busy={busy}
+                          error={error}
+                          onCancel={() => setEditingField(null)}
+                          onSubmit={async (n, v) => {
+                            if (await onSetField(n, v, "edit")) setEditingField(null);
+                          }}
+                        />
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+              {Object.keys(doc).length === 0 && <li className="muted small">This document has no fields.</li>}
+            </ul>
+            {!readOnly && item.version && (
+              <div className="add-field">
+                {adding ? (
+                  <FieldForm
+                    idPrefix="af"
+                    title="Add field"
+                    submitLabel="Add field"
+                    busy={busy}
+                    error={editingField === null ? error : null}
+                    onCancel={() => setAdding(false)}
+                    onSubmit={async (n, v) => {
+                      if (await onSetField(n, v, "add")) setAdding(false);
+                    }}
+                  />
+                ) : (
+                  <button type="button" className="btn btn-sm" onClick={() => setAdding(true)}>
+                    <Plus size={15} strokeWidth={2} aria-hidden="true" />
+                    Add field
+                  </button>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -430,38 +619,6 @@ function NewCollection({ onCreate }: { onCreate: (name: string) => void }) {
         </button>
       </div>
     </form>
-  );
-}
-
-function DocumentRow({ item, onEdit, onDelete, readOnly }: { item: DocumentItem; onEdit: () => void; onDelete: () => void; readOnly: boolean }) {
-  const [open, setOpen] = useState(false);
-  const bodyId = useId();
-  return (
-    <li className="doc">
-      <div className="doc-head">
-        <button type="button" className="doc-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
-          {open ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
-          <span className="mono ellipsis">_id: {idSummary(item.id, 64)}</span>
-        </button>
-        {!readOnly && <div className="row-actions">
-          <button type="button" className="btn btn-sm" onClick={onEdit} disabled={item.tooLarge || !item.id} aria-label={`Edit document ${idSummary(item.id, 40)}`}>
-            <Pencil size={14} aria-hidden="true" />
-            <span className="hide-narrow">Edit</span>
-          </button>
-          <button type="button" className="btn btn-sm btn-danger" onClick={onDelete} disabled={!item.version} aria-label={`Delete document ${idSummary(item.id, 40)}`} title={item.version ? undefined : "Open the whole document (no field list) to delete it"}>
-            <Trash2 size={14} aria-hidden="true" />
-            <span className="hide-narrow">Delete</span>
-          </button>
-        </div>}
-      </div>
-      {item.tooLarge ? (
-        <p className="muted small doc-body">This document is too large to list ({formatCount(item.sizeBytes ?? 0)} characters).</p>
-      ) : (
-        <div id={bodyId} className="doc-body">
-          {open ? <JsonTree value={item.document ?? {}} /> : <CollapsedFields doc={item.document ?? {}} />}
-        </div>
-      )}
-    </li>
   );
 }
 

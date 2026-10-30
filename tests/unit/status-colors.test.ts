@@ -15,6 +15,14 @@ function tokens(): Record<string, string> {
     for (const m of block[1].replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/--([\w-]+)\s*:\s*([^;]+);/g)) out[m[1]] = m[2].trim();
   const resolve = (v: string, depth = 0): string => (depth > 5 ? v : v.replace(/var\(--([\w-]+)\)/g, (_, n) => resolve(out[n] ?? "", depth + 1)));
   for (const k of Object.keys(out)) out[k] = resolve(out[k]);
+  // A semi-transparent navigation fill is checked as what it looks like: flattened onto the navigation colour.
+  for (const k of ["nav-hover", "nav-active"]) {
+    const m = /rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/.exec(out[k] ?? "");
+    if (!m) continue;
+    const base = [1, 3, 5].map((i) => parseInt(out["nav-bg"].slice(i, i + 2), 16));
+    const a = parseFloat(m[4]);
+    out[k] = "#" + [1, 2, 3].map((i, j) => Math.round(+m[i] * a + base[j] * (1 - a)).toString(16).padStart(2, "0")).join("");
+  }
   return out;
 }
 const T = tokens();
@@ -38,6 +46,8 @@ function hue(hex: string) {
   return (h * 60 + 360) % 360;
 }
 const NEUTRAL = 0.08;
+/** The one blue family of the interface: greys with a slight blue tint, the dark colour and its lighter shades. */
+const isBlueFamily = (hex: string) => hue(hex) >= 205 && hue(hex) <= 240;
 
 const LIGHT = ["bg", "page", "surface", "surface-2"];
 // Dark surfaces: the navigation and its hover and selected rows; toasts are drawn on --text.
@@ -108,15 +118,15 @@ function rules(): [string, string][] {
 test("no hue other than the status colours appears in the stylesheet or in the components", () => {
   const allowed = new Set([...STATUS, ...STATUS.map((s) => `${s}-on-dark`)].map((s) => T[s].toLowerCase()));
   const hexes = (text: string) => [...text.matchAll(/#[0-9a-f]{6}\b|#[0-9a-f]{3}\b/gi)].map((m) => m[0].toLowerCase()).map((h) => (h.length === 4 ? `#${[...h.slice(1)].map((c) => c + c).join("")}` : h));
-  for (const h of hexes(CSS)) assert.ok(chroma(h) < NEUTRAL || allowed.has(h), `styles.css uses ${h}, which is neither a grey nor a status colour`);
+  for (const h of hexes(CSS)) assert.ok(chroma(h) < NEUTRAL || allowed.has(h) || isBlueFamily(h), `styles.css uses ${h}, which is neither a grey, the blue family nor a status colour`);
   for (const m of CSS.matchAll(/rgba?\(([^)]+)\)/g)) {
     const [r, g, b] = m[1].split(",").map((x) => parseFloat(x) / 255);
-    assert.ok(Math.max(r, g, b) - Math.min(r, g, b) < NEUTRAL, `styles.css uses ${m[0]}`);
+    assert.ok(Math.max(r, g, b) - Math.min(r, g, b) < NEUTRAL || isBlueFamily("#" + [r, g, b].map((c) => Math.round(c * 255).toString(16).padStart(2, "0")).join("")), `styles.css uses ${m[0]}`);
   }
   // The Google "G" on the sign-in button is Google's own mark, in its own colours; it is the one exception.
   const walk = (dir: string): string[] => readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? walk(join(dir, f)) : [join(dir, f)]));
   for (const file of walk("src").filter((f) => /\.(tsx?|css)$/.test(f) && !f.endsWith("marks.tsx") && !f.endsWith("styles.css")))
-    for (const h of hexes(readFileSync(file, "utf8"))) assert.ok(chroma(h) < NEUTRAL || allowed.has(h), `${file} uses ${h}`);
+    for (const h of hexes(readFileSync(file, "utf8"))) assert.ok(chroma(h) < NEUTRAL || allowed.has(h) || isBlueFamily(h), `${file} uses ${h}`);
   // A status colour is only ever read through its token, never written out.
   for (const file of walk("src").filter((f) => f.endsWith(".tsx")))
     for (const h of hexes(readFileSync(file, "utf8"))) assert.ok(!allowed.has(h), `${file} writes out a status colour (${h}); use the token`);
@@ -239,9 +249,9 @@ test("every action that cannot be undone has a dialog with a red confirm button 
   assert.match(red, /(^|[;\s])color:\s*var\(--on-text\)/, "the confirm button of a destructive dialog has no white text");
   assert.ok(contrast(T["on-text"], T.danger) >= 4.5, "white on red is below 4.5:1");
   const triggers: [string, RegExp][] = [
-    ["pages/DatabaseDetail.tsx", /className="btn btn-danger" onClick=\{\(\) => open\("erase"\)\}/],
+    ["pages/DatabaseDetail.tsx", /className="action-row action-btn action-erase"[^>]*onClick=\{\(\) => open\("erase"\)\}/],
     ["components/BulkBar.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setAction\("erase"\)\}/],
-    ["components/DatabaseUsers.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => open\(\{ kind: "delete", user: u \}\)\}/],
+    ["components/DatabaseUsers.tsx", /className="icon-btn icon-danger" onClick=\{\(\) => open\(\{ kind: "delete", user: u \}\)\}/],
     ["components/DataExplorer.tsx", /className="btn btn-sm btn-danger" onClick=\{onDelete\}/],
     ["pages/ApiKeys.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setTarget\(k\)\}/],
     ["pages/Members.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setRemoving\(m\)\}/],
@@ -272,12 +282,12 @@ test("every toast says whether it is a success or an error, except the plain not
 test("Restore to a point in time: its dialog is destructive (red confirm), the button that opens it stays neutral", () => {
   const detail = src("pages/DatabaseDetail.tsx");
   assert.match(detail, /<ConfirmDialog danger open=\{dialog === "restore"\}[^>]*confirmLabel="Restore database"/);
-  assert.match(detail, /<button type="button" className="btn" onClick=\{\(\) => open\("restore"\)\}>/, "the Restore button is not neutral");
+  assert.match(detail, /<button type="button" className="action-row action-btn"[^>]*onClick=\{\(\) => open\("restore"\)\}>/, "the Restore button is not neutral");
 });
 
 test("Reset password: the button stays neutral, its dialog is not destructive and warns in amber, with an icon", () => {
   const users = src("components/DatabaseUsers.tsx");
-  assert.match(users, /<button type="button" className="btn btn-sm" onClick=\{\(\) => open\(\{ kind: "reset", user: u \}\)\}/, "the Reset password button is not neutral");
+  assert.match(users, /<button type="button" className="icon-btn" onClick=\{\(\) => open\(\{ kind: "reset", user: u \}\)\}/, "the Reset password button is not neutral");
   const dialog = /<ConfirmDialog open=\{dialog\?\.kind === "reset"\}[\s\S]*?<\/ConfirmDialog>/.exec(users)?.[0] ?? "";
   assert.ok(dialog, "the reset dialog is not plain (it has the danger option, or is missing)");
   assert.match(dialog, /<p className="once-warning" role="note">\s*<TriangleAlert[^>]*aria-hidden="true" \/>\s*<span>Applications using the old password will stop working\.<\/span>/);

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOrg } from "../session/OrgProvider";
 import { Link, useSearchParams } from "react-router-dom";
-import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, SlidersHorizontal, X } from "lucide-react";
 import { client, type DatabaseFilter, type DatabaseSort } from "../data";
 import { PageHeader, Message } from "../components/PageHeader";
 import { DbTable, COLUMNS, isTextSort, type Dir } from "../components/DbTable";
 import { BulkBar } from "../components/BulkBar";
 import { Select } from "../components/Select";
+import { Segmented } from "../components/Segmented";
 import { SearchInput, SuggestInput } from "../components/SearchInput";
 import { Pagination } from "../components/Pagination";
 import { useAsync } from "../lib/useAsync";
@@ -134,6 +135,18 @@ export function DatabasesPage() {
     setSelected(new Set(ids));
   }
 
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeCount = (stateTab !== "all" ? 1 : 0) + (groupBy ? 1 : 0) + tagFilters.length;
+  const total = counts.status === "ready" ? counts.data.all : 0;
+  const awakeN = counts.status === "ready" ? counts.data.awake : 0;
+  const keptN = counts.status === "ready" ? Math.min(counts.data.keep, awakeN) : 0;
+  const asleepN = total - awakeN;
+  const stateOptions = STATE_TABS.map((t) => ({
+    value: t.id,
+    label: t.label,
+    count: counts.status === "ready" ? formatCount(t.id === "all" ? counts.data.all : t.id === "awake" ? counts.data.awake : t.id === "asleep" ? counts.data.all - counts.data.awake : counts.data.keep) : undefined,
+  }));
+
   return (
     <>
       <PageHeader
@@ -142,103 +155,107 @@ export function DatabasesPage() {
         actions={
           canManage ? (
             <Link to="/databases/new" className="btn btn-primary">
-              <Plus size={16} aria-hidden="true" />
+              <Plus size={16} strokeWidth={2.25} aria-hidden="true" />
               Create database
             </Link>
           ) : undefined
         }
       />
 
-      <div className="toolbar">
-        <div className="field grow">
-          <label htmlFor="db-search">Search by name</label>
-          <SearchInput id="db-search" value={search} onChange={(e) => update({ q: e.target.value || null })} placeholder="Search databases" />
-        </div>
-        <div className="field field-seg">
-          <span className="label" id="db-state-label">State</span>
-          <div className="seg" role="group" aria-labelledby="db-state-label">
-            {STATE_TABS.map((t) => (
-              <button key={t.id} type="button" aria-pressed={stateTab === t.id} onClick={() => update({ state: t.state ?? null, keep: t.keep ?? null })}>
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="field">
-          <label htmlFor="db-group">Group by tag</label>
-          <Select id="db-group" value={groupBy} onChange={(v) => update({ group: v || null })} options={[{ value: "", label: "No grouping" }, ...tagKeys.map((k) => ({ value: k, label: k }))]} />
-        </div>
-        {!groupBy && (
-          <div className="field">
-            <label htmlFor="db-sort">Sort by</label>
-            <Select id="db-sort" value={`${sort.key}:${sort.dir}`} onChange={(v) => { const [key, dir] = v.split(":"); update({ sort: key, dir }); }} options={SORT_OPTIONS} />
-          </div>
-        )}
-      </div>
-
-      <form className="toolbar" onSubmit={(e) => (e.preventDefault(), addTagFilter())} noValidate>
-        <div className="field grow">
-          <label htmlFor="db-tag">Filter by tag</label>
-          <SuggestInput id="db-tag" value={tagInput} onChange={(v) => (setTagInput(v), setTagError(null))} suggestions={tagOptions} placeholder="customer:acme-labs" invalid={!!tagError} describedBy={tagError ? "db-tag-error" : undefined} />
-        </div>
-        <button type="submit" className="btn">
-          Add tag filter
-        </button>
-        {tagError && (
-          <p id="db-tag-error" className="error grow-row" role="alert">
-            {tagError}
-          </p>
-        )}
-      </form>
-
-      {(tagFilters.length > 0 || filtersActive) && (
-        <div className="active-filters">
-          {search && (
-            <span className="chip chip-removable">
-              name: {search}
-              <button type="button" onClick={() => update({ q: null })} aria-label="Clear the name search">
-                <X size={12} aria-hidden="true" />
-              </button>
+      {counts.status === "ready" && (
+        <section className="fleet" aria-label="Fleet state">
+          <div className="fleet-line">
+            <span className="counts-bar" role="status">
+              <span>
+                <b>{formatCount(total)}</b> {total === 1 ? "database" : "databases"}
+                {search || tagFilters.length ? " match these filters" : " in this workspace"}
+              </span>
+              <span className="muted">
+                <b>{Math.round((asleepN / Math.max(total, 1)) * 100)}%</b> asleep right now
+              </span>
             </span>
+            <span className="small faint">Idle databases cost almost nothing</span>
+          </div>
+          {total > 0 && (
+            <div className="fleet-bar" role="img" aria-label={`${awakeN - keptN} awake, ${keptN} kept awake, ${asleepN} asleep`}>
+              <span className="fleet-awake" style={{ flex: awakeN - keptN }} />
+              <span className="fleet-kept" style={{ flex: keptN }} />
+              <span className="fleet-asleep" style={{ flex: asleepN }} />
+            </div>
           )}
-          {tagFilters.map((t) => (
-            <span key={t} className="chip chip-removable">
-              {t}
-              <button type="button" onClick={() => update({ tag: tagFilters.filter((x) => x !== t) })} aria-label={`Remove tag filter ${t}`}>
-                <X size={12} aria-hidden="true" />
-              </button>
-            </span>
-          ))}
-          <button type="button" className="btn btn-quiet" onClick={() => setParams({}, { replace: true })}>
-            Clear filters
+        </section>
+      )}
+
+      <section className="filters" aria-label="Filters">
+        <div className="filters-top">
+          <div className="field grow search-field">
+            <label htmlFor="db-search" className="sr-only">
+              Search by name
+            </label>
+            <SearchInput id="db-search" value={search} onChange={(e) => update({ q: e.target.value || null })} placeholder="Search by name" />
+          </div>
+          <button type="button" className="btn filters-toggle" aria-expanded={filtersOpen} aria-controls="db-filters" onClick={() => setFiltersOpen((o) => !o)}>
+            <SlidersHorizontal size={16} strokeWidth={1.75} aria-hidden="true" />
+            Filters{activeCount > 0 ? ` (${activeCount})` : ""}
           </button>
         </div>
-      )}
-
-      {counts.status === "ready" && (
-        <div className="counts-bar" role="status">
-          <span>
-            <b>{formatCount(counts.data.all)}</b> {counts.data.all === 1 ? "database" : "databases"}
-            {search || tagFilters.length ? " match these filters" : " in this workspace"}
-          </span>
-          <span className="counts-sep" aria-hidden="true">
-            |
-          </span>
-          <span>
-            <b>{formatCount(counts.data.awake)}</b> awake
-          </span>
-          <span>
-            <b>{formatCount(counts.data.all - counts.data.awake)}</b> asleep
-          </span>
-          <span className="muted">{Math.round(((counts.data.all - counts.data.awake) / Math.max(counts.data.all, 1)) * 100)}% of them asleep right now</span>
-          <span className="counts-sep" aria-hidden="true">
-            |
-          </span>
-          <span>
-            <b>{formatCount(counts.data.keep)}</b> kept awake
-          </span>
+        <div id="db-filters" className="filters-panel" data-open={filtersOpen || undefined}>
+          <Segmented label="State" value={stateTab} options={stateOptions} onChange={(id) => { const t = STATE_TABS.find((x) => x.id === id)!; update({ state: t.state ?? null, keep: t.keep ?? null }); }} />
+          <div className="field">
+            <label htmlFor="db-group" className="sr-only">
+              Group by tag
+            </label>
+            <Select id="db-group" value={groupBy} onChange={(v) => update({ group: v || null })} options={[{ value: "", label: "Group by tag" }, ...tagKeys.map((k) => ({ value: k, label: k }))]} />
+          </div>
+          {!groupBy && (
+            <div className="field">
+              <label htmlFor="db-sort" className="sr-only">
+                Sort by
+              </label>
+              <Select id="db-sort" value={`${sort.key}:${sort.dir}`} onChange={(v) => { const [key, dir] = v.split(":"); update({ sort: key, dir }); }} options={SORT_OPTIONS} />
+            </div>
+          )}
+          <form className="tag-filter" onSubmit={(e) => (e.preventDefault(), addTagFilter())} noValidate>
+            <div className="field">
+              <label htmlFor="db-tag" className="sr-only">
+                Filter by tag
+              </label>
+              <SuggestInput id="db-tag" value={tagInput} onChange={(v) => (setTagInput(v), setTagError(null))} suggestions={tagOptions} placeholder="customer:acme-labs" invalid={!!tagError} describedBy={tagError ? "db-tag-error" : undefined} />
+            </div>
+            <button type="submit" className="btn btn-quiet">
+              Add tag filter
+            </button>
+            {tagError && (
+              <p id="db-tag-error" className="error grow-row" role="alert">
+                {tagError}
+              </p>
+            )}
+          </form>
         </div>
-      )}
+        {(tagFilters.length > 0 || filtersActive) && (
+          <div className="active-filters">
+            {search && (
+              <span className="chip chip-lg chip-removable">
+                name: {search}
+                <button type="button" onClick={() => update({ q: null })} aria-label="Clear the name search">
+                  <X size={12} strokeWidth={2.5} aria-hidden="true" />
+                </button>
+              </span>
+            )}
+            {tagFilters.map((t) => (
+              <span key={t} className="chip chip-lg chip-removable">
+                {t}
+                <button type="button" onClick={() => update({ tag: tagFilters.filter((x) => x !== t) })} aria-label={`Remove tag filter ${t}`}>
+                  <X size={12} strokeWidth={2.5} aria-hidden="true" />
+                </button>
+              </span>
+            ))}
+            <button type="button" className="btn btn-quiet btn-xs" onClick={() => setParams({}, { replace: true })}>
+              Clear filters
+            </button>
+          </div>
+        )}
+      </section>
 
       {canManage && selected.size > 0 && <BulkBar selected={[...selected]} matching={matching} onSelectAll={selectAllMatching} onClear={() => setSelected(new Set())} onDone={reloadAll} />}
 

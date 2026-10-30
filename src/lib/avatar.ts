@@ -1,7 +1,7 @@
 /** Initial and colours of an organization avatar. Pure functions: no React, so the unit tests can run them. */
 
 /** The avatar of an organization: a black square with a white initial, like the rest of the dashboard. */
-export const AVATAR_BG = "#000000";
+export const AVATAR_BG = "#0b1220";
 export const AVATAR_FG = "#ffffff";
 
 /** The first visible character of the name, upper-cased: a whole emoji or accented letter, never half of one. "W" for an empty name. */

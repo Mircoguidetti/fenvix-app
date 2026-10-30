@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useOrg } from "../session/OrgProvider";
 import { TagChips } from "../components/Tags";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Download, GitFork, History, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronRight, Download, GitFork, History, TriangleAlert } from "lucide-react";
 import { client, type OperationProgress, type UsageRange } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -20,6 +20,10 @@ import { connectionParts } from "../data/connection";
 import { useAsync } from "../lib/useAsync";
 import { download } from "../lib/download";
 import { formatCount, formatDate, formatDateTime, formatRelative, formatStorage } from "../lib/format";
+import { DateTimePicker } from "../components/DateTimePicker";
+import { Switch } from "../components/Switch";
+import { Segmented } from "../components/Segmented";
+import { toApiTime } from "../lib/zoned";
 
 const RANGES: { value: UsageRange; label: string }[] = [
   { value: "24h", label: "24 h" },
@@ -32,8 +36,20 @@ type Dialog = "fork" | "restore" | "erase" | null;
 /** One unit for the whole axis, so it never mixes MB and GB. */
 const storageAxis = (max: number) => (max >= 1024 ? (n: number) => `${(n / 1024).toFixed(1)} GB` : (n: number) => `${Math.round(n)} MB`);
 
-/** `YYYY-MM-DDTHH:mm` in UTC, the format a datetime-local input wants. */
-const toInput = (d: Date) => d.toISOString().slice(0, 16);
+type Lang = "node" | "python" | "mongosh" | "uri";
+const LANGS: { value: Lang; label: string }[] = [
+  { value: "node", label: "Node.js" },
+  { value: "python", label: "Python" },
+  { value: "mongosh", label: "mongosh" },
+  { value: "uri", label: "Connection string" },
+];
+/** The same connection string in the form each client takes it. */
+function snippet(lang: Lang, uri: string) {
+  if (lang === "node") return `// Node.js\nconst client = new MongoClient(\n  "${uri}"\n);`;
+  if (lang === "python") return `# Python\nclient = MongoClient(\n    "${uri}"\n)`;
+  if (lang === "mongosh") return `mongosh "${uri}"`;
+  return uri;
+}
 
 export function DatabaseDetailPage() {
   const { id = "" } = useParams();
@@ -52,6 +68,8 @@ function DatabaseDetail({ id }: { id: string }) {
   const usage = useAsync(() => client.getUsage(id, range), [id, range]);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [field, setField] = useState("");
+  const [lang, setLang] = useState<Lang>("node");
+  const [restoreAt, setRestoreAt] = useState<Date>(() => new Date());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   /** Where the running fork, restore, erase or export has got to. */
@@ -93,7 +111,8 @@ function DatabaseDetail({ id }: { id: string }) {
   function open(next: Dialog) {
     setError(null);
     setBusy(false);
-    setField(next === "fork" ? `${d.name}-fork`.slice(0, 48) : next === "restore" ? toInput(new Date(now.getTime() - 3600_000)) : "");
+    setField(next === "fork" ? `${d.name}-fork`.slice(0, 48) : "");
+    if (next === "restore") setRestoreAt(new Date(Math.max(new Date(d.createdAt).getTime(), now.getTime() - 3600_000)));
     setDialog(next);
   }
 
@@ -123,9 +142,9 @@ function DatabaseDetail({ id }: { id: string }) {
     });
   const restore = () =>
     run(async () => {
-      if (!field) throw new Error("Choose a date and time.");
-      await client.restoreDatabase(d.id, `${field}:00Z`, track);
-      toast(`Restored ${d.name} to ${formatDateTime(`${field}:00Z`)}`, "success");
+      const at = toApiTime(restoreAt);
+      await client.restoreDatabase(d.id, at, track);
+      toast(`Restored ${d.name} to ${formatDateTime(at)}`, "success");
       db.reload();
     });
   const erase = () =>
@@ -167,27 +186,20 @@ function DatabaseDetail({ id }: { id: string }) {
       <PageHeader
         title={<span className="mono">{d.name}</span>}
         back={back}
-        actions={
-          <div className="header-facts">
-            <StateBadge state={d.state} />
-            <span className="muted">{d.region}</span>
-          </div>
+        meta={
+          <>
+            <StateBadge state={d.state} kept={keepAwake} />
+            <span className="mono muted small">{d.region}</span>
+          </>
         }
       />
 
-      <div className="seg detail-tabs" role="group" aria-label="Database sections">
-        <button type="button" aria-pressed={tab === "overview"} onClick={() => setParams({}, { replace: true })}>
-          Overview
-        </button>
-        <button type="button" aria-pressed={tab === "data"} onClick={() => setParams({ tab: "data" }, { replace: true })}>
-          Data
-        </button>
-        <button type="button" aria-pressed={tab === "users"} onClick={() => setParams({ tab: "users" }, { replace: true })}>
-          Users
-        </button>
-        <button type="button" aria-pressed={tab === "network"} onClick={() => setParams({ tab: "network" }, { replace: true })}>
-          Network
-        </button>
+      <div className="tabs" role="group" aria-label="Database sections">
+        {(["overview", "data", "users", "network"] as const).map((t) => (
+          <button key={t} type="button" aria-pressed={tab === t} onClick={() => setParams(t === "overview" ? {} : { tab: t }, { replace: true })}>
+            {t[0].toUpperCase() + t.slice(1)}
+          </button>
+        ))}
       </div>
 
       {tab === "data" && <DataExplorer db={d} />}
@@ -195,19 +207,25 @@ function DatabaseDetail({ id }: { id: string }) {
       {tab === "network" && <DatabaseNetwork db={d} />}
 
       {tab === "overview" && (
-        <>
-          <div className="grid-2 even">
-            <Card id="conn" title="Connection string" description="Point any MongoDB driver at this. Replace <password> with the user's password: it was shown once when the user was made. Lost it? Reset it in Users.">
+        <div className="ov-grid">
+          <div className="ov-main">
+            <Card id="conn" title="Connect" description="Use any standard MongoDB driver. Replace <password> with the password of your user: it was shown once when the user was made. Lost it? Reset it in Users.">
+              <Segmented label="Language" value={lang} onChange={setLang} options={LANGS} />
               <label htmlFor="conn-string" className="sr-only">
                 Connection string
               </label>
-              <textarea id="conn-string" className="code" readOnly rows={3} value={d.connectionString} onFocus={(e) => e.currentTarget.select()} />
-              <div className="row-actions">
-                <CopyButton value={d.connectionString} what="connection string" />
-                <button type="button" className="btn" onClick={() => setParams({ tab: "users" }, { replace: true })}>
+              <div className="codebox">
+                <pre id="conn-string" className="mono" tabIndex={0} aria-label="Connection code">
+                  {snippet(lang, d.connectionString)}
+                </pre>
+                <CopyButton value={snippet(lang, d.connectionString)} what={lang === "uri" ? "connection string" : "code"} />
+              </div>
+              <p className="help">
+                Standard MongoDB drivers work as they are. The connection always uses TLS, on port {conn.port}.{" "}
+                <button type="button" className="link-btn" onClick={() => setParams({ tab: "users" }, { replace: true })}>
                   {canManage ? "Manage users" : "View users"}
                 </button>
-              </div>
+              </p>
               <dl className="facts facts-tight">
                 <div>
                   <dt>Host</dt>
@@ -236,29 +254,13 @@ function DatabaseDetail({ id }: { id: string }) {
               </dl>
             </Card>
 
-            <Card id="status" title="Status" description="What this database is doing and what it holds.">
-              <dl className="facts facts-fill">
+            <Card id="status" title="Status">
+              <dl className="status-facts">
                 <div>
                   <dt>State</dt>
                   <dd>
-                    <StateBadge state={d.state} />
+                    <StateBadge state={d.state} kept={keepAwake} />
                   </dd>
-                </div>
-                <div>
-                  <dt>Keep awake</dt>
-                  <dd>{keepAwake ? "On" : "Off"}</dd>
-                </div>
-                <div>
-                  <dt>Storage</dt>
-                  <dd className="mono">{formatStorage(d.storageMb)}</dd>
-                </div>
-                <div>
-                  <dt>Requests (24 h)</dt>
-                  <dd className="mono">{formatCount(d.requests24h)}</dd>
-                </div>
-                <div>
-                  <dt>Last active</dt>
-                  <dd title={formatDateTime(d.lastActiveAt)}>{formatRelative(d.lastActiveAt, now)}</dd>
                 </div>
                 <div>
                   <dt>Region</dt>
@@ -267,6 +269,18 @@ function DatabaseDetail({ id }: { id: string }) {
                 <div>
                   <dt>Created</dt>
                   <dd>{formatDate(d.createdAt)}</dd>
+                </div>
+                <div>
+                  <dt>Storage</dt>
+                  <dd>{formatStorage(d.storageMb)}</dd>
+                </div>
+                <div>
+                  <dt>Requests (24 h)</dt>
+                  <dd>{formatCount(d.requests24h)}</dd>
+                </div>
+                <div>
+                  <dt>Last request</dt>
+                  <dd title={formatDateTime(d.lastActiveAt)}>{formatRelative(d.lastActiveAt, now)}</dd>
                 </div>
                 {d.forkedFrom && (
                   <div>
@@ -286,90 +300,101 @@ function DatabaseDetail({ id }: { id: string }) {
                 )}
               </dl>
             </Card>
-          </div>
 
-          <Card id="tags" title="Tags" description="Tags group and filter databases across the fleet, for example by customer or environment.">
-            {canManage ? (
-              <TagEditor db={d} onChanged={db.reload} />
-            ) : d.tags.length === 0 ? (
-              <p className="muted">This database has no tags yet.</p>
-            ) : (
-              <TagChips tags={d.tags} max={d.tags.length} />
-            )}
-          </Card>
+            <Card id="tags" title="Tags" description="Tags group and filter databases across the fleet, for example by customer or environment.">
+              {canManage ? (
+                <TagEditor db={d} onChanged={db.reload} />
+              ) : d.tags.length === 0 ? (
+                <p className="muted">This database has no tags yet.</p>
+              ) : (
+                <TagChips tags={d.tags} max={d.tags.length} />
+              )}
+            </Card>
 
-          <Card
-            id="usage"
-            title="Activity"
-            description="Requests, storage and the hours this database was awake."
-            actions={
-              <div className="seg seg-sm" role="group" aria-label="Time range">
-                {RANGES.map((r) => (
-                  <button key={r.value} type="button" aria-pressed={range === r.value} onClick={() => setRange(r.value)}>
-                    {r.label}
-                  </button>
-                ))}
-              </div>
-            }
-          >
-            {usage.status === "loading" && <Message>Loading activity</Message>}
-            {usage.status === "error" && <Message role="alert">{usage.message}</Message>}
-            {usage.status === "ready" && (
-              <div className="stack wide">
-                <div className="chart-pair">
-                  <section aria-labelledby="chart-requests">
-                    <h3 id="chart-requests" className="chart-title">
-                      Requests
+            <Card
+              id="usage"
+              title="Activity"
+              description="Requests, storage and the hours this database was awake."
+              actions={<Segmented label="Time range" value={range} onChange={setRange} options={RANGES} />}
+            >
+              {usage.status === "loading" && <Message>Loading activity</Message>}
+              {usage.status === "error" && <Message role="alert">{usage.message}</Message>}
+              {usage.status === "ready" && (
+                <div className="stack wide">
+                  <div className="chart-pair">
+                    <section aria-labelledby="chart-requests">
+                      <h3 id="chart-requests" className="chart-title">
+                        Requests
+                      </h3>
+                      <TimeBarsChart points={usage.data.map((p) => ({ at: p.at, value: p.requests }))} range={range} valueLabel={(n) => `${formatCount(n)} requests`} bucketNoun={range === "7d" ? "six-hour window" : undefined} />
+                    </section>
+                    <section aria-labelledby="chart-storage">
+                      <h3 id="chart-storage" className="chart-title">
+                        Storage
+                      </h3>
+                      <AreaSeriesChart points={usage.data.map((p) => ({ at: p.at, value: p.storageMb }))} range={range} valueLabel={formatStorage} axisLabel={storageAxis(Math.max(...usage.data.map((p) => p.storageMb)))} />
+                    </section>
+                  </div>
+                  <section aria-labelledby="chart-timeline">
+                    <h3 id="chart-timeline" className="chart-title">
+                      Awake and asleep
                     </h3>
-                    <TimeBarsChart points={usage.data.map((p) => ({ at: p.at, value: p.requests }))} range={range} valueLabel={(n) => `${formatCount(n)} requests`} bucketNoun={range === "7d" ? "six-hour window" : undefined} />
-                  </section>
-                  <section aria-labelledby="chart-storage">
-                    <h3 id="chart-storage" className="chart-title">
-                      Storage
-                    </h3>
-                    <AreaSeriesChart points={usage.data.map((p) => ({ at: p.at, value: p.storageMb }))} range={range} valueLabel={formatStorage} axisLabel={storageAxis(Math.max(...usage.data.map((p) => p.storageMb)))} />
+                    <WakeTimeline points={usage.data} range={range} />
                   </section>
                 </div>
-                <section aria-labelledby="chart-timeline">
-                  <h3 id="chart-timeline" className="chart-title">
-                    Awake and asleep
-                  </h3>
-                  <WakeTimeline points={usage.data} range={range} />
-                </section>
+              )}
+            </Card>
+          </div>
+
+          <section className="actions-card" id="actions" aria-labelledby="actions-h">
+            <h2 id="actions-h">Actions</h2>
+            {canManage ? (
+              <>
+                <div className="action-row">
+                  <Switch id="keep-awake" checked={keepAwake} onChange={(on) => void toggleKeepAwake(on)} label="Keep awake" help="Never sleeps. First request is never slow." />
+                </div>
+                <button type="button" className="action-row action-btn" aria-label="Fork" aria-describedby="act-fork" onClick={() => open("fork")}>
+                  <span className="action-text">
+                    <span className="action-name">
+                      <GitFork size={16} strokeWidth={1.75} aria-hidden="true" /> Fork
+                    </span>
+                    <span id="act-fork" className="help">Make a copy of this database.</span>
+                  </span>
+                  <ChevronRight size={16} strokeWidth={2} aria-hidden="true" className="action-chev" />
+                </button>
+                <button type="button" className="action-row action-btn" aria-label="Restore to a point in time" aria-describedby="act-restore" onClick={() => open("restore")}>
+                  <span className="action-text">
+                    <span className="action-name">
+                      <History size={16} strokeWidth={1.75} aria-hidden="true" /> Restore to a point in time
+                    </span>
+                    <span id="act-restore" className="help">Go back to how it was.</span>
+                  </span>
+                  <ChevronRight size={16} strokeWidth={2} aria-hidden="true" className="action-chev" />
+                </button>
+                <button type="button" className="action-row action-btn" aria-label={exporting ? "Exporting" : "Export"} aria-describedby="act-export" onClick={exportData} disabled={exporting}>
+                  <span className="action-text">
+                    <span className="action-name">
+                      <Download size={16} strokeWidth={1.75} aria-hidden="true" /> {exporting ? "Exporting…" : "Export"}
+                    </span>
+                    <span id="act-export" className="help">Download its data.</span>
+                  </span>
+                  <ChevronRight size={16} strokeWidth={2} aria-hidden="true" className="action-chev" />
+                </button>
+                <button type="button" className="action-row action-btn action-erase" aria-label="Erase" aria-describedby="act-erase" onClick={() => open("erase")}>
+                  <span className="action-text">
+                    <span className="action-name">Erase</span>
+                    <span id="act-erase" className="help">Deletes all its data and users.</span>
+                  </span>
+                </button>
+                <OperationNote progress={exporting ? progress : null} />
+              </>
+            ) : (
+              <div className="action-row">
+                <Message>You have view-only access: keep awake, fork, restore, export and erase are for owners and admins.</Message>
               </div>
             )}
-          </Card>
-
-          <Card id="actions" title="Actions" description={canManage ? "Everything you can do to this database from here." : "Only an owner or admin can change this database."}>
-            {canManage && (<>
-            <label className="check">
-              <input type="checkbox" checked={keepAwake} onChange={(e) => toggleKeepAwake(e.target.checked)} />
-              Keep awake
-            </label>
-            <p className="muted small">A database that is kept awake never sleeps, so its first request is never slow.</p>
-            <div className="row-actions">
-              <button type="button" className="btn" onClick={() => open("fork")}>
-                <GitFork size={16} aria-hidden="true" />
-                Fork
-              </button>
-              <button type="button" className="btn" onClick={() => open("restore")}>
-                <History size={16} aria-hidden="true" />
-                Restore to a point in time
-              </button>
-              <button type="button" className="btn" onClick={exportData} disabled={exporting}>
-                <Download size={16} aria-hidden="true" />
-                {exporting ? "Exporting…" : "Export"}
-              </button>
-              <button type="button" className="btn btn-danger" onClick={() => open("erase")}>
-                <Trash2 size={16} aria-hidden="true" />
-                Erase
-              </button>
-            </div>
-            <OperationNote progress={exporting ? progress : null} />
-            </>)}
-            {!canManage && <Message>You have view-only access: keep awake, fork, restore, export and erase are for owners and admins.</Message>}
-          </Card>
-        </>
+          </section>
+        </div>
       )}
 
       <PasswordDialog
@@ -397,17 +422,24 @@ function DatabaseDetail({ id }: { id: string }) {
       </ConfirmDialog>
 
       <ConfirmDialog danger open={dialog === "restore"} title="Restore to a point in time" confirmLabel="Restore database" busy={busy} onConfirm={restore} onCancel={() => setDialog(null)}>
-        <p>Rolls {d.name} back to the moment you choose. Changes made after that moment are lost.</p>
-        <div className="field">
-          <label htmlFor="restore-at">Date and time (UTC)</label>
-          <input id="restore-at" type="datetime-local" value={field} min={toInput(new Date(d.createdAt))} max={toInput(now)} onChange={(e) => (setField(e.target.value), setError(null))} autoFocus />
-          {error && (
-            <p className="error" role="alert">
-              {error}
-            </p>
-          )}
-          <OperationNote progress={busy ? progress : null} />
-        </div>
+        <p>Pick a moment. Fenvix brings {d.name} back to how it was then.</p>
+        <p className="once-warning" role="note">
+          <TriangleAlert size={16} aria-hidden="true" />
+          <span>
+            Changes made after that moment are lost.{" "}
+            <button type="button" className="link-btn" onClick={() => open("fork")}>
+              Fork this database first
+            </button>{" "}
+            to keep a copy.
+          </span>
+        </p>
+        {dialog === "restore" && <DateTimePicker value={restoreAt} onChange={(v) => (setRestoreAt(v), setError(null))} min={new Date(d.createdAt)} max={now} minNote={`Earlier days are unavailable because this database was created on ${formatDateTime(d.createdAt)}.`} />}
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        <OperationNote progress={busy ? progress : null} />
       </ConfirmDialog>
 
       <ConfirmDialog danger open={dialog === "erase"} title="Erase this database?" confirmLabel="Erase database" busy={busy} confirmDisabled={field !== d.name} onConfirm={erase} onCancel={() => setDialog(null)}>

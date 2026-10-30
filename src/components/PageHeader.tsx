@@ -1,13 +1,15 @@
 import type { ReactNode } from "react";
 import { CircleAlert, TriangleAlert } from "lucide-react";
 
-export function PageHeader({ title, description, actions, back }: { title: ReactNode; description?: ReactNode; actions?: ReactNode; back?: ReactNode }) {
+/** `meta` sits next to the title (a state badge, a region); `actions` sit at the far end. */
+export function PageHeader({ title, description, actions, back, meta }: { title: ReactNode; description?: ReactNode; actions?: ReactNode; back?: ReactNode; meta?: ReactNode }) {
   return (
     <header className="page-header">
       <div className="page-header-main">
         {back}
         <div className="page-title-row">
           <h1>{title}</h1>
+          {meta}
         </div>
         {description && <p className="muted page-desc">{description}</p>}
       </div>

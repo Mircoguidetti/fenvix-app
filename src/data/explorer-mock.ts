@@ -83,15 +83,47 @@ function parseObject(text: string | undefined, field: string): Doc {
 }
 
 const flat = (v: Ejson): string => JSON.stringify(v);
-/** Equality on top-level fields, with plain numbers matching int32 values and $regex on strings. */
+/** A stored value as something comparable: numbers (plain or wrapped), dates and text. */
+function comparable(v: Ejson | undefined): number | string | boolean | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "number" || typeof v === "string" || typeof v === "boolean") return v;
+  if (!Array.isArray(v) && typeof v === "object") {
+    for (const k of ["$numberInt", "$numberLong", "$numberDouble", "$numberDecimal"]) if (k in v) return Number(v[k]);
+    if ("$date" in v) return Number(typeof v.$date === "object" && v.$date && !Array.isArray(v.$date) ? (v.$date as { $numberLong?: string }).$numberLong : Date.parse(String(v.$date)));
+    if ("$oid" in v) return String(v.$oid);
+  }
+  return flat(v);
+}
+const same = (a: Ejson | undefined, b: Ejson | undefined) => comparable(a) === comparable(b);
+
+/** The operators the control plane allows: $eq $ne $gt $gte $lt $lte $in $nin $and $or $not $exists $regex. Top-level fields only. */
 function matches(d: Doc, f: Doc): boolean {
   return Object.entries(f).every(([k, cond]) => {
+    if (k === "$and") return (cond as Doc[]).every((x) => matches(d, x));
+    if (k === "$or") return (cond as Doc[]).some((x) => matches(d, x));
     const val = d[k];
-    if (cond && typeof cond === "object" && !Array.isArray(cond) && "$regex" in cond) {
-      return typeof val === "string" && new RegExp(String(cond.$regex), String(cond.$options ?? "")).test(val);
+    if (cond && typeof cond === "object" && !Array.isArray(cond) && Object.keys(cond).every((o) => o.startsWith("$")) && !("$oid" in cond) && !("$date" in cond) && !Object.keys(cond).some((o) => o.startsWith("$number"))) {
+      return Object.entries(cond).every(([op, arg]) => {
+        const x = comparable(val);
+        const y = comparable(arg as Ejson);
+        switch (op) {
+          case "$eq": return same(val, arg as Ejson);
+          case "$ne": return !same(val, arg as Ejson);
+          case "$gt": return x !== null && y !== null && x > y;
+          case "$gte": return x !== null && y !== null && x >= y;
+          case "$lt": return x !== null && y !== null && x < y;
+          case "$lte": return x !== null && y !== null && x <= y;
+          case "$in": return (arg as Ejson[]).some((a) => same(val, a));
+          case "$nin": return !(arg as Ejson[]).some((a) => same(val, a));
+          case "$exists": return (val !== undefined) === !!arg;
+          case "$regex": return typeof val === "string" && new RegExp(String(arg), String((cond as Doc).$options ?? "")).test(val);
+          case "$options": return true;
+          case "$not": return !matches({ [k]: val as Ejson }, { [k]: arg as Ejson });
+          default: return false;
+        }
+      });
     }
-    if (typeof cond === "number") return flat(val ?? null) === flat({ $numberInt: String(cond) }) || val === cond;
-    return flat(val ?? null) === flat(cond);
+    return same(val, cond as Ejson);
   });
 }
 

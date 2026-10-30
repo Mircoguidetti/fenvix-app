@@ -132,7 +132,7 @@ const TESTS = {
     await page.locator("#actions").getByText("view-only access").waitFor();
     await go(page, "databases/db_0001?tab=users");
     await page.locator("#users td .user-name").first().waitFor();
-    assert(!(await page.getByRole("button", { name: "Add user" }).count()), "a member can add database users");
+    assert(!(await page.getByRole("button", { name: "Create user" }).count()), "a member can add database users");
     // Network: the list read only, no blocked addresses.
     await go(page, "databases/db_0001?tab=network");
     await page.locator("#allowlist .net-entry").first().waitFor();

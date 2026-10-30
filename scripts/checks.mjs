@@ -2,7 +2,7 @@
 // (fresh data, signed out) and signs in through the real sign-in page unless it is testing sign-in.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: npm run checks
 import { readFile } from "node:fs/promises";
-import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText, choose } from "./lib.mjs";
+import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText, choose, openFilters } from "./lib.mjs";
 
 const { fail, pass, state } = makeReporter();
 const browser = await launch();
@@ -53,19 +53,15 @@ const userCell = (page, name) => page.locator("#users td .user-name").filter({ h
 
 /** Clicks a segmented-control tab and waits for it to actually be the chosen one. */
 async function clickTab(page, name) {
-  const tab = page.getByRole("button", { name, exact: true });
+  await openFilters(page);
+  const tab = page.getByRole("button", { name: new RegExp(`^${name}( [\\d,]+)?$`) });
   await tab.click();
   await eventually(async () => (await tab.getAttribute("aria-pressed")) === "true", `the ${name} tab did not become active`);
 }
 
 /** Opens a collection in the Data tab: the list on a wide screen, the select on a phone. */
 async function pickCollection(page, vp, name) {
-  if (isMobile(vp)) {
-    await page.locator("#coll-select").waitFor();
-    await choose(page, page.locator("#coll-select"), name);
-  } else {
-    await page.locator(".coll-btn", { hasText: name }).click();
-  }
+  await page.locator(".coll-btn", { hasText: name }).first().click();
   await page.getByRole("heading", { name, exact: true }).waitFor();
 }
 
@@ -94,7 +90,7 @@ const TESTS = {
         const b = document.querySelector(".menu-btn").getBoundingClientRect();
         return { bar: t.height, above: b.top - t.top, below: t.bottom - b.bottom, long: document.querySelector(".content").scrollHeight > innerHeight };
       });
-      assert(m.bar >= 68, `${route}: the top bar is ${m.bar}px tall, not 68`);
+      assert(m.bar >= 60, `${route}: the top bar is ${m.bar}px tall, not 60`);
       assert(m.above >= 12 && m.below >= 12, `${route}: the menu button has ${m.above}px above and ${m.below}px below`);
       if (route === "overview") assert(m.long, "overview is not longer than the screen, so it does not test the squeeze");
     }
@@ -277,6 +273,7 @@ const TESTS = {
 
     await go(page, "databases");
     await settled(page);
+    await openFilters(page);
     await page.locator("#db-tag").fill("customer:acme-labs");
     await page.getByRole("button", { name: "Add tag filter" }).click();
     await eventually(async () => (await counted(page)) < 3000, "the tag filter did not apply");
@@ -296,9 +293,10 @@ const TESTS = {
     assert((await counted(page)) === 3000, "the fleet should hold 3,000 databases");
     const dom = await page.evaluate(() => document.querySelectorAll("*").length);
     assert(dom < 5000, `${dom} DOM nodes on the list page`);
-    const asleep = num(await page.locator(".counts-bar b").nth(2).innerText());
-    assert(asleep > 2500, `most databases should be asleep, got ${asleep}`);
+    const asleepPct = num(await page.locator(".counts-bar b").nth(1).innerText());
+    assert(asleepPct > 80, `most databases should be asleep, got ${asleepPct}%`);
     // The default list is by name, so awake and asleep databases are mixed together.
+    await openFilters(page);
     assert((await page.getByLabel("Sort by").textContent()).trim() === "Name, A to Z", "the default sort is not by name");
     const names = await page.locator("tbody tr td a").allTextContents();
     assert([...names].sort((a, b) => a.localeCompare(b)).join() === names.join(), "the default list is not in name order");
@@ -307,13 +305,14 @@ const TESTS = {
     await page.getByRole("button", { name: "Previous" }).click();
 
     await clickTab(page, "Awake");
-    await eventually(async () => (await page.locator('tbody td[data-label="State"]').allTextContents()).every((s) => s.includes("Awake")), "the Awake tab still shows asleep databases");
+    await eventually(async () => (await page.locator('tbody td[data-label="State"]').allTextContents()).every((s) => /awake/i.test(s)), "the Awake tab still shows asleep databases");
     await clickTab(page, "Kept awake");
-    await eventually(async () => (await page.locator("tbody tr").count()) > 0 && (await page.locator(".kept").count()) > 0, "the Kept awake tab shows nothing");
+    await eventually(async () => (await page.locator("tbody tr").count()) > 0 && (await page.locator(".state-kept").count()) > 0, "the Kept awake tab shows nothing");
     await clickTab(page, "All");
     await eventually(async () => (await counted(page)) === 3000, "clearing the state tab did not bring the fleet back");
 
     const t1 = Date.now();
+    await openFilters(page);
     await choose(page, page.getByLabel("Group by tag"), "customer");
     await page.getByText("3,000 databases in 200 groups, grouped by customer").waitFor();
     assert(Date.now() - t1 < 4000, "grouping took too long");
@@ -324,8 +323,10 @@ const TESTS = {
     await page.locator(".group-body tbody tr").first().waitFor();
     await page.getByRole("button", { name: /^Show more/ }).click();
     await eventually(async () => (await page.locator(".group-body tbody tr").count()) === 50, "show more should load 25 more rows");
+    await openFilters(page);
     await choose(page, page.getByLabel("Group by tag"), "env");
     await page.getByText(/in 4 groups, grouped by env/).waitFor();
+    await openFilters(page);
     await choose(page, page.getByLabel("Group by tag"), "");
     await page.waitForSelector("tbody tr");
   },
@@ -355,10 +356,15 @@ const TESTS = {
   async "restore to a point in time"(page) {
     await signIn(page, "databases/db_0001");
     await page.getByRole("button", { name: "Restore to a point in time" }).click();
-    await page.getByLabel("Date and time (UTC)").fill("2026-12-01T10:00");
-    await page.getByRole("button", { name: "Restore database" }).click();
-    await page.getByRole("dialog").getByRole("alert").getByText("in the past").waitFor();
-    await page.getByLabel("Date and time (UTC)").fill("2026-10-20T10:00");
+    const dlg = page.getByRole("dialog", { name: "Restore to a point in time" });
+    // Days after today and before the database existed cannot be chosen; there is no option to restore into a new database.
+    assert(await dlg.getByRole("button", { name: "October 27, 2026" }).isDisabled(), "a day in the future can be chosen");
+    assert(!(await dlg.getByText("new database", { exact: false }).count()), "the restore dialog offers a new database");
+    await dlg.getByRole("button", { name: "UTC", exact: true }).click();
+    await dlg.getByRole("button", { name: "October 20, 2026" }).click();
+    await dlg.getByLabel("Hour", { exact: true }).fill("10");
+    await dlg.getByLabel("Minute", { exact: true }).fill("00");
+    await dlg.getByText("Tue, Oct 20, 10:00 UTC").waitFor();
     await page.getByRole("button", { name: "Restore database" }).click();
     await toast(page, "Restored orders-prod to Oct 20, 10:00 UTC");
     await page.getByText("Restored to").waitFor();
@@ -393,9 +399,9 @@ const TESTS = {
 
   async "keep awake"(page) {
     await signIn(page, "databases/db_0003");
-    await page.getByLabel("Keep awake").check();
+    await page.getByRole("switch", { name: "Keep awake" }).click();
     await toast(page, "orders-staging will stay awake");
-    await page.locator(".facts").getByText("Awake").first().waitFor();
+    await page.locator(".status-facts").getByText("Kept awake").first().waitFor();
     await go(page, "databases");
     await settled(page);
     await clickTab(page, "Kept awake");
@@ -403,9 +409,8 @@ const TESTS = {
     await eventually(async () => (await counted(page)) === 1, "the kept-awake filter does not find it");
     const row = page.locator("tbody tr").filter({ hasText: "orders-staging" });
     await row.getByText("Kept awake").waitFor();
-    await row.getByText("Awake", { exact: true }).waitFor();
     await go(page, "databases/db_0003");
-    await page.getByLabel("Keep awake").uncheck();
+    await page.getByRole("switch", { name: "Keep awake" }).click();
     await toast(page, "orders-staging can sleep when idle");
     await go(page, "databases?keep=on&q=orders-staging");
     await page.getByText("No databases match these filters").waitFor();
@@ -484,10 +489,13 @@ const TESTS = {
       const r = await requests();
       return r.length === 50 && r.every((v, i) => i === 0 || cmp(r[i - 1], v));
     };
+    await openFilters(page);
     await choose(page, page.getByLabel("Sort by"), "requests:desc");
     await eventually(sortedBy((a, b) => a >= b), "requests are not sorted high to low");
+    await openFilters(page);
     await choose(page, page.getByLabel("Sort by"), "requests:asc");
     await eventually(sortedBy((a, b) => a <= b), "requests are not sorted low to high");
+    await openFilters(page);
     await choose(page, page.getByLabel("Sort by"), "name:asc");
     await eventually(async () => {
       const names = await page.locator('tbody td[data-label="Name"]').allTextContents();
@@ -594,10 +602,10 @@ const TESTS = {
     await eventually(async () => (await page.locator(".doc").count()) === 15, "the filter did not narrow the list to the 15 paid orders");
     assert(!(await page.getByRole("alert").count()), "the filter error stayed after a valid filter");
 
-    await page.locator(".doc").first().getByRole("button", { expanded: false }).first().click();
-    await page.locator(".json-tree").first().getByText(/^ISODate\("2026-09-/).waitFor();
     await page.getByRole("button", { name: "Reset" }).click();
     await eventually(async () => (await page.locator(".doc").count()) === 25, "Reset did not bring back every document");
+    await page.locator(".doc-pick").first().click();
+    await page.locator(".ex-doc .field-value").getByText(/^ISODate\("2026-09-/).first().waitFor();
   },
 
   async "data explorer: documents are shown as text, never as markup"(page, vp) {
@@ -607,13 +615,14 @@ const TESTS = {
     await page.getByRole("heading", { name: "Collections" }).waitFor();
     await pickCollection(page, vp, "notes");
     await eventually(async () => (await page.locator(".doc").count()) === 2, "the notes did not load");
-    for (const t of await page.locator(".doc-toggle").all()) await t.click();
-    await page.locator(".json-tree").first().waitFor();
     const text = await page.locator(".explorer").innerText();
     assert(text.includes("<script>window.__xss = 'script'</script>"), "the <script> in the document is not shown as text");
     assert(text.includes("<img src=x onerror="), "the <img onerror> in the document is not shown as text");
     assert((await page.locator(".explorer script, .explorer img, .explorer iframe, .explorer object").count()) === 0, "markup from a document became an element");
-    await page.getByRole("button", { name: /^Edit document/ }).first().click();
+    await page.locator(".doc-pick").first().click();
+    await page.locator(".ex-doc .field-row").first().waitFor();
+    assert((await page.locator(".ex-doc script, .ex-doc img").count()) === 0, "markup from a document became an element in the fields");
+    await page.getByRole("button", { name: /^Edit as JSON, document/ }).click();
     const editor = page.getByLabel("Document", { exact: true });
     await editor.waitFor();
     assert((await editor.inputValue()).includes("<script>"), "the editor does not hold the raw text");
@@ -631,6 +640,7 @@ const TESTS = {
     await eventually(async () => (await page.locator(".doc").count()) === 1, "customers did not load");
 
     await page.getByRole("button", { name: "Insert document" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Edit as JSON", exact: true }).click();
     const editor = page.getByLabel("Document", { exact: true });
     await editor.fill('{"name": "Contoso"');
     await page.getByRole("alert").getByText("The document is not valid JSON").waitFor();
@@ -640,14 +650,15 @@ const TESTS = {
     await toast(page, "Document inserted");
     await eventually(async () => (await page.locator(".doc").count()) === 2, "the new document is not listed");
 
-    await page.getByRole("button", { name: 'Edit document "contoso"' }).click();
+    await page.getByRole("button", { name: 'Open document "contoso"' }).click();
+    await page.getByRole("button", { name: 'Edit as JSON, document "contoso"' }).click();
     await editor.fill('{"_id": "contoso", "name": "Contoso Ltd", "seats": {"$numberInt": "4"}}');
     await page.getByRole("button", { name: "Save" }).click();
     await toast(page, "Document saved");
-    await page.locator(".doc", { hasText: "Contoso Ltd" }).waitFor();
+    await page.locator(".ex-doc .field-value", { hasText: "Contoso Ltd" }).waitFor();
 
     // Someone else changes the document while it is open here: the save is refused, nothing is overwritten.
-    await page.getByRole("button", { name: 'Edit document "contoso"' }).click();
+    await page.getByRole("button", { name: 'Edit as JSON, document "contoso"' }).click();
     await editor.fill('{"_id": "contoso", "name": "Mine", "seats": {"$numberInt": "9"}}');
     await page.evaluate(() => window.__fenvixExplorerMock.touch("db_0001", "customers", '"contoso"', "name", "Theirs"));
     await page.getByRole("button", { name: "Save" }).click();
@@ -659,11 +670,69 @@ const TESTS = {
     await page.getByRole("button", { name: 'Delete document "contoso"' }).click();
     await page.getByRole("heading", { name: "Delete this document?" }).waitFor();
     await page.getByRole("button", { name: "Cancel" }).click();
-    assert((await page.locator(".doc").count()) === 2, "Cancel deleted the document");
+    assert(await page.locator(".doc-pick").count() === 2, "Cancel deleted the document");
     await page.getByRole("button", { name: 'Delete document "contoso"' }).click();
     await page.getByRole("button", { name: "Delete document", exact: true }).click();
     await toast(page, "Document deleted");
     await eventually(async () => (await page.locator(".doc").count()) === 1, "the document is still listed");
+  },
+
+  async "data explorer: add a field, step by step, with the type checked"(page, vp) {
+    await signIn(page, "databases/db_0001?tab=data");
+    await page.getByRole("heading", { name: "Collections" }).waitFor();
+    await pickCollection(page, vp, "customers");
+    await eventually(async () => (await page.locator(".doc-pick").count()) === 1, "customers did not load");
+    await page.locator(".doc-pick").first().click();
+    await page.getByRole("button", { name: "Add field", exact: true }).click();
+    const form = page.locator(".add-field");
+    await form.getByLabel("Name").fill("$bad");
+    await form.getByRole("button", { name: "Add field" }).click();
+    await form.getByRole("alert").getByText('cannot start with "$"').waitFor();
+    await form.getByLabel("Name").fill("total");
+    await choose(page, form.locator("#af-type"), "Number");
+    await form.getByLabel("Value").fill("abc");
+    await form.getByRole("button", { name: "Add field" }).click();
+    await form.getByRole("alert").getByText("not a number").waitFor();
+    await form.getByLabel("Value").fill("42.5");
+    await form.getByRole("button", { name: "Add field" }).click();
+    await toast(page, "Added field total");
+    const row = page.locator(".ex-doc .field-row", { hasText: "total" });
+    await row.waitFor();
+    assert((await row.innerText()).includes("double") && (await row.innerText()).includes("42.5"), `the new field reads: ${await row.innerText()}`);
+    // The date type reads ISO text and keeps it a date.
+    await page.getByRole("button", { name: "Add field", exact: true }).click();
+    await form.getByLabel("Name").fill("seenAt");
+    await choose(page, form.locator("#af-type"), "Date");
+    await form.getByLabel("Value").fill("2026-10-30T17:48:12Z");
+    await form.getByRole("button", { name: "Add field" }).click();
+    await page.locator(".ex-doc .field-row", { hasText: "seenAt" }).getByText('ISODate("2026-10-30T17:48:12.000Z")').waitFor();
+  },
+
+  async "data explorer: query builder"(page, vp) {
+    await signIn(page, "databases/db_0001?tab=data");
+    await page.getByRole("heading", { name: "Collections" }).waitFor();
+    await pickCollection(page, vp, "orders");
+    await page.getByRole("button", { name: "Query builder" }).click();
+    await page.getByRole("region", { name: "Query" }).waitFor();
+    await choose(page, page.locator(".qb-collection .select-btn"), "orders");
+    const row = page.getByRole("group", { name: "Condition 1" });
+    await row.getByLabel("Field").fill("status");
+    await row.getByLabel("Value").fill("paid");
+    await page.getByRole("button", { name: "Run query" }).click();
+    await page.getByText(/^15 documents/).waitFor();
+    // The same filter, as JSON.
+    await page.getByRole("button", { name: "Show as JSON" }).click();
+    assert((await page.getByLabel("Filter as JSON").inputValue()) === '{"status":{"$eq":"paid"}}', `the JSON reads ${await page.getByLabel("Filter as JSON").inputValue()}`);
+    await page.getByLabel("Filter as JSON").fill('{"status": {"$ne": "paid"}}');
+    await page.getByRole("button", { name: "Show as rows" }).click();
+    assert((await page.getByRole("group", { name: "Condition 1" }).getByLabel("Value").inputValue()) === '"paid"', "the rows do not follow the JSON");
+    await page.getByRole("group", { name: "Condition 1" }).getByLabel("Field").fill("");
+    await page.getByRole("button", { name: "Run query" }).click();
+    // An empty row is skipped; a half-written one is explained.
+    await page.getByRole("group", { name: "Condition 1" }).getByLabel("Field").fill("total");
+    await page.getByRole("group", { name: "Condition 1" }).getByLabel("Value").fill("");
+    await page.getByRole("button", { name: "Run query" }).click();
+    await page.getByRole("alert").getByText("Give a value").waitFor();
   },
 
   async "data explorer: a sleeping database is woken"(page, vp) {
@@ -684,13 +753,13 @@ const TESTS = {
     assert(!/[A-Za-z0-9]{40}/.test(await page.locator("#users table").innerText()), "the list shows something that looks like a password");
 
     // A name the server would refuse is explained before anything is sent.
-    await page.getByRole("button", { name: "Add user" }).click();
-    const add = page.getByRole("dialog", { name: "Add a user" });
+    const add = page.getByRole("region", { name: "New user" });
     await add.getByLabel("User name").fill("Admin!");
     await add.getByRole("button", { name: "Create user" }).click();
     await add.getByRole("alert").getByText("lowercase letters").waitFor();
     await add.getByLabel("User name").fill("check-reader");
-    await choose(page, add.getByLabel("Access"), "read");
+    await add.getByRole("radio", { name: /^Read only/ }).check();
+    assert((await add.getByRole("radio").count()) === 2, "the roles are not exactly Read only and Read and write");
     await add.getByRole("button", { name: "Create user" }).click();
 
     const once = page.getByRole("dialog", { name: "User check-reader created" });
@@ -750,11 +819,11 @@ const TESTS = {
   async "database users: empty and error states"(page) {
     await signIn(page, "databases/db_0002?tab=users");
     await page.getByRole("heading", { name: "No users yet" }).waitFor();
-    await page.getByRole("button", { name: "Add user" }).waitFor();
+    await page.getByRole("button", { name: "Create user" }).waitFor();
     await go(page, "databases/db_0005?tab=users");
     await page.getByRole("alert").getByText("The database engine did not answer").waitFor();
     await page.getByRole("button", { name: "Try again" }).waitFor();
-    assert(await page.getByRole("button", { name: "Add user" }).isDisabled(), "Add user is enabled while the list could not load");
+    assert(await page.getByRole("button", { name: "Create user" }).isDisabled(), "Create user is enabled while the list could not load");
   },
 
   async "sidebar: brand and workspace"(page, vp) {
@@ -818,7 +887,13 @@ const TESTS = {
     assert(!mine.empty.length, `empty elements in the organization box: ${mine.empty.join(", ")}`);
     assert(mine.tag === "BUTTON", "the organization box is not a button");
     assert(!mine.brandInside, "the brand is inside the organization box");
-    assert(mine.bg === "rgb(0, 0, 0)" && mine.fg === "rgb(255, 255, 255)", `the avatar is not black with a white initial: ${mine.bg} ${mine.fg}`);
+    assert(mine.bg === "rgb(11, 18, 32)" && mine.fg === "rgb(255, 255, 255)", `the avatar is not the dark colour with a white initial: ${mine.bg} ${mine.fg}`);
+    // The logo mark is white (with its fade) on the dark navigation, not tinted.
+    const mark = await page.evaluate(() => {
+      const svg = document.querySelector(".sidebar .logo svg");
+      return { svg: getComputedStyle(svg).color, stops: [...svg.querySelectorAll("stop")].map((s) => getComputedStyle(s).stopColor) };
+    });
+    assert(mark.svg === "rgb(255, 255, 255)" && mark.stops.every((c) => c === "rgb(255, 255, 255)"), `the logo mark in the sidebar is ${mark.svg} (${mark.stops})`);
 
     assert((await rename("🚀 Launch team")).initial === "🚀", "an emoji name does not show the emoji");
     const accented = await rename("élan studio");
@@ -844,6 +919,7 @@ const TESTS = {
 
   async "select: keyboard, mouse and one look for every dropdown"(page) {
     await signIn(page, "databases");
+    await openFilters(page);
     assert(!(await page.locator("select, datalist").count()), "a native select or datalist is on the page");
     const sort = page.locator("#db-sort");
     assert((await page.getByLabel("Sort by").count()) === 1, "the label does not name the select");

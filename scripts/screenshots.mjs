@@ -1,7 +1,7 @@
 // Regenerates every screenshot in screenshots/ and checks layout, rendering and accessibility on each one.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: npm run screenshots
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
-import { BANNED, BASE, VIEWPORTS, axeViolations, go, isMobile, launch, layoutProblems, makeReporter, newPage, renderProblems, settled, visibleText } from "./lib.mjs";
+import { BANNED, BASE, VIEWPORTS, axeViolations, go, isMobile, launch, layoutProblems, makeReporter, newPage, renderProblems, settled, visibleText, openFilters } from "./lib.mjs";
 
 const { fail, state } = makeReporter();
 const MAX_HEIGHT = 2600; // long lists are cut here so the files stay a sensible size
@@ -98,6 +98,7 @@ for (const [vpName, viewport] of VIEWPORTS) {
   // A select, open: the list under it with the choice ticked.
   await go(page, "databases");
   await settled(page);
+  await openFilters(page);
   await page.getByLabel("Sort by").click();
   await page.getByRole("listbox").waitFor();
   await check(`select-open ${vpName}`);
@@ -133,11 +134,9 @@ for (const [vpName, viewport] of VIEWPORTS) {
   await go(page, "databases/db_0001?tab=users");
   await settled(page);
   await page.locator("#users td .user-name").filter({ hasText: /^reporting$/ }).waitFor();
-  await page.getByRole("button", { name: "Add user" }).click();
-  await page.getByRole("dialog", { name: "Add a user" }).waitFor();
   await page.getByLabel("User name").fill("shot-user");
   await check(`database-users-add ${vpName}`);
-  await shot("database-users-add-dialog", true);
+  await shot("database-users-new-user");
   await page.getByRole("button", { name: "Create user" }).click();
   await page.getByRole("dialog", { name: "User shot-user created" }).waitFor();
   await check(`database-users-password ${vpName}`);
