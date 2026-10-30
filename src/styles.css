@@ -8,13 +8,14 @@
      in the dashboard is this token: text, buttons, the navigation, the sign-in screens. No other near-black. */
   --black: #000000;
   --bg: #ffffff;
-  --page: #fafafa;
-  --surface: #f6f6f7;
-  --surface-2: #efeff1;
-  --border: #e7e7ea;
-  --border-strong: #c3c3c9;
+  /* Warm neutrals: a paper-white page under white cards. */
+  --page: #f5f4f0;
+  --surface: #f3f2ee;
+  --surface-2: #f0efeb;
+  --border: #e6e4de;
+  --border-strong: #c6c3bb;
   --text: var(--black);
-  --muted: #65656b;
+  --muted: #66645e;
   --on-text: #ffffff;
   --nav-bg: var(--black);
   --nav-text: #f4f4f6;
@@ -22,9 +23,11 @@
   --nav-border: #232327;
   --nav-hover: #17171a;
   --nav-active: #202024;
-  --grid: #ececef;
-  --ink-2: #8a8a92;
-  --ink-3: #c6c6cc;
+  --grid: #ebe9e3;
+  --ink-2: #8b8982;
+  --ink-3: #c9c6bf;
+  /* Charts: a soft slate instead of black, like ink on paper. */
+  --chart: #4a4e55;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.12);
 
@@ -44,8 +47,10 @@
   --silver: linear-gradient(90deg, var(--silver-1) 0%, var(--silver-2) 50%, var(--silver-3) 100%);
 
   --font: "Schibsted Grotesk Variable", "Schibsted Grotesk", system-ui, sans-serif;
+  /* Display serif: page titles and the big numbers. */
+  --serif: "Newsreader Variable", "Newsreader", Georgia, serif;
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
-  --radius: 12px;
+  --radius: 14px;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -63,7 +68,7 @@ body {
   overflow-x: hidden;
 }
 h1, h2, p, dl, dd, fieldset { margin: 0; }
-h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
+h1 { font-family: var(--serif); font-size: 34px; font-weight: 400; letter-spacing: -0.015em; line-height: 1.15; }
 h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 /* No underlines anywhere (see tests/unit/no-underline.test.ts): links and states are shown with weight, colour or a
    background, and keyboard focus with the outline below. */
@@ -150,7 +155,7 @@ main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 20px 16px 56px; 
 .dot-outline { background: transparent; }
 
 /* Cards */
-.card { background: var(--bg); box-shadow: var(--shadow); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.card { background: var(--bg); box-shadow: none; border: 1px solid transparent; border-radius: var(--radius); padding: 22px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; }
 .card-head-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .card-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -230,7 +235,7 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; accent-
 .seg button:focus-visible { outline-offset: -3px; }
 
 /* Tables */
-.table-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+.table-card { background: var(--bg); border: 1px solid transparent; border-radius: var(--radius); overflow: hidden; }
 .table-card.flush { background: transparent; border-radius: 0; border: 0; }
 table { width: 100%; border-collapse: collapse; }
 table.data th, table.data td { padding: 0 16px; height: 48px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--border); }
@@ -271,8 +276,8 @@ table.plain th.num, table.plain td.num { text-align: right; }
 .chart { width: 100%; }
 .chart svg { display: block; max-width: 100%; }
 .chart-grid { stroke: var(--border); stroke-width: 1; }
-.chart-text { fill: var(--muted); font: 11px var(--mono); }
-.chart-bar { fill: var(--text); }
+.chart-text { fill: var(--muted); font: 11px var(--font); }
+.chart-bar { fill: var(--chart); }
 .chart-summary { font-size: 13.5px; }
 
 /* Dialog */
@@ -311,7 +316,7 @@ table.data tr[data-selected] { background: var(--surface-2); }
 
 /* Groups */
 .groups { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.group { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); overflow: hidden; box-shadow: var(--shadow); }
+.group { border: 1px solid transparent; border-radius: var(--radius); background: var(--bg); overflow: hidden; }
 .group-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; font-size: 14px; font-weight: 400; letter-spacing: 0; }
 .group-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 16px; background: none; border: 0; cursor: pointer; font-weight: 600; text-align: left; min-width: 0; flex: 1 1 200px; }
 .group-toggle:hover { background: var(--surface-2); }
@@ -384,22 +389,22 @@ a.btn { text-decoration: none; }
 .kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 @media (min-width: 720px) { .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (min-width: 1180px) { .kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
-.kpi { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
-.kpi-label { font: 500 10.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.kpi-value { font-size: 23px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; overflow-wrap: anywhere; }
+.kpi { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 18px 18px 14px; background: var(--bg); border: 1px solid transparent; border-radius: var(--radius); }
+.kpi-label { font-size: 13.5px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-value { font-family: var(--serif); font-size: clamp(28px, 2.2vw, 34px); white-space: nowrap; font-weight: 400; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: lining-nums; }
 .kpi-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kpi-spark { margin-top: auto; padding-top: 8px; }
 .spark { display: block; width: 100%; height: 30px; }
-.spark-line { stroke: var(--text); stroke-width: 1.5; stroke-linejoin: round; }
+.spark-line { stroke: var(--chart); stroke-width: 1.25; stroke-linejoin: round; }
 .spark-area { fill: rgba(0, 0, 0, 0.07); } /* fallback; the charts fill it with the silver gradient */
 
 .chart-area { fill: rgba(0, 0, 0, 0.12); }
-.chart-line { stroke: var(--text); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-line { stroke: var(--chart); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
 .chart-line-dash { stroke: var(--ink-2); stroke-width: 1.5; stroke-dasharray: 5 4; }
-.chart-dot { fill: var(--text); }
+.chart-dot { fill: var(--chart); }
 .chart-grid { stroke: var(--grid); stroke-width: 1; }
-.chart-text { fill: var(--muted); font: 11px var(--mono); }
-.chart-bar { fill: var(--text); }
+.chart-text { fill: var(--muted); font: 11px var(--font); }
+.chart-bar { fill: var(--chart); }
 .chart-summary { font-size: 13px; }
 .legend { display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-left: 4px; }
 .key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; background: var(--text); margin-right: 5px; vertical-align: middle; }
@@ -414,8 +419,8 @@ a.btn { text-decoration: none; }
 .hbars li { display: grid; grid-template-columns: var(--label-w, 150px) minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .hbar-label { min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hbar-label .mono { font-size: 12.5px; }
-.hbar-track { height: 10px; border-radius: 6px; background: var(--surface-2); overflow: hidden; }
-.hbar-fill { display: block; height: 100%; border-radius: 6px; background: var(--text); }
+.hbar-track { height: 12px; border-radius: 3px; background: transparent; overflow: hidden; }
+.hbar-fill { display: block; height: 100%; border-radius: 3px; background: var(--chart); }
 .hbar-value { font-size: 12.5px; text-align: right; min-width: 56px; }
 @media (max-width: 560px) {
   .hbars li { grid-template-columns: minmax(0, 1fr) auto; row-gap: 5px; }
@@ -444,7 +449,7 @@ a.btn { text-decoration: none; }
 
 /* ---------------------------------------------------------------- state badge */
 .state { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; height: 24px; padding: 0 9px 0 8px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 12.5px; font-weight: 500; }
-.counts-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); box-shadow: var(--shadow); font-size: 13.5px; }
+.counts-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding: 12px 16px; border: 1px solid transparent; border-radius: var(--radius); background: var(--bg); font-size: 13.5px; }
 .counts-bar b { font-variant-numeric: tabular-nums; }
 .counts-sep { color: var(--border-strong); }
 

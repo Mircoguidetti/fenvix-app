@@ -245,7 +245,7 @@ export function TimeBarsChart({
   const left = leftPad(max, formatCompact);
   const inner = { x: left, y: PAD.top, w: Math.max(40, width - left - PAD.right), h: height - PAD.top - PAD.bottom };
   const step = inner.w / Math.max(points.length, 1);
-  const barW = Math.max(2, Math.min(28, step * 0.62));
+  const barW = Math.max(2, Math.min(12, step * 0.4));
   const total = points.reduce((a, p) => a + p.value, 0);
 
   return (

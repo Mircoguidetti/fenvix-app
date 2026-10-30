@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "@fontsource-variable/schibsted-grotesk";
 import "@fontsource-variable/jetbrains-mono";
+import "@fontsource-variable/newsreader";
 import "./styles.css";
 import App from "./App";
 import { completeAuthRedirect } from "./session/redirect";
