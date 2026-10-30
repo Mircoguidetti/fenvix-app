@@ -111,8 +111,8 @@ const TESTS = {
     await page.getByRole("button", { name: "Continue with GitHub" }).click();
     await page.getByRole("heading", { name: "orders-prod" }).waitFor(); // lands on the route that was asked for
     await openUserMenu(page, vp);
-    await page.locator(".user-panel").getByText("Elena Marsh").waitFor();
-    await page.locator(".user-panel").getByText("elena.marsh@northwind.cloud").waitFor();
+    await page.locator(".account-panel .account-who").getByText("Elena Marsh").waitFor();
+    await page.locator(".account-panel .account-who").getByText("elena.marsh@northwind.cloud").waitFor();
     await page.reload(); // the session survives a reload
     await page.getByRole("heading", { name: "orders-prod" }).waitFor();
     await openUserMenu(page, vp);
@@ -140,8 +140,8 @@ const TESTS = {
     await page.getByRole("button", { name: "Continue" }).click();
     await page.locator(".shell").waitFor();
     await openUserMenu(page, vp);
-    await page.locator(".user-panel").getByText("Sam Rivera").waitFor();
-    await page.locator(".user-panel").getByText("sam.rivera@northwind.cloud").waitFor();
+    await page.locator(".account-panel .account-who").getByText("Sam Rivera").waitFor();
+    await page.locator(".account-panel .account-who").getByText("sam.rivera@northwind.cloud").waitFor();
   },
 
   async "nothing reads as a demo"(page) {
@@ -750,17 +750,22 @@ const TESTS = {
         await page.getByRole("button", { name: "Open navigation" }).click();
         await page.locator(".drawer .nav").waitFor();
       }
-      // The accessible name holds the whole name and the role, and says what the button does.
-      await page.locator(nav).getByRole("button", { name: `Organization: ${name.trim()}, Owner. Switch organization`, exact: true }).waitFor();
-      const box = page.locator(`${nav} .workspace`);
+      // The block at the bottom: the person, with the organization and role under the name. Its accessible name holds
+      // all of it and says what the button does.
+      await page.locator(nav).getByRole("button", { name: `Elena Marsh. Organization: ${name.trim()}, Owner. Account and organizations`, exact: true }).waitFor();
+      const box = page.locator(`${nav} .account-btn`);
+      await box.click();
+      const current = page.locator(`${nav} .account-panel .org-item[aria-current="true"]`);
+      await current.waitFor();
+      const avatarRead = await current.evaluate((el) => {
+        const a = el.querySelector(".workspace-avatar");
+        return { initial: a.textContent, bg: getComputedStyle(a).backgroundColor, fg: getComputedStyle(a).color };
+      });
+      await box.click();
       const read = await box.evaluate((el) => {
-        const avatar = el.querySelector(".workspace-avatar");
         const label = el.querySelector(".workspace-name");
         const empty = [...el.querySelectorAll("*")].filter((e) => !e.textContent.trim() && e.tagName !== "svg" && !e.closest("svg")).map((e) => e.className);
         return {
-          initial: avatar?.textContent,
-          bg: getComputedStyle(avatar).backgroundColor,
-          fg: getComputedStyle(avatar).color,
           role: el.querySelector(".workspace-sub")?.textContent,
           title: el.getAttribute("title"),
           clipped: label.scrollWidth > label.clientWidth,
@@ -772,7 +777,7 @@ const TESTS = {
         };
       });
       if (isMobile(vp)) await page.getByRole("button", { name: "Close navigation" }).click();
-      return read;
+      return { ...read, ...avatarRead };
     };
 
     // The brand sits on its own at the top, outside the organization.
@@ -785,7 +790,7 @@ const TESTS = {
     const mine = await rename("My workspace");
     assert(mine.initial === "M", `My workspace shows ${mine.initial}`);
     assert(mine.role === "Owner", `the role reads ${mine.role}`);
-    assert(mine.title === "My workspace", `the tooltip reads ${mine.title}`);
+    assert(mine.title === "Elena Marsh · My workspace", `the tooltip reads ${mine.title}`);
     assert(!mine.clipped, "My workspace is cut off");
     assert(!mine.empty.length, `empty elements in the organization box: ${mine.empty.join(", ")}`);
     assert(mine.tag === "BUTTON", "the organization box is not a button");
@@ -801,9 +806,9 @@ const TESTS = {
     const l = await rename(long);
     assert(l.clipped && l.ellipsis, "a long name is not cut with an ellipsis");
     assert(l.inside, "a long name runs out of its box");
-    assert(l.title === long, `the tooltip does not hold the whole name: ${l.title}`);
+    assert(l.title === `Elena Marsh · ${long}`, `the tooltip does not hold the whole name: ${l.title}`);
 
-    // Keyboard order: skip link, then the organization switcher (desktop) or the menu button (phone).
+    // Keyboard order: skip link, then the first menu item (desktop) or the menu button (phone).
     await page.reload(); // a fresh load, so focus starts at the top of the document
     await page.locator(".shell").waitFor();
     await settled(page);
@@ -811,7 +816,7 @@ const TESTS = {
     assert(await page.evaluate(() => document.activeElement?.classList.contains("skip-link")), "the first Tab does not reach the skip link");
     await page.keyboard.press("Tab");
     const second = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") || document.activeElement?.textContent.trim());
-    assert(isMobile(vp) ? second === "Open navigation" : second.startsWith("Organization: "), `the second Tab reaches ${second}`);
+    assert(isMobile(vp) ? second === "Open navigation" : second === "Overview", `the second Tab reaches ${second}`);
   },
 
   async "select: keyboard, mouse and one look for every dropdown"(page) {

@@ -1,13 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { ChartColumn, CreditCard, Database, KeyRound, LayoutDashboard, Menu, Settings, Users, X } from "lucide-react";
-import { client } from "../data";
 import { Logo } from "./Logo";
-import { UserMenu } from "./UserMenu";
-import { useAsync } from "../lib/useAsync";
-import { useWorkspaceVersion } from "../lib/workspace";
+import { AccountMenu } from "./AccountMenu";
 import { useOrg } from "../session/OrgProvider";
-import { OrgAvatar, OrgSwitcher } from "./OrgSwitcher";
 
 const NAV = [
   { to: "/overview", label: "Overview", icon: LayoutDashboard, end: true },
@@ -21,38 +17,6 @@ const NAV_WORKSPACE = [
   { to: "/settings/members", label: "Members", icon: Users, end: false },
   { to: "/settings", label: "Settings", icon: Settings, end: true },
 ];
-
-/** The plan every workspace is on today; shown under the workspace name. */
-const PLAN = "Managed";
-
-/**
- * The organization this dashboard shows. With the organizations API: a switcher. Without it (no VITE_API_URL): the
- * workspace's name and plan, read from its settings, as before.
- */
-function Workspace() {
-  const org = useOrg();
-  if (org.status === "ready" && org.current) return <OrgSwitcher />;
-  return <StaticWorkspace />;
-}
-
-function StaticWorkspace() {
-  const version = useWorkspaceVersion();
-  const settings = useAsync(() => client.getSettings(), [version]);
-  // The slot keeps its height while the name loads, so nothing jumps and no empty avatar is ever drawn.
-  if (settings.status !== "ready") return <div className="workspace-slot" data-state={settings.status} />;
-  const name = settings.data.workspaceName.trim() || "Workspace";
-  return (
-    <div className="workspace-slot" data-state="ready">
-      <div className="workspace" role="group" aria-label={`Workspace: ${name}, ${PLAN} plan`} title={name}>
-        <OrgAvatar name={name} />
-        <span className="workspace-text" aria-hidden="true">
-          <span className="workspace-name">{name}</span>
-          <span className="workspace-sub">{PLAN}</span>
-        </span>
-      </div>
-    </div>
-  );
-}
 
 /** Shown to a member on every page: they can look, not change. The server refuses changes anyway. */
 function ReadOnlyNote() {
@@ -104,10 +68,9 @@ export function Shell({ children }: { children: ReactNode }) {
           <div className="sidebar-top">
             <Logo />
           </div>
-          <Workspace />
           <SideNav />
           <div className="sidebar-bottom">
-            <UserMenu />
+            <AccountMenu />
           </div>
         </div>
       </aside>
@@ -120,10 +83,9 @@ export function Shell({ children }: { children: ReactNode }) {
             <X size={18} aria-hidden="true" />
           </button>
         </div>
-        <Workspace />
         <SideNav onNavigate={() => setOpen(false)} />
         <div className="sidebar-bottom">
-          <UserMenu />
+          <AccountMenu />
         </div>
       </aside>
 

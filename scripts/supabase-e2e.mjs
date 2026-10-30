@@ -105,8 +105,8 @@ step("sign in with Google: the ?code= is exchanged before the router, the URL en
 step("the user menu shows the real name, email and photo", async () => {
   const { page } = ownerContext;
   await page.locator(".sidebar .user-btn").click();
-  await page.locator(".user-panel").getByText("Mirco Guidetti").waitFor();
-  await page.locator(".user-panel").getByText("mircoguidetti1994@gmail.com").waitFor();
+  await page.locator(".account-panel .account-who").getByText("Mirco Guidetti").waitFor();
+  await page.locator(".account-panel .account-who").getByText("mircoguidetti1994@gmail.com").waitFor();
   const img = page.locator(".sidebar .user-btn img.avatar-photo");
   assert((await img.count()) === 1 && (await img.getAttribute("src")).includes("avatars.githubusercontent.com"), "the avatar is not shown");
   await page.keyboard.press("Escape");
@@ -332,7 +332,7 @@ step("email link: the link comes back with ?code=, finishes before the router, l
   await dashboard(page);
   assert(!page.url().includes("code=") && new URL(page.url()).pathname === "/overview", page.url());
   await page.locator(".sidebar .user-btn").click();
-  await page.locator(".user-panel").getByText("elena.marsh@northwind.cloud").waitFor();
+  await page.locator(".account-panel .account-who").getByText("elena.marsh@northwind.cloud").waitFor();
   // A brand-new person gets an empty workspace of their own and can see none of the seeded fleet.
   await page.goto(APP + "databases");
   await page.getByText("No databases match these filters").waitFor();
@@ -360,7 +360,7 @@ step("on a phone: sign in and the dashboard works", async () => {
   await dashboard(page);
   await page.getByRole("button", { name: "Open navigation" }).click();
   await page.locator(".drawer .user-btn").click();
-  await page.locator(".drawer .user-panel").getByText("Mirco Guidetti").waitFor();
+  await page.locator(".drawer .account-panel .account-who").getByText("Mirco Guidetti").waitFor();
   assert(!(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)), "the page scrolls sideways");
   await ctx.close();
 });

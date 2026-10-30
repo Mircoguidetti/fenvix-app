@@ -20,10 +20,10 @@ async function toast(page, text) {
 async function openSwitcher(page, vp) {
   if (isMobile(vp)) {
     await page.getByRole("button", { name: "Open navigation" }).click();
-    await page.locator(".drawer .workspace-btn").click();
+    await page.locator(".drawer .account-btn").click();
     return page.locator(".drawer .org-panel");
   }
-  await page.locator(".sidebar .workspace-btn").click();
+  await page.locator(".sidebar .account-btn").click();
   return page.locator(".sidebar .org-panel");
 }
 

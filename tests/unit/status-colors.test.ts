@@ -206,7 +206,7 @@ test("the states in the inventory are wired to the right classes in the componen
 });
 
 test("every action that cannot be undone has a dialog with a red confirm button and no border; the buttons that open them are red, except Restore", () => {
-  const files = ["pages/DatabaseDetail.tsx", "components/BulkBar.tsx", "components/DatabaseUsers.tsx", "components/DataExplorer.tsx", "pages/ApiKeys.tsx", "pages/Members.tsx", "components/OrgSwitcher.tsx", "components/DatabaseNetwork.tsx"];
+  const files = ["pages/DatabaseDetail.tsx", "components/BulkBar.tsx", "components/DatabaseUsers.tsx", "components/DataExplorer.tsx", "pages/ApiKeys.tsx", "pages/Members.tsx", "components/AccountMenu.tsx", "components/DatabaseNetwork.tsx"];
   let dialogs = 0;
   for (const f of files) {
     const text = src(f);
