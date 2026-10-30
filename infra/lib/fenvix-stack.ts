@@ -9,7 +9,7 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 import { challengeRecords, apiChallengeTarget, zoneName } from './acme';
-import { ARTIFACT_PREFIXES, Arch } from './artifacts';
+import { ARTIFACT_PREFIXES, Arch, artifactPins } from './artifacts';
 import { FenvixConfig, PROJECT_TAG } from './config';
 import { apiHost } from './control-plane-env';
 import { requiredSecretNames, ssmPrefix } from './parameters';
@@ -482,6 +482,18 @@ export class FenvixStack extends Stack {
     new CfnOutput(this, 'DatabaseHosts', { value: dbWildcard, description: 'Database hostnames of this region' });
     new CfnOutput(this, 'TlsSecret', { value: tlsStore.secretArn, description: "Where the server keeps its Let's Encrypt certificate" });
     if (props.createDns) new CfnOutput(this, 'ControlPlaneUrl', { value: `https://${apiHost(c)}/v1` });
+    // The release pins, readable with cloudformation:DescribeStacks. The versions themselves live only inside the
+    // compressed user data, so without these outputs nothing outside the shell that ran the deploy can tell which
+    // engine and which control plane a running stack is pinned to. The deploy workflow
+    // (.github/workflows/deploy-control-plane.yml) reads them to keep the engine exactly as it is and to print the
+    // previous control-plane version for a rollback. No cost: an output is part of the stack description.
+    const pinsOut = artifactPins(c);
+    if (pinsOut) {
+      new CfnOutput(this, 'EngineVersion', { value: pinsOut.engineVersion, description: 'Engine release pinned in this stack (stack setting engineVersion)' });
+      new CfnOutput(this, 'EngineSha256', { value: pinsOut.engineSha256, description: 'SHA-256 the server checks for that engine (stack setting engineSha256)' });
+      new CfnOutput(this, 'ControlPlaneVersion', { value: pinsOut.controlPlaneVersion, description: 'Control-plane release pinned in this stack (stack setting controlPlaneVersion)' });
+      new CfnOutput(this, 'ControlPlaneSha256', { value: pinsOut.controlPlaneSha256, description: 'SHA-256 the server checks for that control-plane image (stack setting controlPlaneSha256)' });
+    }
     if (props.createDns && c.dnsZone === 'db') {
       new CfnOutput(this, 'ApiRecordToCreate', {
         value: Fn.join('', [`${apiHost(c)} A `, eip.ref]),

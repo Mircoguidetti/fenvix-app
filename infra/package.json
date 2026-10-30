@@ -2,7 +2,7 @@
   "name": "fenvix-infra",
   "version": "0.1.0",
   "private": true,
-  "description": "AWS CDK infrastructure for FENVIX (never deployed from CI; see README.md)",
+  "description": "AWS CDK infrastructure for FENVIX (deployed from CloudShell, or by .github/workflows/deploy-control-plane.yml after a human approval; see README.md)",
   "scripts": {
     "build": "tsc --noEmit",
     "test": "jest",
@@ -11,12 +11,14 @@
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "aws-cdk": "^2",
     "aws-cdk-lib": "^2",
     "cdk-nag": "^2",
     "constructs": "^10",
     "jest": "^29.7.0",
+    "js-yaml": "^4.1.0",
     "ts-jest": "^29.2.0",
     "ts-node": "^10.9.2",
     "typescript": "~5.6.0"

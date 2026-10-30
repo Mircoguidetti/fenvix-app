@@ -6,7 +6,7 @@ Regole che valgono per tutta la lista:
 
 - **Regione: `eu-west-1` (Irlanda)** per tutto: console AWS, CloudShell, stack, parametri SSM, bucket, progetto Supabase. Quota server verificata in Irlanda: 5 vCPU, il `t3.medium` ne usa 2.
 - **Nessun segreto passa da una chat, da un file o da un commit.** I segreti si generano in CloudShell e finiscono direttamente in SSM Parameter Store (non compaiono a schermo), oppure si scrivono a mano solo dove servono (editor SQL di Supabase, gestore di password). Nessun passo chiede di incollarli a qualcuno.
-- **Ordine:** (1) lo stack con il certificato di **prova** (staging) e senza artefatti; (2) gli artefatti (motore e immagine del control plane) pubblicati da GitHub Actions nel bucket creato al passo 1; (3) lo stack con gli artefatti fissati, ancora con il certificato di prova; (4) il certificato **vero**. Ogni deploy della fase 3 e 4 sostituisce il server (5-15 minuti); i dati sono in S3 e non si perdono.
+- **Ordine:** (1) lo stack con il certificato di **prova** (staging) e senza artefatti; (2) l'artefatto del **motore** pubblicato da GitHub Actions nel bucket creato al passo 1; (3) il **workflow di deploy** (`deploy-control-plane`), che pubblica il control plane e lo mette in produzione con un pulsante e la tua approvazione; (4) il certificato **vero**. Ogni deploy della fase 3 e 4 sostituisce il server (5-15 minuti); i dati sono in S3 e non si perdono.
 - Gli esempi di valori qui sotto **non sono segreti** (dominio, email, id di zona inventati): sostituiscili con i tuoi.
 
 ---
@@ -47,6 +47,8 @@ Genera sul tuo computer una password per l'utente `fenvix_root` del motore (`ope
 
 ### 0.4 GitHub (niente da fare ora)
 I due workflow di pubblicazione servono alla fase 2. Decisione da prendere prima (vedi "Decisioni" in fondo): da quale ramo li lanci.
+
+Il workflow di deploy della fase 3 ha bisogno di una preparazione che si fa **una volta sola**, dopo il deploy della fase 1 (serve il provider OIDC nell'account): `infra/README.md`, **Step 3b** — il ruolo `fenvix-github-deployer` su AWS, l'environment `production` su GitHub con te come revisore obbligatorio, tre secret e quattro variabili. Non costa nulla.
 
 ---
 
@@ -164,11 +166,11 @@ engineSha256=<64 caratteri>
 ```
 Annota le due righe (non sono segreti).
 
-### 2.4 Control plane
-fenvix-app → Actions → **release-control-plane** → Run workflow, ramo `main`: `ref` = il commit da pubblicare, `arch` = `x86_64`, `publish` = sì. Nel riepilogo: `controlPlaneVersion=...` e `controlPlaneSha256=...`.
+### 2.4 Control plane: non serve più a mano
+Lo pubblica il workflow della fase 3. Se ti serve solo l'archivio (per esempio per provare una build senza metterla in produzione): fenvix-app → Actions → **release-control-plane** → Run workflow, `ref` = il commit, `arch` = `x86_64`, `publish` = sì. Nel riepilogo: `controlPlaneVersion=...` e `controlPlaneSha256=...`.
 
 ### 2.5 Verifica della fase 2
-- I due job sono verdi e il riepilogo riporta le due coppie di valori.
+- Il job del motore è verde e il riepilogo riporta `engineVersion` e `engineSha256`.
 - Nei log pubblici di fenvix-engine non compaiono l'id dell'account, il nome del ruolo o del bucket (sono mascherati: `***`).
 - Il controllo vero del file è del server alla fase 3 (SHA-256 confrontato con i parametri).
 
@@ -177,26 +179,58 @@ Niente da annullare: un artefatto pubblicato non viene usato finché la sua vers
 
 ---
 
-## Fase 3. Stack con gli artefatti fissati (ancora certificato di prova)
+## Fase 3. Il control plane in produzione: lancia il workflow
 
-### 3.1 Parametri
+Da qui in avanti il deploy del control plane è **un pulsante su GitHub, non un comando in CloudShell**. Il workflow pubblica l'immagine, legge dallo stack le versioni già in produzione (il **motore resta quello che è**: cambia solo il control plane), rifà i test e il piano, aspetta la tua approvazione, fa il deploy e controlla che l'API risponda sana.
+
+Prima volta: fai lo **Step 3b** di `infra/README.md` (ruolo AWS, environment `production`, secret e variabili). Finché il certificato è quello di prova, la variabile `FENVIX_ACME_STAGING` dell'environment deve stare a `true`; la metterai a `false` alla fase 4.
+
+### 3.1 Lancia il workflow
+fenvix-app → **Actions** → **deploy-control-plane** → **Run workflow** (ramo `main`):
+
+- `ref`: il commit, il tag o il ramo da mettere in produzione (lascia `main` se vuoi l'ultimo).
+- Solo la primissima volta, se lo stack è stato deployato prima di questo workflow e non ha ancora gli output `EngineVersion`/`EngineSha256`: scrivi in `engine_version` e `engine_sha256` i valori della fase 2.3 (o, se il server è già in piedi, quelli di `sudo fenvix-artifact current`). Dalla volta dopo li legge da solo: lasciali vuoti.
+- Tutto il resto vuoto / non toccato.
+
+Premi **Run workflow**.
+
+### 3.2 Approva
+Dopo pochi minuti (test e build) il job **deploy** si mette in attesa con la scritta *Review pending deployments* e il pulsante **Review deployments → production → Approve and deploy**. **Fino a quel clic nulla cambia in produzione.**
+
+Prima di approvare guarda il riepilogo del run: c'è il piano (`cdk diff`), la versione precedente del control plane e l'avviso che il server viene sostituito.
+
+### 3.3 Verifica
+Il workflow la fa da solo e il job diventa verde solo se riesce:
+
+- `cdk diff` nel riepilogo (se toccasse permessi IAM o regole di rete, il run si ferma e non deploya nulla);
+- `cdk deploy`: il server viene sostituito, **5-15 minuti senza servizio** (i dati sono in S3, l'indirizzo pubblico non cambia);
+- `https://api.<dominio>/healthz` e `https://api.<dominio>/readyz` devono rispondere `{"ok":true}` (il secondo dice anche che il database risponde).
+
+Se il job è verde, non c'è altro da controllare. Se è rosso, il messaggio dice dove si è fermato; i controlli sul server restano quelli di `infra/README.md`, Step 9, e del punto 3.6 (la strada manuale) qui sotto.
+
+### 3.4 Utenti del motore (una volta)
+`infra/README.md`, Step 10: `sudo /usr/local/bin/fenvix-create-engine-users`, con la password di 0.3 digitata quando richiesta.
+
+### 3.5 Tornare indietro dalla fase 3
+Il riepilogo di ogni run scrive la versione del control plane che c'era **prima**, con il suo SHA-256. Per tornarci: Actions → deploy-control-plane → Run workflow, incolla quei due valori in `rollback_version` e `rollback_sha256`, lascia `ref` su `main`, Run workflow, **Approve**. Non ricompila niente: rimette quella release (già nel bucket) e sostituisce il server. (`ref` non sceglie più il control plane, ma decide quale copia di `infra/` disegna il piano: lascialo su `main`.)
+
+Più veloce, senza sostituire il server (secondi): `sudo fenvix-artifact rollback control-plane` da Session Manager; poi lancia comunque il workflow con quella versione, altrimenti un server sostituito reinstallerebbe quella sbagliata. Dettagli e casi particolari: `infra/README.md`, "Going back (rollback)".
+
+### 3.6 La strada manuale (quando il workflow non basta)
+Serve ancora per il motore, per il certificato, per un cambio di permessi o di dominio — tutto ciò che il workflow rifiuta di fare.
+
 Nella stessa sessione di CloudShell (o ripeti le righe di 1.7), aggiungi:
 ```bash
 export FENVIX_ENGINE_VERSION="20261029-628273b0a1b2-r1.1"
 export FENVIX_ENGINE_SHA256="<engineSha256 della fase 2.3>"
-export FENVIX_CONTROL_PLANE_VERSION="<controlPlaneVersion della fase 2.4>"
-export FENVIX_CONTROL_PLANE_SHA256="<controlPlaneSha256 della fase 2.4>"
+export FENVIX_CONTROL_PLANE_VERSION="<controlPlaneVersion>"
+export FENVIX_CONTROL_PLANE_SHA256="<controlPlaneSha256>"
 ```
-Tutti e quattro o nessuno: `cdk synth` si ferma se ne manca uno.
-
-### 3.2 Deploy
+Tutti e quattro o nessuno: `cdk synth` si ferma se ne manca uno. Poi:
 ```bash
 npm test && npx cdk deploy --all --require-approval broadening
 ```
-Il server viene sostituito (lo user data è cambiato).
-
-### 3.3 Verifica
-Session Manager sul nuovo server:
+Il server viene sostituito (lo user data è cambiato). Verifica, da Session Manager sul nuovo server:
 ```bash
 sudo grep -E "fenvix-artifact|bootstrap done" /var/log/fenvix-bootstrap.log
 ```
@@ -208,13 +242,9 @@ systemctl status fenvix-engine fenvix-control-plane fenvix-proxy --no-pager
 ```
 Atteso: `engine/<versione>/x86_64/engine: SHA-256 ... matches`, `control-plane/<versione>/x86_64/control-plane.tar.gz: SHA-256 ... matches`, `fenvix bootstrap done`; i tre servizi `active (running)`. Poi i controlli di `infra/README.md`, Step 9.
 
-Se il log dice `SHA-256 MISMATCH`: nessun servizio è partito; il valore nei parametri non corrisponde al file pubblicato (copiato male o build diversa). Correggi il parametro e rifai 3.2.
+Se il log dice `SHA-256 MISMATCH`: nessun servizio è partito; il valore nei parametri non corrisponde al file pubblicato (copiato male o build diversa). Correggi il parametro e rifai il deploy.
 
-### 3.4 Utenti del motore (una volta)
-`infra/README.md`, Step 10: `sudo /usr/local/bin/fenvix-create-engine-users`, con la password di 0.3 digitata quando richiesta.
-
-### 3.5 Tornare indietro dalla fase 3
-Svuota i quattro parametri (`unset FENVIX_ENGINE_VERSION FENVIX_ENGINE_SHA256 FENVIX_CONTROL_PLANE_VERSION FENVIX_CONTROL_PLANE_SHA256`) e rifai il deploy: torni allo stato della fase 1. Oppure rimetti la versione precedente e il suo hash.
+Per tornare indietro da qui: svuota i quattro parametri (`unset FENVIX_ENGINE_VERSION FENVIX_ENGINE_SHA256 FENVIX_CONTROL_PLANE_VERSION FENVIX_CONTROL_PLANE_SHA256`) e rifai il deploy: torni allo stato della fase 1. Oppure rimetti la versione precedente e il suo hash.
 
 ---
 
@@ -227,6 +257,8 @@ export FENVIX_ACME_STAGING="false"
 ```bash
 npx cdk deploy --all --require-approval broadening
 ```
+
+Poi, su GitHub, Settings → Environments → `production` → Environment variables: metti `FENVIX_ACME_STAGING` a **`false`**. Da quel momento il workflow della fase 3 e lo stack dicono la stessa cosa; se restassero diversi il workflow si fermerebbe (e fa bene: una release del control plane non deve cambiare il certificato).
 
 ### 4.2 Verifica
 `infra/README.md`, Step 11, da CloudShell:
@@ -244,13 +276,20 @@ Se il certificato vero non arriva (per esempio CAA o DNS), il motore e il contro
 
 ## Aggiornare il motore o il control plane (dopo il primo deploy)
 
-1. Pubblica la nuova versione (fase 2.3 o 2.4) e annota versione e SHA-256.
+### Solo il control plane: il workflow
+Actions → **deploy-control-plane** → Run workflow (`ref` = il commit da mettere in produzione) → **Approve**. Fa tutto: build, pubblicazione, test, piano, deploy, controllo della salute, e nel riepilogo la versione precedente per tornare indietro (fase 3). Il motore non viene toccato. Costa 5-15 minuti di indisponibilità perché sostituisce il server.
+
+Se non vuoi l'indisponibilità, resta valida la strada del punto 2 qui sotto (`fenvix-artifact update control-plane`, pochi secondi), ma poi lancia comunque il workflow con quella versione, altrimenti un server sostituito reinstallerebbe la vecchia.
+
+### A mano, dal server (obbligatorio per il motore)
+
+1. Pubblica la nuova versione (fase 2.3 per il motore, 2.4 per il control plane) e annota versione e SHA-256.
 2. Session Manager sul server:
    ```bash
    sudo fenvix-artifact update engine <versione> <sha256>
    ```
    (oppure `control-plane`). Scarica, controlla lo SHA-256 (se non coincide si ferma e non tocca la versione in uso), rende la nuova versione quella corrente, riavvia il servizio in modo ordinato (il motore, a SIGTERM, chiude i database in modo pulito; dati, WAL e lease sono in S3) e aspetta fino a 3 minuti che sia sano (servizio attivo, porta che risponde, nessun riavvio per 20 s; per il control plane il suo health check Docker). **Se non diventa sano, torna da solo alla versione precedente** e la riavvia. Per tornare indietro a mano: `sudo fenvix-artifact rollback engine`.
-3. Metti la stessa versione e lo stesso SHA-256 nei parametri dello stack (3.1) e, quando vuoi, fai il deploy: così un server sostituito (ripristino, cambio di user data) installa la versione giusta. Il deploy sostituisce il server (qualche minuto di interruzione); l'aggiornamento del punto 2 no (pochi secondi).
+3. Metti la stessa versione e lo stesso SHA-256 nei parametri dello stack (3.6) e, quando vuoi, fai il deploy: così un server sostituito (ripristino, cambio di user data) installa la versione giusta. Il deploy sostituisce il server (qualche minuto di interruzione); l'aggiornamento del punto 2 no (pochi secondi).
 
 Nessun dato si perde in nessuno dei due casi: il server non tiene dati propri.
 
@@ -306,5 +345,7 @@ Prezzi letti dall'AWS Price List API pubblica (`pricing.us-east-1.amazonaws.com`
 | **Totale artefatti** | | **~0,03 $ il primo mese, < 0,50 $ dopo un anno** |
 
 Le copie sostituite scadono dopo 30 giorni; le versioni pubblicate restano finché non le cancelli (servono per tornare indietro).
+
+**Il deploy automatico (fase 3) non aggiunge costi AWS**: il ruolo `fenvix-github-deployer`, il provider OIDC, `sts:AssumeRoleWithWebIdentity`, `cloudformation:DescribeStacks` e gli output dello stack sono gratuiti. I minuti di GitHub Actions sono gli stessi di prima (la build c'era già): su runner Linux, repository privato, rientrano nei minuti inclusi del piano.
 
 **Il resto dello stack** (stessa fonte, per confronto): EC2 `t3.medium` 0,0456 $/h ≈ 33,29 $ (listino del 28/10/2026); disco gp3 20 GB ≈ 1,76 $; IPv4 pubblico 0,005 $/h ≈ 3,65 $; zona Route 53 0,50 $; un segreto in Secrets Manager 0,40 $; un allarme CloudWatch 0,10 $; monitoraggio dettagliato EC2 qualche dollaro. Circa **42-45 $/mese** fissi, più spazio e richieste del bucket dei dati e traffico verso internet (secondo l'uso). Dettagli: `infra/report-infra-align.md`, sezione 11.4.

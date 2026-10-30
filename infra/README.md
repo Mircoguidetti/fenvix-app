@@ -17,7 +17,10 @@ Everything is tagged `project=fenvix` and `env=<prod|...>`.
 
 ## Files
 
-- `deploy-policy.json`: the permissions your deploy role needs, nothing more.
+- `deploy-policy.json`: the permissions your deploy role needs, nothing more. Used by both deploy roles: yours
+  (`fenvix-deployer`, from CloudShell) and GitHub's (`fenvix-github-deployer`, the one-button deploy).
+- `github-deploy-trust.json`, `github-deploy-guardrails.json`: who may become `fenvix-github-deployer` (one
+  GitHub repository, one GitHub environment) and the three things it is denied (Step 3b).
 - `cdk.json`: the settings (region list, server size, budget...).
 - `lib/`, `bin/`: the code. `test/`: the checks.
 - `lib/engine-command.ts`: the engine's start command (the only place with the engine's flag names).
@@ -188,11 +191,67 @@ The engine release must be `engine-round2` (test5 commit `3bcd7e5`) or later: an
 The engine is private and the server must get it without exposing it. Nothing is pulled from a public place and the server has no registry login:
 
 - **Bucket.** The first region's stack creates a private S3 bucket for releases (output `ArtifactsBucketName`; CloudFormation picks the name, with a random suffix). Public access blocked, ACLs off, encrypted, versioned, TLS only, replaced copies expire after 30 days, kept if the stack is deleted. Keys: `engine/<version>/<arch>/engine` and `control-plane/<version>/<arch>/control-plane.tar.gz` (`lib/artifacts.ts`).
-- **Who writes.** Two GitHub Actions workflows, started by hand: `release-engine` in Mircoguidetti/fenvix-engine (`cargo build --release --workspace --locked` with a pinned Rust toolchain) and `release-control-plane` in this repository (`docker build`, then `docker save | gzip`). Each logs in to AWS with GitHub's OIDC token for 15 minutes, as a role the stack made for it: trusted only by that repository on the branches of `engineRepoBranches` / `controlPlaneRepoBranches`, allowed only `s3:PutObject` under its own prefix. A version is never overwritten. No long-lived AWS key exists anywhere.
+- **Who writes.** Two GitHub Actions workflows, started by hand (and `deploy-control-plane`, which calls the second one
+  for you): `release-engine` in Mircoguidetti/fenvix-engine (`cargo build --release --workspace --locked` with a pinned Rust toolchain) and `release-control-plane` in this repository (`docker build`, then `docker save | gzip`). Each logs in to AWS with GitHub's OIDC token for 15 minutes, as a role the stack made for it: trusted only by that repository on the branches of `engineRepoBranches` / `controlPlaneRepoBranches`, allowed only `s3:PutObject` under its own prefix. A version is never overwritten. No long-lived AWS key exists anywhere.
 - **Who reads.** The server, with its own role: `s3:GetObject` on the two prefixes, nothing else. The bucket policy repeats it: reads only by the engine roles, each prefix written only by its publisher.
 - **The check.** The server installs a file only if its SHA-256 is the one in the stack settings (`engineSha256`, `controlPlaneSha256`); nothing stored in the bucket can change what is expected. A mismatch stops the boot before any service starts, with `SHA-256 MISMATCH for <key>: expected ..., got ...`.
 - **Updates.** `sudo fenvix-artifact update engine <version> <sha256>` (or `control-plane`) on the server: download, check, ordered restart (the engine closes its databases cleanly on SIGTERM; data, WAL and leases are in S3), health check, and back to the previous version by itself if the new one does not come up. `sudo fenvix-artifact rollback engine` goes back by hand; `sudo fenvix-artifact current` shows what runs. Then put the same version in the stack settings, so that a replaced server installs it too. The full steps: `docs/deploy-checklist.md`.
 - **The binary's name** is in `ENGINE_BINARY_NAME` (`lib/engine-command.ts`) only. The object in the bucket is always called `engine`.
+
+## The one-button deploy, and how to go back
+`.github/workflows/deploy-control-plane.yml` does phase 3 of `docs/deploy-checklist.md` (publish a control-plane
+release and put it in production) from GitHub Actions, so that nobody has to type anything in CloudShell for a normal
+control-plane update. Set it up once: Step 3b above.
+
+What one run does, in order:
+
+1. `checks` runs the infra unit tests. No AWS, no secrets, no approval: a broken build never reaches the button.
+2. `release` calls `release-control-plane.yml` — the same workflow as a manual release, not a copy of it — which
+   builds the image and uploads it under a new version in the artifacts bucket. Nothing running uses it yet.
+3. `deploy` waits for **Approve**. It is the only job that names the GitHub environment `production`, so there is one
+   click per run and nothing can reach AWS before it; the deploy role trusts no other subject than
+   `repo:Mircoguidetti/fenvix-app:environment:production`.
+   After the click: short-lived OIDC credentials, the current pins read from the stack (`EngineVersion`,
+   `EngineSha256`: the engine is put back **unchanged**, only the control plane moves), `npm test`, `cdk synth`,
+   `cdk diff` written into the job summary, `cdk deploy`, and then `https://api.<domain>/healthz` and `/readyz` until
+   both answer `{"ok":true}` (up to 20 minutes; the server is replaced).
+
+Two brakes stop the run with nothing deployed:
+
+- **Permissions and network.** If the plan contains `IAM Statement Changes`, `IAM Policy Changes` or
+  `Security Group Changes`, the run stops. A control-plane release should only change the version and the SHA-256 the
+  server installs. Read the plan in the summary; if the change is wanted, run the workflow again with
+  **allow_iam_changes = true**.
+- **The domain.** If `BASE_DOMAIN` in the environment is not the domain the stack already serves (output
+  `ControlPlaneUrl`), the run stops before the plan. Changing the domain is a deploy to do from CloudShell, where
+  someone reads the table.
+  The other settings of the environment cannot be compared this way (the stack publishes no output for them), so they
+  must be kept equal to Step 5 by hand. `FENVIX_ACME_STAGING = true` prints a warning in the run: it is right only
+  during the first install, before phase 4.
+
+### Going back (rollback)
+Every run's job summary ends with the control-plane version that was in production **before** it, and its SHA-256.
+To go back:
+
+1. Actions, **deploy-control-plane**, Run workflow.
+2. Paste those two values into **rollback_version** and **rollback_sha256**. Nothing is built, so `ref` no longer
+   chooses the control plane; it still chooses which copy of `infra/` draws the plan, so leave it at `main`.
+3. Run workflow, then **Approve**.
+
+It builds nothing: that release is already in the bucket, so the run only pins it again and replaces the server
+(another 5 to 15 minutes without service). The same brakes and the same health check apply.
+
+Other ways back, unchanged and still available:
+
+- **Without replacing the server** (seconds instead of minutes), from Session Manager:
+  `sudo fenvix-artifact rollback control-plane`. Use this when a release is bad and you want it off now. Then run the
+  workflow with that version so a replaced server installs it too (otherwise the stack still names the bad one).
+- **From CloudShell**, the manual route of `docs/deploy-checklist.md` phase 3: set the four release settings to the
+  previous values and `npx cdk deploy`. This is the route for anything the workflow refuses (a change to permissions,
+  to the domain, to the certificate mode, or to the engine).
+
+The engine is never changed by the workflow. Its rollback stays `sudo fenvix-artifact rollback engine` plus a deploy
+from CloudShell (`docs/deploy-checklist.md`, "prima il motore, poi il control plane").
 
 ## The boot script and the 16 KB limit
 EC2 accepts at most 16 KB of user data. The boot script (`bootScript()` in `lib/user-data.ts`, with the files of `lib/scripts/`, `lib/acme-requirements.txt` and the artifact installer of `lib/artifacts.ts`) is about 32 KB, so the user data carries it **gzip-compressed and base85-encoded** (about 15.6 KB in all; base64 no longer fits once the artifact installer was added), checks its SHA-256 before running it, and keeps a readable copy at `/opt/fenvix/boot.sh` on the server. It is decoded with the Python 3 standard library, which every Amazon Linux 2023 image has (cloud-init runs on it). Nothing is downloaded for it and nothing is left out. `npm test` checks the size, with a long domain too, and that the compressed part decodes to the exact script. If it ever grows past 16 KB, the next step is to keep the boot script in the artifacts bucket under `boot/` with its SHA-256 fixed in the user data.
@@ -242,14 +301,59 @@ If `put` answers `ParameterAlreadyExists`, the parameter is there already; to re
 2. Open the role, Add permissions, **Create inline policy**, JSON tab. Paste the whole content of `infra/deploy-policy.json`. Name it `fenvix-deploy`. (It is longer than the 6,144 characters a managed policy may have, so it must be inline.)
 3. Switch to this role: your name (top right), Switch role, account `865859654353`, role `fenvix-deployer`. Stay in this role for the rest of the steps (CloudShell opens a new, empty session for the role).
 
+### Step 3b. The deploy role for GitHub Actions, and the `production` environment (once)
+Only needed for the one-button deploy of the control plane (`.github/workflows/deploy-control-plane.yml`,
+`docs/deploy-checklist.md` phase 3). Everything here is free: IAM roles, OIDC and GitHub environments cost nothing.
+
+Do it after Step 7 (the first deploy), because GitHub's OIDC provider must exist in the account: the stack creates it,
+or it is already there (`docs/deploy-checklist.md`, 1.4).
+
+1. **The role.** IAM, Roles, Create role. Trusted entity type: **Custom trust policy**. Paste the whole content of
+   `infra/github-deploy-trust.json`. Next, skip the permissions page, name the role exactly
+   **`fenvix-github-deployer`** (the name is in the policy files), Create role.
+   It trusts one thing only: a GitHub Actions run of `Mircoguidetti/fenvix-app` that names the environment
+   `production`. A branch, a tag, a pull request or another repository gets `AccessDenied`.
+2. **Its permissions.** Open the role, Permissions, Add permissions, **Create inline policy**, JSON tab, paste
+   `infra/deploy-policy.json` (the same policy as `fenvix-deployer`: the workflow can do no more than you in
+   CloudShell), name it `fenvix-deploy`, Create. Then **Create inline policy** a second time, paste
+   `infra/github-deploy-guardrails.json`, name it `fenvix-github-guardrails`, Create. The second one only takes
+   permissions away: the role cannot change its own permissions, cannot change who may log in from GitHub, and cannot
+   delete the stack.
+3. **Session length.** Open the role, Summary, Edit, Maximum session duration: **1 hour** (the default). The workflow
+   asks for one hour because a deploy can take twenty minutes.
+   Expected: the role page shows two inline policies and a trust relationship with
+   `token.actions.githubusercontent.com`. Copy the role ARN (`arn:aws:iam::...:role/fenvix-github-deployer`).
+4. **The GitHub environment.** Repository Settings, Environments, New environment, name it exactly **`production`**,
+   Configure environment. Tick **Required reviewers** and add yourself, Save protection rules.
+5. **Its secrets** (same page, Environment secrets, Add secret), three:
+   | Name | Value |
+   |---|---|
+   | `AWS_DEPLOY_ROLE_ARN` | the role ARN of point 3 |
+   | `FENVIX_BUDGET_EMAIL` | the same address as `FENVIX_BUDGET_EMAIL` in Step 5 |
+   | `FENVIX_ACME_EMAIL` | the same address as `FENVIX_ACME_EMAIL` in Step 5 |
+6. **Its variables** (same page, Environment variables, Add variable):
+   | Name | Value |
+   |---|---|
+   | `BASE_DOMAIN` | the same value as `BASE_DOMAIN` in Step 5 |
+   | `FENVIX_DASHBOARD_ORIGINS` | the same value as in Step 5 |
+   | `FENVIX_HOSTED_ZONE_ID` | the same value as in Step 5 (empty if you never set it) |
+   | `FENVIX_ACME_STAGING` | `false` once the real certificate is in place; `true` only while the staging one is |
+
+   They are variables, not secrets, because they are public (a domain, a zone id) and because the workflow prints them
+   when they do not match the stack. The two addresses are secrets so they stay out of the logs.
+
+The workflow refuses to run with any of these missing and says which one. It also stops, before touching anything, if
+a variable here does not match what the stack is already deployed with: a release may change the control-plane version
+and nothing else.
+
 ### Step 4. Get the code
 In CloudShell, run one line at a time:
 ```
-git clone https://github.com/mircoguidetti/olvix-app.git
-cd olvix-app && git checkout infra-align && cd infra
+git clone https://github.com/Mircoguidetti/fenvix-app.git
+cd fenvix-app/infra
 npm ci
 ```
-If CloudShell says `node` is too old, run `nvm install 22` first. If the repository is private, `git clone` asks for a login and will fail for a password: ask your engineer for a read-only access token, or download the `infra-align` branch as a zip on your computer and upload it with CloudShell menu Actions, Upload file, then `unzip` it.
+If CloudShell says `node` is too old, run `nvm install 22` first. If the repository is private, `git clone` asks for a login and will fail for a password: ask your engineer for a read-only access token, or download the `main` branch as a zip on your computer and upload it with CloudShell menu Actions, Upload file, then `unzip` it.
 
 ### Step 5. Fill in the settings
 The release settings stay empty for the first deploy (the bucket they come from is made by it): `docs/deploy-checklist.md` has the exact order (stack with a staging certificate, then the artifacts, then the real certificate). Then:
@@ -279,7 +383,7 @@ npx cdk deploy --all --require-approval broadening
 ```
 Read the table it shows (roles, security group). Type `y`. No `cdk bootstrap` is needed: the stack uses no uploaded files.
 
-The deploy does not wait for the certificate: the server requests it when it starts. It takes 10 to 20 minutes. At the end it prints `BucketName`, `InstanceId`, `PublicIp`, `SecretsPath`, `TlsSecret`, `DatabaseHosts` (`*.eu-west-1.db.<domain>`), `ControlPlaneUrl` (`https://api.<domain>/v1`: the value of the dashboard's `VITE_API_URL` on Vercel, see "Addresses"), with option B `ApiRecordToCreate` and `ApiChallengeRecordToCreate` (make them now if you have not, "The domain and DNS"), and, if the stack created the zone, `NameServers` (put them at your DNS provider now: option B as `NS` records named `db`, option A as the domain's name servers).
+The deploy does not wait for the certificate: the server requests it when it starts. It takes 10 to 20 minutes. At the end it prints `BucketName`, `InstanceId`, `PublicIp`, `SecretsPath`, `TlsSecret`, `DatabaseHosts` (`*.eu-west-1.db.<domain>`), `ControlPlaneUrl` (`https://api.<domain>/v1`: the value of the dashboard's `VITE_API_URL` on Vercel, see "Addresses"), once the releases are pinned also `EngineVersion`, `EngineSha256`, `ControlPlaneVersion` and `ControlPlaneSha256` (what the server is told to install: the deploy workflow reads them, and `aws cloudformation describe-stacks` answers "which version is production on?" without opening a shell on the server), with option B `ApiRecordToCreate` and `ApiChallengeRecordToCreate` (make them now if you have not, "The domain and DNS"), and, if the stack created the zone, `NameServers` (put them at your DNS provider now: option B as `NS` records named `db`, option A as the domain's name servers).
 
 ### Step 8. Switch on the cost tracking (once)
 Billing console, Cost allocation tags, activate the user tags `project` and `env`. (Optional but useful: it lets Cost Explorer split costs per tag from the next day on. The budget itself already works per region without it.)
