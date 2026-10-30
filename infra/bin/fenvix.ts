@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { App, BootstraplessSynthesizer } from 'aws-cdk-lib';
+import { App, LegacyStackSynthesizer } from 'aws-cdk-lib';
 import { loadConfig, makeLookup } from '../lib/config';
 import { FenvixStack } from '../lib/fenvix-stack';
 
@@ -26,7 +26,7 @@ config.regions.forEach((region, index) => {
     region,
     createDns: index === 0,
     // No assets in this stack, so no bootstrap stack is needed (see README).
-    synthesizer: new BootstraplessSynthesizer(),
+    synthesizer: new LegacyStackSynthesizer(),
     description: `FENVIX engine node (${config.envName}, ${region})`,
   });
 });
