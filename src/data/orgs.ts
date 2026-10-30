@@ -64,6 +64,21 @@ export function orgNameProblem(raw: string): string | null {
   return null;
 }
 
+/**
+ * The name to start the "Name your organization" field with: the name guessed at sign-up, with spaces tidied and a
+ * name written twice over ("Spazio Milano Spazio Milano", from a profile whose first and last name are both the
+ * business name) shown once.
+ */
+export function suggestedOrgName(raw: string): string {
+  const words = raw.trim().split(/\s+/).filter(Boolean);
+  const half = words.length / 2;
+  if (words.length >= 2 && Number.isInteger(half)) {
+    const a = words.slice(0, half).join(" ");
+    if (a.toLowerCase() === words.slice(half).join(" ").toLowerCase()) return a;
+  }
+  return words.join(" ");
+}
+
 /** Owner and admin manage; a member reads. */
 export const canManage = (role: OrgRole | null | undefined) => role === "owner" || role === "admin";
 

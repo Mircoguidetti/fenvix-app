@@ -220,7 +220,7 @@ const CHECKS = {
 
   async "create: POST /v1/databases with an Idempotency-Key; the password is shown once, then never again"(page) {
     await createWith(page, "api-create-01");
-    await page.getByRole("heading", { name: "Database created" }).waitFor();
+    await page.getByRole("heading", { name: "Your database is ready" }).waitFor();
     const password = (await page.getByTestId("once-password").innerText()).trim();
     assert(/^Pw[0-9a-f]{30}Once1234$/.test(password), `the password shown: ${password}`);
     await page.getByText("This is the only time it is shown").waitFor();
@@ -228,7 +228,7 @@ const CHECKS = {
     assert(sent.length === 1 && sent[0].key && sent[0].key.length >= 16, `the create was sent ${sent.length} times, key ${sent[0]?.key}`);
     await page.getByRole("link", { name: "Open database" }).click();
     await page.waitForURL(/\/databases\/[0-9a-f-]{36}$/);
-    await page.getByRole("heading", { name: "Database created" }).waitFor({ state: "detached" });
+    await page.getByRole("heading", { name: "Your database is ready" }).waitFor({ state: "detached" });
     await page.getByRole("heading", { name: "api-create-01" }).waitFor();
     assert(!(await page.content()).includes(password), "the password is still on the page after leaving the creation screen");
   },
@@ -237,7 +237,7 @@ const CHECKS = {
     await createWith(page, "slow-create-01");
     const note = page.locator(".op-note");
     await note.filter({ hasText: /queued|in progress/ }).first().waitFor();
-    await page.getByRole("heading", { name: "Database created" }).waitFor();
+    await page.getByRole("heading", { name: "Your database is ready" }).waitFor();
     await page.getByText("The password of this database's first user could not be shown here.").waitFor();
     assert(!(await page.getByTestId("once-password").count()), "a password is shown for a create that answered 202");
     assert(requests.some((r) => r.method === "GET" && r.path.startsWith("/operations/")), "the operation was never polled");

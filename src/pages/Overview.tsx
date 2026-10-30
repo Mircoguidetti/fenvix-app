@@ -6,6 +6,7 @@ import { AwakeAreaChart, CostLineChart, HBars, Sparkline, TimeBarsChart } from "
 import { useAsync } from "../lib/useAsync";
 import { useWorkspaceVersion } from "../lib/workspace";
 import { formatCompact, formatCount, formatMoney, formatRelative } from "../lib/format";
+import { Select } from "../components/Select";
 
 const RANGES: { value: UsageRange; label: string }[] = [
   { value: "24h", label: "24 h" },
@@ -104,13 +105,7 @@ export function OverviewPage() {
                   <label className="sr-only" htmlFor="ov-key">
                     Tag key
                   </label>
-                  <select id="ov-key" value={tagKey} onChange={(e) => setTagKey(e.target.value)}>
-                    {tagKeys.map((k) => (
-                      <option key={k} value={k}>
-                        {k}
-                      </option>
-                    ))}
-                  </select>
+                  <Select id="ov-key" size="sm" value={tagKey} onChange={setTagKey} options={tagKeys.map((k) => ({ value: k, label: k }))} />
                   <div className="seg seg-sm" role="group" aria-label="Metric">
                     <button type="button" aria-pressed={metric === "requests"} onClick={() => setMetric("requests")}>
                       Requests

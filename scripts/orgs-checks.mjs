@@ -2,7 +2,7 @@
 // account, an existing account that goes straight in, switching organization, a member's read-only screens and the
 // mock server refusing their changes, invite → accept, and hostile names shown as text.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: node scripts/orgs-checks.mjs
-import { BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn } from "./lib.mjs";
+import { BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, choose } from "./lib.mjs";
 
 const { fail, pass, state } = makeReporter();
 const browser = await launch();
@@ -151,11 +151,12 @@ const TESTS = {
     await go(page, "settings");
     await page.locator("#organization").getByText("Harbor Analytics").waitFor();
     assert(!(await page.getByRole("button", { name: "Rename" }).count()), "a member can rename the organization");
-    assert(await page.getByLabel("Sleep after idle").isDisabled(), "a member can change settings");
+    assert(await page.getByLabel("Email me about usage and account notices").isDisabled(), "a member can change settings");
+    assert(!(await page.getByText("Sleep after idle").count()), "settings still offer Sleep after idle");
     await go(page, "settings/members");
     await page.locator("#members").getByText("Jonas Weber").waitFor();
     assert(!(await page.getByRole("button", { name: "Invite" }).count()), "a member can invite");
-    assert(!(await page.locator("#members select").count()), "a member can change roles");
+    assert(!(await page.locator("#members .select").count()), "a member can change roles");
     assert(!(await page.getByRole("button", { name: /^Remove / }).count()), "a member can remove people");
 
     // The screens hide it, and the server refuses it anyway (the mock server, called directly).
@@ -199,7 +200,7 @@ const TESTS = {
     await page.getByRole("button", { name: "Invite" }).click();
     await page.getByRole("alert").getByText("Enter a valid email address").waitFor();
     await page.getByLabel("Email", { exact: true }).fill("Sam.Rivera@northwind.cloud");
-    await page.getByLabel("Role", { exact: true }).selectOption("member");
+    await choose(page, page.getByLabel("Role", { exact: true }), "member");
     await page.getByRole("button", { name: "Invite" }).click();
     const dialog = page.getByRole("dialog", { name: "Invitation link" });
     await dialog.waitFor();

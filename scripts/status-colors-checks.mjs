@@ -17,7 +17,7 @@ const DANGER = "rgb(214, 20, 10)";
 const WARNING = "rgb(161, 92, 0)";
 const SUCCESS_DARK = "rgb(61, 220, 132)";
 const DANGER_DARK = "rgb(255, 106, 92)";
-const BLACK = "rgb(10, 10, 11)";
+const BLACK = "rgb(0, 0, 0)"; // --black, the landing page's black
 const WHITE = "rgb(255, 255, 255)";
 const STATUS = [SUCCESS, DANGER, WARNING, SUCCESS_DARK, DANGER_DARK, "rgb(255, 176, 32)"];
 
@@ -94,10 +94,14 @@ async function noBorder(page, what) {
   assert(!d.shadow.includes("inset") && !STATUS.some((c) => d.shadow.includes(c)), `the ${what} dialog has a line (${d.shadow})`);
 }
 
-async function silverLine(page, selector) {
+/** The selected tab or menu item shows its state with its background and weight: no line under it, no underline. */
+async function noLine(page, selector) {
   const after = await paint(page, selector, "::after");
-  assert(/linear-gradient/.test(after.bgImage), `${selector} has no silver line (${after.bgImage})`);
-  assert(after.bgImage.includes("rgb(196, 200, 206)") && after.bgImage.includes("rgb(244, 245, 247)") && after.bgImage.includes("rgb(124, 130, 139)"), `${selector}: the line is not the silver gradient`);
+  assert(after.bgImage === "none" && !/gradient/.test(after.bgImage), `${selector} has a line under it (${after.bgImage})`);
+  const deco = await page.locator(selector).first().evaluate((e) => getComputedStyle(e).textDecorationLine);
+  assert(deco === "none", `${selector} is underlined`);
+  const weight = await page.locator(selector).first().evaluate((e) => Number(getComputedStyle(e).fontWeight));
+  assert(weight >= 600, `${selector} is not bold (${weight})`);
 }
 
 const TESTS = {
@@ -115,9 +119,9 @@ const TESTS = {
     await fits(page);
   },
 
-  async "database: erase is red, its dialog has no border and a red confirm button; restore opens the same red dialog from a neutral button; the selected tab has the silver line"(page) {
+  async "database: erase is red, its dialog has no border and a red confirm button; restore opens the same red dialog from a neutral button; the selected tab is black and bold, with no line under it"(page) {
     await signIn(page, "databases/db_0001");
-    await silverLine(page, '.detail-tabs button[aria-pressed="true"]');
+    await noLine(page, '.detail-tabs button[aria-pressed="true"]');
     const tab = await paint(page, '.detail-tabs button[aria-pressed="true"]');
     assert(tab.bg === BLACK, `the selected tab is not black (${tab.bg})`);
     const erase = await paint(page, "#actions .btn-danger");
@@ -165,7 +169,7 @@ const TESTS = {
 
   async "network: blocked addresses are red with an icon, a bad entry is a red error, unsaved changes are amber, saving says so in green"(page) {
     await signIn(page, "databases/db_0001?tab=network");
-    await silverLine(page, '.detail-tabs button[aria-pressed="true"]');
+    await noLine(page, '.detail-tabs button[aria-pressed="true"]');
     const blocked = await paint(page, "#blocks .blocked-until");
     assert(blocked.color === DANGER && blocked.svg && /^Blocked until/.test(blocked.text), `blocked: ${blocked.color} "${blocked.text}"`);
     const clear = await paint(page, "#allowlist .btn-danger");
@@ -303,11 +307,11 @@ const TESTS = {
     await fits(page);
   },
 
-  async "overview and navigation: the selected menu item has the silver line, charts are black, grey and silver"(page, viewport) {
+  async "overview and navigation: the selected menu item has no line under it, charts are black, grey and silver"(page, viewport) {
     await signIn(page, "overview");
     if (isMobile(viewport)) await page.getByRole("button", { name: "Open navigation" }).click();
     const scope = isMobile(viewport) ? ".drawer" : ".sidebar";
-    await silverLine(page, `${scope} .nav-link.active`);
+    await noLine(page, `${scope} .nav-link.active`);
     const item = await paint(page, `${scope} .nav-link.active`);
     assert(!STATUS.includes(item.color) && !STATUS.includes(item.bg), "the selected menu item is coloured");
     if (isMobile(viewport)) await page.getByRole("button", { name: "Close navigation" }).click();

@@ -13,6 +13,28 @@ export const BANNED = /sample|demo|test|placeholder|coming soon|planned|preview|
 
 export const launch = () => chromium.launch();
 
+/**
+ * Picks `value` in one of the dashboard's selects (src/components/Select.tsx): opens it and clicks the option. Its
+ * options may still be loading, so it opens it again until the option is there (as selectOption waits for one).
+ */
+export async function choose(page, select, value) {
+  const list = page.getByRole("listbox");
+  const option = list.locator(`[data-value="${value}"]`);
+  for (let i = 0; i < 40; i++) {
+    if ((await select.getAttribute("aria-expanded")) !== "true") await select.click();
+    try {
+      await option.waitFor({ timeout: 500 });
+    } catch {
+      if ((await select.getAttribute("aria-expanded")) === "true") await select.click();
+      continue;
+    }
+    await option.click();
+    await list.waitFor({ state: "detached" });
+    return;
+  }
+  throw new Error(`the select has no option ${value}`);
+}
+
 export function makeReporter() {
   const state = { failures: 0, passes: 0 };
   return {

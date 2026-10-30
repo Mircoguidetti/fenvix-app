@@ -10,6 +10,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
+import { choose } from "./lib.mjs";
 
 const DB = process.env.TEST_DATABASE_URL;
 if (!DB) { console.error("Set TEST_DATABASE_URL to an empty scratch database."); process.exit(2); }
@@ -146,9 +147,9 @@ step("databases: 3,000, paged, filtered by tag, grouped by customer", async () =
   await page.getByRole("button", { name: "Add tag filter" }).click();
   await page.waitForFunction(() => document.querySelector(".counts-bar b")?.textContent === "154");
   await page.getByRole("button", { name: "Remove tag filter customer:acme-labs" }).click();
-  await page.getByLabel("Group by tag").selectOption("customer");
+  await choose(page, page.getByLabel("Group by tag"), "customer");
   await page.getByText("3,000 databases in 200 groups, grouped by customer").waitFor();
-  await page.getByLabel("Group by tag").selectOption("");
+  await choose(page, page.getByLabel("Group by tag"), "");
 });
 
 let createdId;
@@ -156,7 +157,7 @@ step("create, duplicate name, tags, keep awake, fork, restore, export, erase", a
   const { page } = ownerContext;
   await page.goto(APP + "databases/new");
   await page.getByLabel("Name", { exact: true }).fill("e2e-created-01");
-  await page.getByLabel("Region").selectOption("us-east");
+  await choose(page, page.getByLabel("Region"), "us-east");
   await page.getByLabel("Tags").fill("customer:acme-labs env:prod");
   await page.getByRole("button", { name: "Create database" }).click();
   await page.getByRole("link", { name: "Open database" }).waitFor();
@@ -239,7 +240,7 @@ step("usage: per database and per tag, sorted, CSV with every row", async () => 
   await page.goto(APP + "usage");
   await page.locator("tbody tr").first().waitFor();
   const r = async () => (await page.locator('tbody td[data-label="Requests"]').allTextContents()).map(num);
-  await page.getByLabel("Sort by").selectOption("requests:desc");
+  await choose(page, page.getByLabel("Sort by"), "requests:desc");
   await page.waitForFunction(() => document.querySelectorAll('tbody td[data-label="Requests"]').length === 50);
   await page.waitForTimeout(600); // let the re-sorted page replace the previous one
   const desc = await r();
@@ -252,7 +253,7 @@ step("usage: per database and per tag, sorted, CSV with every row", async () => 
   await toast(page, "CSV ready");
   await page.getByRole("button", { name: "Per tag" }).click();
   await page.waitForFunction(() => [...document.querySelectorAll(".seg button")].some((b) => b.textContent === "Per tag" && b.getAttribute("aria-pressed") === "true"));
-  await page.locator("#u-key").selectOption("customer");
+  await choose(page, page.locator("#u-key"), "customer");
   await page.getByRole("heading", { name: "Per customer" }).waitFor();
   await page.waitForFunction(() => document.querySelector('tbody td[data-label="Name"]')?.textContent?.startsWith("customer:"));
   const tag = await saved(page, () => page.getByRole("button", { name: "Export CSV" }).click());

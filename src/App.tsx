@@ -14,7 +14,7 @@ import { ApiKeysPage } from "./pages/ApiKeys";
 import { SettingsPage } from "./pages/Settings";
 import { MembersPage } from "./pages/Members";
 import { OrgProvider, useOrg } from "./session/OrgProvider";
-import { InviteScreen, NameOrgScreen } from "./components/OrgScreens";
+import { InviteScreen, NameOrgScreen, NoOrgScreen } from "./components/OrgScreens";
 import { usePendingInvite } from "./lib/invite";
 
 function NotFound() {
@@ -31,8 +31,9 @@ function NotFound() {
 }
 
 /**
- * Between sign-in and the dashboard: an invitation link first, then a person with no organization (create one), then
- * an owner whose organization name was never chosen (name it). Someone who joined by invitation is not its owner and
+ * Between sign-in and the dashboard: an invitation link first, then a person with no organization (they can only
+ * join one by invitation: the dashboard offers no way to create one), then an owner whose organization name was never
+ * chosen (name it: a brand-new account). Someone who joined by invitation is not its owner and
  * never sees the name screen. These screens only guide: every rule is the server's.
  */
 function Gated() {
@@ -40,8 +41,8 @@ function Gated() {
   const invite = usePendingInvite();
   if (invite) return <InviteScreen token={invite} />;
   if (org.status === "loading") return null;
-  if (org.status === "ready" && org.orgs.length === 0) return <NameOrgScreen mode="create" />;
-  if (org.current?.role === "owner" && !org.current.nameConfirmed) return <NameOrgScreen key={org.current.id} mode="confirm" />;
+  if (org.status === "ready" && org.orgs.length === 0) return <NoOrgScreen />;
+  if (org.current?.role === "owner" && !org.current.nameConfirmed) return <NameOrgScreen key={org.current.id} />;
   return <Dashboard key={org.current?.id ?? "default"} />;
 }
 

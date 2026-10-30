@@ -9,6 +9,7 @@ import { ROLE_NAMES, memberActions, type CreatedInvitation, type Invitation, typ
 import { useOrg } from "../session/OrgProvider";
 import { useAsync } from "../lib/useAsync";
 import { formatDate } from "../lib/format";
+import { Select } from "../components/Select";
 
 /** The link of a new invitation, shown once: only its hash is kept. */
 function LinkDialog({ created, onClose }: { created: CreatedInvitation | null; onClose: () => void }) {
@@ -160,10 +161,12 @@ export function MembersPage() {
             </div>
             <div className="field">
               <label htmlFor="invite-role">Role</label>
-              <select id="invite-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as InviteRole)}>
-                <option value="member">Member: can view, cannot change</option>
-                {role === "owner" && <option value="admin">Admin: can manage databases and members</option>}
-              </select>
+              <Select
+                id="invite-role"
+                value={inviteRole}
+                onChange={(v) => setInviteRole(v as InviteRole)}
+                options={[{ value: "member", label: "Member: can view, cannot change" }, ...(role === "owner" ? [{ value: "admin", label: "Admin: can manage databases and members" }] : [])]}
+              />
             </div>
             <button type="submit" className="btn btn-primary" disabled={busy}>
               Invite
@@ -217,13 +220,7 @@ export function MembersPage() {
                       </td>
                       <td data-label="Role">
                         {can.roles.length > 0 ? (
-                          <select aria-label={`Role of ${m.name}`} value={m.role} onChange={(e) => void changeRole(m, e.target.value as OrgRole)} className="select-sm">
-                            {can.roles.map((r) => (
-                              <option key={r} value={r}>
-                                {ROLE_NAMES[r]}
-                              </option>
-                            ))}
-                          </select>
+                          <Select aria-label={`Role of ${m.name}`} size="sm" value={m.role} onChange={(v) => void changeRole(m, v as OrgRole)} options={can.roles.map((r) => ({ value: r, label: ROLE_NAMES[r] }))} />
                         ) : (
                           ROLE_NAMES[m.role]
                         )}
