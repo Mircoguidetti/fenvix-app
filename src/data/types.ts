@@ -199,22 +199,6 @@ export interface Invoice {
   status: "paid" | "open";
 }
 
-export interface ApiKey {
-  id: string;
-  name: string;
-  /** Last characters only. The full secret is shown once at creation. */
-  hint: string;
-  createdAt: string;
-  lastUsedAt: string | null;
-  revokedAt: string | null;
-}
-
-export interface CreatedApiKey {
-  key: ApiKey;
-  /** Shown once. */
-  secret: string;
-}
-
 export interface Settings {
   workspaceName: string;
   idleMinutes: number;
@@ -321,3 +305,5 @@ export interface Plan {
   features: string[];
   current: boolean;
 }
+
+export type { CreatedPublicKey, NewPublicKey, PublicApiKey, PublicKeyPage, PublicKeyRole, PublicKeyStatus } from "./public-keys";

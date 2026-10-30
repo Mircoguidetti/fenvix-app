@@ -539,12 +539,35 @@ const TESTS = {
 
   async "api keys"(page) {
     await signIn(page, "api-keys");
+    // The list: prefix, role, expiry and the three statuses.
+    for (const [name, status] of [["Production backend", "Active"], ["Quarterly report", "Expired"], ["Old laptop", "Revoked"]]) {
+      await page.getByRole("row", { name: new RegExp(name) }).getByText(status, { exact: true }).waitFor();
+    }
+    await page.getByRole("row", { name: /Agent runner/ }).getByText("fvx_Qm3xT8aL…").waitFor();
+    await page.getByRole("row", { name: /Agent runner/ }).getByText("Read only").waitFor();
+    assert(!(await page.getByRole("button", { name: "Revoke key Old laptop" }).count()), "a revoked key can be revoked again");
+    await page.getByRole("button", { name: "Create key" }).click();
+    await page.getByRole("alert").getByText("Enter a name for the key").waitFor();
+
     await page.getByLabel("Key name").fill("Check runner");
+    await page.getByRole("combobox", { name: "Role" }).click();
+    await page.getByRole("option", { name: "Admin" }).click();
+    await page.getByRole("combobox", { name: "Expires" }).click();
+    await page.getByRole("option", { name: "Never" }).click();
+    await page.getByText("The key works until it is revoked.").waitFor();
     await page.getByRole("button", { name: "Create key" }).click();
     await page.getByText("Key “Check runner” created.").waitFor();
     const secret = await page.locator(".secret").innerText();
-    assert(secret.startsWith("fnx_"), `the new key reads ${secret}`);
+    assert(/^fvx_[A-Za-z0-9_-]{43}$/.test(secret), `the new key reads ${secret}`);
+    await page.getByText("It will not be shown again.").waitFor();
+    const example = await page.getByLabel("Try it: list your databases").inputValue();
+    assert(!example.includes(secret) && example.includes("$FENVIX_KEY"), "the example holds the key");
+    const row = page.getByRole("row", { name: /Check runner/ });
+    await row.getByText("Admin").waitFor();
+    await row.getByText(secret.slice(0, 12) + "…").waitFor();
+    assert(!(await row.innerText()).includes(secret), "the list shows the whole key");
     await page.getByRole("button", { name: "Revoke key Check runner" }).click();
+    await page.getByRole("dialog").getByText("stops working immediately").waitFor();
     await page.getByRole("button", { name: "Revoke key", exact: true }).click();
     await page.getByRole("row", { name: /Check runner/ }).getByText("Revoked").waitFor();
   },

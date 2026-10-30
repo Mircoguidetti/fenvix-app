@@ -98,7 +98,7 @@ test("lists that come wrapped in { items } or { ids } are unwrapped", async () =
     if (p === "/regions") return { status: 200, body: { items: ["eu-west", "us-east"] } };
     if (p === "/tags") return { status: 200, body: { items: [{ key: "env", value: "prod", count: 2 }] } };
     if (p === "/plans") return { status: 200, body: { items: [{ id: "managed", current: true }] } };
-    if (p === "/api-keys") return { status: 200, body: { items: [] } };
+    if (p === "/public/api-keys") return { status: 200, body: { items: [], nextCursor: null } };
     if (p === "/usage/months") return { status: 200, body: { items: ["2026-10"] } };
     if (p === "/usage/history") return { status: 200, body: { items: [] } };
     if (p === "/tags/breakdown") return { status: 200, body: { items: [{ value: "a", databases: 1, storageGb: 0, requests: 3 }] } };
@@ -109,7 +109,7 @@ test("lists that come wrapped in { items } or { ids } are unwrapped", async () =
   assert.deepEqual(await client.listRegions(), ["eu-west", "us-east"]);
   assert.equal((await client.listTags())[0].count, 2);
   assert.equal((await client.listPlans())[0].current, true);
-  assert.deepEqual(await client.listApiKeys(), []);
+  assert.deepEqual(await client.listPublicApiKeys(), { items: [], nextCursor: null });
   assert.deepEqual(await client.listUsageMonths(), ["2026-10"]);
   assert.deepEqual(await client.getUsageHistory(), []);
   assert.equal((await client.getTagBreakdown("customer"))[0].requests, 3);
@@ -242,13 +242,11 @@ test("erase that is still running when the request returns: polled until it repo
   assert.deepEqual(await client.eraseDatabases([DB_ID]), { affected: 3 });
 });
 
-test("keep awake, tags, settings and API keys are writes with an Idempotency-Key", async () => {
+test("keep awake, tags and settings are writes with an Idempotency-Key", async () => {
   const { client, seen } = fakeServer((r) => {
     const p = r.url.pathname.replace("/v1", "");
     if (p === `/databases/${DB_ID}/tags`) return { status: 200, body: database({ tags: ["env:prod"] }) };
     if (p === "/settings") return { status: 200, body: { workspaceName: "Acme", idleMinutes: 5, emailNotices: true } };
-    if (p === "/api-keys") return { status: 201, body: { key: { id: "k" }, secret: "fnx_abc" } };
-    if (p.endsWith("/revoke")) return { status: 200, body: { id: "k", revokedAt: "now" } };
     return { status: 200, body: { affected: 1 } };
   });
   await client.setKeepAwake([DB_ID], true);
@@ -256,13 +254,83 @@ test("keep awake, tags, settings and API keys are writes with an Idempotency-Key
   await client.addTags([DB_ID], ["env:prod"]);
   await client.removeTags([DB_ID], ["env"]);
   await client.saveSettings({ workspaceName: "Acme", idleMinutes: 5, emailNotices: true });
-  assert.equal((await client.createApiKey("CI")).secret, "fnx_abc");
-  await client.revokeApiKey("k");
   assert.deepEqual(seen.map((r) => `${r.method} ${r.url.pathname}`), [
-    "POST /v1/databases/keep-awake", `PUT /v1/databases/${DB_ID}/tags`, "POST /v1/databases/tags/add", "POST /v1/databases/tags/remove", "PUT /v1/settings", "POST /v1/api-keys", "POST /v1/api-keys/k/revoke",
+    "POST /v1/databases/keep-awake", `PUT /v1/databases/${DB_ID}/tags`, "POST /v1/databases/tags/add", "POST /v1/databases/tags/remove", "PUT /v1/settings",
   ]);
   assert.ok(seen.every((r) => r.headers["idempotency-key"]), "every write has a key");
   assert.deepEqual(seen[0].body, { ids: [DB_ID], enabled: true });
+});
+
+// ---------------------------------------------------------------- public API keys (fvx_), /v1/public/api-keys
+
+const KEY_ID = "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b01";
+const TOKEN = `fvx_${"Ab3_-".repeat(8)}xyz`;
+const wireKey = (over: Record<string, unknown> = {}) => ({
+  id: KEY_ID, name: "ci deploys", role: "read_only", prefix: TOKEN.slice(0, 12), status: "active",
+  createdAt: "2026-10-01T09:00:00.000Z", lastUsedAt: null, expiresAt: null, revokedAt: null, ...over,
+});
+
+test("public keys: list, create and revoke on /v1/public/api-keys, with the session and the organization header", async () => {
+  const { client, seen } = fakeServer((r) => {
+    if (r.method === "GET") return { status: 200, body: { items: [wireKey({ lastUsedAt: "2026-10-29T08:00:00.000Z" })], nextCursor: "next-1" } };
+    if (r.method === "POST") return { status: 201, body: { key: wireKey({ role: "admin", expiresAt: "2027-01-28T12:00:00.000Z" }), token: TOKEN } };
+    return { status: 200, body: wireKey({ status: "revoked", revokedAt: "2026-10-30T12:00:00.000Z" }) };
+  });
+  const page = await client.listPublicApiKeys();
+  assert.equal(page.nextCursor, "next-1");
+  assert.equal(page.items[0].lastUsedAt, "2026-10-29T08:00:00.000Z");
+  assert.equal(page.items[0].prefix, "fvx_Ab3_-Ab3");
+  await client.listPublicApiKeys("next-1");
+  const made = await client.createPublicApiKey({ name: "ci deploys", role: "admin", expiresAt: "2027-01-28T12:00:00.000Z" });
+  assert.equal(made.token, TOKEN);
+  assert.equal(made.key.role, "admin");
+  await client.createPublicApiKey({ name: "forever", role: "read_only", expiresAt: null });
+  const gone = await client.revokePublicApiKey(KEY_ID);
+  assert.equal(gone.status, "revoked");
+  assert.equal(gone.revokedAt, "2026-10-30T12:00:00.000Z");
+
+  assert.deepEqual(seen.map((r) => `${r.method} ${r.url.pathname}${r.url.search}`), [
+    "GET /v1/public/api-keys?limit=100", "GET /v1/public/api-keys?limit=100&cursor=next-1", "POST /v1/public/api-keys", "POST /v1/public/api-keys", `DELETE /v1/public/api-keys/${KEY_ID}`,
+  ]);
+  assert.deepEqual(seen[2].body, { name: "ci deploys", role: "admin", expiresAt: "2027-01-28T12:00:00.000Z" });
+  assert.deepEqual(seen[3].body, { name: "forever", role: "read_only" }, "no expiresAt for a key that does not expire");
+  for (const r of seen) {
+    assert.equal(r.headers.authorization, "Bearer session-token");
+    assert.equal(r.headers["x-fenvix-workspace"], ORG);
+  }
+  assert.ok(seen.slice(2).every((r) => r.headers["idempotency-key"]), "every change has an Idempotency-Key");
+});
+
+test("public keys: a create whose answer is lost is not sent again (a resend could never show the key)", async () => {
+  const { client, seen } = fakeServer(() => "network-error");
+  await rejects(client.createPublicApiKey({ name: "ci", role: "read_only", expiresAt: null }), (e) => assert.equal(e.code, "network"));
+  assert.equal(seen.length, 1);
+});
+
+test("public keys: a revoke whose answer is lost is sent again with the same Idempotency-Key", async () => {
+  const { client, seen } = fakeServer((_r, n) => (n === 1 ? "network-error" : { status: 200, body: wireKey({ status: "revoked", revokedAt: "2026-10-30T12:00:00.000Z" }) }));
+  assert.equal((await client.revokePublicApiKey(KEY_ID)).status, "revoked");
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].headers["idempotency-key"], seen[1].headers["idempotency-key"]);
+});
+
+test("public keys: the API's errors keep their code, status, field and message", async () => {
+  const cases: [number, unknown, string, string | undefined][] = [
+    [409, { error: { code: "conflict", message: "An organization can have up to 100 active API keys. Revoke one first." } }, "conflict", undefined],
+    [403, { error: { code: "forbidden", message: "Only an owner or admin of this organization can create API keys." } }, "forbidden", undefined],
+    [400, { error: { code: "validation_failed", message: "expiresAt must be at least a minute from now.", field: "expiresAt" } }, "validation_failed", "expiresAt"],
+  ];
+  for (const [status, body, code, field] of cases) {
+    const { client } = fakeServer(() => ({ status, body }));
+    await rejects(client.createPublicApiKey({ name: "ci", role: "read_only", expiresAt: null }), (e) => {
+      assert.equal(e.status, status);
+      assert.equal(e.code, code);
+      assert.equal(e.field, field);
+      assert.equal(e.message, (body as { error: { message: string } }).error.message);
+    });
+  }
+  const { client } = fakeServer(() => ({ status: 404, body: { error: { code: "not_found", message: "That API key does not exist." } } }));
+  await rejects(client.revokePublicApiKey("nope"), (e) => assert.equal(e.status, 404));
 });
 
 // ---------------------------------------------------------------- errors a person can read

@@ -276,23 +276,13 @@ step("billing: month to date, invoices, a real PDF, plans", async () => {
   assert(/current plan/i.test(await page.locator(".plan-current .tag").innerText()), "current plan not marked");
 });
 
-step("API keys: the key is shown once, the database holds only a hash", async () => {
+step("API keys: without the FENVIX API the page says so and offers no key", async () => {
+  // Customers' keys are the public API's (fvx_), made by the control plane only. The dashboard's own fnx_ keys
+  // (public.api_keys and its functions) are left as they are, but no screen offers them any more.
   const { page } = ownerContext;
   await page.goto(APP + "api-keys");
-  await page.getByLabel("Key name").fill("E2E runner");
-  await page.getByRole("button", { name: "Create key" }).click();
-  await page.getByText("Key “E2E runner” created.").waitFor();
-  const secret = await page.locator(".secret").innerText();
-  assert(/^fnx_[0-9a-f]{64}$/.test(secret), secret);
-  const row = query("select key_hash || '|' || last4 from public.api_keys where name = 'E2E runner'");
-  const [hash, last4] = row.split("|");
-  assert(hash.length === 64 && last4 === secret.slice(-4), `stored row ${row}`);
-  assert(!hash.includes(secret.slice(4)) && query(`select count(*) from public.api_keys where key_hash like '%${secret.slice(4, 20)}%'`) === "0", "the key itself must not be stored");
-  const { createHash } = await import("node:crypto");
-  assert(hash === createHash("sha256").update(secret).digest("hex"), "the stored hash is not the SHA-256 of the key");
-  await page.getByRole("button", { name: "Revoke key E2E runner" }).click();
-  await page.getByRole("button", { name: "Revoke key", exact: true }).click();
-  await page.getByRole("row", { name: /E2E runner/ }).getByText("Revoked").waitFor();
+  await page.getByText("API keys need the FENVIX API, which this dashboard is not set up for (VITE_API_URL).").waitFor();
+  assert(!(await page.getByRole("button", { name: "Create key" }).count()), "a key can be created without the FENVIX API");
 });
 
 step("settings: saving renames the workspace everywhere", async () => {

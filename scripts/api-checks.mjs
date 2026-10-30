@@ -6,7 +6,8 @@
 // created, forked and erased through the control plane's routes, with Idempotency-Key, operation polling, the
 // password shown once, and readable 401/403/409/422 errors.
 //
-// It is NOT the control plane: the routes answer from memory with the shapes of control-plane/src/routes/data.ts.
+// It is NOT the control plane: the routes answer from memory with the shapes of control-plane/src/routes/data.ts, and
+// for API keys with those of control-plane/src/routes/public/index.ts and services/apikeys.ts (viewKey).
 // Usage: npm run check (builds, serves and runs everything), or on its own: node scripts/api-checks.mjs
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
@@ -68,10 +69,17 @@ function slowOp(kind, finish, polls = 2) {
   ops.set(op.id, op);
   return { status: 202, body: { operation: view(op) }, headers: { location: `${API}/operations/${op.id}`, "retry-after": "2", "operation-id": op.id } };
 }
+// Public API keys (fvx_), newest first, as viewKey shows them.
+const publicKeys = [
+  { id: randomUUID(), name: "Production backend", role: "admin", prefix: "fvx_7HcR0ZyN", status: "active", createdAt: "2026-09-01T00:00:00.000Z", lastUsedAt: null, expiresAt: null, revokedAt: null },
+];
+const newToken = () => `fvx_${Buffer.from(randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "")).toString("base64url").slice(0, 43)}`;
+
 const view = (op) => ({ id: op.id, kind: op.kind, status: op.status, databaseId: op.databaseId, createdAt: op.createdAt, updatedAt: op.updatedAt, finishedAt: op.finishedAt, result: op.result, error: op.error });
 
 function route(method, path, q, body) {
   let m;
+  if (path.startsWith("/public/api-keys")) return publicKeyRoute(method, path, q, body);
   if (method === "GET" && path === "/organizations") return { status: 200, body: { items: [{ id: ORG, name: "Acme", role: "owner", nameConfirmed: true }] } };
   if (method === "GET" && path === "/settings") return { status: 200, body: { workspaceName: "Acme", idleMinutes: 5, emailNotices: true } };
   if (method === "GET" && path === "/regions") return { status: 200, body: { items: ["eu-west", "us-east"] } };
@@ -139,6 +147,29 @@ function route(method, path, q, body) {
   return null;
 }
 
+function publicKeyRoute(method, path, q, body) {
+  let m;
+  if (method === "GET" && path === "/public/api-keys") return { status: 200, body: { items: publicKeys, nextCursor: null } };
+  if (method === "POST" && path === "/public/api-keys") {
+    const name = String(body?.name ?? "").trim();
+    // The name picks the refusal the API would give, so each can be checked on its own.
+    if (name.startsWith("limit-")) return err(409, "conflict", "An organization can have up to 100 active API keys. Revoke one first.");
+    if (!name || name.length > 60) return err(400, "validation_failed", "Use 1 to 60 characters for the name, on one line.", "name");
+    if (!["admin", "read_only"].includes(body?.role)) return err(400, "validation_failed", "Choose a role: admin or read_only.", "role");
+    const token = newToken();
+    const key = { id: randomUUID(), name, role: body.role, prefix: token.slice(0, 12), status: "active", createdAt: now(), lastUsedAt: null, expiresAt: body.expiresAt ?? null, revokedAt: null };
+    publicKeys.unshift(key);
+    return { status: 201, body: { key, token } };
+  }
+  if (method === "DELETE" && (m = /^\/public\/api-keys\/([^/]+)$/.exec(path))) {
+    const key = publicKeys.find((k) => k.id === m[1]);
+    if (!key) return err(404, "not_found", "That API key does not exist.");
+    Object.assign(key, { revokedAt: key.revokedAt ?? now(), status: "revoked" });
+    return { status: 200, body: key };
+  }
+  return null;
+}
+
 const api = createServer((req, res) => {
   const send = (r) => {
     res.writeHead(r.status, { ...cors(req), "content-type": "application/json", "cache-control": "no-store", ...(r.headers ?? {}) });
@@ -153,6 +184,10 @@ const api = createServer((req, res) => {
     const body = raw ? JSON.parse(raw) : undefined;
     requests.push({ method: req.method, path, key: req.headers["idempotency-key"] ?? null, auth: req.headers.authorization ?? null, org: req.headers["x-fenvix-workspace"] ?? null });
     if (!req.headers.authorization?.startsWith("Bearer ")) return send(err(401, "unauthenticated", "Sign in to continue."));
+    // As the control plane: a session on the key routes must name the organization.
+    if (path.startsWith("/public/") && !req.headers["x-fenvix-workspace"]) {
+      return send(err(400, "validation_failed", "Name the organization with the X-Fenvix-Workspace header (its id) to manage its API keys.", "X-Fenvix-Workspace"));
+    }
     const r = route(req.method, path, url.searchParams, body);
     send(r ?? { status: 404, body: { error: { code: "not_found", message: `No such route in the fake: ${req.method} ${path}` } } });
   });
@@ -297,6 +332,38 @@ const CHECKS = {
     assert(sent.length === 1 && sent[0].key, "erase needs an Idempotency-Key");
     await page.goto(`${APP}databases/${d.id}`);
     await page.getByRole("heading", { name: "Database not found" }).waitFor();
+  },
+
+  async "API keys: public keys (fvx_) on /v1/public/api-keys; the key shown once with a curl example; revoke with DELETE"(page) {
+    await page.goto(`${APP}api-keys`);
+    await page.getByRole("row", { name: /Production backend/ }).getByText("fvx_7HcR0ZyN…").waitFor();
+    await page.getByLabel("Key name").fill("limit-check");
+    await page.getByRole("button", { name: "Create key" }).click();
+    await page.getByRole("alert").filter({ hasText: "An organization can have up to 100 active API keys. Revoke one first." }).waitFor();
+
+    await page.getByLabel("Key name").fill("CI deploys");
+    await page.getByRole("button", { name: "Create key" }).click();
+    await page.getByText("Key “CI deploys” created.").waitFor();
+    const token = (await page.locator(".secret").innerText()).trim();
+    assert(/^fvx_[A-Za-z0-9_-]{43}$/.test(token), `the new key reads ${token}`);
+    await page.getByText("It will not be shown again.").waitFor();
+    const example = await page.getByLabel("Try it: list your databases").inputValue();
+    assert(example.includes(`export FENVIX_API=${API}/public`), `the example does not use the API host: ${example}`);
+    assert(!example.includes(token) && /\$FENVIX_KEY/.test(example), "the example holds the key instead of reading $FENVIX_KEY");
+    assert((await page.getByRole("link", { name: `${API}/openapi.json` }).count()) === 1, "no link to the OpenAPI document");
+
+    const sent = requests.filter((r) => r.method === "POST" && r.path === "/public/api-keys");
+    assert(sent.length === 2 && sent.every((r) => r.key && r.org === ORG && r.auth === "Bearer header.payload.sig"), "a create went without its Idempotency-Key, organization or session");
+    const made = publicKeys.find((k) => k.name === "CI deploys");
+    assert(made.role === "read_only" && made.expiresAt && Math.abs(new Date(made.expiresAt) - Date.now() - 90 * 86_400_000) < 3_600_000, `defaults: ${made.role} ${made.expiresAt}`);
+
+    await page.getByRole("button", { name: "Revoke key CI deploys" }).click();
+    await page.getByRole("dialog").getByText("stops working immediately").waitFor();
+    await page.getByRole("button", { name: "Revoke key", exact: true }).click();
+    await page.getByRole("row", { name: /CI deploys/ }).getByText("Revoked").waitFor();
+    const del = requests.filter((r) => r.method === "DELETE" && r.path === `/public/api-keys/${made.id}`);
+    assert(del.length === 1 && del[0].key, "revoke is not one DELETE with an Idempotency-Key");
+    assert(!requests.some((r) => r.path === "/api-keys" || r.path.startsWith("/api-keys/")), "the page still calls the dashboard's fnx_ key routes");
   },
 };
 

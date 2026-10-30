@@ -199,7 +199,7 @@ test("the states in the inventory are wired to the right classes in the componen
   assert.match(net, /className="btn btn-danger" onClick=\{\(\) => open\("clear"\)\}/);
   assert.match(src("components/StateBadge.tsx"), /state === "awake" \? "state-awake"/);
   assert.match(src("components/StateBadge.tsx"), /tone=\{status === "paid" \? "ok" : "warn"\}/);
-  assert.match(src("components/StateBadge.tsx"), /tone=\{revoked \? "neutral" : "ok"\}/);
+  assert.match(src("components/StateBadge.tsx"), /tone=\{status === "active" \? "ok" : "neutral"\}/);
   assert.match(src("pages/Billing.tsx"), /<InvoiceStatus status=\{i\.status\} \/>/);
   assert.match(src("pages/ApiKeys.tsx"), /callout callout-success/);
   assert.match(src("pages/SignIn.tsx"), /callout callout-success/);

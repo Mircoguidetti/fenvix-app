@@ -1,7 +1,7 @@
 // Pure helpers behind the Supabase DataClient: they turn the dashboard's queries into
 // function arguments and turn database rows back into the dashboard's types. They import
 // only types, so they can be tested with no browser, no network and no Supabase.
-import type { ApiKey, Database, DatabaseFilter, DatabaseGroup, DatabaseQuery, Invoice, Page, TagBreakdownRow, TagCount, UsagePoint, UsageQuery, UsageRow, UsageTrend } from "./types";
+import type { Database, DatabaseFilter, DatabaseGroup, DatabaseQuery, Invoice, Page, TagBreakdownRow, TagCount, UsagePoint, UsageQuery, UsageRow, UsageTrend } from "./types";
 
 export type Row = Record<string, unknown>;
 
@@ -96,15 +96,6 @@ export const mapUsageRow = (r: Row): UsageRow => ({
   requests: num(r.requests),
 });
 
-export const mapApiKey = (r: Row): ApiKey => ({
-  id: str(r.id),
-  name: str(r.name),
-  hint: str(r.hint),
-  createdAt: str(r.createdAt),
-  lastUsedAt: r.lastUsedAt ? str(r.lastUsedAt) : null,
-  revokedAt: r.revokedAt ? str(r.revokedAt) : null,
-});
-
 export const mapInvoice = (r: Row): Invoice => ({
   id: str(r.id),
   number: str(r.number),
@@ -130,17 +121,6 @@ export function sparkFrom(values: number[], points = 12): number[] {
   if (values.length <= points) return values.map((v) => Math.round(v * 100) / 100);
   const step = values.length / points;
   return Array.from({ length: points }, (_, i) => Math.round(values[Math.min(values.length - 1, Math.round(i * step))] * 100) / 100);
-}
-
-/** 32 random bytes as hex, with the prefix people expect on a key. */
-export function newKeySecret(bytes: Uint8Array): string {
-  return `fnx_${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
-}
-
-/** Hex SHA-256, for the part of an API key that is stored. */
-export async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** What a person should read when a call fails, instead of a database error. */
