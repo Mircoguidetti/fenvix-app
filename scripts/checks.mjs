@@ -2,7 +2,7 @@
 // (fresh data, signed out) and signs in through the real sign-in page unless it is testing sign-in.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: npm run checks
 import { readFile } from "node:fs/promises";
-import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText, choose } from "./lib.mjs";
+import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText, choose, openFilters } from "./lib.mjs";
 
 const { fail, pass, state } = makeReporter();
 const browser = await launch();
@@ -53,6 +53,7 @@ const userCell = (page, name) => page.locator("#users td .user-name").filter({ h
 
 /** Clicks a segmented-control tab and waits for it to actually be the chosen one. */
 async function clickTab(page, name) {
+  await openFilters(page);
   const tab = page.getByRole("button", { name, exact: true });
   await tab.click();
   await eventually(async () => (await tab.getAttribute("aria-pressed")) === "true", `the ${name} tab did not become active`);
@@ -94,7 +95,7 @@ const TESTS = {
         const b = document.querySelector(".menu-btn").getBoundingClientRect();
         return { bar: t.height, above: b.top - t.top, below: t.bottom - b.bottom, long: document.querySelector(".content").scrollHeight > innerHeight };
       });
-      assert(m.bar >= 68, `${route}: the top bar is ${m.bar}px tall, not 68`);
+      assert(m.bar >= 60, `${route}: the top bar is ${m.bar}px tall, not 60`);
       assert(m.above >= 12 && m.below >= 12, `${route}: the menu button has ${m.above}px above and ${m.below}px below`);
       if (route === "overview") assert(m.long, "overview is not longer than the screen, so it does not test the squeeze");
     }
@@ -296,9 +297,10 @@ const TESTS = {
     assert((await counted(page)) === 3000, "the fleet should hold 3,000 databases");
     const dom = await page.evaluate(() => document.querySelectorAll("*").length);
     assert(dom < 5000, `${dom} DOM nodes on the list page`);
-    const asleep = num(await page.locator(".counts-bar b").nth(2).innerText());
-    assert(asleep > 2500, `most databases should be asleep, got ${asleep}`);
+    const asleepPct = num(await page.locator(".counts-bar b").nth(1).innerText());
+    assert(asleepPct > 80, `most databases should be asleep, got ${asleepPct}%`);
     // The default list is by name, so awake and asleep databases are mixed together.
+    await openFilters(page);
     assert((await page.getByLabel("Sort by").textContent()).trim() === "Name, A to Z", "the default sort is not by name");
     const names = await page.locator("tbody tr td a").allTextContents();
     assert([...names].sort((a, b) => a.localeCompare(b)).join() === names.join(), "the default list is not in name order");
@@ -307,13 +309,14 @@ const TESTS = {
     await page.getByRole("button", { name: "Previous" }).click();
 
     await clickTab(page, "Awake");
-    await eventually(async () => (await page.locator('tbody td[data-label="State"]').allTextContents()).every((s) => s.includes("Awake")), "the Awake tab still shows asleep databases");
+    await eventually(async () => (await page.locator('tbody td[data-label="State"]').allTextContents()).every((s) => /awake/i.test(s)), "the Awake tab still shows asleep databases");
     await clickTab(page, "Kept awake");
-    await eventually(async () => (await page.locator("tbody tr").count()) > 0 && (await page.locator(".kept").count()) > 0, "the Kept awake tab shows nothing");
+    await eventually(async () => (await page.locator("tbody tr").count()) > 0 && (await page.locator(".state-kept").count()) > 0, "the Kept awake tab shows nothing");
     await clickTab(page, "All");
     await eventually(async () => (await counted(page)) === 3000, "clearing the state tab did not bring the fleet back");
 
     const t1 = Date.now();
+    await openFilters(page);
     await choose(page, page.getByLabel("Group by tag"), "customer");
     await page.getByText("3,000 databases in 200 groups, grouped by customer").waitFor();
     assert(Date.now() - t1 < 4000, "grouping took too long");
@@ -324,8 +327,10 @@ const TESTS = {
     await page.locator(".group-body tbody tr").first().waitFor();
     await page.getByRole("button", { name: /^Show more/ }).click();
     await eventually(async () => (await page.locator(".group-body tbody tr").count()) === 50, "show more should load 25 more rows");
+    await openFilters(page);
     await choose(page, page.getByLabel("Group by tag"), "env");
     await page.getByText(/in 4 groups, grouped by env/).waitFor();
+    await openFilters(page);
     await choose(page, page.getByLabel("Group by tag"), "");
     await page.waitForSelector("tbody tr");
   },
@@ -403,7 +408,6 @@ const TESTS = {
     await eventually(async () => (await counted(page)) === 1, "the kept-awake filter does not find it");
     const row = page.locator("tbody tr").filter({ hasText: "orders-staging" });
     await row.getByText("Kept awake").waitFor();
-    await row.getByText("Awake", { exact: true }).waitFor();
     await go(page, "databases/db_0003");
     await page.getByLabel("Keep awake").uncheck();
     await toast(page, "orders-staging can sleep when idle");
@@ -484,10 +488,13 @@ const TESTS = {
       const r = await requests();
       return r.length === 50 && r.every((v, i) => i === 0 || cmp(r[i - 1], v));
     };
+    await openFilters(page);
     await choose(page, page.getByLabel("Sort by"), "requests:desc");
     await eventually(sortedBy((a, b) => a >= b), "requests are not sorted high to low");
+    await openFilters(page);
     await choose(page, page.getByLabel("Sort by"), "requests:asc");
     await eventually(sortedBy((a, b) => a <= b), "requests are not sorted low to high");
+    await openFilters(page);
     await choose(page, page.getByLabel("Sort by"), "name:asc");
     await eventually(async () => {
       const names = await page.locator('tbody td[data-label="Name"]').allTextContents();
@@ -795,7 +802,7 @@ const TESTS = {
     assert(!mine.empty.length, `empty elements in the organization box: ${mine.empty.join(", ")}`);
     assert(mine.tag === "BUTTON", "the organization box is not a button");
     assert(!mine.brandInside, "the brand is inside the organization box");
-    assert(mine.bg === "rgb(0, 0, 0)" && mine.fg === "rgb(255, 255, 255)", `the avatar is not black with a white initial: ${mine.bg} ${mine.fg}`);
+    assert(mine.bg === "rgb(11, 18, 32)" && mine.fg === "rgb(255, 255, 255)", `the avatar is not the dark colour with a white initial: ${mine.bg} ${mine.fg}`);
 
     assert((await rename("🚀 Launch team")).initial === "🚀", "an emoji name does not show the emoji");
     const accented = await rename("élan studio");
@@ -821,6 +828,7 @@ const TESTS = {
 
   async "select: keyboard, mouse and one look for every dropdown"(page) {
     await signIn(page, "databases");
+    await openFilters(page);
     assert(!(await page.locator("select, datalist").count()), "a native select or datalist is on the page");
     const sort = page.locator("#db-sort");
     assert((await page.getByLabel("Sort by").count()) === 1, "the label does not name the select");

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useOrg } from "../session/OrgProvider";
 import { Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Check } from "lucide-react";
 import { client, type Database, type OperationProgress } from "../data";
 import { Card, PageHeader } from "../components/PageHeader";
 import { CopyButton } from "../components/CopyButton";
@@ -116,55 +116,85 @@ function CreateDatabaseForm() {
     );
   }
 
+  const previewName = name.trim() || "your-database";
+  const previewDb = previewName.replace(/-/g, "_");
+  const previewUser = appUser.trim() || "app";
+
   return (
     <>
-      <PageHeader title="Create database" description="A new database starts asleep and wakes on its first request." back={back} />
-      <div className="form-col">
-      <Card id="new" title="Details" description="The name is part of the connection string, so it cannot change later.">
-        <form onSubmit={submit} className="stack" noValidate>
-          <div className="field">
-            <label htmlFor="new-name">Name</label>
-            <input id="new-name" value={name} onChange={(e) => (setName(e.target.value), setError(null))} placeholder="acme-labs-prod-01" autoComplete="off" maxLength={48} />
+      <PageHeader title="Create database" description="It starts empty, sleeps when idle and wakes on its first request." back={back} />
+      <div className="create-layout">
+        <form onSubmit={submit} className="form-card" noValidate aria-label="New database">
+          <div className="form-section">
+            <div className="field">
+              <label htmlFor="new-name">Name</label>
+              <input id="new-name" className="mono" value={name} onChange={(e) => (setName(e.target.value), setError(null))} placeholder="acme-labs-prod-01" autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={48} aria-describedby="new-name-help" />
+              <p id="new-name-help" className="help">
+                Lowercase letters, numbers and dashes. The name is part of the connection string, so it cannot change later.
+              </p>
+            </div>
           </div>
-          <div className="field">
-            <label htmlFor="new-region">Region</label>
-            <Select id="new-region" value={region} onChange={setRegion} options={regions.status === "ready" ? regions.data.map((r) => ({ value: r, label: r })) : []} />
+          <div className="form-section form-split">
+            <div className="field">
+              <label htmlFor="new-region">Region</label>
+              <Select id="new-region" className="mono" value={region} onChange={setRegion} options={regions.status === "ready" ? regions.data.map((r) => ({ value: r, label: r })) : []} />
+            </div>
+            <div className="field grow">
+              <label htmlFor="new-tags">Tags</label>
+              <input id="new-tags" className="mono" value={tagText} onChange={(e) => (setTagText(e.target.value), setError(null))} placeholder="customer:acme-labs env:prod" autoComplete="off" autoCapitalize="none" spellCheck={false} aria-describedby="new-tags-help" />
+              <p id="new-tags-help" className="help">
+                key:value pairs separated by spaces or commas. Use tags to filter and group a large fleet.
+              </p>
+            </div>
           </div>
-          <div className="field">
-            <label htmlFor="new-user">Database user</label>
-            <input id="new-user" className="mono" value={appUser} onChange={(e) => (setAppUser(e.target.value), setError(null))} autoComplete="off" spellCheck={false} maxLength={32} aria-describedby="new-user-help" />
-            <p id="new-user-help" className="muted small">
-              Your application connects as this user. Its password is made for you and shown once, on the next screen.
-            </p>
+          <div className="form-section">
+            <div className="field">
+              <label htmlFor="new-user">Database user</label>
+              <input id="new-user" className="mono" value={appUser} onChange={(e) => (setAppUser(e.target.value), setError(null))} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={32} aria-describedby="new-user-help" />
+              <p id="new-user-help" className="help">
+                Your application connects as this user, with read and write on this database only. Its password is made for you and shown once, on the next screen.
+              </p>
+            </div>
           </div>
-          <div className="field">
-            <label htmlFor="new-tags">Tags</label>
-            <input id="new-tags" value={tagText} onChange={(e) => (setTagText(e.target.value), setError(null))} placeholder="customer:acme-labs env:prod" autoComplete="off" aria-describedby="new-tags-help" />
-            <p id="new-tags-help" className="muted small">
-              key:value pairs separated by spaces or commas.
-            </p>
-          </div>
-          {regions.status === "error" && (
-            <p className="error" role="alert">
-              {regions.message}
-            </p>
-          )}
-          {error && (
-            <p className="error" role="alert">
-              {error}
-            </p>
+          {(regions.status === "error" || error) && (
+            <div className="form-section">
+              {regions.status === "error" && (
+                <p className="error" role="alert">
+                  {regions.message}
+                </p>
+              )}
+              {error && (
+                <p className="error" role="alert">
+                  {error}
+                </p>
+              )}
+            </div>
           )}
           <OperationNote progress={busy ? progress : null} />
-          <div className="row-actions">
+          <div className="form-actions">
+            <Link to="/databases" className="btn btn-quiet">
+              Cancel
+            </Link>
             <button type="submit" className="btn btn-primary" disabled={busy || !region}>
               {busy ? "Creating…" : "Create database"}
             </button>
-            <Link to="/databases" className="btn">
-              Cancel
-            </Link>
           </div>
         </form>
-      </Card>
+
+        <aside className="preview" aria-label="Connection details">
+          <span className="preview-title">Your connection string</span>
+          <div className="preview-code mono" role="group" aria-label="Connection string shape">
+            mongodb://<span className="pc-a">{previewUser}</span>:<span className="pc-d">&lt;password&gt;</span>@<span className="pc-w">{previewName}</span>.db.fenvix.cloud:<span className="pc-w">27018</span>/<span className="pc-w">{previewDb}</span>?tls=true
+          </div>
+          <ul className="preview-facts">
+            {["Sleeps when idle and wakes on its first request.", "Isolated from your other databases, with its own users.", "Works with the standard MongoDB drivers. Connect over TLS."].map((f) => (
+              <li key={f}>
+                <Check size={16} strokeWidth={2.25} aria-hidden="true" />
+                <span>{f}</span>
+              </li>
+            ))}
+          </ul>
+        </aside>
       </div>
     </>
   );

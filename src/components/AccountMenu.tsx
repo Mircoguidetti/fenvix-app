@@ -27,7 +27,7 @@ export function OrgAvatar({ name, size = 32 }: { name: string; size?: number }) 
 }
 
 /** The organization shown under the person's name: from the organizations API, or the workspace settings without it. */
-function useCurrentOrg(): { status: "loading" | "ready"; name: string; sub: string } {
+export function useCurrentOrg(): { status: "loading" | "ready"; name: string; sub: string } {
   const org = useOrg();
   const version = useWorkspaceVersion();
   const api = org.status === "ready" || org.status === "loading";

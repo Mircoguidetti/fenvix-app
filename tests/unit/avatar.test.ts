@@ -27,7 +27,7 @@ test("an empty name gives W", () => {
 });
 
 test("the avatar is black with a white initial, whatever the name", () => {
-  assert.equal(AVATAR_BG, "#000000");
+  assert.equal(AVATAR_BG, "#0b1220");
   assert.equal(AVATAR_FG, "#ffffff");
   assert.ok(contrastRatio(AVATAR_FG, AVATAR_BG) >= 4.5);
 });

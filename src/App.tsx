@@ -13,6 +13,7 @@ import { BillingPage } from "./pages/Billing";
 import { ApiKeysPage } from "./pages/ApiKeys";
 import { SettingsPage } from "./pages/Settings";
 import { MembersPage } from "./pages/Members";
+import { STYLEGUIDE_ON, StyleguidePage } from "./pages/Styleguide";
 import { OrgProvider, useOrg } from "./session/OrgProvider";
 import { InviteScreen, NameOrgScreen, NoOrgScreen } from "./components/OrgScreens";
 import { usePendingInvite } from "./lib/invite";
@@ -72,6 +73,7 @@ function Dashboard() {
         <Route path="/api-keys" element={<ApiKeysPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/settings/members" element={<MembersPage />} />
+        {STYLEGUIDE_ON && <Route path="/styleguide" element={<StyleguidePage />} />}
         <Route path="/invite" element={<Navigate to="/overview" replace />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

@@ -17,8 +17,15 @@ export function StatusPill({ tone, children }: { tone: Tone; children: ReactNode
   );
 }
 
-/** Filled green dot = awake, hollow grey dot = asleep. */
-export function StateBadge({ state }: { state: DbState }) {
+/** Filled green dot = awake, dark dot = kept awake, hollow grey dot = asleep. */
+export function StateBadge({ state, kept }: { state: DbState; kept?: boolean }) {
+  if (kept)
+    return (
+      <span className="state state-kept" data-tone="neutral">
+        <span className="dot dot-filled" aria-hidden="true" />
+        Kept awake
+      </span>
+    );
   return (
     <span className={`state ${state === "awake" ? "state-awake" : "state-asleep"}`} data-tone={state === "awake" ? "ok" : "neutral"}>
       <span className={`dot ${state === "awake" ? "dot-filled" : "dot-outline"}`} aria-hidden="true" />

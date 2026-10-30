@@ -5,6 +5,7 @@ import { client, type Database, type DatabaseSort } from "../data";
 import { StateBadge } from "./StateBadge";
 import { TagChips } from "./Tags";
 import { formatCount, formatRelative, formatStorage } from "../lib/format";
+import { PHONE, useMedia } from "../lib/useMedia";
 
 export type Dir = "asc" | "desc";
 
@@ -48,7 +49,7 @@ function Head({ col, sort, onSort }: { col: (typeof COLUMNS)[number]; sort?: { k
   );
 }
 
-/** Databases as a table on wide screens and as stacked rows on phones. Every row is the same height. */
+/** Databases as a table on wide screens and as one card per database on phones. Every row is the same height. */
 export function DbTable({
   items,
   selected,
@@ -70,6 +71,7 @@ export function DbTable({
   caption: string;
 }) {
   const now = client.now();
+  const phone = useMedia(PHONE);
   const ids = items.map((d) => d.id);
   const picked = ids.filter((id) => selected.has(id)).length;
   return (
@@ -90,8 +92,13 @@ export function DbTable({
               </th>
             )}
             <Head col={COLUMNS[0]} sort={sort} onSort={onSort} />
-            <th scope="col">Tags</th>
-            {COLUMNS.filter((c) => c.key !== "name" && c.key !== "keepAwake").map((c) => (
+            {COLUMNS.filter((c) => c.key === "state").map((c) => (
+              <Head key={c.key} col={c} sort={sort} onSort={onSort} />
+            ))}
+            <th scope="col" className="col-region">
+              Region
+            </th>
+            {COLUMNS.filter((c) => c.key === "storageMb" || c.key === "requests24h" || c.key === "lastActiveAt").map((c) => (
               <Head key={c.key} col={c} sort={sort} onSort={onSort} />
             ))}
           </tr>
@@ -105,21 +112,21 @@ export function DbTable({
                 </td>
               )}
               <td data-label="Name" className="name-cell">
-                <Link to={`/databases/${d.id}`} className="row-link mono">
+                <Link to={`/databases/${d.id}`} className="row-link mono db-name" title={d.name}>
                   {d.name}
                 </Link>
-              </td>
-              <td data-label="Tags" className="tags-cell">
-                <TagChips tags={d.tags} max={2} onPick={onPickTag} />
+                {d.tags.length > 0 && <TagChips tags={d.tags} max={2} onPick={phone ? undefined : onPickTag} />}
               </td>
               <td data-label="State" className="state-cell">
-                <StateBadge state={d.state} />
-                {d.keepAwake && <span className="muted small kept">Kept awake</span>}
+                <StateBadge state={d.state} kept={d.keepAwake} />
               </td>
-              <td data-label="Storage" className="num mono">
+              <td data-label="Region" className="mono col-region">
+                {d.region}
+              </td>
+              <td data-label="Storage" className="num">
                 {formatStorage(d.storageMb)}
               </td>
-              <td data-label="Requests (24 h)" className="num mono">
+              <td data-label="Requests (24 h)" className="num col-requests">
                 {formatCount(d.requests24h)}
               </td>
               <td data-label="Last active" className="muted">

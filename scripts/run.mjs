@@ -4,7 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 const PORT = 4173;
 
 // The checks run against the mock backend: no network, no Supabase project needed.
-const buildEnv = { ...process.env, VITE_DATA_BACKEND: "mock" };
+const buildEnv = { ...process.env, VITE_DATA_BACKEND: "mock", VITE_STYLEGUIDE: "1" };
 if (spawnSync("npx", ["vite", "build"], { stdio: "inherit", env: buildEnv }).status !== 0) process.exit(1);
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 const stop = () => server.kill();

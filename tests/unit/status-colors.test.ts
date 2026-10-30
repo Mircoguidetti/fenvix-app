@@ -15,6 +15,14 @@ function tokens(): Record<string, string> {
     for (const m of block[1].replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/--([\w-]+)\s*:\s*([^;]+);/g)) out[m[1]] = m[2].trim();
   const resolve = (v: string, depth = 0): string => (depth > 5 ? v : v.replace(/var\(--([\w-]+)\)/g, (_, n) => resolve(out[n] ?? "", depth + 1)));
   for (const k of Object.keys(out)) out[k] = resolve(out[k]);
+  // A semi-transparent navigation fill is checked as what it looks like: flattened onto the navigation colour.
+  for (const k of ["nav-hover", "nav-active"]) {
+    const m = /rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/.exec(out[k] ?? "");
+    if (!m) continue;
+    const base = [1, 3, 5].map((i) => parseInt(out["nav-bg"].slice(i, i + 2), 16));
+    const a = parseFloat(m[4]);
+    out[k] = "#" + [1, 2, 3].map((i, j) => Math.round(+m[i] * a + base[j] * (1 - a)).toString(16).padStart(2, "0")).join("");
+  }
   return out;
 }
 const T = tokens();
@@ -38,6 +46,8 @@ function hue(hex: string) {
   return (h * 60 + 360) % 360;
 }
 const NEUTRAL = 0.08;
+/** The one blue family of the interface: greys with a slight blue tint, the dark colour and its lighter shades. */
+const isBlueFamily = (hex: string) => hue(hex) >= 205 && hue(hex) <= 240;
 
 const LIGHT = ["bg", "page", "surface", "surface-2"];
 // Dark surfaces: the navigation and its hover and selected rows; toasts are drawn on --text.
@@ -108,15 +118,15 @@ function rules(): [string, string][] {
 test("no hue other than the status colours appears in the stylesheet or in the components", () => {
   const allowed = new Set([...STATUS, ...STATUS.map((s) => `${s}-on-dark`)].map((s) => T[s].toLowerCase()));
   const hexes = (text: string) => [...text.matchAll(/#[0-9a-f]{6}\b|#[0-9a-f]{3}\b/gi)].map((m) => m[0].toLowerCase()).map((h) => (h.length === 4 ? `#${[...h.slice(1)].map((c) => c + c).join("")}` : h));
-  for (const h of hexes(CSS)) assert.ok(chroma(h) < NEUTRAL || allowed.has(h), `styles.css uses ${h}, which is neither a grey nor a status colour`);
+  for (const h of hexes(CSS)) assert.ok(chroma(h) < NEUTRAL || allowed.has(h) || isBlueFamily(h), `styles.css uses ${h}, which is neither a grey, the blue family nor a status colour`);
   for (const m of CSS.matchAll(/rgba?\(([^)]+)\)/g)) {
     const [r, g, b] = m[1].split(",").map((x) => parseFloat(x) / 255);
-    assert.ok(Math.max(r, g, b) - Math.min(r, g, b) < NEUTRAL, `styles.css uses ${m[0]}`);
+    assert.ok(Math.max(r, g, b) - Math.min(r, g, b) < NEUTRAL || isBlueFamily("#" + [r, g, b].map((c) => Math.round(c * 255).toString(16).padStart(2, "0")).join("")), `styles.css uses ${m[0]}`);
   }
   // The Google "G" on the sign-in button is Google's own mark, in its own colours; it is the one exception.
   const walk = (dir: string): string[] => readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? walk(join(dir, f)) : [join(dir, f)]));
   for (const file of walk("src").filter((f) => /\.(tsx?|css)$/.test(f) && !f.endsWith("marks.tsx") && !f.endsWith("styles.css")))
-    for (const h of hexes(readFileSync(file, "utf8"))) assert.ok(chroma(h) < NEUTRAL || allowed.has(h), `${file} uses ${h}`);
+    for (const h of hexes(readFileSync(file, "utf8"))) assert.ok(chroma(h) < NEUTRAL || allowed.has(h) || isBlueFamily(h), `${file} uses ${h}`);
   // A status colour is only ever read through its token, never written out.
   for (const file of walk("src").filter((f) => f.endsWith(".tsx")))
     for (const h of hexes(readFileSync(file, "utf8"))) assert.ok(!allowed.has(h), `${file} writes out a status colour (${h}); use the token`);

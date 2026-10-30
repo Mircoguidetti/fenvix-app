@@ -175,3 +175,9 @@ export async function axeViolations(page) {
   const axe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
   return axe.violations.map((v) => `axe ${v.id} (${v.nodes.length}) ${v.nodes[0]?.target}`);
 }
+
+/** On a phone the state, group, sort and tag filters sit behind the "Filters" button: opens them when they are shut. */
+export async function openFilters(page) {
+  const toggle = page.getByRole("button", { name: /^Filters/ });
+  if ((await toggle.count()) && (await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+}

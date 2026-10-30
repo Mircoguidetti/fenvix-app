@@ -10,6 +10,7 @@
     "preview": "vite preview --port 4173",
     "typecheck": "tsc --noEmit",
     "screenshots": "node scripts/screenshots.mjs",
+    "ui-shots": "node scripts/ui-shots.mjs",
     "checks": "node scripts/checks.mjs",
     "check": "node scripts/run.mjs",
     "test:unit": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test tests/unit/*.test.ts",
@@ -17,9 +18,8 @@
     "test:e2e": "node scripts/supabase-e2e.mjs"
   },
   "dependencies": {
-    "@fontsource-variable/jetbrains-mono": "^5.2.0",
-    "@fontsource-variable/newsreader": "^5.3.0",
-    "@fontsource-variable/schibsted-grotesk": "^5.2.0",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
     "@supabase/supabase-js": "^2.118.0",
     "lucide-react": "^1.61.0",
     "react": "^19.2.0",
