@@ -1,5 +1,8 @@
-/** Every database answers on this host. The one place the address is written down. */
-export const DB_HOST = "db.fenvix.cloud";
+/**
+ * Every database answers on this host. The one place the address is written down: `db.fenvix.dev` unless
+ * VITE_DB_HOST overrides it (for example for a staging environment), so no other file needs to know the domain.
+ */
+export const DB_HOST = import.meta.env?.VITE_DB_HOST?.trim() || "db.fenvix.dev";
 
 /**
  * The same shape as the control plane's (control-plane/src/services/databases.ts): the first database user ("app"),

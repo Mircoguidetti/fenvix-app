@@ -54,8 +54,8 @@ test("a database row becomes a Database with a mongodb:// connection string", ()
   assert.equal(db.keepAwake, true);
   assert.equal(db.forkedFrom, null);
   assert.deepEqual(db.tags, ["customer:acme-labs", "env:prod"]);
-  assert.equal(db.host, "acme-labs-prod-01.db.fenvix.cloud");
-  assert.equal(db.connectionString, "mongodb://app:<password>@acme-labs-prod-01.db.fenvix.cloud:27017/acme_labs_prod_01?tls=true&authSource=acme_labs_prod_01&authMechanism=SCRAM-SHA-256");
+  assert.equal(db.host, "acme-labs-prod-01.db.fenvix.dev");
+  assert.equal(db.connectionString, "mongodb://app:<password>@acme-labs-prod-01.db.fenvix.dev:27017/acme_labs_prod_01?tls=true&authSource=acme_labs_prod_01&authMechanism=SCRAM-SHA-256");
   assert.ok(!/postgres/i.test(db.connectionString));
 });
 

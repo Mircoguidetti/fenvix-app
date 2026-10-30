@@ -162,7 +162,7 @@ step("create, duplicate name, tags, keep awake, fork, restore, export, erase", a
   await page.getByRole("button", { name: "Create database" }).click();
   await page.getByRole("link", { name: "Open database" }).waitFor();
   const conn = await page.getByRole("textbox", { name: "Connection string" }).inputValue();
-  assert(conn === "mongodb://app:<password>@e2e-created-01.db.fenvix.cloud:27017/e2e_created_01?tls=true&authSource=e2e_created_01&authMechanism=SCRAM-SHA-256", conn);
+  assert(conn === "mongodb://app:<password>@e2e-created-01.db.fenvix.dev:27017/e2e_created_01?tls=true&authSource=e2e_created_01&authMechanism=SCRAM-SHA-256", conn);
   await toast(page, "Created database e2e-created-01");
   await page.goto(APP + "databases"); // leave the "created" screen, then open the form again
   await page.getByRole("link", { name: "Create database" }).click();

@@ -47,7 +47,7 @@ const requests = []; // { method, path, key, auth, org }
 
 function makeDb(name, over = {}) {
   const id = randomUUID();
-  const host = `${name}.db.fenvix.cloud`;
+  const host = `${name}.db.fenvix.dev`;
   const db = name.replace(/-/g, "_");
   return {
     id, name, state: "asleep", storageMb: 12, requests24h: 3, lastActiveAt: now(), createdAt: "2026-10-01T00:00:00Z", region: "eu-west", host,
