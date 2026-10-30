@@ -115,7 +115,7 @@
       "Sid": "Ec2LaunchOtherParts",
       "Effect": "Allow",
       "Action": ["ec2:RunInstances"],
-      "Resource": ["arn:aws:ec2:eu-west-1:865859654353:network-interface/*", "arn:aws:ec2:eu-west-1::image/ami-*"]
+      "Resource": ["arn:aws:ec2:eu-west-1:865859654353:network-interface/*", "arn:aws:ec2:eu-west-1:865859654353:volume/*", "arn:aws:ec2:eu-west-1::image/ami-*"]
     },
     {
       "Sid": "IamRolesAndProfilesNamedFenvix",
