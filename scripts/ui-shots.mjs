@@ -92,6 +92,8 @@ for (const [w, h] of SIZES) {
 
   for (const [name, def] of Object.entries(SCREENS)) {
     if (only.length && !only.includes(name)) continue;
+    await go(page, "overview"); // a fresh mount of the screen each time
+    await page.waitForSelector("main h1");
     await go(page, def.route);
     if (!def.noH1) await page.waitForSelector("main h1");
     await settled(page);

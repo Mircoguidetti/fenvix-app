@@ -1165,3 +1165,9 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
 .not-found .nf-code { font-size: 44px; font-weight: 500; color: #b4c0da; letter-spacing: 0.02em; }
 .not-found h1 { font-size: 18px; }
 @media (max-width: 640px) { .settings-tabs .seg-link { min-height: var(--touch); display: inline-flex; align-items: center; padding-bottom: 0; } .not-found { padding: 40px 16px; } .not-found .btn { width: 100%; } }
+@media (max-width: 640px) {
+  .tabs button { min-width: var(--touch); justify-content: center; }
+  .query-line input { flex: none; width: 100%; }
+  .codebox .btn { min-height: var(--touch); height: var(--touch); }
+  .codebox pre { padding-top: 52px; }
+}
