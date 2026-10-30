@@ -1,13 +1,16 @@
 import type { FastifyInstance } from "fastify";
 import type { Deps } from "../../http.ts";
 import { conflict, notFound, validation } from "../../errors.ts";
-import { asObject, isUuid, parseName, parseTags } from "../../validate.ts";
+import { asObject, isUuid, parseEnum, parseName, parseTags } from "../../validate.ts";
+import { signDownload } from "../../downloads.ts";
 import * as ops from "../../services/operations.ts";
 import * as du from "../../services/db-users.ts";
 import * as net from "../../services/network.ts";
 import * as orgs from "../../services/orgs.ts";
 import * as keys from "../../services/apikeys.ts";
 import * as pdb from "../../services/public-api.ts";
+import * as usage from "../../services/usage.ts";
+import * as account from "../../services/account.ts";
 import { type PublicCtx, type Presenter, publicHelpers, publicOperationView } from "./http.ts";
 
 /**
@@ -118,6 +121,29 @@ export function publicRoutes(app: FastifyInstance, d: Deps): void {
 
   write("PUT", "/databases/:id/ip-allowlist", {}, async (c) =>
     ({ status: 200, body: await net.setAllowlist(netCtx(c), dbId(c), c.body) }));
+
+  // ---------------------------------------------------------------- usage (read only: every key and role)
+
+  const RANGES = ["24h", "7d", "30d"] as const;
+  const range = (c: PublicCtx) => parseEnum(c.q.range, RANGES, "range");
+
+  read("/usage", { query: ["range", "databaseId"] }, async (c) => {
+    const only = c.q.databaseId === undefined ? null : isUuid(c.q.databaseId) ? String(c.q.databaseId) : "";
+    // An id that is not one is a database that does not exist (404), as in a path.
+    return usage.getPublicUsage(s, c.caller, range(c), only);
+  });
+
+  read("/databases/:id/usage", { query: ["range"] }, async (c) => usage.getPublicUsage(s, c.caller, range(c), dbId(c)));
+
+  // The dashboard's monthly CSV, behind the same signed 15 minute link (GET /v1/downloads/{token}, no key needed).
+  read("/usage/export", { query: ["month", "by", "tagKey", "sort", "dir"] }, async ({ caller, q }) => {
+    const uq = usage.parseUsageQuery(q);
+    // Built once now so a month without a report is a 400 here, not when the link is opened.
+    const { filename } = await usage.buildUsageCsv(s, caller.workspaceId, uq);
+    const exp = Math.floor(Date.now() / 1000) + L.exportUrlTtlSeconds;
+    const token = signDownload(s.cfg.downloadSigningKey, { ws: caller.workspaceId, kind: "usage-csv", p: uq, exp });
+    return { filename, mimeType: "text/csv", downloadUrl: account.downloadUrl(s, token), expiresAt: new Date(exp * 1000).toISOString() };
+  });
 
   // ---------------------------------------------------------------- organization
 

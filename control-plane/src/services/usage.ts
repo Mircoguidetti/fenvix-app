@@ -2,7 +2,7 @@ import { type Caller, type Services } from "../context.ts";
 import { type Client, iso } from "../db.ts";
 import { notFound, validation } from "../errors.ts";
 import { writeAudit } from "../audit.ts";
-import { isUuid } from "../validate.ts";
+import { type Obj, isUuid, parseEnum, parseMonth, parseTagKey } from "../validate.ts";
 
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
@@ -14,29 +14,38 @@ const daysInMonth = (ms: number) => { const d = new Date(ms); return new Date(Da
 
 export type UsageRange = "24h" | "7d" | "30d";
 
+/** The buckets of a database's usage chart, oldest first: 24 hourly, 28 six-hourly (UTC 00/06/12/18), or 30 UTC days. */
+function rangeGrid(range: UsageRange, now: Date) {
+  if (range === "30d") return { daily: true, step: DAY, count: 30, first: startOfUtcDay(now) - 29 * DAY };
+  const step = range === "24h" ? HOUR : 6 * HOUR;
+  const count = range === "24h" ? 24 : 28;
+  return { daily: false, step, count, first: Math.floor(now.getTime() / step) * step - (count - 1) * step };
+}
+
+/** 404 unless the database is the caller's and its creation has finished (as everywhere else). */
+async function assertVisibleDatabase(c: Client, ws: string, id: string) {
+  if (!isUuid(id)) throw notFound("That database does not exist.");
+  const found = await c.query("select 1 from public.databases where workspace_id = $1 and id = $2 and engine_state <> 'provisioning'", [ws, id]);
+  if (!found.rowCount) throw notFound("That database does not exist.");
+}
+
 // ---------------------------------------------------------------- one database
 
 export async function getUsageSeries(s: Services, caller: Caller, id: string, range: UsageRange, now = new Date()) {
   return s.db.tx(caller.workspaceId, async (c) => {
-    if (!isUuid(id)) throw notFound("That database does not exist.");
-    const found = await c.query("select 1 from public.databases where workspace_id = $1 and id = $2 and engine_state <> 'provisioning'", [caller.workspaceId, id]);
-    if (!found.rowCount) throw notFound("That database does not exist.");
+    await assertVisibleDatabase(c, caller.workspaceId, id);
+    const { step, count, first } = rangeGrid(range, now);
 
     if (range === "30d") {
-      const first = startOfUtcDay(now) - 29 * DAY;
       const rows = (await c.query("select day::text as day, requests, storage_bytes from public.usage_daily where database_id = $1 and day >= $2::date", [id, dayKey(first)])).rows;
       const by = new Map(rows.map((r) => [r.day as string, r]));
-      return { items: Array.from({ length: 30 }, (_, i) => {
+      return { items: Array.from({ length: count }, (_, i) => {
         const at = first + i * DAY;
         const r = by.get(dayKey(at));
         return { at: iso(new Date(at))!, requests: r ? Number(r.requests) : 0, storageMb: r ? Math.floor(Number(r.storage_bytes) / 1048576) : 0, awake: r ? Number(r.requests) > 0 : false };
       }) };
     }
 
-    const step = range === "24h" ? HOUR : 6 * HOUR;
-    const count = range === "24h" ? 24 : 28;
-    const last = Math.floor(now.getTime() / step) * step;
-    const first = last - (count - 1) * step;
     const rows = (await c.query("select hour, requests, storage_bytes from public.usage_hourly where database_id = $1 and hour >= $2 order by hour", [id, new Date(first)])).rows;
     const buckets = Array.from({ length: count }, (_, i) => ({ at: first + i * step, requests: 0, storageBytes: 0, awake: false }));
     for (const r of rows) {
@@ -48,6 +57,56 @@ export async function getUsageSeries(s: Services, caller: Caller, id: string, ra
       b.awake = b.awake || Number(r.requests) > 0;
     }
     return { items: buckets.map((b) => ({ at: iso(new Date(b.at))!, requests: b.requests, storageMb: Math.floor(b.storageBytes / 1048576), awake: b.awake })) };
+  });
+}
+
+// ---------------------------------------------------------------- public API (docs/public-api.md, "Usage")
+
+export interface PublicUsageBucket { at: string; requests: number; storageBytes: number; activeDatabases: number }
+
+/**
+ * Usage of the organization, or of one of its databases, on the grid of the database charts (rangeGrid), from the
+ * same rows (usage_hourly for 24h and 7d, usage_daily for 30d). Per bucket and database: requests are summed and
+ * storage is the database's newest value in the bucket, as getUsageSeries does; the organization's bucket adds those
+ * up. `activeDatabases` counts databases that served a request in the bucket (the database chart's "awake").
+ */
+export async function getPublicUsage(s: Services, caller: Caller, range: UsageRange, databaseId: string | null, now = new Date()) {
+  const ws = caller.workspaceId;
+  return s.db.tx(ws, async (c) => {
+    if (databaseId !== null) await assertVisibleDatabase(c, ws, databaseId);
+    const g = rangeGrid(range, now);
+    const end = g.first + g.count * g.step;
+    // Days as UTC day keys, as everywhere in this file (a timestamp cast to date would use the session's time zone).
+    const params: unknown[] = g.daily ? [ws, dayKey(g.first), dayKey(end)] : [ws, new Date(g.first), new Date(end), g.step / 1000];
+    const only = databaseId === null ? "" : ` and database_id = $${params.push(databaseId.toLowerCase())}`;
+    const source = g.daily
+      ? `select database_id, (day - $2::date) as i, requests, storage_bytes, day as t from public.usage_daily
+          where workspace_id = $1 and day >= $2::date and day < $3::date${only}`
+      : `select database_id, floor(extract(epoch from hour - $2::timestamptz) / $4::int)::int as i, requests, storage_bytes, hour as t from public.usage_hourly
+          where workspace_id = $1 and hour >= $2 and hour < $3${only}`;
+    const per = `per as (select database_id, i, sum(requests)::bigint as requests, (array_agg(storage_bytes order by t desc))[1] as storage
+                           from (${source}) r group by database_id, i)`;
+    const rows = (await c.query(
+      `with ${per} select i, sum(requests)::bigint as requests, sum(storage)::bigint as storage, (count(*) filter (where requests > 0))::int as active
+         from per group by i`, params)).rows;
+    // Storage at the end of the range: each database's newest bucket that has a value, added up.
+    const latest = (await c.query(
+      `with ${per} select coalesce(sum(storage), 0)::bigint as storage from (select distinct on (database_id) storage from per order by database_id, i desc) l`,
+      params)).rows[0];
+    const by = new Map(rows.map((r) => [Number(r.i), r]));
+    const items: PublicUsageBucket[] = Array.from({ length: g.count }, (_, i) => {
+      const r = by.get(i);
+      return { at: iso(new Date(g.first + i * g.step))!, requests: r ? Number(r.requests) : 0, storageBytes: r ? Number(r.storage) : 0, activeDatabases: r ? Number(r.active) : 0 };
+    });
+    return {
+      range,
+      databaseId: databaseId === null ? null : databaseId.toLowerCase(),
+      from: iso(new Date(g.first))!,
+      to: iso(new Date(end))!,
+      bucketSeconds: g.step / 1000,
+      totals: { requests: items.reduce((n, b) => n + b.requests, 0), storageBytes: Number(latest.storage) },
+      items,
+    };
   });
 }
 
@@ -182,6 +241,18 @@ export interface UsageQuery {
   tagKey?: string;
   sort: "name" | "databases" | "storageGb" | "requests";
   dir: "asc" | "desc";
+}
+
+const USAGE_SORTS = ["name", "databases", "storageGb", "requests"] as const;
+
+/** A monthly report's query (`month`, `by`, `tagKey`, `sort`, `dir`), for the dashboard and the public API alike. */
+export function parseUsageQuery(q: Obj) {
+  const by = parseEnum(q.by, ["database", "tag"] as const, "by");
+  const tagKey = q.tagKey === undefined || q.tagKey === "" ? undefined : parseTagKey(q.tagKey, "tagKey");
+  if (tagKey && by !== "tag") throw validation("tagKey can only be used with by=tag.", "tagKey");
+  const sort = parseEnum(q.sort, USAGE_SORTS, "sort", "requests");
+  if (sort === "databases" && by !== "tag") throw validation("Sorting by databases only works with by=tag.", "sort");
+  return { month: parseMonth(q.month), by, tagKey, sort, dir: parseEnum(q.dir, ["asc", "desc"] as const, "dir", "desc") };
 }
 
 export interface UsageRowOut { id: string; name: string; tags: string[]; databases: number; storageGb: number; requests: number }

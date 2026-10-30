@@ -1,6 +1,6 @@
 # Fenvix public API
 
-Manage your organization from code: databases, their users and IP allowlists, and API keys. The machine-readable
+Manage your organization from code: databases, their users and IP allowlists, and API keys; and read its usage. The machine-readable
 description is the OpenAPI 3.1 document at **`GET /v1/openapi.json`** (no key needed). This guide covers the same
 routes with a `curl` example for each one. `tests/integration/public-openapi.test.ts` fails if a route is missing from
 the document or from this guide, or if either describes a route that does not exist.
@@ -145,6 +145,90 @@ curl -sS -X PUT "$FENVIX_API/databases/$DATABASE_ID/ip-allowlist" -H "Authorizat
   -H "Content-Type: application/json" -d '{"entries": ["203.0.113.7", "10.0.0.0/8"]}'
 ```
 
+## Usage
+
+Read only: `admin` and `read_only` keys alike. These routes show the numbers the dashboard's charts and monthly
+report show, from the same rows, so you can bill your own users from them. They measure nothing new.
+
+Usage of the organization. `range` is required: `24h` (24 hourly buckets), `7d` (28 six-hourly buckets, starting
+at 00, 06, 12 and 18 UTC) or `30d` (30 UTC days). The last bucket is the current, unfinished one. Add
+`databaseId=<id>` for one database (the answer is then the same as the next route's).
+
+```bash
+curl -sS "$FENVIX_API/usage?range=30d" -H "Authorization: Bearer $FENVIX_KEY"
+```
+
+Usage of one database (`404` for another organization's database, or one still being created):
+
+```bash
+curl -sS "$FENVIX_API/databases/$DATABASE_ID/usage?range=7d" -H "Authorization: Bearer $FENVIX_KEY"
+```
+
+```json
+{
+  "range": "7d", "databaseId": "6f1c...", "from": "2026-10-23T18:00:00Z", "to": "2026-10-30T18:00:00Z", "bucketSeconds": 21600,
+  "totals": { "requests": 48210, "storageBytes": 734003200 },
+  "items": [ { "at": "2026-10-23T18:00:00Z", "requests": 1200, "storageBytes": 733980672, "activeDatabases": 1 }, "..." ]
+}
+```
+
+Every bucket of the range is in `items`, oldest first; a bucket with no data is zeros (a new or idle database, or an
+organization with no databases, answers zeros, not an error). Times are UTC; `from` is the start of the first bucket
+and `to` the end of the last (exclusive).
+
+### What each number means
+
+| Field | Meaning |
+| --- | --- |
+| `requests` (bucket) | Requests the engine counted for the database(s) in the bucket: MongoDB commands (the engine's `requests.commands`). Summed over databases. |
+| `totals.requests` | The sum of the buckets: requests in the whole range. |
+| `storageBytes` (bucket) | Bytes stored: for each database, its newest measurement in the bucket (the engine's sampled storage for the day, or the database's size when there is no sample), added up over databases. A level, not a sum over time. |
+| `totals.storageBytes` | Bytes stored at the end of the range: each database's newest measurement in the range, added up. |
+| `activeDatabases` | Databases that served at least one request in the bucket (`0` or `1` for one database). The dashboard's database chart calls this "awake". |
+
+What is **not** measured, so it is not here: data transfer, CPU or compute time, time awake, per-collection or
+per-database-user numbers, and prices. The dashboard's "cost this month" is Fenvix's own price, computed from rates
+in the service's configuration; it is not part of the usage you bill on and is not exposed. Average storage over time
+(for a GB-month price) is not a separate number either: average the daily `storageBytes` of `range=30d`, or use the
+CSV's `storage_gb_avg` (below).
+
+### How fresh it is
+
+* The numbers are copied from the engine into Postgres by the **usage sync**, every `USAGE_SYNC_SECONDS` (a
+  deployment setting; `0` turns it off, and then nothing new appears). Nothing is read from the engine when you call
+  these routes, so they are cheap and never wait for it.
+* Each sync reads again from 00:00 UTC of the day before and **overwrites** those rows: today's and yesterday's
+  numbers can still grow. A UTC day is final once the day after it is over.
+* **The engine counts per UTC day, not per hour.** With the current engine, a day's requests and storage land in
+  the bucket that starts at 00:00 UTC of that day, so the hourly (`24h`) and six-hourly (`7d`) series show one
+  non-zero bucket a day. Use `range=30d` (or the CSV) to bill; the finer ranges become exact when the engine reports
+  hours.
+* Hourly rows are kept for `HOURLY_RETENTION_DAYS` (default 8, at least 2; `7d` needs 7); daily rows are kept.
+* **Erasing a database removes its usage** (its rows go with it), from these routes and from the CSV. Read or export
+  what you need to bill before you erase a database.
+
+### Monthly CSV
+
+The dashboard's monthly report as a CSV file. `month` (`YYYY-MM`, UTC) and `by` (`database` or `tag`) are required;
+`tagKey` (with `by=tag`), `sort` (`name`, `databases`, `storageGb`, `requests`; default `requests`) and `dir` (`asc`,
+`desc`; default `desc`) are optional. The answer is `{ "filename", "mimeType", "downloadUrl", "expiresAt" }`:
+`downloadUrl` is the same signed link the dashboard hands out (`/v1/downloads/<token>`, 15 minutes, no key needed: do
+not share it). The file is built when the link is opened. A month without usage is a `400` (`field: "month"`).
+
+```bash
+curl -sS "$FENVIX_API/usage/export?month=2026-10&by=database" -H "Authorization: Bearer $FENVIX_KEY"
+```
+
+```bash
+curl -sS -o usage.csv "$(curl -sS "$FENVIX_API/usage/export?month=2026-10&by=tag&tagKey=customer" \
+  -H "Authorization: Bearer $FENVIX_KEY" | jq -r .downloadUrl)"
+```
+
+Columns: by database `database,tags,storage_gb_avg,requests`; by tag `tag,databases,storage_gb_avg,requests`.
+`requests` is the month's sum; `storage_gb_avg` is the average of the daily storage over the days of the month that
+have data, in GiB (2<sup>30</sup> bytes), rounded to 2 decimals. Tag your databases by customer (for example
+`customer:acme`) and `by=tag&tagKey=customer` gives one row per customer.
+
 ## Organization
 
 The key's organization, its member count, and the key's own id and role:
@@ -267,8 +351,8 @@ public.fenvix_cp_resolve_public_api_key(text);` (dropping the table drops its tw
 
 ## Not in this version
 
-* Fork, restore, export, tags, keep-awake, usage, billing, the Data Explorer, network blocks and members are only on
-  the dashboard's routes.
+* Fork, restore, export, tags, keep-awake, billing and invoices, the overview (cost, wake-ups, top databases), the Data
+  Explorer, network blocks and members are only on the dashboard's routes.
 * No page in the dashboard for public keys yet: the first key is made with a session (above).
 * Rate limits are in memory per instance (see the README, "Limits worth knowing").
 * Browsers: the public API sends no CORS headers for other origins; call it from a server.

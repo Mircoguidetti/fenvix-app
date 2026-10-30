@@ -17,6 +17,9 @@ let bKey = "";
 let bKeyId = "";
 let bDb = "";
 let bOp = "";
+let aDb = "";
+const A_REQUESTS = 111;
+const MONTH = new Date().toISOString().slice(0, 7);
 
 async function snapshotOf(ws: string): Promise<string> {
   const q = async (sql: string) => JSON.stringify((await h.admin.query(sql, [ws])).rows);
@@ -45,6 +48,14 @@ before(async () => {
   bOp = String(created.headers["operation-id"]);
   assert.equal((await h.as(bKey).post(`/public/databases/${bDb}/users`, { username: "bobuser" })).statusCode, 201);
   assert.equal((await h.as(bKey).put(`/public/databases/${bDb}/ip-allowlist`, { entries: ["198.51.100.0/24"] })).statusCode, 200);
+  // Usage for both: B's numbers are ones A's could never add up to.
+  const created2 = await h.as(aKey).post("/public/databases", { name: "alice-own", region: "eu-central-1" });
+  assert.equal(created2.statusCode, 201, created2.body);
+  aDb = json(created2).id;
+  for (const [id, ws, requests] of [[aDb, a.workspaceId, A_REQUESTS], [bDb, b.workspaceId, 7_777_777]] as const) {
+    await h.admin.query("insert into public.usage_daily (database_id, workspace_id, day, requests, storage_bytes) values ($1, $2, (now() at time zone 'UTC')::date, $3, $3)", [id, ws, requests]);
+    await h.admin.query("insert into public.usage_hourly (database_id, workspace_id, hour, requests, storage_bytes) values ($1, $2, date_trunc('hour', now()), $3, $3)", [id, ws, requests]);
+  }
 });
 after(async () => { await h.close(); });
 
@@ -63,6 +74,17 @@ const cases: Record<string, () => Promise<{ res: Res; check?: (r: Res) => void }
   "DELETE /v1/public/databases/:id/users/:username": async () => ({ res: await h.as(aKey).del(`/public/databases/${bDb}/users/bobuser`) }),
   "GET /v1/public/databases/:id/ip-allowlist": async () => ({ res: await h.as(aKey).get(`/public/databases/${bDb}/ip-allowlist`) }),
   "PUT /v1/public/databases/:id/ip-allowlist": async () => ({ res: await h.as(aKey).put(`/public/databases/${bDb}/ip-allowlist`, { entries: [] }) }),
+  "GET /v1/public/usage": async () => ({
+    // A's organization: A's numbers only. (B's database as databaseId: the next test.)
+    res: await h.as(aKey).get("/public/usage?range=24h"),
+    check: (r) => { assert.equal(json(r).totals.requests, A_REQUESTS); assert.ok(!r.body.includes(bDb)); },
+  }),
+  "GET /v1/public/databases/:id/usage": async () => ({ res: await h.as(aKey).get(`/public/databases/${bDb}/usage?range=30d`) }),
+  "GET /v1/public/usage/export": async () => {
+    const res = await h.as(aKey).get(`/public/usage/export?month=${MONTH}&by=database`);
+    const file = res.statusCode === 200 ? (await h.app.fastify.inject(json(res).downloadUrl.replace("https://api.fenvix.test", ""))).body : "";
+    return { res, check: () => { assert.ok(file.includes("alice-own") && !file.includes("bob-secret") && !file.includes("7777777"), file); } };
+  },
   "GET /v1/public/organization": async () => ({ res: await h.as(aKey).get("/public/organization"), check: (r) => { assert.equal(json(r).id, a.workspaceId); assert.ok(!r.body.includes(b.workspaceId)); } }),
   "GET /v1/public/operations/:id": async () => ({ res: await h.as(aKey).get(`/public/operations/${bOp}`) }),
   "GET /v1/public/api-keys": async () => ({ res: await h.as(aKey).get("/public/api-keys?limit=100"), check: (r) => assert.ok(!r.body.includes(bKeyId)) }),
@@ -93,6 +115,17 @@ test("A's key gets 404 (or only its own data) on every route, and B is unchanged
   assert.deepEqual(json(await h.as(bKey).get(`/public/databases/${bDb}/users`)).items.map((u: { username: string }) => u.username).sort(), ["app", "bobuser"]);
   // The key A made belongs to A.
   assert.equal((await h.admin.query("select count(*)::int as n from public.public_api_keys where workspace_id = $1 and name = 'made by a'", [b.workspaceId])).rows[0].n, 0);
+});
+
+test("A's key cannot name B's database in GET /usage, in any range", async () => {
+  for (const range of ["24h", "7d", "30d"]) {
+    const r = await h.as(aKey).get(`/public/usage?range=${range}&databaseId=${bDb}`);
+    assert.equal(r.statusCode, 404, `${range}: ${r.body}`);
+    assert.ok(!r.body.includes("7777777"));
+    assert.equal((await h.as(aKey).get(`/public/databases/${bDb}/usage?range=${range}`)).statusCode, 404);
+  }
+  // B still sees its own.
+  assert.equal(json(await h.as(bKey).get(`/public/usage?range=24h&databaseId=${bDb}`)).totals.requests, 7_777_777);
 });
 
 test("A's cursor cannot page into B: a cursor only narrows A's own rows", async () => {
