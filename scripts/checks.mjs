@@ -54,7 +54,7 @@ const userCell = (page, name) => page.locator("#users td .user-name").filter({ h
 /** Clicks a segmented-control tab and waits for it to actually be the chosen one. */
 async function clickTab(page, name) {
   await openFilters(page);
-  const tab = page.getByRole("button", { name, exact: true });
+  const tab = page.getByRole("button", { name: new RegExp(`^${name}( [\\d,]+)?$`) });
   await tab.click();
   await eventually(async () => (await tab.getAttribute("aria-pressed")) === "true", `the ${name} tab did not become active`);
 }
@@ -278,6 +278,7 @@ const TESTS = {
 
     await go(page, "databases");
     await settled(page);
+    await openFilters(page);
     await page.locator("#db-tag").fill("customer:acme-labs");
     await page.getByRole("button", { name: "Add tag filter" }).click();
     await eventually(async () => (await counted(page)) < 3000, "the tag filter did not apply");
