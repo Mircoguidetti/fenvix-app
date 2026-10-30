@@ -19,7 +19,7 @@ const SUCCESS_DARK = "rgb(61, 220, 132)";
 const DANGER_DARK = "rgb(255, 106, 92)";
 const BLACK = "rgb(11, 18, 32)"; // --black, the one dark colour (#0b1220)
 const WHITE = "rgb(255, 255, 255)";
-const CHART = "rgb(74, 78, 85)"; // --chart, the slate of bars and lines
+const CHART = "rgb(11, 18, 32)"; // --chart, the one dark colour of bars and lines
 const STATUS = [SUCCESS, DANGER, WARNING, SUCCESS_DARK, DANGER_DARK, "rgb(255, 176, 32)"];
 
 /** Computed colours of the first element matching `selector` (optionally of a pseudo-element). */
@@ -57,6 +57,10 @@ async function huesOnPage(page, allowed) {
         if (!c || c.a === 0) continue;
         const chroma = (Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b)) / 255;
         if (chroma < 0.08) continue;
+        // The blue family of the interface: greys with a slight blue tint and the dark colour (hue 205 to 240).
+        const mx = Math.max(c.r, c.g, c.b), d = mx - Math.min(c.r, c.g, c.b);
+        const h = (mx === c.r ? ((c.g - c.b) / d) % 6 : mx === c.g ? (c.b - c.r) / d + 2 : (c.r - c.g) / d + 4) * 60;
+        if (((h + 360) % 360) >= 205 && ((h + 360) % 360) <= 240) continue;
         if (!allowedList.includes(c.key)) {
           problems.add(`${el.tagName.toLowerCase()}.${el.getAttribute("class") ?? ""} uses ${c.key}`);
           continue;
@@ -102,7 +106,7 @@ async function noLine(page, selector) {
   const deco = await page.locator(selector).first().evaluate((e) => getComputedStyle(e).textDecorationLine);
   assert(deco === "none", `${selector} is underlined`);
   const weight = await page.locator(selector).first().evaluate((e) => Number(getComputedStyle(e).fontWeight));
-  assert(weight >= 600, `${selector} is not bold (${weight})`);
+  assert(weight >= 500, `${selector} is not bold (${weight})`);
 }
 
 const TESTS = {

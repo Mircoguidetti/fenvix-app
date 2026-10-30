@@ -15,7 +15,7 @@
   --border-strong: #cfd7e6;
   --text: var(--black);
   --muted: #5a6785; /* secondary text */
-  --muted-2: #6b7794; /* tertiary text: hints, column headings */
+  --muted-2: #5f6b89; /* tertiary text: hints, column headings (4.5:1 on every light surface) */
   --on-text: #ffffff;
   --nav-bg: var(--black);
   --nav-text: #ffffff;
@@ -736,8 +736,8 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
 .switch:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* State pills */
-.state { background: var(--bg); border: 1px solid var(--border-strong); height: 24px; padding: 0 10px 0 8px; font-size: 12px; }
-.state .dot { width: 8px; height: 8px; border-width: 1.5px; border-color: var(--ink-2); }
+.state { background: var(--bg); height: 24px; padding: 0 10px 0 8px; font-size: 12px; }
+.state .dot { width: 8px; height: 8px; border-width: 1.5px; }
 .state-asleep { background: var(--surface-2); border-color: transparent; color: #4b5775; }
 .state-asleep .dot { border-color: var(--ink-2); }
 .state-kept { background: var(--surface-2); border-color: transparent; color: #1b2740; }
@@ -818,7 +818,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
   .back-link { min-height: var(--touch); }
   .select-sm .select-btn { height: var(--touch); font-size: 15px; }
   .select-option { min-height: var(--touch); font-size: 15px; }
-  .seg { display: flex; width: 100%; }
+  .seg { display: flex; flex-wrap: wrap; width: 100%; }
   .seg button { flex: 1 1 auto; justify-content: center; min-height: 38px; height: auto; font-size: 14px; padding: 0 10px; }
   .row-actions { gap: 8px; }
   .filters-top .search-field { max-width: none; }
@@ -831,8 +831,8 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
   .tag-filter .field { flex: 1 1 auto; width: auto; min-width: 0; }
   .tag-filter .btn { flex: 0 0 auto; }
   .tag-filter input { font-size: 16px; }
-  .chip-lg button { width: var(--touch); height: var(--touch); margin: -8px -2px -8px 0; }
-  .chip-lg { height: 34px; }
+  .chip-lg { height: var(--touch); padding-right: 0; }
+  .chip-lg button { width: var(--touch); height: var(--touch); }
   .select-hit { width: var(--touch); height: var(--touch); }
   input[type="radio"], input[type="checkbox"] { width: 20px; height: 20px; }
   .form-section { padding: 18px 16px; }
