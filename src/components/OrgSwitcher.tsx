@@ -1,10 +1,10 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, ChevronsUpDown, LogOut, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, LogOut } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "./Toast";
 import { orgs } from "../data/orgs-client";
-import { ROLE_NAMES, orgNameProblem, type Organization } from "../data/orgs";
+import { ROLE_NAMES, type Organization } from "../data/orgs";
 import { useOrg } from "../session/OrgProvider";
 import { workspaceInitial } from "../lib/avatar";
 
@@ -18,8 +18,8 @@ export function OrgAvatar({ name, size = 32 }: { name: string; size?: number }) 
 }
 
 /**
- * The organization box of the sidebar, as a switcher: the person's organizations, "Create organization" and, for
- * anyone but an owner, "Leave organization". The choice is only a preference sent to the server, which checks the
+ * The organization box of the sidebar, as a switcher: the person's organizations and, for anyone but an owner,
+ * "Leave organization". Creating an organization is not offered in the dashboard. The choice is only a preference sent to the server, which checks the
  * membership and the role on every request.
  */
 export function OrgSwitcher() {
@@ -27,8 +27,7 @@ export function OrgSwitcher() {
   const navigate = useNavigate();
   const toast = useToast();
   const [open, setOpen] = useState(false);
-  const [dialog, setDialog] = useState<"create" | "leave" | null>(null);
-  const [name, setName] = useState("");
+  const [dialog, setDialog] = useState<"leave" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -55,23 +54,6 @@ export function OrgSwitcher() {
     org.switchTo(o.id);
     navigate("/overview");
     toast(`Switched to ${o.name}`, "success");
-  }
-
-  async function create() {
-    const problem = orgNameProblem(name);
-    if (problem) return setError(problem);
-    setBusy(true);
-    try {
-      const made = await orgs.createOrganization(name.trim());
-      await org.refresh(made.id);
-      setDialog(null);
-      navigate("/overview");
-      toast(`Created ${made.name}`, "success");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not create the organization. Try again.");
-    } finally {
-      setBusy(false);
-    }
   }
 
   async function leave() {
@@ -124,33 +106,16 @@ export function OrgSwitcher() {
               </li>
             ))}
           </ul>
-          <div className="org-actions">
-            <button type="button" className="org-item" onClick={() => (setOpen(false), setName(""), setError(null), setDialog("create"))}>
-              <Plus size={16} aria-hidden="true" />
-              Create organization
-            </button>
-            {current.role !== "owner" && (
+          {current.role !== "owner" && (
+            <div className="org-actions">
               <button type="button" className="org-item" onClick={() => (setOpen(false), setError(null), setDialog("leave"))}>
                 <LogOut size={16} aria-hidden="true" />
                 Leave organization
               </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      <ConfirmDialog open={dialog === "create"} title="Create organization" confirmLabel="Create organization" busy={busy} onConfirm={create} onCancel={() => setDialog(null)}>
-        <div className="field">
-          <label htmlFor="new-org-name">Organization name</label>
-          <input id="new-org-name" value={name} maxLength={200} onChange={(e) => (setName(e.target.value), setError(null))} aria-invalid={error ? true : undefined} aria-describedby={error ? "new-org-error" : undefined} />
-          {error && (
-            <p id="new-org-error" className="error" role="alert">
-              {error}
-            </p>
+            </div>
           )}
         </div>
-        <p>You will be its owner. You can invite people from Settings.</p>
-      </ConfirmDialog>
+      )}
 
       <ConfirmDialog danger open={dialog === "leave"} title="Leave this organization?" confirmLabel="Leave organization" busy={busy} onConfirm={leave} onCancel={() => setDialog(null)}>
         <p>

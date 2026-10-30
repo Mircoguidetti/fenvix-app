@@ -2,7 +2,7 @@
 // (fresh data, signed out) and signs in through the real sign-in page unless it is testing sign-in.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: npm run checks
 import { readFile } from "node:fs/promises";
-import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText } from "./lib.mjs";
+import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText, choose } from "./lib.mjs";
 
 const { fail, pass, state } = makeReporter();
 const browser = await launch();
@@ -62,8 +62,7 @@ async function clickTab(page, name) {
 async function pickCollection(page, vp, name) {
   if (isMobile(vp)) {
     await page.locator("#coll-select").waitFor();
-    await eventually(async () => (await page.locator(`#coll-select option[value="${name}"]`).count()) === 1, `no ${name} collection`);
-    await page.locator("#coll-select").selectOption(name);
+    await choose(page, page.locator("#coll-select"), name);
   } else {
     await page.locator(".coll-btn", { hasText: name }).click();
   }
@@ -199,7 +198,7 @@ const TESTS = {
     await page.getByRole("button", { name: "30 d" }).click();
     await eventually(async () => (await page.locator(".kpi-value").nth(3).innerText()) !== requests7d, "30 d shows the same as 7 d");
 
-    await page.locator("#ov-key").selectOption("env");
+    await choose(page, page.locator("#ov-key"), "env");
     await eventually(async () => (await page.locator(".hbar-label").first().innerText()).includes("prod"), "the by-tag chart does not follow the tag key");
     await page.locator(".card#top-h, #top").first().waitFor();
     await page.locator("#top").getByRole("link").first().click();
@@ -212,7 +211,7 @@ const TESTS = {
     await signIn(page, "databases");
     await page.getByRole("link", { name: "Create database" }).click();
     await page.getByLabel("Name", { exact: true }).fill("check-create-01");
-    await page.getByLabel("Region").selectOption("us-east");
+    await choose(page, page.getByLabel("Region"), "us-east");
     await page.getByLabel("Tags").fill("customer:checkco env:dev");
     await page.getByRole("button", { name: "Create database" }).click();
     await page.getByRole("link", { name: "Open database" }).waitFor();
@@ -300,7 +299,7 @@ const TESTS = {
     const asleep = num(await page.locator(".counts-bar b").nth(2).innerText());
     assert(asleep > 2500, `most databases should be asleep, got ${asleep}`);
     // The default list is by name, so awake and asleep databases are mixed together.
-    assert((await page.getByLabel("Sort by").inputValue()) === "name:asc", "the default sort is not by name");
+    assert((await page.getByLabel("Sort by").textContent()).trim() === "Name, A to Z", "the default sort is not by name");
     const names = await page.locator("tbody tr td a").allTextContents();
     assert([...names].sort((a, b) => a.localeCompare(b)).join() === names.join(), "the default list is not in name order");
     await page.getByRole("button", { name: "Next" }).click();
@@ -315,7 +314,7 @@ const TESTS = {
     await eventually(async () => (await counted(page)) === 3000, "clearing the state tab did not bring the fleet back");
 
     const t1 = Date.now();
-    await page.getByLabel("Group by tag").selectOption("customer");
+    await choose(page, page.getByLabel("Group by tag"), "customer");
     await page.getByText("3,000 databases in 200 groups, grouped by customer").waitFor();
     assert(Date.now() - t1 < 4000, "grouping took too long");
     const counts = await page.locator(".group-meta strong").allTextContents();
@@ -325,9 +324,9 @@ const TESTS = {
     await page.locator(".group-body tbody tr").first().waitFor();
     await page.getByRole("button", { name: /^Show more/ }).click();
     await eventually(async () => (await page.locator(".group-body tbody tr").count()) === 50, "show more should load 25 more rows");
-    await page.getByLabel("Group by tag").selectOption("env");
+    await choose(page, page.getByLabel("Group by tag"), "env");
     await page.getByText(/in 4 groups, grouped by env/).waitFor();
-    await page.getByLabel("Group by tag").selectOption("");
+    await choose(page, page.getByLabel("Group by tag"), "");
     await page.waitForSelector("tbody tr");
   },
 
@@ -485,11 +484,11 @@ const TESTS = {
       const r = await requests();
       return r.length === 50 && r.every((v, i) => i === 0 || cmp(r[i - 1], v));
     };
-    await page.getByLabel("Sort by").selectOption("requests:desc");
+    await choose(page, page.getByLabel("Sort by"), "requests:desc");
     await eventually(sortedBy((a, b) => a >= b), "requests are not sorted high to low");
-    await page.getByLabel("Sort by").selectOption("requests:asc");
+    await choose(page, page.getByLabel("Sort by"), "requests:asc");
     await eventually(sortedBy((a, b) => a <= b), "requests are not sorted low to high");
-    await page.getByLabel("Sort by").selectOption("name:asc");
+    await choose(page, page.getByLabel("Sort by"), "name:asc");
     await eventually(async () => {
       const names = await page.locator('tbody td[data-label="Name"]').allTextContents();
       return names.length === 50 && [...names].sort((a, b) => a.localeCompare(b)).join() === names.join();
@@ -503,7 +502,7 @@ const TESTS = {
     await toast(page, "CSV ready");
 
     await clickTab(page, "Per tag");
-    await page.locator("#u-key").selectOption("customer");
+    await choose(page, page.locator("#u-key"), "customer");
     await page.getByRole("heading", { name: "Per customer" }).waitFor();
     await eventually(async () => (await page.locator('tbody td[data-label="Name"]').first().innerText()).startsWith("customer:"), "the per-tag table did not load");
     const shown = num(await page.locator(".kpi-value").nth(2).innerText().then((t) => t));
@@ -518,7 +517,7 @@ const TESTS = {
     await toast(page, "CSV ready");
 
     const october = await page.locator(".kpi-value").nth(2).innerText();
-    await page.locator("#u-month").selectOption("2026-09");
+    await choose(page, page.locator("#u-month"), "2026-09");
     await eventually(async () => (await page.locator(".kpi-value").nth(2).innerText()) !== october, "another month shows the same totals");
   },
 
@@ -668,7 +667,7 @@ const TESTS = {
     await add.getByRole("button", { name: "Create user" }).click();
     await add.getByRole("alert").getByText("lowercase letters").waitFor();
     await add.getByLabel("User name").fill("check-reader");
-    await add.getByLabel("Access").selectOption("read");
+    await choose(page, add.getByLabel("Access"), "read");
     await add.getByRole("button", { name: "Create user" }).click();
 
     const once = page.getByRole("dialog", { name: "User check-reader created" });
@@ -815,12 +814,54 @@ const TESTS = {
     assert(isMobile(vp) ? second === "Open navigation" : second.startsWith("Organization: "), `the second Tab reaches ${second}`);
   },
 
+  async "select: keyboard, mouse and one look for every dropdown"(page) {
+    await signIn(page, "databases");
+    assert(!(await page.locator("select, datalist").count()), "a native select or datalist is on the page");
+    const sort = page.locator("#db-sort");
+    assert((await page.getByLabel("Sort by").count()) === 1, "the label does not name the select");
+    const value = async () => (await sort.textContent()).trim();
+    assert((await sort.getAttribute("role")) === "combobox" && (await sort.getAttribute("aria-haspopup")) === "listbox", "the select is not a combobox");
+    // Keyboard: Down opens on the current choice, Down moves, Enter picks and closes, focus stays on the select.
+    await sort.focus();
+    await page.keyboard.press("ArrowDown");
+    const list = page.getByRole("listbox", { name: "Sort by" });
+    await list.waitFor();
+    assert((await list.locator('[aria-selected="true"]').textContent()).trim() === "Name, A to Z", "the current choice is not marked");
+    assert((await sort.getAttribute("aria-activedescendant")) === (await list.locator('[aria-selected="true"]').getAttribute("id")), "the highlight does not start on the choice");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await list.waitFor({ state: "detached" });
+    await eventually(async () => (await value()) === "Name, Z to A", "Enter did not pick the next option");
+    assert(await sort.evaluate((e) => e === document.activeElement), "focus left the select");
+    await eventually(async () => new URL(page.url()).searchParams.get("dir") === "desc", "the pick did not reach the list");
+    // Escape closes without changing; End and Home jump; typing jumps to a matching option.
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("End");
+    await page.keyboard.press("Escape");
+    await list.waitFor({ state: "detached" });
+    assert((await value()) === "Name, Z to A", "Escape changed the choice");
+    await page.keyboard.press(" ");
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Enter");
+    await eventually(async () => (await value()) === "Name, A to Z", "Home did not reach the first option");
+    // Mouse: a click elsewhere closes it unchanged.
+    await sort.click();
+    await list.waitFor();
+    await page.locator("main h1").click();
+    await list.waitFor({ state: "detached" });
+    // The select and the search field are the same height, radius and border width.
+    const box = (sel) => page.locator(sel).first().evaluate((e) => { const c = getComputedStyle(e); return [c.height, c.borderRadius, c.borderTopWidth].join(" "); });
+    const [a, b] = [await box("#db-search"), await box("#db-sort")];
+    assert(a === b, `search ${a} and select ${b} differ`);
+  },
+
   async "settings"(page) {
     await signIn(page, "settings");
     await page.getByLabel("Organization name").fill("Northwind Platform");
     await page.getByRole("button", { name: "Rename" }).click();
     await page.getByText("Organization renamed").waitFor();
-    await page.getByLabel("Sleep after idle").selectOption("15");
+    assert(!(await page.getByText("Sleep after idle").count()), "settings still offer Sleep after idle");
+    await page.getByLabel("Email me about usage and account notices").uncheck();
     await page.getByRole("button", { name: "Save changes" }).click();
     await page.getByText("Settings saved").waitFor();
     await go(page, "overview");
@@ -848,7 +889,7 @@ for (const [vpName, viewport] of VIEWPORTS) {
       pass(label);
       console.log("ok  ", label);
     } catch (e) {
-      fail(`${label}: ${String(e.message).split("\n")[0]}`);
+      fail(`${label}: ${process.env.STACK ? e.stack : String(e.message).split("\n")[0]}`);
       await page.screenshot({ path: `/tmp/fail-${vpName}-${name.replace(/\W+/g, "-")}.png` }).catch(() => {});
     }
     await ctx.close();

@@ -1,7 +1,7 @@
 // Unit tests for the organization rules the dashboard uses to explain and hide things: npm run test:unit
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { canManage, memberActions, orgNameProblem, type Member } from "../../src/data/orgs.ts";
+import { canManage, memberActions, orgNameProblem, suggestedOrgName, type Member } from "../../src/data/orgs.ts";
 
 test("organization names: 2 to 64 characters after trimming, one line, markup allowed as text", () => {
   for (const ok of ["ab", "  Acme Labs  ", "<script>alert(1)</script>", "🚀".repeat(64), "Ünïcödé & Co."]) assert.equal(orgNameProblem(ok), null, ok);
@@ -23,4 +23,14 @@ test("what each role is offered for another member", () => {
   assert.deepEqual(memberActions("admin", m("admin")), { roles: [], remove: false });
   assert.deepEqual(memberActions("admin", m("owner")), { roles: [], remove: false });
   assert.deepEqual(memberActions("member", m("member")), { roles: [], remove: false });
+});
+
+test("the name field starts with the sign-up name once, never written twice", () => {
+  assert.equal(suggestedOrgName("Spazio Milano Spazio Milano"), "Spazio Milano");
+  assert.equal(suggestedOrgName("  Spazio   Milano  spazio milano "), "Spazio Milano");
+  assert.equal(suggestedOrgName("Acme Acme"), "Acme");
+  assert.equal(suggestedOrgName("Spazio Milano"), "Spazio Milano");
+  assert.equal(suggestedOrgName("Elena Marsh"), "Elena Marsh");
+  assert.equal(suggestedOrgName("New New York"), "New New York");
+  assert.equal(suggestedOrgName(""), "");
 });

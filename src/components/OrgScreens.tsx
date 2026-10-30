@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Logo } from "./Logo";
 import { useToast } from "./Toast";
 import { orgs } from "../data/orgs-client";
-import { orgNameProblem } from "../data/orgs";
+import { orgNameProblem, suggestedOrgName } from "../data/orgs";
 import { useOrg } from "../session/OrgProvider";
 import { useSession } from "../session/SessionProvider";
 import { clearPendingInvite } from "../lib/invite";
@@ -29,11 +29,14 @@ function Frame({ children, label }: { children: React.ReactNode; label: string }
   );
 }
 
-/** One field, 2 to 64 characters. "confirm" names the current organization; "create" makes the first one. */
-export function NameOrgScreen({ mode }: { mode: "confirm" | "create" }) {
+/**
+ * One field, 2 to 64 characters: names the organization a new account was given at sign-up. The field starts with the
+ * name that was guessed then, once (a guess like "Spazio Milano Spazio Milano" is shown as "Spazio Milano").
+ */
+export function NameOrgScreen() {
   const org = useOrg();
   const navigate = useNavigate();
-  const [name, setName] = useState(mode === "confirm" ? (org.current?.name ?? "") : "");
+  const [name, setName] = useState(() => suggestedOrgName(org.current?.name ?? ""));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -44,13 +47,8 @@ export function NameOrgScreen({ mode }: { mode: "confirm" | "create" }) {
     setBusy(true);
     setError(null);
     try {
-      if (mode === "confirm") {
-        await orgs.renameOrganization(name.trim());
-        await org.refresh();
-      } else {
-        const made = await orgs.createOrganization(name.trim());
-        await org.refresh(made.id);
-      }
+      await orgs.renameOrganization(name.trim());
+      await org.refresh();
       navigate("/overview", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the name. Try again.");
@@ -59,13 +57,9 @@ export function NameOrgScreen({ mode }: { mode: "confirm" | "create" }) {
   }
 
   return (
-    <Frame label={mode === "confirm" ? "Name your organization" : "Create your organization"}>
-      <h1>{mode === "confirm" ? "Name your organization" : "Create your organization"}</h1>
-      <p className="muted signin-lead">
-        {mode === "confirm"
-          ? "This is the name your team sees. You can change it later in Settings."
-          : "You are not part of an organization yet. Create one, or open the invitation link you were sent."}
-      </p>
+    <Frame label="Name your organization">
+      <h1>Name your organization</h1>
+      <p className="muted signin-lead">This is the name your team sees. You can change it later in Settings.</p>
       <form onSubmit={submit} className="stack wide" noValidate>
         <div className="field">
           <label htmlFor="org-name">Organization name</label>
@@ -73,7 +67,7 @@ export function NameOrgScreen({ mode }: { mode: "confirm" | "create" }) {
             id="org-name"
             value={name}
             maxLength={200}
-            autoComplete="organization"
+            autoComplete="off"
             autoFocus
             onChange={(e) => (setName(e.target.value), setError(null))}
             aria-invalid={error ? true : undefined}
@@ -89,9 +83,19 @@ export function NameOrgScreen({ mode }: { mode: "confirm" | "create" }) {
           )}
         </div>
         <button type="submit" className="btn btn-primary btn-block btn-lg" disabled={busy}>
-          {mode === "confirm" ? "Continue" : "Create organization"}
+          Continue
         </button>
       </form>
+    </Frame>
+  );
+}
+
+/** Someone who belongs to no organization (they left, or were removed): they can join one by invitation. */
+export function NoOrgScreen() {
+  return (
+    <Frame label="No organization">
+      <h1>No organization yet</h1>
+      <p className="muted signin-lead">You are not part of an organization. Open the invitation link you were sent to join one.</p>
     </Frame>
   );
 }

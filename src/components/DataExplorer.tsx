@@ -9,6 +9,7 @@ import { formatCount } from "../lib/format";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Message } from "./PageHeader";
 import { useToast } from "./Toast";
+import { Select } from "./Select";
 
 /**
  * The Data tab of a database: its collections on the left, the documents of the chosen one on the right.
@@ -261,13 +262,13 @@ export function DataExplorer({ db }: { db: Database }) {
             <label className="sr-only" htmlFor="coll-select">
               Collection
             </label>
-            <select id="coll-select" className="coll-select" value={current ?? ""} onChange={(e) => pick(e.target.value)}>
-              {collections.map((c) => (
-                <option key={c.name} value={c.name} disabled={!c.browsable}>
-                  {c.name} {c.estimatedCount === null ? "" : `(${formatCount(c.estimatedCount)})`}
-                </option>
-              ))}
-            </select>
+            <Select
+              id="coll-select"
+              className="coll-select"
+              value={current ?? ""}
+              onChange={pick}
+              options={collections.map((c) => ({ value: c.name, label: `${c.name} ${c.estimatedCount === null ? "" : `(${formatCount(c.estimatedCount)})`}`.trim(), disabled: !c.browsable }))}
+            />
             <ul className="coll-list">
               {collections.map((c) => (
                 <li key={c.name}>

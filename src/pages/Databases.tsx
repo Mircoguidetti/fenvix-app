@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOrg } from "../session/OrgProvider";
 import { Link, useSearchParams } from "react-router-dom";
-import { ChevronDown, ChevronRight, Plus, Search, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { client, type DatabaseFilter, type DatabaseSort } from "../data";
 import { PageHeader, Message } from "../components/PageHeader";
 import { DbTable, COLUMNS, isTextSort, type Dir } from "../components/DbTable";
 import { BulkBar } from "../components/BulkBar";
+import { Select } from "../components/Select";
+import { SearchInput, SuggestInput } from "../components/SearchInput";
 import { Pagination } from "../components/Pagination";
 import { useAsync } from "../lib/useAsync";
 import { parseTag, splitTag } from "../lib/tags";
@@ -60,6 +62,7 @@ export function DatabasesPage() {
 
   const tags = useAsync(() => client.listTags(), [version]);
   const tagKeys = useMemo(() => (tags.status === "ready" ? [...new Set(tags.data.map((t) => t.key))] : []), [tags]);
+  const tagOptions = useMemo(() => (tags.status === "ready" ? tags.data.map((t) => `${t.key}:${t.value}`) : []), [tags]);
 
   const update = useCallback(
     (changes: Record<string, string | string[] | null>, keepPage = false) => {
@@ -149,10 +152,7 @@ export function DatabasesPage() {
       <div className="toolbar">
         <div className="field grow">
           <label htmlFor="db-search">Search by name</label>
-          <div className="input-wrap">
-            <Search size={16} aria-hidden="true" />
-            <input id="db-search" type="search" value={search} onChange={(e) => update({ q: e.target.value || null })} placeholder="Search databases" autoComplete="off" />
-          </div>
+          <SearchInput id="db-search" value={search} onChange={(e) => update({ q: e.target.value || null })} placeholder="Search databases" />
         </div>
         <div className="field field-seg">
           <span className="label" id="db-state-label">State</span>
@@ -166,25 +166,12 @@ export function DatabasesPage() {
         </div>
         <div className="field">
           <label htmlFor="db-group">Group by tag</label>
-          <select id="db-group" value={groupBy} onChange={(e) => update({ group: e.target.value || null })}>
-            <option value="">No grouping</option>
-            {tagKeys.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
-          </select>
+          <Select id="db-group" value={groupBy} onChange={(v) => update({ group: v || null })} options={[{ value: "", label: "No grouping" }, ...tagKeys.map((k) => ({ value: k, label: k }))]} />
         </div>
         {!groupBy && (
           <div className="field">
             <label htmlFor="db-sort">Sort by</label>
-            <select id="db-sort" value={`${sort.key}:${sort.dir}`} onChange={(e) => { const [key, dir] = e.target.value.split(":"); update({ sort: key, dir }); }}>
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            <Select id="db-sort" value={`${sort.key}:${sort.dir}`} onChange={(v) => { const [key, dir] = v.split(":"); update({ sort: key, dir }); }} options={SORT_OPTIONS} />
           </div>
         )}
       </div>
@@ -192,10 +179,7 @@ export function DatabasesPage() {
       <form className="toolbar" onSubmit={(e) => (e.preventDefault(), addTagFilter())} noValidate>
         <div className="field grow">
           <label htmlFor="db-tag">Filter by tag</label>
-          <input id="db-tag" list="tag-options" value={tagInput} onChange={(e) => (setTagInput(e.target.value), setTagError(null))} placeholder="customer:acme-labs" autoComplete="off" aria-invalid={tagError ? true : undefined} aria-describedby={tagError ? "db-tag-error" : undefined} />
-          <datalist id="tag-options">
-            {tags.status === "ready" && tags.data.map((t) => <option key={`${t.key}:${t.value}`} value={`${t.key}:${t.value}`} />)}
-          </datalist>
+          <SuggestInput id="db-tag" value={tagInput} onChange={(v) => (setTagInput(v), setTagError(null))} suggestions={tagOptions} placeholder="customer:acme-labs" invalid={!!tagError} describedBy={tagError ? "db-tag-error" : undefined} />
         </div>
         <button type="submit" className="btn">
           Add tag filter

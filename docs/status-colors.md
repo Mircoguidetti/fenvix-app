@@ -23,7 +23,7 @@ the "status colours and silver" section at the end of that file.
 | `--silver-1` | `#c4c8ce` | silver, light grey |
 | `--silver-2` | `#f4f5f7` | silver, near white |
 | `--silver-3` | `#7c828b` | silver, mid grey |
-| `--silver` | `linear-gradient(90deg, silver-1, silver-2 50%, silver-3)` | the silver line |
+| `--silver` | `linear-gradient(90deg, silver-1, silver-2 50%, silver-3)` | the silver gradient |
 
 The status colours are flat: a single hex value each, no gradient, no tint behind text.
 
@@ -37,7 +37,7 @@ Contrast ratios (WCAG 2), computed by `tests/unit/status-colors.test.ts`:
 | `--danger` | 5.30 | 5.08 | 4.91 | 4.61 |
 | `--warning` | 5.19 | 4.97 | 4.81 | 4.52 |
 
-| Colour | on `--nav-bg` #0a0a0b (also the toast) | on `--nav-hover` #17171a | on `--nav-active` #202024 |
+| Colour | on `--nav-bg` #000000, `--black` (also the toast) | on `--nav-hover` #17171a | on `--nav-active` #202024 |
 | --- | --- | --- | --- |
 | `--success-on-dark` | 11.09 | 10.03 | 9.10 |
 | `--danger-on-dark` | 7.04 | 6.36 | 5.77 |
@@ -56,11 +56,10 @@ white, so on the white content it reads as a sheen rather than a stripe.
 2. Green, red and amber only for a state. Each of them always comes with a word or an icon too, so the meaning never
    depends on telling colours apart: "Awake", "Active", "Paid", "Open", "Error: …", "Blocked until …", "Unsaved
    changes", a warning triangle, a tick in a circle, an alert circle, a "blocked" sign.
-3. No blue and no other hue. Links stay underlined. The selected menu item stays filled (dark grey on the dark
-   navigation) with a silver underline. Charts are black and grey; none of today's series means success or error,
+3. No blue and no other hue. Nothing is underlined: links are bold, and the selected menu item and tab are filled
+   (dark grey on the dark navigation, black on the content) and bold, with no line under them. Charts are black and grey; none of today's series means success or error,
    so none is green or red.
-4. Silver only on: the thin line under the selected tab (database tabs, settings tabs) and under the selected menu
-   item; the border of the highlighted card (the current plan); the light fill under chart lines (area charts and
+4. Silver only on: the border of the highlighted card (the current plan); the light fill under chart lines (area charts and
    sparklines). Never on text, never behind text, no chrome or bevel. The logo does not use silver and is unchanged.
 5. Primary buttons stay black, except the confirm button of a destructive dialog: that one is filled red
    (`--danger`, white text, 5.30:1). Dialogs have no border and no coloured line. The button that opens a destructive dialog
@@ -95,9 +94,9 @@ white, so on the white content it reads as a sheen rather than a stripe.
 | Load failures (lists, pages, charts, the engine not answering, 403, network errors) | error | red text and icon | alert circle, the message | `.message-error` (`Message role="alert"`) |
 | Erase (database page and bulk bar), Delete user, Delete document, Revoke key, Remove member, Revoke invitation, Clear list | destructive | red text and border; red fill on hover | the word on the button | `.btn-danger` |
 | The dialogs of those actions, Leave organization, and Restore to a point in time | destructive | the confirm button filled red with white text (the dialog itself has no border or line) | the title and text say what is lost; the button says the action | `.dialog-danger` (`ConfirmDialog danger`) |
-| Selected database tab | — | silver line under it | the tab is also filled black | `::after` |
+| Selected database tab | — | — | filled black, bold; no line under it | `.seg button[aria-pressed]` |
 | Selected settings tab | — | none (the black fill is enough) | the tab is filled black | — |
-| Selected menu item (sidebar and drawer) | — | silver line under it | the item is also filled and bold | `.nav-link.active::after` |
+| Selected menu item (sidebar and drawer) | — | — | filled dark grey, bold; no line under it | `.nav-link.active` |
 | Current plan card (Billing) | — | silver border | "Current plan" | `.plan-current` |
 | Area charts and sparklines | — | silver fill under the line | — | `.silver-stop-*` |
 

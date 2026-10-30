@@ -9,6 +9,7 @@ import { Card, Message } from "./PageHeader";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PasswordDialog } from "./PasswordOnce";
 import { useToast } from "./Toast";
+import { Select } from "./Select";
 
 /**
  * The Users tab of a database: the user names and passwords applications connect with ("Database Access").
@@ -179,10 +180,7 @@ export function DatabaseUsers({ db }: { db: Database }) {
         </div>
         <div className="field">
           <label htmlFor="user-role">Access</label>
-          <select id="user-role" value={role} onChange={(e) => setRole(e.target.value as DbUserRole)}>
-            <option value="readWrite">{ROLE_LABELS.readWrite}</option>
-            <option value="read">{ROLE_LABELS.read}</option>
-          </select>
+          <Select id="user-role" value={role} onChange={(v) => setRole(v as DbUserRole)} options={[{ value: "readWrite", label: ROLE_LABELS.readWrite }, { value: "read", label: ROLE_LABELS.read }]} />
         </div>
         <p>The password is made for you and shown once.</p>
         {dialogError && (

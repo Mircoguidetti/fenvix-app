@@ -11,6 +11,7 @@ import { parseTag } from "../lib/tags";
 import { SecretOnce } from "../components/PasswordOnce";
 import { usernameProblem } from "../data/users";
 import { OperationNote } from "../components/OperationNote";
+import { Select } from "../components/Select";
 
 export function CreateDatabasePage() {
   const { canManage } = useOrg();
@@ -87,7 +88,7 @@ function CreateDatabaseForm() {
     const first = created.initialUser;
     return (
       <>
-        <PageHeader title="Database created" back={back} />
+        <PageHeader title="Your database is ready" description="Connect any MongoDB driver with the connection string and the database user below." back={back} />
         <div className="grid-2">
           {first?.password ? (
             <Card id="credentials" title="Save the database user's password" description={`Applications connect as ${first.username}. It can read and write this database only.`}>
@@ -118,7 +119,7 @@ function CreateDatabaseForm() {
   return (
     <>
       <PageHeader title="Create database" description="A new database starts asleep and wakes on its first request." back={back} />
-      <div className="grid-2">
+      <div className="form-col">
       <Card id="new" title="Details" description="The name is part of the connection string, so it cannot change later.">
         <form onSubmit={submit} className="stack" noValidate>
           <div className="field">
@@ -127,9 +128,7 @@ function CreateDatabaseForm() {
           </div>
           <div className="field">
             <label htmlFor="new-region">Region</label>
-            <select id="new-region" value={region} onChange={(e) => setRegion(e.target.value)}>
-              {regions.status === "ready" && regions.data.map((r) => <option key={r}>{r}</option>)}
-            </select>
+            <Select id="new-region" value={region} onChange={setRegion} options={regions.status === "ready" ? regions.data.map((r) => ({ value: r, label: r })) : []} />
           </div>
           <div className="field">
             <label htmlFor="new-user">Database user</label>
@@ -165,16 +164,6 @@ function CreateDatabaseForm() {
             </Link>
           </div>
         </form>
-      </Card>
-
-      <Card id="what-next" title="What happens next" description="A database is ready the moment you create it.">
-        <ul className="ticks">
-          <li>It starts asleep and wakes on its first request, in under a second.</li>
-          <li>You get a connection string and a database user straight away. Any MongoDB driver can use them.</li>
-          <li>While it sleeps you pay for its storage only.</li>
-          <li>Tags can change at any time. The name and region cannot.</li>
-          <li>Fork it, restore it to a point in time, export it or erase it whenever you like.</li>
-        </ul>
       </Card>
       </div>
     </>

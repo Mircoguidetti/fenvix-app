@@ -38,6 +38,16 @@ for (const [vpName, viewport] of VIEWPORTS) {
     (await axeViolations(page)).forEach((v) => fail(`${label}: ${v}`));
     const text = await visibleText(page);
     if (BANNED.test(text)) fail(`${label}: says "${text.match(BANNED)?.[0]}"`);
+    // No underlined text anywhere, and one background behind full-page screens (no seam between two blacks).
+    const underlined = await page.evaluate(() => [...document.querySelectorAll("body *")].filter((e) => getComputedStyle(e).textDecorationLine.includes("underline")).map((e) => `${e.tagName.toLowerCase()}.${e.className}`));
+    if (underlined.length) fail(`${label}: underlined ${underlined.slice(0, 3).join(", ")}`);
+    const seam = await page.evaluate(() => {
+      const full = document.querySelector(".signin-page");
+      if (!full) return null;
+      const bgs = new Set([document.documentElement, document.body, full].map((e) => getComputedStyle(e).backgroundColor));
+      return bgs.size === 1 ? null : [...bgs].join(" / ");
+    });
+    if (seam) fail(`${label}: the full-page screen has more than one background (${seam})`);
   };
   /**
    * The shell fills the window and the content column scrolls inside it, so a "full page"
@@ -84,6 +94,15 @@ for (const [vpName, viewport] of VIEWPORTS) {
     await check(label);
     await shot(name);
   }
+
+  // A select, open: the list under it with the choice ticked.
+  await go(page, "databases");
+  await settled(page);
+  await page.getByLabel("Sort by").click();
+  await page.getByRole("listbox").waitFor();
+  await check(`select-open ${vpName}`);
+  await shot("select-open", true);
+  await page.keyboard.press("Escape");
 
   // Grouped list with a group open and the bulk bar showing.
   await go(page, "databases?group=customer&q=acme");
@@ -175,6 +194,25 @@ for (const [vpName, viewport] of VIEWPORTS) {
 
   errors.forEach((e) => fail(`console ${vpName}: ${e}`));
   await ctx.close();
+
+  // A brand-new account: the first screen names its organization.
+  const fresh = await newPage(browser, { viewport });
+  await go(fresh.page, "overview");
+  await fresh.page.getByLabel("Work email").fill("spazio.milano@example.com");
+  await fresh.page.getByRole("button", { name: "Email me a sign-in link" }).click();
+  await fresh.page.getByText(/We sent a sign-in link/).waitFor();
+  await go(fresh.page, "?token=one-time");
+  await fresh.page.getByRole("heading", { name: "Name your organization" }).waitFor();
+  await fresh.page.evaluate(() => document.fonts.ready);
+  (await layoutProblems(fresh.page)).forEach((x) => fail(`name-organization ${vpName}: ${x}`));
+  (await axeViolations(fresh.page)).forEach((v) => fail(`name-organization ${vpName}: ${v}`));
+  const bgs = await fresh.page.evaluate(() => [document.documentElement, document.body, document.querySelector(".signin-page")].map((e) => getComputedStyle(e).backgroundColor));
+  if (new Set(bgs).size !== 1) fail(`name-organization ${vpName}: more than one background (${bgs.join(" / ")})`);
+  const prefill = await fresh.page.getByLabel("Organization name").inputValue();
+  if (prefill !== "Spazio Milano") fail(`name-organization ${vpName}: the field starts with "${prefill}"`);
+  await fresh.page.screenshot({ path: `screenshots/name-organization-${vpName}.png` });
+  fresh.errors.forEach((e) => fail(`console ${vpName}: ${e}`));
+  await fresh.ctx.close();
 }
 
 await browser.close();

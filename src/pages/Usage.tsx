@@ -10,6 +10,7 @@ import { useToast } from "../components/Toast";
 import { useAsync } from "../lib/useAsync";
 import { download } from "../lib/download";
 import { formatCompact, formatCount } from "../lib/format";
+import { Select } from "../components/Select";
 
 const PAGE_SIZE = 50;
 
@@ -94,15 +95,7 @@ export function UsagePage() {
       <div className="toolbar">
         <div className="field">
           <label htmlFor="u-month">Month</label>
-          <select id="u-month" value={month} onChange={(e) => update({ month: e.target.value })}>
-            {months.status === "ready" &&
-              months.data.map((m, i) => (
-                <option key={m} value={m}>
-                  {monthLabel(m)}
-                  {i === 0 ? " (so far)" : ""}
-                </option>
-              ))}
-          </select>
+          <Select id="u-month" value={month} onChange={(v) => update({ month: v })} options={months.status === "ready" ? months.data.map((m, i) => ({ value: m, label: `${monthLabel(m)}${i === 0 ? " (so far)" : ""}` })) : []} />
         </div>
         <div className="field field-seg">
           <span className="label" id="u-by-label">
@@ -119,22 +112,19 @@ export function UsagePage() {
         </div>
         <div className="field">
           <label htmlFor="u-key">Tag key</label>
-          <select id="u-key" value={tagKey} onChange={(e) => update({ key: e.target.value })}>
-            {tagKeys.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
-          </select>
+          <Select id="u-key" value={tagKey} onChange={(v) => update({ key: v })} options={tagKeys.map((k) => ({ value: k, label: k }))} />
         </div>
         <div className="field">
           <label htmlFor="u-sort">Sort by</label>
-          <select id="u-sort" value={`${sort}:${dir}`} onChange={(e) => { const [s, d] = e.target.value.split(":"); update({ sort: s, dir: d }); }}>
-            {columns.flatMap((c) => [
-              <option key={`${c.key}:asc`} value={`${c.key}:asc`}>{`${c.label}, ${c.key === "name" ? "A to Z" : "low to high"}`}</option>,
-              <option key={`${c.key}:desc`} value={`${c.key}:desc`}>{`${c.label}, ${c.key === "name" ? "Z to A" : "high to low"}`}</option>,
+          <Select
+            id="u-sort"
+            value={`${sort}:${dir}`}
+            onChange={(v) => { const [s, d] = v.split(":"); update({ sort: s, dir: d }); }}
+            options={columns.flatMap((c) => [
+              { value: `${c.key}:asc`, label: `${c.label}, ${c.key === "name" ? "A to Z" : "low to high"}` },
+              { value: `${c.key}:desc`, label: `${c.label}, ${c.key === "name" ? "Z to A" : "high to low"}` },
             ])}
-          </select>
+          />
         </div>
       </div>
 

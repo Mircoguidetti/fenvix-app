@@ -121,7 +121,7 @@ export function SettingsPage() {
       <div className="grid-2 even">
         {org.status === "ready" && <OrganizationCard />}
 
-        <Card id="workspace" title="Databases" description={readOnly ? "Only an owner or admin can change these." : "How new databases behave in this organization."}>
+        <Card id="workspace" title={nameHere ? "Workspace" : "Notifications"} description={readOnly ? "Only an owner or admin can change these." : "Emails FENVIX sends about this organization."}>
           {loaded.status === "loading" && <Message>Loading settings</Message>}
           {loaded.status === "error" && <Message role="alert">{loaded.message}</Message>}
           {form && (
@@ -133,15 +133,6 @@ export function SettingsPage() {
                     <input id="ws-name" value={form.workspaceName} maxLength={60} onChange={(e) => { setSaved(false); setForm({ ...form, workspaceName: e.target.value }); }} aria-invalid={error ? true : undefined} aria-describedby={error ? "ws-error" : undefined} />
                   </div>
                 )}
-                <div className="field">
-                  <label htmlFor="ws-idle">Sleep after idle</label>
-                  <select id="ws-idle" value={form.idleMinutes} onChange={(e) => { setSaved(false); setForm({ ...form, idleMinutes: Number(e.target.value) }); }}>
-                    {[1, 5, 15, 60].map((m) => (
-                      <option key={m} value={m}>{m === 60 ? "1 hour" : `${m} ${m === 1 ? "minute" : "minutes"}`}</option>
-                    ))}
-                  </select>
-                  <p className="muted small">New databases sleep after this much time with no requests.</p>
-                </div>
                 <label className="check">
                   <input type="checkbox" checked={form.emailNotices} onChange={(e) => { setSaved(false); setForm({ ...form, emailNotices: e.target.checked }); }} />
                   Email me about usage and account notices

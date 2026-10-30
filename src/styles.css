@@ -1,19 +1,22 @@
 /* Tokens. Black, white and greys for everything. Colour only where it means something: green, red and amber are
    status colours (see docs/status-colors.md), never decoration. Silver is a detail for accent lines, one highlighted
    card border and the fill under chart lines; never on or behind text. */
-/* One fixed theme: near-black navigation, white content. */
+/* One fixed theme: black navigation, white content. */
 :root {
   color-scheme: light;
+  /* The black of the landing page (fenvix-landing, index.html: its dark sections, .dk and --d0, are #000). Every black
+     in the dashboard is this token: text, buttons, the navigation, the sign-in screens. No other near-black. */
+  --black: #000000;
   --bg: #ffffff;
   --page: #fafafa;
   --surface: #f6f6f7;
   --surface-2: #efeff1;
   --border: #e7e7ea;
   --border-strong: #c3c3c9;
-  --text: #0a0a0b;
+  --text: var(--black);
   --muted: #65656b;
   --on-text: #ffffff;
-  --nav-bg: #0a0a0b;
+  --nav-bg: var(--black);
   --nav-text: #f4f4f6;
   --nav-muted: #9c9ca4;
   --nav-border: #232327;
@@ -22,8 +25,8 @@
   --grid: #ececef;
   --ink-2: #8a8a92;
   --ink-3: #c6c6cc;
-  --shadow: 0 1px 2px rgba(10, 10, 11, 0.05);
-  --shadow-lg: 0 10px 30px rgba(10, 10, 11, 0.12);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.12);
 
   /* Status colours, flat. On the light content (bg, page, surface, surface-2): at least 4.5:1, so text may use them. */
   --success: #067a3a; /* ready, awake, active, done, confirmed */
@@ -46,10 +49,13 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+/* The page behind everything is the black of the full-page screens (sign-in, naming the organization, loading), so
+   no other tone shows around them: not when the browser bar grows or shrinks, nor when the page is pulled past its
+   end. The dashboard covers it with its own background. */
+html { -webkit-text-size-adjust: 100%; background: var(--black); }
 body {
   margin: 0;
-  background: var(--bg);
+  background: var(--black);
   color: var(--text);
   font-family: var(--font);
   font-size: 15px;
@@ -59,7 +65,9 @@ body {
 h1, h2, p, dl, dd, fieldset { margin: 0; }
 h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
 h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
-a { color: inherit; }
+/* No underlines anywhere (see tests/unit/no-underline.test.ts): links and states are shown with weight, colour or a
+   background, and keyboard focus with the outline below. */
+a { color: inherit; text-decoration: none; }
 button, input, select, textarea { font: inherit; color: inherit; }
 .mono { font-family: var(--mono); font-size: 0.92em; font-variant-ligatures: none; }
 .small { font-size: 12.5px; }
@@ -131,7 +139,7 @@ main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 20px 16px 56px; 
 .page-title-row h1 { overflow-wrap: anywhere; }
 .page-desc { max-width: 68ch; }
 .back-link { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13.5px; text-decoration: none; align-self: flex-start; }
-.back-link:hover { color: var(--text); text-decoration: underline; }
+.back-link:hover { color: var(--text); }
 
 /* Tags and states */
 .tag { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 6px; font: 500 11px var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text); white-space: nowrap; }
@@ -146,7 +154,7 @@ main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 20px 16px 56px; 
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; }
 .card-head-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .card-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.card-controls select { height: 34px; width: auto; min-width: 124px; }
+.card-controls .select { min-width: 124px; }
 .card-desc { font-size: 13.5px; max-width: 70ch; }
 .grid-2 { display: grid; grid-template-columns: 1fr; gap: 20px; align-items: stretch; }
 @media (min-width: 980px) { .grid-2 { grid-template-columns: 3fr 2fr; } .grid-2.even { grid-template-columns: 1fr 1fr; } }
@@ -163,14 +171,34 @@ main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 20px 16px 56px; 
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field.grow { flex: 1 1 240px; }
 .field label { font-size: 13px; font-weight: 500; }
-input[type="text"], input:not([type]), input[type="search"], input[type="email"], input[type="datetime-local"], select, textarea {
+/* Every field, the select and the search: one height, radius, border and padding. */
+input[type="text"], input:not([type]), input[type="search"], input[type="email"], input[type="datetime-local"], textarea, .select-btn {
   height: 40px; width: 100%; padding: 0 12px; background: var(--bg); border: 1px solid var(--border-strong); border-radius: 10px;
 }
-select { padding-right: 8px; }
 textarea.code { font-variant-ligatures: none; height: auto; padding: 10px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.5; resize: none; overflow-wrap: anywhere; background: var(--bg); }
-.input-wrap { position: relative; display: flex; align-items: center; }
-.input-wrap svg { position: absolute; left: 12px; color: var(--muted); pointer-events: none; }
-.input-wrap input { padding-left: 36px; }
+/* Search: a magnifier in the field, a light border that darkens on hover and focus, no browser clear button. */
+.search { position: relative; display: flex; align-items: center; }
+.search svg { position: absolute; left: 12px; color: var(--muted); pointer-events: none; }
+.search input { padding-left: 36px; border-color: var(--border); background: var(--surface); -webkit-appearance: none; appearance: none; }
+.search input:hover, .search input:focus { border-color: var(--border-strong); background: var(--bg); }
+.search input::-webkit-search-cancel-button, .search input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+/* Select (components/Select.tsx): a button with the choice and a chevron, and a list with the choice ticked. */
+.select { position: relative; min-width: 0; }
+.select-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 10px; cursor: pointer; text-align: left; }
+.select-btn:hover:not(:disabled) { border-color: var(--ink-2); }
+.select-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.select-btn[aria-expanded="true"] { border-color: var(--text); }
+.select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-chevron { flex-shrink: 0; color: var(--muted); }
+.select-btn[aria-expanded="true"] .select-chevron { transform: rotate(180deg); }
+.select-sm .select-btn { height: 34px; }
+.select-list { position: fixed; z-index: 90; margin: 0; padding: 4px; list-style: none; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg); overflow-y: auto; }
+.select-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 0 10px; border-radius: 7px; cursor: pointer; font-size: 14px; }
+.select-option[data-active] { background: var(--surface-2); }
+.select-option[aria-selected="true"] { font-weight: 600; }
+.select-option[aria-disabled="true"] { color: var(--muted); cursor: not-allowed; }
+.suggest { position: relative; }
+.suggest-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); max-height: 320px; }
 input[aria-invalid="true"] { border-width: 2px; }
 .error { font-size: 13.5px; font-weight: 500; }
 .error::before { content: "Error: "; font-weight: 600; }
@@ -189,7 +217,7 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; accent-
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn-primary { background: var(--text); color: var(--on-text); border-color: var(--text); }
 .btn-primary:hover:not(:disabled) { background: var(--text); opacity: 0.88; }
-.btn-quiet { border-color: transparent; background: transparent; text-decoration: underline; text-underline-offset: 3px; padding: 0 6px; margin-top: 4px; }
+.btn-quiet { border-color: transparent; background: transparent; font-weight: 600; padding: 0 10px; margin-top: 4px; }
 .btn-sm { height: 34px; padding: 0 12px; }
 .row-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 
@@ -214,7 +242,8 @@ table.data tfoot th, table.data tfoot td { font-weight: 600; border-top: 1px sol
 .th-btn { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 4px 0; cursor: pointer; font: inherit; text-transform: inherit; letter-spacing: inherit; color: inherit; }
 .th-btn:hover { color: var(--text); }
 th.num .th-btn { flex-direction: row-reverse; }
-.row-link { text-underline-offset: 3px; }
+.row-link { font-weight: 600; border-radius: 4px; }
+.row-link:hover { color: var(--muted); }
 .actions-cell { text-align: right; }
 .result-count { font-size: 13.5px; margin-bottom: -8px; }
 .empty { border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: 32px 16px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; }
@@ -337,14 +366,15 @@ table.data tr[data-selected] { background: var(--surface-2); }
 a.btn { text-decoration: none; }
 
 /* ---------------------------------------------------------------- sign in */
-.signin-page { min-height: 100dvh; max-width: none; background: var(--nav-bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; padding: 40px 20px; }
+.signin-page { min-height: 100vh; min-height: 100dvh; width: 100%; max-width: none; background: var(--nav-bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; padding: 40px 20px; }
 .signin-mark { color: var(--nav-text); }
 .signin-card { width: min(420px, 100%); display: flex; flex-direction: column; gap: 18px; background: var(--bg); border-radius: 16px; padding: 32px; }
 .signin-card h1 { font-size: 26px; }
 .signin-lead { margin-top: -12px; }
 .signin-providers { display: flex; flex-direction: column; gap: 10px; }
 .signin-terms { line-height: 1.5; }
-.signin-terms a { text-underline-offset: 3px; }
+.signin-terms a { color: var(--text); font-weight: 600; }
+.signin-terms a:hover { color: var(--muted); }
 .btn-lg { height: 46px; font-size: 15px; }
 .divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
 .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
@@ -361,9 +391,9 @@ a.btn { text-decoration: none; }
 .kpi-spark { margin-top: auto; padding-top: 8px; }
 .spark { display: block; width: 100%; height: 30px; }
 .spark-line { stroke: var(--text); stroke-width: 1.5; stroke-linejoin: round; }
-.spark-area { fill: rgba(10, 10, 11, 0.07); } /* fallback; the charts fill it with the silver gradient */
+.spark-area { fill: rgba(0, 0, 0, 0.07); } /* fallback; the charts fill it with the silver gradient */
 
-.chart-area { fill: rgba(10, 10, 11, 0.12); }
+.chart-area { fill: rgba(0, 0, 0, 0.12); }
 .chart-line { stroke: var(--text); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .chart-line-dash { stroke: var(--ink-2); stroke-width: 1.5; stroke-dasharray: 5 4; }
 .chart-dot { fill: var(--text); }
@@ -373,12 +403,12 @@ a.btn { text-decoration: none; }
 .chart-summary { font-size: 13px; }
 .legend { display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-left: 4px; }
 .key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; background: var(--text); margin-right: 5px; vertical-align: middle; }
-.key-fill { height: 11px; width: 11px; border-radius: 3px; background: rgba(10, 10, 11, 0.14); border: 1px solid rgba(10, 10, 11, 0.45); }
+.key-fill { height: 11px; width: 11px; border-radius: 3px; background: rgba(0, 0, 0, 0.14); border: 1px solid rgba(0, 0, 0, 0.45); }
 .key-line-dash { background: repeating-linear-gradient(90deg, var(--ink-2) 0 5px, transparent 5px 9px); }
 .key-block { width: 11px; height: 11px; border-radius: 3px; }
 .legend-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; }
 .legend-list li { display: inline-flex; align-items: center; gap: 6px; }
-:root { --stack-0: #0a0a0b; --stack-1: #3a3a42; --stack-2: #61616b; --stack-3: #8c8c94; --stack-4: #b6b6bd; --stack-5: #dadadf; }
+:root { --stack-0: var(--black); --stack-1: #3a3a42; --stack-2: #61616b; --stack-3: #8c8c94; --stack-4: #b6b6bd; --stack-5: #dadadf; }
 
 .hbars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .hbars li { display: grid; grid-template-columns: var(--label-w, 150px) minmax(0, 1fr) auto; align-items: center; gap: 12px; }
@@ -474,6 +504,7 @@ table.data.dbs tbody tr { height: 58px; }
 .plan-features { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 6px; flex: 1; font-size: 13px; }
 .plan-features li { display: flex; align-items: flex-start; gap: 8px; }
 .plan-features svg { flex-shrink: 0; margin-top: 3px; }
+.form-col { display: flex; flex-direction: column; gap: 20px; max-width: 640px; }
 .ticks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
 .ticks li { position: relative; padding-left: 22px; }
 .ticks li::before { content: ""; position: absolute; left: 2px; top: 7px; width: 8px; height: 8px; border-radius: 50%; background: var(--text); }
@@ -522,7 +553,7 @@ table.data.dbs tbody tr { height: 58px; }
 .json-tree { font-size: 12.5px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .node-children { padding-left: 16px; border-left: 1px solid var(--border); margin-left: 4px; }
 .node-toggle { display: inline; border: 0; padding: 0; background: transparent; cursor: pointer; text-align: left; font: inherit; }
-.node-toggle:hover { text-decoration: underline; }
+.node-toggle:hover { background: var(--surface-2); border-radius: 4px; }
 .t-string { color: var(--text); }
 .t-int32, .t-int64, .t-double, .t-decimal128, .t-number, .t-objectId, .t-date, .t-uuid { font-weight: 600; }
 .dialog-wide { width: min(760px, calc(100vw - 32px)); }
@@ -543,7 +574,7 @@ textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflo
 
 /* Organizations: switcher, read-only note, settings sections, members. Black, white and grey like the rest. */
 .workspace-slot { position: relative; }
-.workspace-avatar { background: #000000; color: #ffffff; border: 1px solid #3a3a40; }
+.workspace-avatar { background: var(--black); color: #ffffff; border: 1px solid #3a3a40; }
 .workspace-btn { width: 100%; min-height: 44px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: inherit; cursor: pointer; text-align: left; font: inherit; }
 .workspace-btn:hover, .workspace-btn[aria-expanded="true"] { background: var(--nav-hover); }
 .workspace-btn:focus-visible { outline-color: var(--nav-text); }
@@ -554,7 +585,7 @@ textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflo
 .org-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; font: inherit; font-size: 13.5px; }
 .org-item:hover { background: var(--surface-2); }
 .org-item[aria-current="true"] { font-weight: 600; }
-.org-item .workspace-avatar { border-color: #000000; font-size: 12px; border-radius: 7px; }
+.org-item .workspace-avatar { border-color: var(--black); font-size: 12px; border-radius: 7px; }
 .org-item-text { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.3; }
 .org-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .org-item-role { font-size: 12px; color: var(--muted); font-weight: 400; }
@@ -571,7 +602,7 @@ textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflo
 .members-table .cell-text { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .member-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .member-name .tag { flex-shrink: 0; }
-.select-sm { height: 34px; width: auto; min-width: 110px; }
+.members-table .select { width: fit-content; min-width: 110px; }
 .members-table td.actions-cell { text-align: right; }
 .members-table td.actions-cell .row-actions { justify-content: flex-end; flex-wrap: nowrap; }
 @media (min-width: 761px) {
@@ -588,7 +619,8 @@ textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflo
 }
 .gate-foot { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 14px; color: var(--nav-muted); font-size: 13.5px; max-width: min(420px, 100%); text-align: center; }
 .gate-who { overflow-wrap: anywhere; }
-.btn-link { background: transparent; border: 0; padding: 0; color: var(--nav-text); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font: inherit; }
+.btn-link { background: transparent; border: 0; padding: 4px 10px; border-radius: 8px; color: var(--nav-text); cursor: pointer; font: inherit; font-weight: 600; }
+.btn-link:hover { background: var(--nav-hover); }
 .btn-link:focus-visible { outline-color: var(--nav-text); }
 
 /* Network tab: the IP allowlist and the blocked addresses. Long IPv6 networks wrap instead of widening the page. */
@@ -655,13 +687,8 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
 .toast-error .toast-icon { color: var(--danger-on-dark); }
 .toast-error { box-shadow: inset 3px 0 0 var(--danger-on-dark); }
 
-/* Silver: the line under the selected tab and menu item, the border of the current plan, the fill under chart lines. */
-.detail-tabs button, .settings-tabs .seg-link { position: relative; }
-.detail-tabs button[aria-pressed="true"]::after, .nav-link.active::after {
-  content: ""; position: absolute; left: 10px; right: 10px; bottom: 4px; height: 2px; border-radius: 2px; background: var(--silver); pointer-events: none;
-}
-.nav-link { position: relative; }
-.nav-link.active::after { bottom: 3px; }
+/* Silver: the border of the current plan and the fill under chart lines. The selected tab and menu item are shown by
+   their background and weight, with no line under them. */
 .plan-current { border: 2px solid transparent; box-shadow: none; background: linear-gradient(var(--bg), var(--bg)) padding-box, linear-gradient(135deg, var(--silver-3), var(--silver-1) 30%, var(--silver-2) 50%, var(--silver-1) 70%, var(--silver-3)) border-box; }
 .silver-stop-1 { stop-color: var(--silver-3); stop-opacity: 0.32; }
 .silver-stop-2 { stop-color: var(--silver-1); stop-opacity: 0.22; }
