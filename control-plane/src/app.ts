@@ -191,7 +191,8 @@ export async function buildApp(opts: AppOptions): Promise<App> {
   await fastify.register(async (pub) => publicRoutes(pub, deps), { prefix: PUBLIC_PREFIX });
   const openapi = JSON.stringify(buildOpenApi(cfg.apiPublicUrl, cfg.regions));
   fastify.get("/v1/openapi.json", async (req, reply) => {
-    deps.limiter.hit(`anon:${req.ip}`, cfg.rateLimitAnonPerMinute);
+    // Its own counter: reading the document is not a failed sign-in, and must not use up the address's anon budget.
+    deps.limiter.hit(`spec:${req.ip}`, 120);
     return reply.header("Content-Type", "application/json; charset=utf-8").header("Cache-Control", "public, max-age=300").send(openapi);
   });
 

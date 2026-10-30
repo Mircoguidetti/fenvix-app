@@ -35,8 +35,8 @@ before(async () => {
   h = await startHarness({ RATE_LIMIT_PER_MINUTE: "100000", PUBLIC_API_RATE_LIMIT_PER_MINUTE: "100000" });
   a = await h.user("Alice");
   b = await h.user("Bob");
-  aKey = json(await h.as(a).post("/public/api-keys", { name: "a", role: "admin" })).token;
-  const made = json(await h.as(b).post("/public/api-keys", { name: "b", role: "admin" }));
+  aKey = json(await h.as(a).post("/public/api-keys", { name: "a", role: "admin" }, { "x-fenvix-workspace": a.workspaceId })).token;
+  const made = json(await h.as(b).post("/public/api-keys", { name: "b", role: "admin" }, { "x-fenvix-workspace": b.workspaceId }));
   bKey = made.token;
   bKeyId = made.key.id;
   const created = await h.as(bKey).post("/public/databases", { name: "bob-secret", region: "eu-central-1" });
@@ -67,7 +67,7 @@ const cases: Record<string, () => Promise<{ res: Res; check?: (r: Res) => void }
   "GET /v1/public/operations/:id": async () => ({ res: await h.as(aKey).get(`/public/operations/${bOp}`) }),
   "GET /v1/public/api-keys": async () => ({ res: await h.as(aKey).get("/public/api-keys?limit=100"), check: (r) => assert.ok(!r.body.includes(bKeyId)) }),
   "POST /v1/public/api-keys": async () => ({
-    res: await h.as(aKey).post("/public/api-keys", { name: "made by a", role: "admin" }),
+    res: await h.as(aKey).post("/public/api-keys", { name: "made by a", role: "read_only" }),
     check: (r) => { assert.equal(r.statusCode, 201); },
   }),
   "DELETE /v1/public/api-keys/:id": async () => ({ res: await h.as(aKey).del(`/public/api-keys/${bKeyId}`) }),

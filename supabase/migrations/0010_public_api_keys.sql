@@ -15,6 +15,9 @@
 --     fenvix_cp_resolve_public_api_key, like fenvix_cp_resolve_api_key in 0002. It returns revoked and expired keys too,
 --     so the service can refuse them AND record the refused attempt in that workspace's audit log.
 --
+--   * Keys do not outlive their creator: triggers at the end revoke a person's admin keys when they leave the
+--     organization or drop below admin, and every key made by a key when that key is revoked.
+--
 -- Every create, revoke and refused sign-in is recorded in public.audit_log (0002): api_key.public.create,
 -- api_key.public.revoke, api_key.public.auth_failed.
 
@@ -60,5 +63,73 @@ $$;
 
 revoke all on function public.fenvix_cp_resolve_public_api_key(text) from public, anon, authenticated;
 grant execute on function public.fenvix_cp_resolve_public_api_key(text) to fenvix_control_plane;
+
+-- ---------------------------------------------------------------- keys do not outlive their creator
+--
+-- In Postgres rather than in the service, so it holds however the change is made (the control plane's routes, an
+-- account deletion, the Supabase SQL editor):
+--   * a person who leaves or is removed from an organization, or whose role drops below admin: the ADMIN keys they
+--     made in that organization are revoked (their read-only keys stay);
+--   * a key that is revoked: every key it made is revoked too (and so on down).
+-- Each revoke gets an audit row: api_key.public.revoke by 'system', with metadata.reason and metadata.creator.
+-- Nothing happens when the whole organization is being deleted (its keys and audit rows go with it).
+
+create or replace function public.public_api_keys_revoke(p_ws uuid, p_ids uuid[], p_reason text, p_creator text)
+returns void
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare k uuid;
+begin
+  if p_ids is null or cardinality(p_ids) = 0 then return; end if;
+  if not exists (select 1 from public.workspaces where id = p_ws) then return; end if;
+  for k in
+    update public.public_api_keys set revoked_at = now()
+     where workspace_id = p_ws and id = any(p_ids) and revoked_at is null
+    returning id
+  loop
+    insert into public.audit_log (workspace_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata)
+    values (p_ws, 'system', null, 'api_key.public.revoke', 'public_api_key', k::text, 'ok',
+            jsonb_build_object('reason', p_reason, 'creator', p_creator));
+  end loop;
+end $$;
+revoke all on function public.public_api_keys_revoke(uuid, uuid[], text, text) from public, anon, authenticated;
+
+create or replace function public.public_api_keys_on_membership() returns trigger
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if tg_op = 'DELETE' or (old.role in ('owner', 'admin') and new.role not in ('owner', 'admin')) then
+    perform public.public_api_keys_revoke(
+      old.workspace_id,
+      array(select id from public.public_api_keys
+             where workspace_id = old.workspace_id and created_by_type = 'user' and created_by = old.user_id::text
+               and role = 'admin' and revoked_at is null),
+      case when tg_op = 'DELETE' then 'creator_removed' else 'creator_demoted' end,
+      old.user_id::text);
+  end if;
+  return null;
+end $$;
+revoke all on function public.public_api_keys_on_membership() from public, anon, authenticated;
+
+drop trigger if exists workspace_members_revoke_public_keys on public.workspace_members;
+create trigger workspace_members_revoke_public_keys after update of role or delete on public.workspace_members
+  for each row execute function public.public_api_keys_on_membership();
+
+create or replace function public.public_api_keys_on_revoke() returns trigger
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if old.revoked_at is null and new.revoked_at is not null then
+    perform public.public_api_keys_revoke(
+      new.workspace_id,
+      array(select id from public.public_api_keys
+             where workspace_id = new.workspace_id and created_by_type = 'api_key' and created_by = new.id::text and revoked_at is null),
+      'creator_revoked',
+      new.id::text);
+  end if;
+  return null;
+end $$;
+revoke all on function public.public_api_keys_on_revoke() from public, anon, authenticated;
+
+drop trigger if exists public_api_keys_cascade_revoke on public.public_api_keys;
+create trigger public_api_keys_cascade_revoke after update of revoked_at on public.public_api_keys
+  for each row execute function public.public_api_keys_on_revoke();
 
 notify pgrst, 'reload schema';

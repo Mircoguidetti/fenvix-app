@@ -3,9 +3,9 @@ import type { Caller } from "../../context.ts";
 import { ApiError, forbidden, validation } from "../../errors.ts";
 import { type Deps, READ_ONLY } from "../../http.ts";
 import * as idem from "../../idempotency.ts";
-import { auditWho, writeAudit } from "../../audit.ts";
 import { type OperationRow, loadOperation, operationError, viewOperation } from "../../services/operations.ts";
 import { type PublicCaller, authenticatePublic } from "../../auth/apikeys.ts";
+import { auditDenied } from "../../services/apikeys.ts";
 import type { Obj } from "../../validate.ts";
 
 /**
@@ -34,7 +34,18 @@ export interface RouteOpts {
   session?: boolean;
   /** Idempotency-Key handling for changes: "standard" replays the first answer, "no-replay" answers 409 (secrets). */
   idem?: "standard" | "no-replay";
+  /** The query parameters the route reads; any other one is a 400. */
+  query?: string[];
+  /**
+   * Called when the change was made but its answer cannot be given (recording the Idempotency-Key failed): undoes what
+   * only this answer would have revealed (a new key, a new password), so nothing is left that nobody can use.
+   */
+  undo?: (ctx: PublicCtx, body: unknown) => Promise<void>;
 }
+
+/** What each public route was registered with, as "METHOD /v1/public/path" (tests compare it with the OpenAPI document). */
+export interface RouteMeta { role: "any" | "admin"; session: boolean; query: string[]; idem: boolean }
+export const PUBLIC_ROUTE_META = new Map<string, RouteMeta>();
 
 /**
  * The body of a finished operation. `first` is true only for the answer to the request that submitted it (where a
@@ -57,16 +68,17 @@ export function publicHelpers(app: FastifyInstance, d: Deps, present: Presenter)
     const role = opts.role ?? (changing ? "admin" : "any");
     if (role === "admin" && who.caller.role === "member") {
       // A read-only key (or a member) trying to change something: refused before anything is read, and recorded.
-      if (who.key) {
-        await s.db.tx(who.caller.workspaceId, (c) => writeAudit(c, auditWho(who.caller), {
-          action: "api_key.public.denied", targetType: "public_api_key", targetId: who.key!.id, outcome: "denied",
-          metadata: { method: req.method, route: req.routeOptions.url },
-        })).catch(() => {});
-      }
+      if (who.key) await auditDenied(s, who.caller, who.key.id, { method: req.method, route: req.routeOptions.url ?? "" });
       throw forbidden(who.key ? "This API key is read only. Use a key with the admin role." : READ_ONLY);
     }
     reply.header("Cache-Control", "no-store");
-    return { ...who, req, reply, q: (req.query ?? {}) as Obj, params: (req.params ?? {}) as Obj, body: req.body };
+    const q = (req.query ?? {}) as Obj;
+    const unknown = Object.keys(q).find((k) => !(opts.query ?? []).includes(k));
+    if (unknown !== undefined) {
+      const allowed = opts.query?.length ? `Use only ${opts.query.join(" and ")}.` : "This route takes none.";
+      throw validation(`Unknown query parameter. ${allowed}`, unknown.length <= 40 && /^[A-Za-z0-9_]+$/.test(unknown) ? unknown : undefined);
+    }
+    return { ...who, req, reply, q, params: (req.params ?? {}) as Obj, body: req.body };
   }
 
   /** A finished operation as the route's answer; still running: 202 with the operation and where to poll it. */
@@ -93,6 +105,7 @@ export function publicHelpers(app: FastifyInstance, d: Deps, present: Presenter)
     render,
 
     read(url: string, opts: RouteOpts, handler: (ctx: PublicCtx) => Promise<unknown>): void {
+      PUBLIC_ROUTE_META.set(`GET ${app.prefix}${url}`, { role: opts.role ?? "any", session: opts.session ?? false, query: opts.query ?? [], idem: false });
       app.get(url, async (req, reply) => {
         const ctx = await auth(req, reply, opts, false);
         return reply.code(200).send(await handler(ctx));
@@ -101,6 +114,7 @@ export function publicHelpers(app: FastifyInstance, d: Deps, present: Presenter)
 
     write(method: "POST" | "PUT" | "DELETE", url: string, opts: RouteOpts, handler: (ctx: PublicCtx) => Promise<PublicOutcome>): void {
       const mode = opts.idem ?? "standard";
+      PUBLIC_ROUTE_META.set(`${method} ${app.prefix}${url}`, { role: opts.role ?? "admin", session: opts.session ?? false, query: opts.query ?? [], idem: true });
       app.route({
         method, url,
         handler: async (req, reply) => {
@@ -135,7 +149,15 @@ export function publicHelpers(app: FastifyInstance, d: Deps, present: Presenter)
               reply.header("Pragma", "no-cache");
               return send(reply, r);
             }
-            if (key) await idem.finish(s, caller, key, mode === "no-replay" ? { status: out.status } : { status: out.status, body: out.body });
+            if (key) {
+              try {
+                await idem.finish(s, caller, key, mode === "no-replay" ? { status: out.status } : { status: out.status, body: out.body });
+              } catch (e) {
+                // The change is made but this answer will not be sent: take back what only it would have shown.
+                if (opts.undo) await opts.undo(ctx, out.body).catch((u) => req.log.error({ err: u instanceof Error ? u.message : String(u) }, "could not undo a change whose answer was not sent"));
+                throw e;
+              }
+            }
             if (mode === "no-replay") reply.header("Pragma", "no-cache");
             return send(reply, out);
           } catch (e) {

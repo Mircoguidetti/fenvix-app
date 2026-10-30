@@ -7,8 +7,9 @@ test("a slow create gets a 202 pointing at /v1/public/operations/{id}; the poll 
   const t = await startHarness({ OPERATION_WAIT_MS: "100" });
   try {
     const w = await t.user();
-    const token = json(await t.as(w).post("/public/api-keys", { name: "ops", role: "admin" })).token;
-    const ro = json(await t.as(w).post("/public/api-keys", { name: "ops-ro", role: "read_only" })).token;
+    const org = { "x-fenvix-workspace": w.workspaceId };
+    const token = json(await t.as(w).post("/public/api-keys", { name: "ops", role: "admin" }, org)).token;
+    const ro = json(await t.as(w).post("/public/api-keys", { name: "ops-ro", role: "read_only" }, org)).token;
     t.engine.delay("create", 500);
     const res = await t.as(token).post("/public/databases", { name: "slow-public-01", region: "eu-central-1" });
     assert.equal(res.statusCode, 202, res.body);

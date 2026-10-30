@@ -108,7 +108,9 @@ export function buildOpenApi(apiPublicUrl: string, regions: string[]) {
         get: op("listApiKeys", "List API keys", { admin: true, session: true, params: [P.cursor, P.limit], responses: { "200": json(page("ApiKey"), "A page of keys, newest first. Never the key itself."), "403": err("The key is read only.") } }),
         post: op("createApiKey", "Create an API key", {
           admin: true, session: true, idem: true,
-          description: "The key (`token`) is in this answer only; store it now. Repeating the request with the same Idempotency-Key answers 409.",
+          description: "The key (`token`) is in this answer only; store it now. Repeating the request with the same Idempotency-Key answers 409. "
+            + "At most 100 active keys per organization (409). Only a dashboard session creates admin keys; a key creates read_only keys "
+            + "that expire no later than itself (and must expire if it does), and that are revoked when it is. A session must send X-Fenvix-Workspace.",
           body: obj({ name: str({ minLength: 1, maxLength: 60 }), role: str({ enum: ["admin", "read_only"] }), expiresAt: dateTime(true) }, ["name", "role"]),
           responses: { "201": json(obj({ key: ref("ApiKey"), token: str({ pattern: "^fvx_[A-Za-z0-9_-]{43}$" }) }), "Created."), ...changing },
         }),
@@ -120,7 +122,7 @@ export function buildOpenApi(apiPublicUrl: string, regions: string[]) {
     components: {
       securitySchemes: {
         apiKey: { type: "http", scheme: "bearer", bearerFormat: "fvx_<43 characters>", description: "A public API key of your organization." },
-        session: { type: "http", scheme: "bearer", bearerFormat: "JWT", description: "A signed-in dashboard session (owner or admin). Only for managing API keys, so the first key can be made." },
+        session: { type: "http", scheme: "bearer", bearerFormat: "JWT", description: "A signed-in dashboard session (owner or admin), with the organization named in X-Fenvix-Workspace. Only for managing API keys, so the first key can be made." },
       },
       schemas: {
         Error: obj({ error: obj({ code: str({ enum: ["validation_failed", "unauthenticated", "forbidden", "not_found", "conflict", "rate_limited", "internal", "unavailable"] }), message: str(), field: str() }, ["code", "message"]) }),

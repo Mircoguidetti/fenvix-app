@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { Deps } from "../../http.ts";
-import { notFound, validation } from "../../errors.ts";
+import { conflict, notFound, validation } from "../../errors.ts";
 import { asObject, isUuid, parseName, parseTags } from "../../validate.ts";
 import * as ops from "../../services/operations.ts";
 import * as du from "../../services/db-users.ts";
@@ -53,7 +53,9 @@ export function publicRoutes(app: FastifyInstance, d: Deps): void {
 
   // ---------------------------------------------------------------- databases
 
-  read("/databases", {}, async ({ caller, q }) =>
+  const PAGE = ["cursor", "limit"];
+
+  read("/databases", { query: PAGE }, async ({ caller, q }) =>
     pdb.listDatabases(s, caller, { limit: keys.parseLimit(q.limit), cursor: keys.decodeCursor(q.cursor) }));
 
   // Same rules as the dashboard's create (routes/data.ts): name, region, tags, initial user.
@@ -71,13 +73,15 @@ export function publicRoutes(app: FastifyInstance, d: Deps): void {
   // The dashboard's erase, for one database. Unlike the bulk erase, an id that is not there is a 404.
   write("DELETE", "/databases/:id", {}, async (c) => {
     const id = dbId(c);
-    await pdb.getDatabase(s, c.caller, id);
+    const db = await pdb.getDatabase(s, c.caller, id);
+    // Already being erased: say so rather than answer for an erase this request did not start.
+    if (db.status === "erasing") throw conflict("This database is already being erased.");
     return { submitted: await ops.submitErase(s, c.caller, [id]) };
   });
 
   // ---------------------------------------------------------------- database users
 
-  read("/databases/:id/users", {}, async (c) => {
+  read("/databases/:id/users", { query: PAGE }, async (c) => {
     const limit = keys.parseLimit(c.q.limit);
     const after = c.q.cursor === undefined || c.q.cursor === "" ? null : decodeUserCursor(c.q.cursor);
     const all = (await du.listUsers(usersCtx(c, false), dbId(c))).items.sort((a, b) => (a.username < b.username ? -1 : 1));
@@ -87,7 +91,12 @@ export function publicRoutes(app: FastifyInstance, d: Deps): void {
   });
 
   // The password is in this answer only: a repeat with the same Idempotency-Key is a 409 (as on the dashboard).
-  write("POST", "/databases/:id/users", { idem: "no-replay" }, async (c) =>
+  // If the answer cannot be sent, the user is dropped again: nobody would have its password.
+  const dropUndelivered = async (c: PublicCtx, body: unknown) => {
+    const username = (body as { user?: { username?: string } } | null)?.user?.username;
+    if (username) await du.deleteUser({ s, caller: c.caller, log: c.req.log }, dbId(c), username);
+  };
+  write("POST", "/databases/:id/users", { idem: "no-replay", undo: dropUndelivered }, async (c) =>
     ({ status: 201, body: await du.createUser(usersCtx(c, true), dbId(c), c.body) }));
 
   write("DELETE", "/databases/:id/users/:username", {}, async (c) =>
@@ -117,11 +126,16 @@ export function publicRoutes(app: FastifyInstance, d: Deps): void {
 
   // ---------------------------------------------------------------- API keys (owner or admin, or an admin key)
 
-  read("/api-keys", { role: "admin", session: true }, async ({ caller, q }) =>
+  read("/api-keys", { role: "admin", session: true, query: PAGE }, async ({ caller, q }) =>
     keys.listKeys(s, caller, { limit: keys.parseLimit(q.limit), cursor: keys.decodeCursor(q.cursor) }));
 
-  // The key is in this answer only: a repeat with the same Idempotency-Key is a 409, never a second key.
-  write("POST", "/api-keys", { role: "admin", session: true, idem: "no-replay" }, async ({ caller, body }) =>
+  // The key is in this answer only: a repeat with the same Idempotency-Key is a 409, never a second key. If the answer
+  // cannot be sent, the key is revoked at once: nobody would have its token.
+  const revokeUndelivered = async (c: PublicCtx, body: unknown) => {
+    const id = (body as { key?: { id?: string } } | null)?.key?.id;
+    if (id) await keys.revokeUndelivered(s, c.caller, id);
+  };
+  write("POST", "/api-keys", { role: "admin", session: true, idem: "no-replay", undo: revokeUndelivered }, async ({ caller, body }) =>
     ({ status: 201, body: await keys.createKey(s, caller, body) }));
 
   write("DELETE", "/api-keys/:id", { role: "admin", session: true }, async ({ caller, params }) =>

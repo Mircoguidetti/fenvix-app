@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { type Caller, type Services } from "../context.ts";
 import { iso } from "../db.ts";
 import { auditWho, writeAudit } from "../audit.ts";
-import { notFound, validation } from "../errors.ts";
+import { conflict, forbidden, notFound, unauthenticated, validation } from "../errors.ts";
 import { type Obj, isUuid } from "../validate.ts";
 
 /**
@@ -93,10 +93,38 @@ export function parseNewKey(body: unknown, now = new Date()): { name: string; ro
   return { name, role: b.role as KeyRole, expiresAt };
 }
 
+/** Keys that are neither revoked nor expired, per organization. */
+export const MAX_ACTIVE_KEYS = 100;
+
+/**
+ * Rules for a key made by another key (a person's session has none of these):
+ *  - it cannot be an admin key: only a person signed in to the dashboard makes admin keys;
+ *  - it cannot expire later than the key that makes it, and it must expire if that key does.
+ * (A key made by a key is also revoked when that key is revoked: migration 0010.)
+ */
+function checkCreator(k: { role: KeyRole; expiresAt: Date | null }, creator: { expires_at: Date | null } | undefined): void {
+  if (k.role === "admin") throw forbidden("Only an owner or admin signed in to the dashboard can create admin keys. An API key can create read_only keys.");
+  if (!creator) throw unauthenticated("That API key is not valid, has expired or has been revoked.");
+  if (creator.expires_at === null) return;
+  const limit = new Date(creator.expires_at);
+  if (k.expiresAt === null) throw validation(`This API key expires, so the keys it creates must expire too: set expiresAt to ${iso(limit)} or earlier.`, "expiresAt");
+  if (k.expiresAt.getTime() > limit.getTime()) throw validation(`expiresAt cannot be later than the expiry of the key creating it (${iso(limit)}).`, "expiresAt");
+}
+
 export async function createKey(s: Services, caller: Caller, body: unknown) {
   const k = parseNewKey(body);
   const token = newToken();
   const key = await s.db.tx(caller.workspaceId, async (c) => {
+    if (caller.actor.type === "api_key") {
+      const creator = (await c.query("select expires_at from public.public_api_keys where workspace_id = $1 and id = $2 and revoked_at is null", [caller.workspaceId, caller.actor.id])).rows[0];
+      checkCreator(k, creator);
+    }
+    // One create at a time per organization, so two at once cannot both take the last place.
+    await c.query("select pg_advisory_xact_lock(hashtext('public_api_keys:' || $1))", [caller.workspaceId]);
+    const active = (await c.query(
+      "select count(*)::int as n from public.public_api_keys where workspace_id = $1 and revoked_at is null and (expires_at is null or expires_at > now())",
+      [caller.workspaceId])).rows[0].n as number;
+    if (active >= MAX_ACTIVE_KEYS) throw conflict(`An organization can have up to ${MAX_ACTIVE_KEYS} active API keys. Revoke one first.`);
     const row = (await c.query(
       `insert into public.public_api_keys (workspace_id, name, role, key_hash, prefix, created_by_type, created_by, expires_at)
        values ($1, $2, $3, $4, $5, $6, $7, $8) returning *`,
@@ -137,6 +165,56 @@ export async function revokeKey(s: Services, caller: Caller, id: unknown) {
   });
 }
 
+/**
+ * The key was made but its answer could not be completed (the Idempotency-Key record failed): nobody has the token, so
+ * the key is revoked at once rather than left active. Recorded with reason "not_delivered".
+ */
+export async function revokeUndelivered(s: Services, caller: Caller, id: string): Promise<void> {
+  await s.db.tx(caller.workspaceId, async (c) => {
+    const row = (await c.query("update public.public_api_keys set revoked_at = coalesce(revoked_at, now()) where workspace_id = $1 and id = $2 returning id", [caller.workspaceId, id])).rows[0];
+    if (row) await writeAudit(c, auditWho(caller), { action: "api_key.public.revoke", targetType: "public_api_key", targetId: id, metadata: { reason: "not_delivered" } });
+  });
+}
+
+// ---------------------------------------------------------------- audit rows for refusals, at most one a minute
+
+/**
+ * Lets one audit row through per subject (a key, or an address) and window; counts the ones it holds back, and hands
+ * that count to the next row it lets through (metadata.suppressed). In memory, per instance: with N instances, at most
+ * N rows a minute per subject.
+ */
+export class AuditThrottle {
+  private readonly seen = new Map<string, { until: number; suppressed: number }>();
+  private readonly windowMs: number;
+  private readonly now: () => number;
+
+  constructor(windowMs = 60_000, now: () => number = Date.now) {
+    this.windowMs = windowMs;
+    this.now = now;
+  }
+
+  /** Whether to write a row for `subject` now, and how many were held back since the last one written. */
+  take(subject: string): { write: true; suppressed: number } | { write: false } {
+    const t = this.now();
+    if (this.seen.size > 50_000) for (const [k, v] of this.seen) if (v.until <= t) this.seen.delete(k);
+    const e = this.seen.get(subject);
+    if (e && e.until > t) {
+      e.suppressed++;
+      return { write: false };
+    }
+    this.seen.set(subject, { until: t + this.windowMs, suppressed: 0 });
+    return { write: true, suppressed: e?.suppressed ?? 0 };
+  }
+}
+
+const throttles = new WeakMap<Services, AuditThrottle>();
+/** The throttle of one running service (one per app, so tests with several apps do not share one). */
+export function auditThrottle(s: Services): AuditThrottle {
+  let t = throttles.get(s);
+  if (!t) { t = new AuditThrottle(); throttles.set(s, t); }
+  return t;
+}
+
 // ---------------------------------------------------------------- resolving a key
 
 export type Resolved =
@@ -162,10 +240,25 @@ export async function resolveKey(s: Services, token: string, now = Date.now()): 
   return { ok: true, keyId: String(r.key_id), workspaceId: String(r.workspace_id), role: r.role };
 }
 
-/** A refused sign-in with a key that exists, in its organization's audit log. Never the key, never its hash. */
+/**
+ * A refused sign-in with a key that exists, in its organization's audit log: at most one row a minute per key, with the
+ * number held back since the previous one. Never the key, never its hash.
+ */
 export async function auditFailedAuth(s: Services, r: { keyId: string; workspaceId: string; reason: string }, req: { id: string; ip: string; method: string; path: string }) {
+  const t = auditThrottle(s).take(`auth_failed:${r.keyId}`);
+  if (!t.write) return;
   await s.db.tx(r.workspaceId, (c) => writeAudit(c,
     { workspaceId: r.workspaceId, actor: { type: "api_key", id: r.keyId }, requestId: req.id, ip: req.ip },
-    { action: "api_key.public.auth_failed", targetType: "public_api_key", targetId: r.keyId, outcome: "denied", metadata: { reason: r.reason, method: req.method, path: req.path } },
+    { action: "api_key.public.auth_failed", targetType: "public_api_key", targetId: r.keyId, outcome: "denied", metadata: { reason: r.reason, method: req.method, path: req.path, suppressed: t.suppressed } },
   )).catch((e) => s.log.error({ err: e instanceof Error ? e.message : String(e) }, "could not record a refused API key in the audit log"));
+}
+
+/** A change refused to a read-only key: at most one row a minute per key, like auditFailedAuth. */
+export async function auditDenied(s: Services, caller: Caller, keyId: string, req: { method: string; route: string }) {
+  const t = auditThrottle(s).take(`denied:${keyId}`);
+  if (!t.write) return;
+  await s.db.tx(caller.workspaceId, (c) => writeAudit(c, auditWho(caller), {
+    action: "api_key.public.denied", targetType: "public_api_key", targetId: keyId, outcome: "denied",
+    metadata: { method: req.method, route: req.route, suppressed: t.suppressed },
+  })).catch((e) => s.log.error({ err: e instanceof Error ? e.message : String(e) }, "could not record a refused change in the audit log"));
 }

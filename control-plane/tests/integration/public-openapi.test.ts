@@ -2,6 +2,7 @@ import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { type Harness, json, startHarness } from "../helpers/harness.ts";
+import { PUBLIC_ROUTE_META } from "../../src/routes/public/http.ts";
 
 /**
  * GET /v1/openapi.json describes exactly the public routes: none missing, none that do not exist. And the guide
@@ -61,13 +62,46 @@ test("every operation has an id, a summary, 2xx and 401 answers, and every $ref 
   for (const r of refs) assert.ok(spec.components.schemas[r], `missing schema ${r}`);
 });
 
+/** The operation object of a "METHOD /v1/public/path/:param" route. */
+const operationOf = (route: string) => {
+  const [method, url] = route.split(" ");
+  const path = url!.replace("/v1/public", "").replace(/:(\w+)/g, "{$1}");
+  return spec.paths[path][method!.toLowerCase()];
+};
+
+test("each operation says the role, session access, parameters and Idempotency-Key the route really has", () => {
+  const routes = appRoutes();
+  assert.equal(PUBLIC_ROUTE_META.size >= routes.length, true);
+  const wrong: string[] = [];
+  for (const r of routes) {
+    const meta = PUBLIC_ROUTE_META.get(r);
+    assert.ok(meta, `no registration record for ${r}`);
+    const o = operationOf(r);
+    if (o["x-fenvix-role"] !== meta.role) wrong.push(`${r}: role ${o["x-fenvix-role"]} in the document, ${meta.role} in the route`);
+    const session = (o.security ?? spec.security).some((x: Record<string, unknown>) => "session" in x);
+    if (session !== meta.session) wrong.push(`${r}: session ${session} in the document, ${meta.session} in the route`);
+    const params = (o.parameters ?? []) as { name: string; in: string; required?: boolean }[];
+    const pathNames = [...r.matchAll(/:(\w+)/g)].map((m) => m[1]).sort();
+    const docPath = params.filter((p) => p.in === "path").map((p) => p.name).sort();
+    if (JSON.stringify(docPath) !== JSON.stringify(pathNames)) wrong.push(`${r}: path parameters ${docPath} in the document, ${pathNames} in the route`);
+    if (params.some((p) => p.in === "path" && p.required !== true)) wrong.push(`${r}: a path parameter is not required`);
+    const docQuery = params.filter((p) => p.in === "query").map((p) => p.name).sort();
+    if (JSON.stringify(docQuery) !== JSON.stringify([...meta.query].sort())) wrong.push(`${r}: query ${docQuery} in the document, ${meta.query} in the route`);
+    const idem = params.some((p) => p.in === "header" && p.name === "Idempotency-Key");
+    if (idem !== meta.idem) wrong.push(`${r}: Idempotency-Key ${idem} in the document, ${meta.idem} in the route`);
+  }
+  // Routes refuse query parameters they were not registered with (public-api.test.ts), so this is about behaviour.
+  assert.deepEqual(wrong, []);
+});
+
 test("the guide has a curl example for every public route", () => {
   const doc = readFileSync(new URL("../../docs/public-api.md", import.meta.url), "utf8");
   for (const r of specRoutes()) {
     const [method, url] = r.split(" ");
     const path = url!.replace("/v1/public", "").replace(/:(\w+)/g, "[^\\s\"']+");
-    const methodFlag = method === "GET" ? "" : `-X ${method} `;
-    const re = new RegExp(`curl[^\\n]*${methodFlag.replace(/ /g, "\\s+")}[^\\n]*\\$FENVIX_API${path}(\\?|\\s|"|$)`, "m");
+    // A GET example is a curl line with no -X at all, so a POST example cannot stand in for it.
+    const lead = method === "GET" ? "curl(?![^\\n]*\\s-X\\s)[^\\n]*" : `curl[^\\n]*\\s-X\\s+${method}\\s[^\\n]*`;
+    const re = new RegExp(`${lead}\\$FENVIX_API${path}(\\?|\\s|"|$)`, "m");
     assert.match(doc, re, `no curl example for ${r}`);
   }
 });

@@ -25,16 +25,18 @@ has one role. The role is applied exactly as the dashboard applies an organizati
 
 | Key role | Acts like | Can |
 | --- | --- | --- |
-| `admin` | an organization **admin** | everything below, including creating and revoking keys |
+| `admin` | an organization **admin** | everything below, including creating `read_only` keys and revoking keys |
 | `read_only` | an organization **member** | every `GET` except listing API keys; every change is `403` |
 
 * A key only ever reaches its own organization. Ids of another organization's databases, users, keys or operations
   answer `404`, exactly like ids that do not exist. Sending `X-Fenvix-Workspace` with another organization is a `404`.
 * No key, a malformed key, an unknown key, a revoked key and an expired key all get the same `401`. Revoked and expired
-  keys are also recorded in the organization's audit log (`api_key.public.auth_failed`, with the reason).
+  keys are also recorded in the organization's audit log (`api_key.public.auth_failed`, with the reason; at most one
+  row a minute per key, see "How keys are kept").
 * The dashboard's own keys (`fnx_...`) do not work here, and `fvx_` keys do not work on the dashboard's routes.
 * The key management routes (`/api-keys`) also accept a signed-in dashboard session of an owner or admin, so the
-  first key can be made. Every other route takes keys only.
+  first key can be made. A session must name the organization with `X-Fenvix-Workspace: <organization id>`; without
+  it the answer is `400` (there is no default organization). Every other route takes keys only.
 
 ## Conventions
 
@@ -45,6 +47,7 @@ has one role. The role is applied exactly as the dashboard applies an organizati
   to have it kept; quote it when you contact support.
 * **Pages.** Lists take `limit` (1 to 100, default 20) and `cursor`, and answer `{ "items": [...], "nextCursor" }`.
   Pass `nextCursor` back as `cursor` for the next page; it is `null` on the last page. Cursors are opaque.
+* **Query parameters** a route does not take are refused (`400`, `field` names the parameter), not ignored.
 * **Idempotency.** Any `POST`, `PUT` or `DELETE` can carry `Idempotency-Key: <1 to 255 visible characters>`. For 24
   hours the same key with the same request answers what the first one answered, with `Idempotent-Replay: true`; the
   same key with a different request is `409`. A `400` or `5xx` frees the key so you can fix and retry. Answers that
@@ -54,7 +57,11 @@ has one role. The role is applied exactly as the dashboard applies an organizati
   is `202 { "operation": {...} }` with `Location` and `Retry-After`; poll `GET /operations/{id}`.
 * **Rate limits.** Each key has its own limit (`PUBLIC_API_RATE_LIMIT_PER_MINUTE`, default 120 a minute), on top of the
   organization's (`RATE_LIMIT_PER_MINUTE`). Over it: `429` with `Retry-After` in seconds. Database user routes have
-  their own, smaller limits (as on the dashboard). Wrong keys count against your address.
+  their own, smaller limits (as on the dashboard). Wrong or missing keys count against your address
+  (`RATE_LIMIT_ANON_PER_MINUTE`, default 30); once over it, further wrong keys get `429`. A **valid key is never held
+  back by that address counter**, so failed or anonymous traffic from the same address (a NAT, a shared CI runner)
+  cannot lock out a working key. Fetching `/v1/openapi.json` has its own counter (120 a minute per address) and does
+  not count as a failure.
 
 ## Databases
 
@@ -81,7 +88,8 @@ Get one. `status` is `ready`, `restoring` or `erasing`; `state` is `awake` or `a
 curl -sS "$FENVIX_API/databases/$DATABASE_ID" -H "Authorization: Bearer $FENVIX_KEY"
 ```
 
-Delete (admin key). Erases the database and its data; `200 { "id", "deleted": true }`, or `202` while it runs.
+Delete (admin key). Erases the database and its data; `200 { "id", "deleted": true }`, or `202` while it runs. A
+database that is already being erased (`status: "erasing"`) answers `409`.
 
 ```bash
 curl -sS -X DELETE "$FENVIX_API/databases/$DATABASE_ID" -H "Authorization: Bearer $FENVIX_KEY"
@@ -152,14 +160,24 @@ curl -sS "$FENVIX_API/api-keys" -H "Authorization: Bearer $FENVIX_KEY"
 ```
 
 Create. `role` is `admin` or `read_only`; `expiresAt` is optional (at most 3 years ahead). The answer is
-`201 { "key": {...}, "token": "fvx_..." }`; store `token` now.
+`201 { "key": {...}, "token": "fvx_..." }`; store `token` now. Rules:
+
+* At most **100 active keys** per organization (revoked and expired keys do not count); the 101st is a `409`.
+* **Admin keys are made only by a person** signed in to the dashboard (owner or admin). A key can create `read_only`
+  keys only (`403` otherwise).
+* A key made by a key **expires no later than its creator**: if the creating key expires, `expiresAt` is required
+  and must be on or before the creator's expiry (`400`, `field: "expiresAt"`).
+* If the answer cannot be completed after the key was made (the `Idempotency-Key` record could not be saved), the key
+  is revoked at once (audit reason `not_delivered`) and the request fails with `500`: retry it. The same goes for a new
+  database user, which is dropped again.
 
 ```bash
 curl -sS -X POST "$FENVIX_API/api-keys" -H "Authorization: Bearer $FENVIX_KEY" \
   -H "Content-Type: application/json" -d '{"name": "ci deploys", "role": "read_only", "expiresAt": "2027-06-30T00:00:00Z"}'
 ```
 
-Revoke. Takes effect on the next request; revoking twice changes nothing.
+Revoke. Takes effect on the next request; revoking twice changes nothing. Keys made by the revoked key are revoked
+with it (and keys made by those, and so on).
 
 ```bash
 curl -sS -X DELETE "$FENVIX_API/api-keys/$KEY_ID" -H "Authorization: Bearer $FENVIX_KEY"
@@ -182,12 +200,36 @@ The first key: until the dashboard has a page for public keys, an owner or admin
   `api_key.public.auth_failed` (revoked or expired, with method and path), `api_key.public.denied` (a read-only key
   tried a change). Changes made with a key are recorded with `actor_type = 'api_key'` and the key's id, like the
   dashboard's own audit rows.
-* An admin key can create more keys (so automation can rotate its own). A stolen admin key is as strong as an admin:
-  revoke it, then check `api_key.public.create` rows in the audit log for keys it made.
+* **Audit growth.** `api_key.public.auth_failed` and `api_key.public.denied` are written at most once a minute per
+  key; the refusals held back in between are counted, and the next row says how many in `metadata.suppressed`. The
+  window is kept in memory per instance, so with N instances there are at most N rows a minute per key. A wrong key
+  that matches no key has no organization to log into: it gets a log line (the reason only) and counts against the
+  address.
+* An admin key can create `read_only` keys (so automation can hand out narrower keys), never admin keys. A stolen
+  admin key is as strong as an admin: revoke it; every key it made is revoked with it.
+
+## Keys do not outlive their creator
+
+Enforced in Postgres (triggers in migration `0010`), so it holds however the change is made: through the dashboard,
+the control plane, an account deletion or the Supabase SQL editor.
+
+| What happens | What is revoked | Audit row (`api_key.public.revoke`, actor `system`) |
+| --- | --- | --- |
+| A person leaves the organization or is removed from it (or their account is deleted) | the **admin** keys they created in it | `metadata.reason = "creator_removed"`, `metadata.creator = <user id>` |
+| A person's role drops below admin (owner or admin to member) | the **admin** keys they created in it | `reason = "creator_demoted"` |
+| A key is revoked (by anyone, or by one of the rules above) | every key it created, and so on down | `reason = "creator_revoked"`, `creator = <key id>` |
+
+* `read_only` keys a person created stay when they leave or are demoted; they can only read, and an owner or admin
+  can revoke them. An owner who becomes an admin keeps their keys (still admin).
+* The request that removed or demoted the person has its own audit row (`member.remove`, `member.role_change`,
+  `organization.leave`) with who did it.
+* Nothing is revoked or recorded when the whole organization is deleted: its keys go with it.
 
 ## Applying the migration
 
-`supabase/migrations/0010_public_api_keys.sql` is repeatable and changes nothing that exists (new table, new function).
+`supabase/migrations/0010_public_api_keys.sql` is repeatable and changes no existing data: a new table, its policy, four
+new functions and two new triggers (one on the new table, one `after update of role or delete` on
+`public.workspace_members`, which only revokes public API keys).
 It needs `0002_control_plane.sql` (the role `fenvix_control_plane` and `cp_workspace()`) and `0001_init.sql`. **Apply it
 before deploying the version of the control plane that has the public API**; the old version ignores the table.
 
@@ -199,8 +241,9 @@ before deploying the version of the control plane that has the public API**; the
    lists `fenvix_control_plane` (`SELECT`, `INSERT`) and no `anon` or `authenticated`.
 4. Optional: set `PUBLIC_API_RATE_LIMIT_PER_MINUTE` on the service (default 120).
 
-To undo (before anyone has made a key): `drop function public.fenvix_cp_resolve_public_api_key(text); drop table
-public.public_api_keys;`.
+To undo (before anyone has made a key): `drop trigger workspace_members_revoke_public_keys on public.workspace_members;
+drop table public.public_api_keys; drop function public.public_api_keys_on_membership(), public.public_api_keys_on_revoke(),
+public.public_api_keys_revoke(uuid, uuid[], text, text), public.fenvix_cp_resolve_public_api_key(text);`.
 
 ## Not in this version
 

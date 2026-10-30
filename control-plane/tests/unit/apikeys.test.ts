@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { TOKEN_RE, decodeCursor, encodeCursor, hashToken, keyStatus, newToken, parseLimit, parseNewKey } from "../../src/services/apikeys.ts";
+import { AuditThrottle, TOKEN_RE, decodeCursor, encodeCursor, hashToken, keyStatus, newToken, parseLimit, parseNewKey } from "../../src/services/apikeys.ts";
 import { ApiError } from "../../src/errors.ts";
 
 test("tokens: fvx_ and 43 base64url characters, all different, hashed with SHA-256", () => {
@@ -53,4 +53,19 @@ test("status: revoked wins, then expired, else active", () => {
   assert.equal(keyStatus({ revoked_at: null, expires_at: new Date(now - 1) }, now), "expired");
   assert.equal(keyStatus({ revoked_at: null, expires_at: new Date(now + 1000) }, now), "active");
   assert.equal(keyStatus({ revoked_at: new Date(now - 5), expires_at: new Date(now - 1) }, now), "revoked");
+});
+
+test("audit throttle: one row per subject a minute; the next row carries how many were held back", () => {
+  let now = 0;
+  const t = new AuditThrottle(60_000, () => now);
+  assert.deepEqual(t.take("denied:k1"), { write: true, suppressed: 0 });
+  for (let i = 0; i < 7; i++) assert.deepEqual(t.take("denied:k1"), { write: false });
+  assert.deepEqual(t.take("denied:k2"), { write: true, suppressed: 0 }, "another key has its own window");
+  assert.deepEqual(t.take("auth_failed:k1"), { write: true, suppressed: 0 }, "another kind of row has its own window");
+  now = 59_999;
+  assert.deepEqual(t.take("denied:k1"), { write: false });
+  now = 60_000;
+  assert.deepEqual(t.take("denied:k1"), { write: true, suppressed: 8 });
+  now = 200_000;
+  assert.deepEqual(t.take("denied:k1"), { write: true, suppressed: 0 });
 });
