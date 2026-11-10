@@ -10,7 +10,8 @@ import { useTheme } from "../lib/theme";
 /*
  * The console's frame, laid out like the mockups (fenvix-brain sessions/2026-11-10-console-ui):
  * - a top bar with where you are (organization / area / database), the theme button and the account;
- * - a thin bar of area icons that widens over the page while the pointer is on it;
+ * - a bar of areas: open with its names where nothing follows it, a thin bar of icons that widens on hover where a
+ *   second bar follows it;
  * - a second bar only where there is a level below the area: one database's sections, or the organization's
  *   settings, with a box at the bottom. It never repeats the icon bar.
  * Below 900px the two bars become one drawer. Only layout changed: every page, route and action is the one it was.
@@ -54,6 +55,9 @@ export function useDatabaseTitle(name: string | undefined) {
     return () => set("");
   }, [name, set]);
 }
+
+/** Where a second bar follows the area bar: inside a database, and in the organization settings. */
+const hasSubNav = (path: string) => dbIdOf(path) !== null || path.startsWith("/settings") || path.startsWith("/api-keys");
 
 /** A database page: /databases/<id>, not the list and not /databases/new. */
 function dbIdOf(path: string): string | null {
@@ -167,11 +171,16 @@ function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgS
   );
 }
 
-/** The thin bar of area icons. It widens over the page while the pointer is on it. */
-function Rail({ path }: { path: string }) {
-  const [wide, setWide] = useState(false);
+/**
+ * The bar of areas. Where no second bar follows it, it stays open with its names. Where a second bar follows it (a
+ * database, the organization settings) it is a thin bar of icons that widens over the page while the pointer is on it
+ * and closes when the pointer leaves, so the second bar shows again.
+ */
+function Rail({ path, open }: { path: string; open: boolean }) {
+  const [hover, setHover] = useState(false);
+  const wide = open || hover;
   return (
-    <nav className="cx-rail" aria-label="Areas" data-wide={wide || undefined} onMouseEnter={() => setWide(true)} onMouseLeave={() => setWide(false)}>
+    <nav className="cx-rail" aria-label="Areas" data-wide={wide || undefined} data-open={open || undefined} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <div className="cx-rail-inner">
         {AREAS.map((a) => (
           <Link key={a.key} to={a.to} className="cx-rail-link" aria-current={a.match(path) ? "page" : undefined} title={a.label}>
@@ -305,7 +314,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </header>
 
         <div className="cx-body">
-          <Rail path={pathname} />
+          <Rail path={pathname} open={!hasSubNav(pathname)} />
           <SubNav path={pathname} orgName={orgName} orgSub={orgSub} />
           <div className="cx-content">
             <main id="main" tabIndex={-1}>

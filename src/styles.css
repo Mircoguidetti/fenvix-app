@@ -1271,6 +1271,9 @@ html:has(.cx-shell), body:has(.cx-shell) { height: 100%; overflow: hidden; }
 .cx-rail { position: relative; flex: 0 0 56px; z-index: 20; }
 .cx-rail-inner { position: absolute; inset: 0 auto 0 0; width: 56px; display: flex; flex-direction: column; gap: 2px; padding: 10px 8px 12px; background: var(--nav-bg); border-right: 1px solid var(--nav-border); overflow: hidden; }
 .cx-rail[data-wide] .cx-rail-inner { width: 232px; box-shadow: 8px 0 24px rgba(9, 12, 20, 0.5); }
+/* Open for good where no second bar follows: it takes its own room and casts no shadow. */
+.cx-rail[data-open] { flex-basis: 232px; }
+.cx-rail[data-open] .cx-rail-inner { box-shadow: none; }
 .cx-rail-link { display: flex; align-items: center; gap: 12px; width: 100%; height: 40px; padding: 0 11px; border: 0; border-radius: 8px; background: transparent; color: var(--nav-muted); font: 500 14px var(--font); white-space: nowrap; text-align: left; cursor: pointer; }
 .cx-rail-link svg { flex-shrink: 0; }
 .cx-rail-link:hover { background: var(--nav-hover); color: var(--nav-text); }
