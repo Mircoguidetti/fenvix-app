@@ -8,27 +8,27 @@
   --black: #06080e;
   --bg: #ffffff; /* cards, fields, dialogs */
   --page: #f6f6f7; /* the page behind the cards */
-  --surface: #f5f5f8;
-  --surface-2: #f0f0f3;
-  --border: #e6e6e9;
-  --border-strong: #d9d9dc;
-  --line-soft: #f1f1f4; /* row separators inside a table */
+  --surface: #f5f6f8;
+  --surface-2: #eff0f4;
+  --border: #e1e4ec;
+  --border-strong: #d1d6e2;
+  --line-soft: #eff1f5; /* row separators inside a table */
   --text: var(--black);
-  --muted: #616164; /* secondary text: 5.5:1 on the page */
-  --muted-2: #67676a; /* hints, column headings: 4.5:1 or more on every light surface */
+  --muted: #4d5a78; /* secondary text: 5.5:1 on the page */
+  --muted-2: #525f80; /* hints, column headings: 4.5:1 or more on every light surface */
   --on-text: #f6f6f7; /* text on a primary (ink) fill */
   --on-text-muted: #a8a8a8;
-  --primary-hover: #222225;
+  --primary-hover: #1c212c;
   --nav-bg: var(--black);
   --nav-text: #f6f6f7;
-  --nav-muted: #acb1bb;
-  --nav-label: #979daa;
-  --nav-border: #1e2229;
-  --nav-hover: rgba(255, 255, 255, 0.05);
-  --nav-active: rgba(255, 255, 255, 0.11);
-  --grid: #ececef;
-  --ink-2: #8f8f92;
-  --ink-3: #cbcbce;
+  --nav-muted: #a8b1c7;
+  --nav-label: #8c98b5;
+  --nav-border: #1d222e;
+  --nav-hover: rgba(120, 150, 220, 0.08);
+  --nav-active: rgba(120, 150, 220, 0.16);
+  --grid: #e8eaf0;
+  --ink-2: #7886a8;
+  --ink-3: #c0c6d6;
   --chart: var(--text);
   --shadow: none;
   --shadow-lg: 0 12px 32px rgba(6, 8, 14, 0.16);
@@ -1243,7 +1243,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
 /* ================= Console frame (components/Shell.tsx), as in the mockups ================= */
 html:has(.cx-shell), body:has(.cx-shell) { height: 100%; overflow: hidden; }
 .cx-shell { display: flex; flex-direction: column; height: 100dvh; background: var(--page); color: var(--text); }
-.cx-top { position: relative; z-index: 30; flex-shrink: 0; display: flex; align-items: center; gap: 8px; min-height: calc(68px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) max(12px, env(safe-area-inset-right, 0px)) 0 max(8px, env(safe-area-inset-left, 0px)); background: var(--nav-bg); color: var(--nav-text); box-shadow: inset 0 -1px 0 var(--nav-border); }
+.cx-top { position: relative; z-index: 30; flex-shrink: 0; display: flex; align-items: center; gap: 8px; min-height: calc(68px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) max(16px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px)); background: var(--nav-bg); color: var(--nav-text); box-shadow: inset 0 -1px 0 var(--nav-border); }
 .cx-top .logo, .cx-drawer .logo { color: #f6f6f7; }
 .cx-logo { display: inline-flex; align-items: center; min-height: var(--touch); padding: 0 8px; border-radius: 8px; }
 .cx-logo:focus-visible, .cx-crumb a:focus-visible { outline-color: var(--nav-text); }
@@ -1322,7 +1322,7 @@ html:has(.cx-shell), body:has(.cx-shell) { height: 100%; overflow: hidden; }
 @media (min-width: 900px) {
   .cx-menu, .cx-drawer, .cx-shell .scrim { display: none !important; }
   .cx-crumbs { display: flex; }
-  .cx-top { min-height: 56px; }
+  .cx-top { min-height: 64px; padding-left: 20px; padding-right: 24px; }
   .cx-rail { display: block; }
   .cx-sub { display: flex; }
   /* Inside a database the second bar lists its sections, so the page does not repeat them as tabs. */
