@@ -1,11 +1,11 @@
-/* Tokens, from the FENVIX landing: ink #090c14 and paper #f6f6f7, white cards, neutral greys. Colour only where it means
+/* Tokens, from the FENVIX landing: ink #05070b and paper #f6f6f7, white cards, neutral greys. Colour only where it means
    something: green, red and amber are status colours (see docs/status-colors.md), never decoration. Two themes: light
    (default) and dark. The theme follows the device until the person picks one with the button in the top bar
    (lib/theme.ts sets data-theme on <html>). */
 :root {
   color-scheme: light;
   /* The brand ink: the navigation, the sign-in panel, primary buttons in light. */
-  --black: #090c14;
+  --black: #05070b;
   --bg: #ffffff; /* cards, fields, dialogs */
   --page: #f6f6f7; /* the page behind the cards */
   --surface: #f4f5f7;
@@ -31,8 +31,8 @@
   --ink-3: #c8cbd2;
   --chart: var(--text);
   --shadow: none;
-  --shadow-lg: 0 12px 32px rgba(9, 12, 20, 0.16);
-  --focus: 0 0 0 3px rgba(9, 12, 20, 0.14);
+  --shadow-lg: 0 12px 32px rgba(5, 7, 11, 0.16);
+  --focus: 0 0 0 3px rgba(5, 7, 11, 0.14);
 
   /* Status colours, flat. On the light content: at least 4.5:1, so text may use them. */
   --success: #067a3a;
@@ -49,7 +49,7 @@
   --silver-3: #7c828b;
   --silver: linear-gradient(90deg, var(--silver-1) 0%, var(--silver-2) 50%, var(--silver-3) 100%);
   --silver-btn: linear-gradient(180deg, #f4f5f7, #c4c8ce);
-  --signin-primary: #090c14;
+  --signin-primary: var(--black);
 
   --font: "Schibsted Grotesk Variable", "Schibsted Grotesk", system-ui, sans-serif;
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
@@ -63,7 +63,7 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0f1522;
-  --page: #090c14;
+  --page: var(--black);
   --surface: #141c2e;
   --surface-2: #1b2742;
   --border: #222c42;
@@ -72,7 +72,7 @@
   --text: #f6f6f7;
   --muted: #a7b3cc;
   --muted-2: #9aa6c0;
-  --on-text: #090c14;
+  --on-text: var(--black);
   --on-text-muted: #4b5468;
   --primary-hover: #d6d9df;
   --nav-bg: var(--black);
@@ -80,7 +80,7 @@
   --grid: #1f2a44;
   --ink-2: #6b7896;
   --ink-3: #33425f;
-  --shadow-lg: 0 12px 32px rgba(9, 12, 20, 0.7);
+  --shadow-lg: 0 12px 32px rgba(5, 7, 11, 0.7);
   --focus: 0 0 0 3px rgba(246, 246, 247, 0.2);
   --success: #3ddc84;
   --danger: #ff6a5c;
@@ -91,7 +91,7 @@
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     --bg: #0f1522;
-    --page: #090c14;
+    --page: var(--black);
     --surface: #141c2e;
     --surface-2: #1b2742;
     --border: #222c42;
@@ -100,7 +100,7 @@
     --text: #f6f6f7;
     --muted: #a7b3cc;
     --muted-2: #9aa6c0;
-    --on-text: #090c14;
+    --on-text: var(--black);
     --on-text-muted: #4b5468;
     --primary-hover: #d6d9df;
     --nav-bg: var(--black);
@@ -108,7 +108,7 @@
     --grid: #1f2a44;
     --ink-2: #6b7896;
     --ink-3: #33425f;
-    --shadow-lg: 0 12px 32px rgba(9, 12, 20, 0.7);
+    --shadow-lg: 0 12px 32px rgba(5, 7, 11, 0.7);
     --focus: 0 0 0 3px rgba(246, 246, 247, 0.2);
     --success: #3ddc84;
     --danger: #ff6a5c;
@@ -195,7 +195,7 @@ main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 20px 16px 56px; 
 .topbar .icon-btn:focus-visible, .drawer .icon-btn:focus-visible { outline-color: var(--nav-text); }
 
 /* Drawer (below 900px): the same items as the sidebar, sliding in from the left. */
-.scrim { position: fixed; inset: 0; background: rgba(11, 18, 32, 0.55); z-index: 40; }
+.scrim { position: fixed; inset: 0; background: rgba(5, 7, 11, 0.55); z-index: 40; }
 .drawer { position: fixed; inset: 0 auto 0 0; width: min(320px, 88vw); z-index: 50; background: var(--nav-bg); color: var(--nav-text); padding: calc(14px + env(safe-area-inset-top, 0px)) 14px calc(14px + var(--safe-b)) max(14px, env(safe-area-inset-left, 0px)); display: flex; flex-direction: column; gap: 14px; overflow-y: auto; overscroll-behavior: contain; }
 .drawer[hidden] { display: none; }
 .drawer .nav-link { min-height: var(--touch); font-size: 15px; }
@@ -366,7 +366,7 @@ table.plain th.num, table.plain td.num { text-align: right; }
 /* Dialog */
 .dialog { border: 0; border-radius: 14px; box-shadow: var(--shadow-lg); background: var(--bg); color: var(--text); padding: 22px 24px; width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; }
 .dialog:not([open]) { display: none; }
-.dialog::backdrop { background: rgba(11, 18, 32, 0.55); }
+.dialog::backdrop { background: rgba(5, 7, 11, 0.55); }
 .dialog h2 { font-size: 17px; margin-bottom: 8px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
 
@@ -478,9 +478,9 @@ html:has(.signin-page), body:has(.signin-page) { background: var(--page); }
 .kpi-spark { margin-top: auto; padding-top: 8px; }
 .spark { display: block; width: 100%; height: 30px; }
 .spark-line { stroke: var(--chart); stroke-width: 1.25; stroke-linejoin: round; }
-.spark-area { fill: rgba(11, 18, 32, 0.07); } /* fallback; the charts fill it with the silver gradient */
+.spark-area { fill: rgba(5, 7, 11, 0.07); } /* fallback; the charts fill it with the silver gradient */
 
-.chart-area { fill: rgba(11, 18, 32, 0.1); }
+.chart-area { fill: rgba(5, 7, 11, 0.1); }
 .chart-line { stroke: var(--chart); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
 .chart-line-dash { stroke: var(--ink-2); stroke-width: 1.5; stroke-dasharray: 5 4; }
 .chart-dot { fill: var(--chart); }
@@ -490,7 +490,7 @@ html:has(.signin-page), body:has(.signin-page) { background: var(--page); }
 .chart-summary { font-size: 13px; }
 .legend { display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-left: 4px; }
 .key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; background: var(--text); margin-right: 5px; vertical-align: middle; }
-.key-fill { height: 11px; width: 11px; border-radius: 3px; background: rgba(11, 18, 32, 0.14); border: 1px solid rgba(11, 18, 32, 0.45); }
+.key-fill { height: 11px; width: 11px; border-radius: 3px; background: rgba(5, 7, 11, 0.14); border: 1px solid rgba(5, 7, 11, 0.45); }
 .key-line-dash { background: repeating-linear-gradient(90deg, var(--ink-2) 0 5px, transparent 5px 9px); }
 .key-block { width: 11px; height: 11px; border-radius: 3px; }
 .legend-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; }
@@ -1186,7 +1186,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
 .role-fieldset { display: flex; flex-direction: column; gap: 8px; }
 .role-fieldset legend { padding: 0; margin-bottom: 8px; font-size: 13.5px; font-weight: 600; }
 .choice { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--bg); cursor: pointer; }
-.choice[data-on] { border-color: var(--text); background: var(--surface); box-shadow: 0 0 0 3px rgba(11, 18, 32, 0.12); }
+.choice[data-on] { border-color: var(--text); background: var(--surface); box-shadow: 0 0 0 3px rgba(5, 7, 11, 0.12); }
 .choice input { margin: 3px 0 0; }
 .choice > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .choice-title { font-weight: 600; font-size: 13.5px; }
@@ -1270,7 +1270,7 @@ html:has(.cx-shell), body:has(.cx-shell) { height: 100%; overflow: hidden; }
 /* The thin bar of areas; it widens over the page on hover. */
 .cx-rail { position: relative; flex: 0 0 56px; z-index: 20; }
 .cx-rail-inner { position: absolute; inset: 0 auto 0 0; width: 56px; display: flex; flex-direction: column; gap: 2px; padding: 10px 8px 12px; background: var(--nav-bg); border-right: 1px solid var(--nav-border); overflow: hidden; }
-.cx-rail[data-wide] .cx-rail-inner { width: 232px; box-shadow: 8px 0 24px rgba(9, 12, 20, 0.5); }
+.cx-rail[data-wide] .cx-rail-inner { width: 232px; box-shadow: 8px 0 24px rgba(5, 7, 11, 0.5); }
 /* Open for good where no second bar follows: it takes its own room and casts no shadow. */
 .cx-rail[data-open] { flex-basis: 232px; }
 .cx-rail[data-open] .cx-rail-inner { box-shadow: none; }
@@ -1334,7 +1334,7 @@ html:has(.cx-shell), body:has(.cx-shell) { height: 100%; overflow: hidden; }
 
 /* ================= Sign-in, as in the mockup: the landing's black hero beside the form ================= */
 .signin-page { min-height: 100vh; min-height: 100dvh; width: 100%; max-width: none; margin: 0; padding: 0; gap: 0; display: flex; flex-direction: row; flex-wrap: wrap; align-items: stretch; justify-content: stretch; background: var(--page); }
-.signin-hero { display: none; position: relative; overflow: hidden; flex: 1.25 1 520px; padding: 36px 48px 48px; background: #090c14; color: #f6f6f7; }
+.signin-hero { display: none; position: relative; overflow: hidden; flex: 1.25 1 520px; padding: 36px 48px 48px; background: var(--black); color: #f6f6f7; }
 .hero-visual { position: absolute; top: 0; bottom: 0; left: -30%; width: 160%; }
 .hero-visual canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .signin-hero-logo { position: relative; }

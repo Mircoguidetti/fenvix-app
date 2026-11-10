@@ -887,7 +887,7 @@ const TESTS = {
     assert(!mine.empty.length, `empty elements in the organization box: ${mine.empty.join(", ")}`);
     assert(mine.tag === "BUTTON", "the organization box is not a button");
     assert(!mine.brandInside, "the brand is inside the organization box");
-    assert(mine.bg === "rgb(9, 12, 20)" && mine.fg === "rgb(255, 255, 255)", `the avatar is not the dark colour with a white initial: ${mine.bg} ${mine.fg}`);
+    assert(mine.bg === "rgb(5, 7, 11)" && mine.fg === "rgb(255, 255, 255)", `the avatar is not the dark colour with a white initial: ${mine.bg} ${mine.fg}`);
     // The logo mark is white (with its fade) on the dark navigation, not tinted.
     const mark = await page.evaluate(() => {
       const svg = document.querySelector(".cx-top .logo svg");
