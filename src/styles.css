@@ -37,7 +37,7 @@
   /* Status colours, flat. On the light content: at least 4.5:1, so text may use them. */
   --success: #067a3a;
   --danger: #d6140a;
-  --warning: #a15c00;
+  --warning: #9c5900;
   /* The same meanings on the dark navigation and toasts. */
   --success-on-dark: #3ddc84;
   --danger-on-dark: #ff6a5c;

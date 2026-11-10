@@ -96,11 +96,11 @@ test("the status colours are saturated and are green, red and amber", () => {
   for (const s of ["warning", "warning-on-dark"]) assert.ok(hue(T[s]) >= 25 && hue(T[s]) <= 50, `--${s} is not amber (${hue(T[s]).toFixed(0)}°)`);
 });
 
-test("silver is a cool, soft grey gradient that stays visible on the white content and on the black surfaces", () => {
+test("silver is a cool, soft blue-slate gradient that stays visible on the white content and on the black surfaces", () => {
   const stops = ["silver-1", "silver-2", "silver-3"].map((n) => T[n]);
   for (const s of stops) {
     assert.match(s, /^#[0-9a-f]{6}$/i);
-    assert.ok(chroma(s) < NEUTRAL, `${s} is not a grey`);
+    assert.ok(chroma(s) < 0.4, `${s} is not soft (too saturated for a fill)`);
     const [r, , b] = rgb(s);
     assert.ok(b >= r, `${s} is not cool (blue channel below red)`);
   }

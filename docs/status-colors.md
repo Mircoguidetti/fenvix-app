@@ -16,7 +16,7 @@ the "status colours and silver" section at the end of that file.
 | --- | --- | --- |
 | `--success` | `#067a3a` | ready, awake, active, paid, done, confirmed |
 | `--danger` | `#d6140a` | errors, blocked addresses, failures, actions that cannot be undone |
-| `--warning` | `#a15c00` | starting, in progress, needs attention |
+| `--warning` | `#9c5900` | starting, in progress, needs attention |
 | `--success-on-dark` | `#3ddc84` | the same on a dark surface (toasts) |
 | `--danger-on-dark` | `#ff6a5c` | the same on a dark surface (toasts) |
 | `--warning-on-dark` | `#ffb020` | the same on a dark surface (defined, not used yet: no amber toast exists) |
