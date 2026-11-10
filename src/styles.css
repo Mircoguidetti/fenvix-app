@@ -1,11 +1,11 @@
-/* Tokens, from the FENVIX landing: ink #05070b and paper #f6f6f7, white cards, neutral greys. Colour only where it means
+/* Tokens, from the FENVIX landing: ink #06080e and paper #f6f6f7, white cards, neutral greys. Colour only where it means
    something: green, red and amber are status colours (see docs/status-colors.md), never decoration. Two themes: light
    (default) and dark. The theme follows the device until the person picks one with the button in the top bar
    (lib/theme.ts sets data-theme on <html>). */
 :root {
   color-scheme: light;
   /* The brand ink: the navigation, the sign-in panel, primary buttons in light. */
-  --black: #05070b;
+  --black: #06080e;
   --bg: #ffffff; /* cards, fields, dialogs */
   --page: #f6f6f7; /* the page behind the cards */
   --surface: #f5f5f8;
@@ -31,8 +31,8 @@
   --ink-3: #cbcbce;
   --chart: var(--text);
   --shadow: none;
-  --shadow-lg: 0 12px 32px rgba(5, 7, 11, 0.16);
-  --focus: 0 0 0 3px rgba(5, 7, 11, 0.14);
+  --shadow-lg: 0 12px 32px rgba(6, 8, 14, 0.16);
+  --focus: 0 0 0 3px rgba(6, 8, 14, 0.14);
 
   /* Status colours, flat. On the light content: at least 4.5:1, so text may use them. */
   --success: #067a3a;
@@ -62,25 +62,25 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #10151e;
+  --bg: #0d1321;
   --page: var(--black);
-  --surface: #151a26;
-  --surface-2: #1b2232;
-  --border: #1e2738;
-  --border-strong: #2d3953;
-  --line-soft: #171e2b;
+  --surface: #10182b;
+  --surface-2: #151f37;
+  --border: #18243f;
+  --border-strong: #23345c;
+  --line-soft: #121b30;
   --text: #f6f6f7;
-  --muted: #a9b3c6;
-  --muted-2: #97a3ba;
+  --muted: #a9b2c6;
+  --muted-2: #97a1ba;
   --on-text: var(--black);
   --on-text-muted: #485163;
   --primary-hover: #d7d9de;
   --nav-bg: var(--black);
-  --nav-border: #10151e;
-  --grid: #1d2535;
-  --ink-2: #546c9c;
-  --ink-3: #2d3953;
-  --shadow-lg: 0 12px 32px rgba(5, 7, 11, 0.7);
+  --nav-border: #0d1321;
+  --grid: #16213b;
+  --ink-2: #4262ae;
+  --ink-3: #23345c;
+  --shadow-lg: 0 12px 32px rgba(6, 8, 14, 0.7);
   --focus: 0 0 0 3px rgba(246, 246, 247, 0.2);
   --success: #3ddc84;
   --danger: #ff6a5c;
@@ -90,25 +90,25 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #10151e;
+    --bg: #0d1321;
     --page: var(--black);
-    --surface: #151a26;
-    --surface-2: #1b2232;
-    --border: #1e2738;
-    --border-strong: #2d3953;
-    --line-soft: #171e2b;
+    --surface: #10182b;
+    --surface-2: #151f37;
+    --border: #18243f;
+    --border-strong: #23345c;
+    --line-soft: #121b30;
     --text: #f6f6f7;
-    --muted: #a9b3c6;
-    --muted-2: #97a3ba;
+    --muted: #a9b2c6;
+    --muted-2: #97a1ba;
     --on-text: var(--black);
     --on-text-muted: #485163;
     --primary-hover: #d7d9de;
     --nav-bg: var(--black);
-    --nav-border: #10151e;
-    --grid: #1d2535;
-    --ink-2: #546c9c;
-    --ink-3: #2d3953;
-    --shadow-lg: 0 12px 32px rgba(5, 7, 11, 0.7);
+    --nav-border: #0d1321;
+    --grid: #16213b;
+    --ink-2: #4262ae;
+    --ink-3: #23345c;
+    --shadow-lg: 0 12px 32px rgba(6, 8, 14, 0.7);
     --focus: 0 0 0 3px rgba(246, 246, 247, 0.2);
     --success: #3ddc84;
     --danger: #ff6a5c;
@@ -195,7 +195,7 @@ main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 20px 16px 56px; 
 .topbar .icon-btn:focus-visible, .drawer .icon-btn:focus-visible { outline-color: var(--nav-text); }
 
 /* Drawer (below 900px): the same items as the sidebar, sliding in from the left. */
-.scrim { position: fixed; inset: 0; background: rgba(5, 7, 11, 0.55); z-index: 40; }
+.scrim { position: fixed; inset: 0; background: rgba(6, 8, 14, 0.55); z-index: 40; }
 .drawer { position: fixed; inset: 0 auto 0 0; width: min(320px, 88vw); z-index: 50; background: var(--nav-bg); color: var(--nav-text); padding: calc(14px + env(safe-area-inset-top, 0px)) 14px calc(14px + var(--safe-b)) max(14px, env(safe-area-inset-left, 0px)); display: flex; flex-direction: column; gap: 14px; overflow-y: auto; overscroll-behavior: contain; }
 .drawer[hidden] { display: none; }
 .drawer .nav-link { min-height: var(--touch); font-size: 15px; }
@@ -366,7 +366,7 @@ table.plain th.num, table.plain td.num { text-align: right; }
 /* Dialog */
 .dialog { border: 0; border-radius: 14px; box-shadow: var(--shadow-lg); background: var(--bg); color: var(--text); padding: 22px 24px; width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; }
 .dialog:not([open]) { display: none; }
-.dialog::backdrop { background: rgba(5, 7, 11, 0.55); }
+.dialog::backdrop { background: rgba(6, 8, 14, 0.55); }
 .dialog h2 { font-size: 17px; margin-bottom: 8px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
 
@@ -478,9 +478,9 @@ html:has(.signin-page), body:has(.signin-page) { background: var(--page); }
 .kpi-spark { margin-top: auto; padding-top: 8px; }
 .spark { display: block; width: 100%; height: 30px; }
 .spark-line { stroke: var(--chart); stroke-width: 1.25; stroke-linejoin: round; }
-.spark-area { fill: rgba(5, 7, 11, 0.07); } /* fallback; the charts fill it with the silver gradient */
+.spark-area { fill: rgba(6, 8, 14, 0.07); } /* fallback; the charts fill it with the silver gradient */
 
-.chart-area { fill: rgba(5, 7, 11, 0.1); }
+.chart-area { fill: rgba(6, 8, 14, 0.1); }
 .chart-line { stroke: var(--chart); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
 .chart-line-dash { stroke: var(--ink-2); stroke-width: 1.5; stroke-dasharray: 5 4; }
 .chart-dot { fill: var(--chart); }
@@ -490,7 +490,7 @@ html:has(.signin-page), body:has(.signin-page) { background: var(--page); }
 .chart-summary { font-size: 13px; }
 .legend { display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-left: 4px; }
 .key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; background: var(--text); margin-right: 5px; vertical-align: middle; }
-.key-fill { height: 11px; width: 11px; border-radius: 3px; background: rgba(5, 7, 11, 0.14); border: 1px solid rgba(5, 7, 11, 0.45); }
+.key-fill { height: 11px; width: 11px; border-radius: 3px; background: rgba(6, 8, 14, 0.14); border: 1px solid rgba(6, 8, 14, 0.45); }
 .key-line-dash { background: repeating-linear-gradient(90deg, var(--ink-2) 0 5px, transparent 5px 9px); }
 .key-block { width: 11px; height: 11px; border-radius: 3px; }
 .legend-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; }
@@ -1186,7 +1186,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
 .role-fieldset { display: flex; flex-direction: column; gap: 8px; }
 .role-fieldset legend { padding: 0; margin-bottom: 8px; font-size: 13.5px; font-weight: 600; }
 .choice { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--bg); cursor: pointer; }
-.choice[data-on] { border-color: var(--text); background: var(--surface); box-shadow: 0 0 0 3px rgba(5, 7, 11, 0.12); }
+.choice[data-on] { border-color: var(--text); background: var(--surface); box-shadow: 0 0 0 3px rgba(6, 8, 14, 0.12); }
 .choice input { margin: 3px 0 0; }
 .choice > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .choice-title { font-weight: 600; font-size: 13.5px; }
@@ -1270,7 +1270,7 @@ html:has(.cx-shell), body:has(.cx-shell) { height: 100%; overflow: hidden; }
 /* The thin bar of areas; it widens over the page on hover. */
 .cx-rail { position: relative; flex: 0 0 56px; z-index: 20; }
 .cx-rail-inner { position: absolute; inset: 0 auto 0 0; width: 56px; display: flex; flex-direction: column; gap: 2px; padding: 10px 8px 12px; background: var(--nav-bg); border-right: 1px solid var(--nav-border); overflow: hidden; }
-.cx-rail[data-wide] .cx-rail-inner { width: 232px; box-shadow: 8px 0 24px rgba(5, 7, 11, 0.5); }
+.cx-rail[data-wide] .cx-rail-inner { width: 232px; box-shadow: 8px 0 24px rgba(6, 8, 14, 0.5); }
 /* Open for good where no second bar follows: it takes its own room and casts no shadow. */
 .cx-rail[data-open] { flex-basis: 232px; }
 .cx-rail[data-open] .cx-rail-inner { box-shadow: none; }

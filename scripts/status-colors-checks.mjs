@@ -17,9 +17,9 @@ const DANGER = "rgb(214, 20, 10)";
 const WARNING = "rgb(161, 92, 0)";
 const SUCCESS_DARK = "rgb(61, 220, 132)";
 const DANGER_DARK = "rgb(255, 106, 92)";
-const BLACK = "rgb(5, 7, 11)"; // --black, the one dark colour (#05070b, chosen by the founder)
+const BLACK = "rgb(6, 8, 14)"; // --black, the one dark colour (#06080e, chosen by the founder)
 const WHITE = "rgb(246, 246, 247)"; // --on-text, the paper white on a dark or red fill
-const CHART = "rgb(5, 7, 11)"; // --chart, the one dark colour of bars and lines
+const CHART = "rgb(6, 8, 14)"; // --chart, the one dark colour of bars and lines
 const STATUS = [SUCCESS, DANGER, WARNING, SUCCESS_DARK, DANGER_DARK, "rgb(255, 176, 32)"];
 
 /** Computed colours of the first element matching `selector` (optionally of a pseudo-element). */
