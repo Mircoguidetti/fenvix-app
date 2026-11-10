@@ -1359,3 +1359,4 @@ html:has(.cx-shell), body:has(.cx-shell) { height: 100%; overflow: hidden; }
   .signin-mark { visibility: hidden; }
   .signin-side { border-left: 1px solid var(--border); }
 }
+tr.row-open { cursor: pointer; }

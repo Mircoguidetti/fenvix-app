@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { client, type Database, type DatabaseSort } from "../data";
 import { StateBadge } from "./StateBadge";
@@ -72,6 +72,13 @@ export function DbTable({
 }) {
   const now = client.now();
   const phone = useMedia(PHONE);
+  const navigate = useNavigate();
+  // A click anywhere on a row opens the database, except on its own controls (checkbox, tag chips, the name link).
+  const openRow = (e: React.MouseEvent, id: string) => {
+    if ((e.target as HTMLElement).closest("a, button, input, label, select")) return;
+    if (window.getSelection()?.toString()) return;
+    navigate(`/databases/${id}`);
+  };
   const ids = items.map((d) => d.id);
   const picked = ids.filter((id) => selected.has(id)).length;
   return (
@@ -105,7 +112,7 @@ export function DbTable({
         </thead>
         <tbody>
           {items.map((d) => (
-            <tr key={d.id} data-selected={selected.has(d.id) || undefined}>
+            <tr key={d.id} className="row-open" data-selected={selected.has(d.id) || undefined} onClick={(e) => openRow(e, d.id)}>
               {selectable && (
                 <td className="select-cell">
                   <Check label={`Select ${d.name}`} checked={selected.has(d.id)} onChange={(on) => onToggle([d.id], on)} />
