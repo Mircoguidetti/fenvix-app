@@ -64,19 +64,21 @@ function Frame({
   label,
   children,
   summary,
+  tip,
 }: {
   width: number;
   height: number;
   label: string;
   children: ReactNode;
   summary?: ReactNode;
+  tip?: ReactNode;
 }) {
   return (
     <div className="chart">
       <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}>
-        <title>{label}</title>
         {children}
       </svg>
+      {tip}
       {summary && <p className="muted chart-summary">{summary}</p>}
     </div>
   );
@@ -165,6 +167,70 @@ function useSilverFill(): [ReactNode, { fill: string }] {
 
 const PAD: Plot = { left: 52, top: 12, right: 14, bottom: 26 };
 
+/** What a tooltip shows: a heading (the time or the bucket) and one row per value. */
+export interface Tip {
+  title: string;
+  rows: { label?: string; value: string; swatch?: string; dash?: boolean }[];
+}
+
+type Inner = { x: number; y: number; w: number; h: number };
+
+/**
+ * Hover for a chart, the way every dashboard does it: move over the chart (or tap it on a phone) and the nearest point is
+ * marked and its values show in a small card. `band` is for bars, where each point owns a slot; otherwise points sit on
+ * the slot edges, as on a line.
+ */
+export function useChartHover(count: number, inner: Inner, band: boolean) {
+  const [active, setActive] = useState<number | null>(null);
+  const pick = (e: React.PointerEvent<SVGRectElement>) => {
+    const svg = e.currentTarget.ownerSVGElement;
+    if (!svg || count === 0) return;
+    const r = svg.getBoundingClientRect();
+    const scale = r.width > 0 ? svg.viewBox.baseVal.width / r.width : 1;
+    const px = (e.clientX - r.left) * scale - inner.x;
+    const i = band ? Math.floor((px / inner.w) * count) : Math.round((px / inner.w) * (count - 1));
+    setActive(Math.max(0, Math.min(count - 1, i)));
+  };
+  const at = (i: number) => (band ? inner.x + (i + 0.5) * (inner.w / Math.max(count, 1)) : inner.x + (i / Math.max(count - 1, 1)) * inner.w);
+  const overlay = (
+    <rect
+      x={inner.x}
+      y={inner.y}
+      width={inner.w}
+      height={inner.h}
+      fill="transparent"
+      className="chart-hit"
+      onPointerMove={pick}
+      onPointerDown={pick}
+      onPointerLeave={(e) => e.pointerType !== "touch" && setActive(null)}
+    />
+  );
+  const guide = active === null ? null : band ? (
+    <rect x={at(active) - inner.w / Math.max(count, 1) / 2} y={inner.y} width={inner.w / Math.max(count, 1)} height={inner.h} className="chart-hover-band" />
+  ) : (
+    <line x1={at(active)} x2={at(active)} y1={inner.y} y2={inner.y + inner.h} className="chart-guide" />
+  );
+  return { active, at, overlay, guide };
+}
+
+/** The card next to the hovered point. It flips to the left of the point in the right half, so it never leaves the box. */
+export function ChartTip({ tip, x, width, top = 8 }: { tip: Tip | null; x: number; width: number; top?: number }) {
+  if (!tip) return null;
+  const right = x > width / 2;
+  return (
+    <div className="chart-tip" role="status" style={right ? { right: width - x + 12, top } : { left: x + 12, top }}>
+      <div className="chart-tip-title">{tip.title}</div>
+      {tip.rows.map((r, i) => (
+        <div key={i} className="chart-tip-row">
+          {r.swatch && <span className={r.dash ? "chart-tip-key chart-tip-key-dash" : "chart-tip-key"} style={r.dash ? undefined : { background: r.swatch }} aria-hidden="true" />}
+          {r.label && <span className="chart-tip-label">{r.label}</span>}
+          <span className="chart-tip-value">{r.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Filled area for the awake count with the fleet total as a thin line above it. */
 export function AwakeAreaChart({ points, range }: { points: { at: string; awake: number; total: number }[]; range: UsageRange }) {
   const [ref, width] = useMeasure<HTMLDivElement>();
@@ -180,20 +246,26 @@ export function AwakeAreaChart({ points, range }: { points: { at: string; awake:
   const low = Math.min(...points.map((p) => p.awake));
   const total = points[points.length - 1]?.total ?? 0;
   const share = Math.round((peak / Math.max(total, 1)) * 100);
+  const hover = useChartHover(points.length, inner, false);
+  const a = hover.active === null ? null : points[hover.active];
 
   return (
     <div ref={ref}>
       <Frame
         width={width}
         height={height}
+        tip={a && <ChartTip x={hover.at(hover.active!)} width={width} tip={{ title: pointLabel(a.at, range), rows: [{ label: "Awake", value: formatCount(a.awake), swatch: "var(--chart)" }, { label: "Fleet", value: formatCount(a.total) }] }} />}
         label={`Awake databases over time: between ${low} and ${peak} of ${total}.`}
         summary={`Between ${formatCount(low)} and ${formatCount(peak)} awake, at most ${share}% of the ${formatCount(total)} databases in the fleet.`}
       >
         {grid(max, inner, formatCompact)}
         {silverDefs}
         <path d={area} className="chart-area" style={silver} />
+        {hover.guide}
         <path d={points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i)} ${y(p.awake)}`).join(" ")} className="chart-line" fill="none" />
+        {a && <circle cx={x(hover.active!)} cy={y(a.awake)} r="4" className="chart-hover-dot" />}
         {axis(timeTicks(points.map((p) => p.at), range, Math.max(2, Math.floor(inner.w / 80))), points.length - 1, inner, height, false)}
+        {hover.overlay}
       </Frame>
     </div>
   );
@@ -212,15 +284,26 @@ export function AreaSeriesChart({ points, range, valueLabel, axisLabel = valueLa
   const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i)} ${y(p.value)}`).join(" ");
   const first = points[0]?.value ?? 0;
   const last = points[points.length - 1]?.value ?? 0;
+  const hover = useChartHover(points.length, inner, false);
+  const a = hover.active === null ? null : points[hover.active];
 
   return (
     <div ref={ref}>
-      <Frame width={width} height={height} label={`From ${valueLabel(first)} to ${valueLabel(last)} over the period.`} summary={`From ${valueLabel(first)} to ${valueLabel(last)} over the period.`}>
+      <Frame
+        width={width}
+        height={height}
+        tip={a && <ChartTip x={hover.at(hover.active!)} width={width} tip={{ title: pointLabel(a.at, range), rows: [{ value: valueLabel(a.value), swatch: "var(--chart)" }] }} />}
+        label={`From ${valueLabel(first)} to ${valueLabel(last)} over the period.`}
+        summary={`From ${valueLabel(first)} to ${valueLabel(last)} over the period.`}
+      >
         {grid(max, inner, axisLabel)}
         {silverDefs}
         <path d={`${line} L${x(points.length - 1)} ${y(0)} L${x(0)} ${y(0)} Z`} className="chart-area" style={silver} />
+        {hover.guide}
         <path d={line} className="chart-line" fill="none" />
+        {a && <circle cx={x(hover.active!)} cy={y(a.value)} r="4" className="chart-hover-dot" />}
         {axis(timeTicks(points.map((p) => p.at), range, Math.max(2, Math.floor(inner.w / 80))), points.length - 1, inner, height, false)}
+        {hover.overlay}
       </Frame>
     </div>
   );
@@ -247,20 +330,28 @@ export function TimeBarsChart({
   const step = inner.w / Math.max(points.length, 1);
   const barW = Math.max(2, Math.min(12, step * 0.4));
   const total = points.reduce((a, p) => a + p.value, 0);
+  const hover = useChartHover(points.length, inner, true);
+  const a = hover.active === null ? null : points[hover.active];
 
   return (
     <div ref={ref}>
-      <Frame width={width} height={height} label={`${valueLabel(total)} in total over the period.`} summary={`${valueLabel(total)} in total, peak ${valueLabel(Math.max(...points.map((p) => p.value)))} in one ${bucketNoun ?? (range === "24h" ? "hour" : "day")}.`}>
+      <Frame
+        width={width}
+        height={height}
+        tip={a && <ChartTip x={hover.at(hover.active!)} width={width} tip={{ title: pointLabel(a.at, range), rows: [{ value: valueLabel(a.value), swatch: "var(--chart)" }] }} />}
+        label={`${valueLabel(total)} in total over the period.`}
+        summary={`${valueLabel(total)} in total, peak ${valueLabel(Math.max(...points.map((p) => p.value)))} in one ${bucketNoun ?? (range === "24h" ? "hour" : "day")}.`}
+      >
         {grid(max, inner, formatCompact)}
+        {hover.guide}
         {points.map((p, i) => {
           const h = (p.value / max) * inner.h;
           return (
-            <rect key={p.at} x={inner.x + i * step + (step - barW) / 2} y={inner.y + inner.h - h} width={barW} height={Math.max(h, p.value > 0 ? 1.5 : 0)} rx="2" className="chart-bar">
-              <title>{`${pointLabel(p.at, range)}: ${valueLabel(p.value)}`}</title>
-            </rect>
+            <rect key={p.at} x={inner.x + i * step + (step - barW) / 2} y={inner.y + inner.h - h} width={barW} height={Math.max(h, p.value > 0 ? 1.5 : 0)} rx="2" className="chart-bar" />
           );
         })}
         {axis(timeTicks(points.map((p) => p.at), range, Math.max(2, Math.floor(inner.w / 80))), points.length, inner, height, true)}
+        {hover.overlay}
       </Frame>
     </div>
   );
@@ -282,12 +373,21 @@ export function CostLineChart({ points, format, axisFormat }: { points: { at: st
       .join(" ")
       .trim();
   const last = live[live.length - 1];
+  const hover = useChartHover(points.length, inner, false);
+  const a = hover.active === null ? null : points[hover.active];
+  const costRows: Tip["rows"] = a
+    ? [
+        ...(a.cost > 0 ? [{ label: "This month", value: format(a.cost), swatch: "var(--chart)" }] : []),
+        ...(a.reference !== null ? [{ label: "Month before", value: format(a.reference), swatch: "var(--ink-2)", dash: true }] : []),
+      ]
+    : [];
 
   return (
     <div ref={ref}>
       <Frame
         width={width}
         height={height}
+        tip={a && costRows.length > 0 && <ChartTip x={hover.at(hover.active!)} width={width} tip={{ title: dayLabel(a.at), rows: costRows }} />}
         label={`Cost so far this month: ${format(last?.cost ?? 0)}, against the month before.`}
         summary={
           <>
@@ -300,10 +400,14 @@ export function CostLineChart({ points, format, axisFormat }: { points: { at: st
         }
       >
         {grid(max, inner, axisFormat)}
+        {hover.guide}
         <path d={path(points.map((p) => p.reference))} className="chart-line-dash" fill="none" />
         <path d={path(points.map((p) => (p.cost > 0 ? p.cost : null)))} className="chart-line" fill="none" />
         {last && <circle cx={x(live.length - 1)} cy={y(last.cost)} r="3.5" className="chart-dot" />}
+        {a && a.reference !== null && <circle cx={x(hover.active!)} cy={y(a.reference)} r="3.5" className="chart-hover-dot chart-hover-dot-ref" />}
+        {a && a.cost > 0 && <circle cx={x(hover.active!)} cy={y(a.cost)} r="4" className="chart-hover-dot" />}
         {axis(timeTicks(points.map((p) => p.at), "30d", Math.max(2, Math.floor(inner.w / 70))), points.length - 1, inner, height, false)}
+        {hover.overlay}
       </Frame>
     </div>
   );
@@ -339,13 +443,15 @@ export function StackedBars({ days, series, valueLabel }: { days: string[]; seri
   const step = inner.w / Math.max(days.length, 1);
   const barW = Math.max(3, Math.min(26, step * 0.68));
   const shade = (i: number) => `var(--stack-${Math.min(i, 5)})`;
+  const hover = useChartHover(days.length, inner, true);
+  const ai = hover.active;
 
   return (
     <div ref={ref}>
       <div className="chart">
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Requests per day split by tag. ${valueLabel(totals.reduce((a, b) => a + b, 0))} in the month.`}>
-          <title>{`Requests per day split by tag. ${valueLabel(totals.reduce((a, b) => a + b, 0))} in the month.`}</title>
           {grid(max, inner, formatCompact)}
+          {hover.guide}
           {days.map((day, i) => {
             let y = inner.y + inner.h;
             return (
@@ -353,13 +459,24 @@ export function StackedBars({ days, series, valueLabel }: { days: string[]; seri
                 {series.map((s, si) => {
                   const h = ((s.values[i] ?? 0) / max) * inner.h;
                   y -= h;
-                  return <rect key={s.label} x={inner.x + i * step + (step - barW) / 2} y={y} width={barW} height={Math.max(h, 0)} fill={shade(si)}><title>{`${dayLabel(day)}, ${s.label}: ${valueLabel(s.values[i] ?? 0)}`}</title></rect>;
+                  return <rect key={s.label} x={inner.x + i * step + (step - barW) / 2} y={y} width={barW} height={Math.max(h, 0)} fill={shade(si)} />;
                 })}
               </g>
             );
           })}
           {axis(timeTicks(days, "30d", Math.max(2, Math.floor(inner.w / 70))), days.length, inner, height, true)}
+          {hover.overlay}
         </svg>
+        {ai !== null && (
+          <ChartTip
+            x={hover.at(ai)}
+            width={width}
+            tip={{
+              title: dayLabel(days[ai]),
+              rows: [...series.map((s, si) => ({ label: s.label, value: valueLabel(s.values[ai] ?? 0), swatch: shade(si) })), { label: "Total", value: valueLabel(totals[ai] ?? 0) }],
+            }}
+          />
+        )}
       </div>
       <ul className="legend-list">
         {series.map((s, i) => (
@@ -379,6 +496,13 @@ export function WakeTimeline({ points, range }: { points: { at: string; awake: b
   const [ref, width] = useMeasure<HTMLDivElement>(200);
   const awakeCount = points.filter((p) => p.awake).length;
   const share = Math.round((awakeCount / Math.max(points.length, 1)) * 100);
+  const [active, setActive] = useState<number | null>(null);
+  const pick = (e: React.PointerEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    if (r.width <= 0 || points.length === 0) return;
+    setActive(Math.max(0, Math.min(points.length - 1, Math.floor(((e.clientX - r.left) / r.width) * points.length))));
+  };
+  const ap = active === null ? null : points[active];
   const ticks = spaceOut(
     timeTicks(points.map((p) => p.at), range, Math.max(2, Math.floor(width / 90))).map((t) => {
       const pct = (t.index / Math.max(points.length - 1, 1)) * 100;
@@ -392,10 +516,27 @@ export function WakeTimeline({ points, range }: { points: { at: string; awake: b
   );
   return (
     <div className="timeline" ref={ref}>
-      <div className="timeline-bar" role="img" aria-label={`Awake for ${share} percent of the last ${range}.`}>
-        {points.map((p) => (
-          <span key={p.at} className={p.awake ? "tl-on" : "tl-off"} title={`${pointLabel(p.at, range)}: ${p.awake ? "awake" : "asleep"}`} />
-        ))}
+      <div className="timeline-wrap">
+        <div
+          className="timeline-bar"
+          role="img"
+          aria-label={`Awake for ${share} percent of the last ${range}.`}
+          onPointerMove={pick}
+          onPointerDown={pick}
+          onPointerLeave={(e) => e.pointerType !== "touch" && setActive(null)}
+        >
+          {points.map((p, i) => (
+            <span key={p.at} className={p.awake ? "tl-on" : "tl-off"} data-active={i === active || undefined} />
+          ))}
+        </div>
+        {ap && (
+          <ChartTip
+            x={((active! + 0.5) / points.length) * width}
+            width={width}
+            top={44}
+            tip={{ title: pointLabel(ap.at, range), rows: [{ value: ap.awake ? "Awake" : "Asleep", swatch: ap.awake ? "var(--chart)" : "var(--surface-2)" }] }}
+          />
+        )}
       </div>
       <div className="timeline-axis" aria-hidden="true">
         {ticks.map((t) => (
@@ -442,25 +583,32 @@ export function MonthBars({ months, format }: { months: { label: string; value: 
   const inner = { x: left, y: PAD.top, w: Math.max(40, width - left - PAD.right), h: height - PAD.top - PAD.bottom };
   const step = inner.w / Math.max(months.length, 1);
   const barW = Math.min(64, step * 0.56);
+  const hover = useChartHover(months.length, inner, true);
+  const a = hover.active === null ? null : months[hover.active];
 
   return (
     <div ref={ref}>
-      <Frame width={width} height={height} label={`Cost by month. This month so far ${format(months[months.length - 1]?.value ?? 0)}.`}>
+      <Frame
+        width={width}
+        height={height}
+        tip={a && <ChartTip x={hover.at(hover.active!)} width={width} tip={{ title: a.partial ? `${a.label} (so far)` : a.label, rows: [{ label: "Cost", value: format(a.value), swatch: "var(--chart)" }] }} />}
+        label={`Cost by month. This month so far ${format(months[months.length - 1]?.value ?? 0)}.`}
+      >
         {grid(max, inner, format)}
+        {hover.guide}
         {months.map((m, i) => {
           const h = (m.value / max) * inner.h;
           const x = inner.x + i * step + (step - barW) / 2;
           return (
             <g key={m.label}>
-              <rect x={x} y={inner.y + inner.h - h} width={barW} height={Math.max(h, 1.5)} rx="2" className={m.partial ? "chart-bar-open" : "chart-bar"}>
-                <title>{`${m.label}: ${format(m.value)}${m.partial ? " so far" : ""}`}</title>
-              </rect>
+              <rect x={x} y={inner.y + inner.h - h} width={barW} height={Math.max(h, 1.5)} rx="2" className={m.partial ? "chart-bar-open" : "chart-bar"} />
               <text x={x + barW / 2} y={height - 8} textAnchor="middle" className="chart-text">
                 {m.label}
               </text>
             </g>
           );
         })}
+        {hover.overlay}
       </Frame>
     </div>
   );
