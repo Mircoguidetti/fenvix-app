@@ -1,7 +1,7 @@
 // Behaviour checks of a database's Network tab (IP allowlist and blocked addresses), on desktop and on a phone-sized
 // screen, against the mock backend. Each check gets a fresh browser context and signs in through the sign-in page.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: node scripts/network-checks.mjs
-import { VIEWPORTS, launch, makeReporter, newPage, signIn } from "./lib.mjs";
+import { VIEWPORTS, launch, makeReporter, newPage, signIn, openSection } from "./lib.mjs";
 
 const { fail, pass, state } = makeReporter();
 const browser = await launch();
@@ -117,8 +117,8 @@ const TESTS = {
     assert(!(await page.getByText("Unsaved changes").count()), "still marked unsaved");
     await page.getByText(/Last changed .* by You\./).waitFor();
     // Leave and come back: the saved list is what the server has.
-    await page.getByRole("button", { name: "Overview", exact: true }).click();
-    await page.getByRole("button", { name: "Network", exact: true }).click();
+    await openSection(page, "Overview");
+    await openSection(page, "Network");
     await eventually(async () => (await entries(page)).join() === "203.0.113.7/32,198.51.100.0/24,2001:db8::/32", "the saved list did not come back");
     await noWords(page);
   },

@@ -2,7 +2,7 @@
 // (fresh data, signed out) and signs in through the real sign-in page unless it is testing sign-in.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: npm run checks
 import { readFile } from "node:fs/promises";
-import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText, choose, openFilters } from "./lib.mjs";
+import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText, choose, openFilters, openSection } from "./lib.mjs";
 
 const { fail, pass, state } = makeReporter();
 const browser = await launch();
@@ -232,7 +232,7 @@ const TESTS = {
     await page.getByText("customer:checkco").first().waitFor();
     await page.getByText("us-east").first().waitFor();
     assert(!(await page.content()).includes(password), "the password is still on the page after leaving the creation screen");
-    await page.getByRole("button", { name: "Users", exact: true }).click();
+    await openSection(page, "Users");
     await userCell(page, "app").waitFor();
     assert(!(await page.content()).includes(password), "the Users tab shows the password again");
 

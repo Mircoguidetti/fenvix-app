@@ -194,3 +194,10 @@ export async function openFilters(page) {
   const toggle = page.getByRole("button", { name: /^Filters/ });
   if ((await toggle.count()) && (await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
 }
+
+/** Opens one of a database's sections: the link in the second bar on a computer, the tab on a phone. */
+export async function openSection(page, name) {
+  const link = page.locator(".cx-sub").getByRole("link", { name, exact: true });
+  if (await link.isVisible()) await link.click();
+  else await page.getByRole("button", { name, exact: true }).click();
+}
