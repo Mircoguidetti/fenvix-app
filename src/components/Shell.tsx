@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useSearchParams } from "react-router-dom";
-import { BookOpen, Building2, ChartColumn, CreditCard, Database, LayoutDashboard, Menu, Moon, Pin, PinOff, Sun, X, type LucideIcon } from "lucide-react";
+import { BookOpen, Building2, ChartColumn, CreditCard, Database, LayoutDashboard, Menu, Moon, Sun, X, type LucideIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { AccountMenu, useCurrentOrg } from "./AccountMenu";
 import { useFocusTrap } from "../lib/useFocusTrap";
@@ -10,14 +10,13 @@ import { useTheme } from "../lib/theme";
 /*
  * The console's frame, laid out like the mockups (fenvix-brain sessions/2026-11-10-console-ui):
  * - a top bar with where you are (organization / area / database), the theme button and the account;
- * - a thin bar of area icons that widens over the page while the pointer is on it (or stays open when pinned);
- * - a second bar with the pages of what is open: the organization's pages, one database's sections, or the
- *   organization's settings, with a box at the bottom.
+ * - a thin bar of area icons that widens over the page while the pointer is on it;
+ * - a second bar only where there is a level below the area: one database's sections, or the organization's
+ *   settings, with a box at the bottom. It never repeats the icon bar.
  * Below 900px the two bars become one drawer. Only layout changed: every page, route and action is the one it was.
  */
 
 const DOCS_URL = "https://docs.fenvix.dev/";
-const PIN_KEY = "fenvix-rail-pinned";
 
 type Area = { key: string; label: string; icon: LucideIcon; to: string; match: (path: string) => boolean };
 const AREAS: Area[] = [
@@ -35,9 +34,9 @@ const ORG_PAGES = [
   { to: "/billing", label: "Billing", end: false },
 ];
 const SETTINGS_PAGES = [
+  { to: "/settings", label: "General", end: true },
   { to: "/settings/members", label: "Members", end: false },
   { to: "/api-keys", label: "API keys", end: false },
-  { to: "/settings", label: "Settings", end: true },
 ];
 const DB_SECTIONS = [
   { tab: "overview", label: "Overview" },
@@ -114,6 +113,9 @@ function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgS
   const { name } = useContext(DbTitle);
   const dbId = dbIdOf(path);
   const settings = path.startsWith("/settings") || path.startsWith("/api-keys");
+  // Only a level below the area gets this bar: a database's sections, or the organization's settings. The other areas
+  // are one page each and already in the icon bar, so the page takes the whole width and nothing is repeated.
+  if (!dbId && !settings) return null;
   return (
     <aside className="cx-sub" aria-label="Pages">
       {dbId ? (
@@ -132,12 +134,12 @@ function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgS
       ) : (
         <>
           <div className="cx-sub-head">
-            <span className="cx-sub-kind">{settings ? "Organization settings" : "Organization"}</span>
+            <span className="cx-sub-kind">Organization settings</span>
             <span className="cx-sub-title">{orgName || " "}</span>
             {orgSub && <span className="cx-sub-meta">{orgSub}</span>}
           </div>
-          <nav aria-label={settings ? "Organization settings" : "Organization pages"} className="cx-sub-nav">
-            <PageLinks pages={settings ? SETTINGS_PAGES : ORG_PAGES} />
+          <nav aria-label="Organization settings" className="cx-sub-nav">
+            <PageLinks pages={SETTINGS_PAGES} />
           </nav>
         </>
       )}
@@ -151,20 +153,12 @@ function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgS
               Manage members
             </Link>
           </>
-        ) : dbId ? (
+        ) : (
           <>
             <span className="cx-sub-box-title">Connect</span>
             <span className="cx-sub-box-text">The connection string and the database users are in Overview and Users.</span>
             <Link to="?tab=users" replace className="btn btn-primary btn-sm">
               Database users
-            </Link>
-          </>
-        ) : (
-          <>
-            <span className="cx-sub-box-title">Databases</span>
-            <span className="cx-sub-box-text">Ready in seconds. Any MongoDB driver connects to it.</span>
-            <Link to="/databases/new" className="btn btn-primary btn-sm">
-              New database
             </Link>
           </>
         )}
@@ -173,12 +167,11 @@ function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgS
   );
 }
 
-/** The thin bar of area icons. It widens over the page while the pointer is on it, or stays wide when pinned. */
-function Rail({ path, pinned, onPin }: { path: string; pinned: boolean; onPin: () => void }) {
-  const [hover, setHover] = useState(false);
-  const wide = pinned || hover;
+/** The thin bar of area icons. It widens over the page while the pointer is on it. */
+function Rail({ path }: { path: string }) {
+  const [wide, setWide] = useState(false);
   return (
-    <nav className="cx-rail" aria-label="Areas" data-wide={wide || undefined} data-pinned={pinned || undefined} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+    <nav className="cx-rail" aria-label="Areas" data-wide={wide || undefined} onMouseEnter={() => setWide(true)} onMouseLeave={() => setWide(false)}>
       <div className="cx-rail-inner">
         {AREAS.map((a) => (
           <Link key={a.key} to={a.to} className="cx-rail-link" aria-current={a.match(path) ? "page" : undefined} title={a.label}>
@@ -192,10 +185,6 @@ function Rail({ path, pinned, onPin }: { path: string; pinned: boolean; onPin: (
           <BookOpen size={18} strokeWidth={1.75} aria-hidden="true" />
           <span className="cx-rail-label">Documentation</span>
         </a>
-        <button type="button" className="cx-rail-link" onClick={onPin} aria-pressed={pinned} title={pinned ? "Let the menu close" : "Keep the menu open"}>
-          {pinned ? <PinOff size={18} strokeWidth={1.75} aria-hidden="true" /> : <Pin size={18} strokeWidth={1.75} aria-hidden="true" />}
-          <span className="cx-rail-label">{pinned ? "Let the menu close" : "Keep the menu open"}</span>
-        </button>
       </div>
     </nav>
   );
@@ -276,13 +265,6 @@ function Crumbs({ path, orgName }: { path: string; orgName: string }) {
 export function Shell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [dbName, setDbName] = useState("");
-  const [pinned, setPinned] = useState(() => {
-    try {
-      return localStorage.getItem(PIN_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
   const { pathname } = useLocation();
   const drawer = useRef<HTMLElement>(null);
   const current = useCurrentOrg();
@@ -299,16 +281,6 @@ export function Shell({ children }: { children: ReactNode }) {
   }, []);
   useFocusTrap(drawer, open, () => setOpen(false));
 
-  function togglePin() {
-    setPinned((p) => {
-      try {
-        localStorage.setItem(PIN_KEY, p ? "0" : "1");
-      } catch {
-        /* the choice lasts for this page only */
-      }
-      return !p;
-    });
-  }
 
   return (
     <DbTitle.Provider value={{ name: dbName, set: setDbName }}>
@@ -333,7 +305,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </header>
 
         <div className="cx-body">
-          <Rail path={pathname} pinned={pinned} onPin={togglePin} />
+          <Rail path={pathname} />
           <SubNav path={pathname} orgName={orgName} orgSub={orgSub} />
           <div className="cx-content">
             <main id="main" tabIndex={-1}>
