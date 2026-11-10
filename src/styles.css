@@ -29,7 +29,7 @@
   --grid: #e4e8f2;
   --ink-2: #7583a3;
   --ink-3: #b4bfda;
-  --chart: var(--text);
+  --chart: #3a455f;
   --shadow: none;
   --shadow-lg: 0 12px 32px rgba(6, 8, 14, 0.16);
   --focus: 0 0 0 3px rgba(6, 8, 14, 0.14);
@@ -44,9 +44,9 @@
   --warning-on-dark: #ffb020;
 
   /* Silver, as on the landing's "Get started" button: detail only, never behind small text. */
-  --silver-1: #c8c8cb;
-  --silver-2: #f5f5f8;
-  --silver-3: #818184;
+  --silver-1: #c5cee2;
+  --silver-2: #f3f5f9;
+  --silver-3: #7583a3;
   --silver: linear-gradient(90deg, var(--silver-1) 0%, var(--silver-2) 50%, var(--silver-3) 100%);
   --silver-btn: linear-gradient(180deg, #f5f5f8, #c8c8cb);
   --signin-primary: var(--black);
