@@ -26,6 +26,9 @@ function tokens(): Record<string, string> {
   return out;
 }
 const T = tokens();
+/** The light tokens (the first :root block) and the dark theme's two blocks. */
+const LIGHT_ROOT = /:root\s*\{([^}]*)\}/.exec(CSS)?.[1] ?? "";
+const DARK_BLOCKS = [...CSS.matchAll(/:root(?:\[data-theme="dark"\]|:not\(\[data-theme="light"\]\))\s*\{([^}]*)\}/g)].map((m) => m[1]).filter((b) => /--success\s*:/.test(b));
 
 const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
 function luminance(hex: string) {
@@ -57,8 +60,12 @@ const STATUS = ["success", "danger", "warning"];
 test("the status tokens are defined once, as flat hex colours, for the light content and the dark surfaces", () => {
   for (const name of [...STATUS, ...STATUS.map((s) => `${s}-on-dark`)]) {
     assert.match(T[name] ?? "", /^#[0-9a-f]{6}$/i, `--${name} is missing or not a flat colour`);
-    assert.equal(CSS.match(new RegExp(`--${name}\\s*:`, "g"))?.length, 1, `--${name} is defined more than once`);
+    assert.equal(LIGHT_ROOT.match(new RegExp(`--${name}\\s*:`, "g"))?.length, 1, `--${name} is defined more than once in the light tokens`);
   }
+  // The dark theme redefines the three status colours, and only as the "on dark" ones.
+  for (const block of DARK_BLOCKS)
+    for (const s of STATUS) assert.equal(new RegExp(`--${s}\\s*:\\s*([^;]+);`).exec(block)?.[1].trim(), T[`${s}-on-dark`], `the dark theme's --${s} is not --${s}-on-dark`);
+  assert.equal(DARK_BLOCKS.length, 2, "the dark theme is defined twice: for data-theme=dark and for the device setting");
 });
 
 test("status text on the light content reaches 4.5:1 on every light surface", () => {

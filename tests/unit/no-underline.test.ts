@@ -37,9 +37,9 @@ test("no source writes an underline inline or with <u>", () => {
 });
 
 test("the landing page's black is one token, and no other near-black is written out", () => {
-  assert.match(CSS, /--black:\s*#0b1220;/);
+  assert.match(CSS, /--black:\s*#090c14;/); // the landing's ink, chosen by the founder on 2026-11-10
   for (const t of ["text", "nav-bg", "stack-0"]) assert.match(CSS, new RegExp(`--${t}:\\s*var\\(--black\\);`), `--${t} is not the black token`);
-  // Pure black (#000000) and anything darker than #101010 is out: the one dark colour is the token, #0b1220, and it is
+  // Pure black (#000000) and anything darker than #101010 is out: the one dark colour is the token, #090c14, and it is
   // written only where the token is defined (and in the favicon).
   const nearBlack = (r: number, g: number, b: number) => Math.max(r, g, b) <= 0x10;
   for (const f of [...SOURCES, "index.html", "public/favicon.svg"]) {

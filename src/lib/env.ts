@@ -8,8 +8,12 @@ export type Backend = "supabase" | "mock";
 
 const raw = import.meta.env;
 
-/** "supabase" unless VITE_DATA_BACKEND says otherwise. The checks run against "mock". */
-export const backend: Backend = raw.VITE_DATA_BACKEND === "mock" ? "mock" : "supabase";
+/**
+ * TEMPORARY (founder, 2026-11-10): "mock" unless VITE_DATA_BACKEND is "supabase", so the deployed dashboard shows the
+ * sample data and calls no endpoint while the control plane is stopped. To go back to the real backend, set
+ * VITE_DATA_BACKEND=supabase where it is built (Vercel), or restore the old default: "supabase" unless it says "mock".
+ */
+export const backend: Backend = raw.VITE_DATA_BACKEND === "supabase" ? "supabase" : "mock";
 
 /**
  * The control-plane API, including /v1 (for example https://api.fenvix.dev/v1). A bare host (https://api.fenvix.dev)

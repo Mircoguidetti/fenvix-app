@@ -24,6 +24,7 @@ import { DateTimePicker } from "../components/DateTimePicker";
 import { Switch } from "../components/Switch";
 import { Segmented } from "../components/Segmented";
 import { toApiTime } from "../lib/zoned";
+import { useDatabaseTitle } from "../components/Shell";
 
 const RANGES: { value: UsageRange; label: string }[] = [
   { value: "24h", label: "24 h" },
@@ -64,6 +65,7 @@ function DatabaseDetail({ id }: { id: string }) {
   const tabParam = params.get("tab");
   const tab = tabParam === "data" || tabParam === "users" || tabParam === "network" ? tabParam : "overview";
   const db = useAsync(() => client.getDatabase(id), [id]);
+  useDatabaseTitle(db.status === "ready" ? db.data?.name : undefined);
   const [range, setRange] = useState<UsageRange>("7d");
   const usage = useAsync(() => client.getUsage(id, range), [id, range]);
   const [dialog, setDialog] = useState<Dialog>(null);

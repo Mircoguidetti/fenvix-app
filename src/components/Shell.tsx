@@ -1,23 +1,66 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { NavLink, useLocation } from "react-router-dom";
-import { ChartColumn, CreditCard, Database, KeyRound, LayoutDashboard, Menu, Settings, Users, X } from "lucide-react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { Link, NavLink, useLocation, useSearchParams } from "react-router-dom";
+import { BookOpen, Building2, ChartColumn, CreditCard, Database, LayoutDashboard, Menu, Moon, Pin, PinOff, Sun, X, type LucideIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { AccountMenu, useCurrentOrg } from "./AccountMenu";
 import { useFocusTrap } from "../lib/useFocusTrap";
 import { useOrg } from "../session/OrgProvider";
+import { useTheme } from "../lib/theme";
 
-const NAV = [
-  { to: "/overview", label: "Overview", icon: LayoutDashboard, end: true },
-  { to: "/databases", label: "Databases", icon: Database, end: false },
-  { to: "/usage", label: "Usage", icon: ChartColumn, end: false },
-  { to: "/billing", label: "Billing", icon: CreditCard, end: false },
+/*
+ * The console's frame, laid out like the mockups (fenvix-brain sessions/2026-11-10-console-ui):
+ * - a top bar with where you are (organization / area / database), the theme button and the account;
+ * - a thin bar of area icons that widens over the page while the pointer is on it (or stays open when pinned);
+ * - a second bar with the pages of what is open: the organization's pages, one database's sections, or the
+ *   organization's settings, with a box at the bottom.
+ * Below 900px the two bars become one drawer. Only layout changed: every page, route and action is the one it was.
+ */
+
+const DOCS_URL = "https://docs.fenvix.dev/";
+const PIN_KEY = "fenvix-rail-pinned";
+
+type Area = { key: string; label: string; icon: LucideIcon; to: string; match: (path: string) => boolean };
+const AREAS: Area[] = [
+  { key: "overview", label: "Overview", icon: LayoutDashboard, to: "/overview", match: (p) => p.startsWith("/overview") },
+  { key: "databases", label: "Databases", icon: Database, to: "/databases", match: (p) => p.startsWith("/databases") },
+  { key: "usage", label: "Usage", icon: ChartColumn, to: "/usage", match: (p) => p.startsWith("/usage") },
+  { key: "billing", label: "Billing", icon: CreditCard, to: "/billing", match: (p) => p.startsWith("/billing") },
+  { key: "org", label: "Organization", icon: Building2, to: "/settings/members", match: (p) => p.startsWith("/settings") || p.startsWith("/api-keys") },
 ];
 
-const NAV_WORKSPACE = [
-  { to: "/api-keys", label: "API keys", icon: KeyRound, end: false },
-  { to: "/settings/members", label: "Members", icon: Users, end: false },
-  { to: "/settings", label: "Settings", icon: Settings, end: true },
+const ORG_PAGES = [
+  { to: "/overview", label: "Overview", end: true },
+  { to: "/databases", label: "Databases", end: false },
+  { to: "/usage", label: "Usage", end: false },
+  { to: "/billing", label: "Billing", end: false },
 ];
+const SETTINGS_PAGES = [
+  { to: "/settings/members", label: "Members", end: false },
+  { to: "/api-keys", label: "API keys", end: false },
+  { to: "/settings", label: "Settings", end: true },
+];
+const DB_SECTIONS = [
+  { tab: "overview", label: "Overview" },
+  { tab: "data", label: "Data" },
+  { tab: "users", label: "Users" },
+  { tab: "network", label: "Network" },
+] as const;
+
+/** The open database's name, set by its page so the bars can show it. Layout only. */
+const DbTitle = createContext<{ name: string; set: (name: string) => void }>({ name: "", set: () => {} });
+export function useDatabaseTitle(name: string | undefined) {
+  const { set } = useContext(DbTitle);
+  useEffect(() => {
+    set(name ?? "");
+    return () => set("");
+  }, [name, set]);
+}
+
+/** A database page: /databases/<id>, not the list and not /databases/new. */
+function dbIdOf(path: string): string | null {
+  const m = /^\/databases\/([^/]+)/.exec(path);
+  return m && m[1] !== "new" ? m[1] : null;
+}
 
 /** Shown to a member on every page: they can look, not change. The server refuses changes anyway. */
 function ReadOnlyNote() {
@@ -30,27 +73,221 @@ function ReadOnlyNote() {
   );
 }
 
-function SideNav({ onNavigate }: { onNavigate?: () => void }) {
-  const item = ({ to, label, icon: Icon, end }: (typeof NAV)[number]) => (
-    <NavLink key={to} to={to} end={end} onClick={onNavigate} className="nav-link">
-      <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
-      <span>{label}</span>
-    </NavLink>
-  );
+function ThemeButton() {
+  const { theme, toggle } = useTheme();
+  const label = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
   return (
-    <nav aria-label="Main" className="nav">
-      {NAV.map(item)}
-      <p className="nav-label">Organization</p>
-      {NAV_WORKSPACE.map(item)}
+    <button type="button" className="cx-icon-btn" onClick={toggle} aria-label={label} title={label}>
+      {theme === "dark" ? <Sun size={18} strokeWidth={1.75} aria-hidden="true" /> : <Moon size={18} strokeWidth={1.75} aria-hidden="true" />}
+    </button>
+  );
+}
+
+function DbSectionLinks({ onNavigate }: { onNavigate?: () => void }) {
+  const [params] = useSearchParams();
+  const tab = params.get("tab") ?? "overview";
+  return (
+    <>
+      {DB_SECTIONS.map((s) => (
+        <Link key={s.tab} to={s.tab === "overview" ? "." : `?tab=${s.tab}`} replace onClick={onNavigate} className="cx-sub-link" aria-current={tab === s.tab ? "page" : undefined}>
+          {s.label}
+        </Link>
+      ))}
+    </>
+  );
+}
+
+function PageLinks({ pages, onNavigate }: { pages: typeof ORG_PAGES; onNavigate?: () => void }) {
+  return (
+    <>
+      {pages.map((p) => (
+        <NavLink key={p.to} to={p.to} end={p.end} onClick={onNavigate} className="cx-sub-link">
+          {p.label}
+        </NavLink>
+      ))}
+    </>
+  );
+}
+
+/** The second bar: the pages of what is open, and a box at the bottom. */
+function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgSub: string }) {
+  const { name } = useContext(DbTitle);
+  const dbId = dbIdOf(path);
+  const settings = path.startsWith("/settings") || path.startsWith("/api-keys");
+  return (
+    <aside className="cx-sub" aria-label="Pages">
+      {dbId ? (
+        <>
+          <Link to="/databases" className="cx-sub-back">
+            ← All databases
+          </Link>
+          <div className="cx-sub-head">
+            <span className="cx-sub-kind">Database</span>
+            <span className="cx-sub-title mono">{name || dbId}</span>
+          </div>
+          <nav aria-label="Database sections" className="cx-sub-nav">
+            <DbSectionLinks />
+          </nav>
+        </>
+      ) : (
+        <>
+          <div className="cx-sub-head">
+            <span className="cx-sub-kind">{settings ? "Organization settings" : "Organization"}</span>
+            <span className="cx-sub-title">{orgName || " "}</span>
+            {orgSub && <span className="cx-sub-meta">{orgSub}</span>}
+          </div>
+          <nav aria-label={settings ? "Organization settings" : "Organization pages"} className="cx-sub-nav">
+            <PageLinks pages={settings ? SETTINGS_PAGES : ORG_PAGES} />
+          </nav>
+        </>
+      )}
+      <span className="cx-sub-fill" />
+      <div className="cx-sub-box">
+        {settings ? (
+          <>
+            <span className="cx-sub-box-title">People</span>
+            <span className="cx-sub-box-text">Invite teammates and choose what they can change.</span>
+            <Link to="/settings/members" className="btn btn-primary btn-sm">
+              Manage members
+            </Link>
+          </>
+        ) : dbId ? (
+          <>
+            <span className="cx-sub-box-title">Connect</span>
+            <span className="cx-sub-box-text">The connection string and the database users are in Overview and Users.</span>
+            <Link to="?tab=users" replace className="btn btn-primary btn-sm">
+              Database users
+            </Link>
+          </>
+        ) : (
+          <>
+            <span className="cx-sub-box-title">Databases</span>
+            <span className="cx-sub-box-text">Ready in seconds. Any MongoDB driver connects to it.</span>
+            <Link to="/databases/new" className="btn btn-primary btn-sm">
+              New database
+            </Link>
+          </>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+/** The thin bar of area icons. It widens over the page while the pointer is on it, or stays wide when pinned. */
+function Rail({ path, pinned, onPin }: { path: string; pinned: boolean; onPin: () => void }) {
+  const [hover, setHover] = useState(false);
+  const wide = pinned || hover;
+  return (
+    <nav className="cx-rail" aria-label="Areas" data-wide={wide || undefined} data-pinned={pinned || undefined} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      <div className="cx-rail-inner">
+        {AREAS.map((a) => (
+          <Link key={a.key} to={a.to} className="cx-rail-link" aria-current={a.match(path) ? "page" : undefined} title={a.label}>
+            <a.icon size={18} strokeWidth={1.75} aria-hidden="true" />
+            <span className="cx-rail-label">{a.label}</span>
+          </Link>
+        ))}
+        <span className="cx-rail-fill" />
+        <span className="cx-rail-rule" />
+        <a href={DOCS_URL} target="_blank" rel="noreferrer" className="cx-rail-link" title="Documentation">
+          <BookOpen size={18} strokeWidth={1.75} aria-hidden="true" />
+          <span className="cx-rail-label">Documentation</span>
+        </a>
+        <button type="button" className="cx-rail-link" onClick={onPin} aria-pressed={pinned} title={pinned ? "Let the menu close" : "Keep the menu open"}>
+          {pinned ? <PinOff size={18} strokeWidth={1.75} aria-hidden="true" /> : <Pin size={18} strokeWidth={1.75} aria-hidden="true" />}
+          <span className="cx-rail-label">{pinned ? "Let the menu close" : "Keep the menu open"}</span>
+        </button>
+      </div>
+    </nav>
+  );
+}
+
+/** Below 900px: one drawer with every area and its pages. */
+function Drawer({ path, onClose }: { path: string; onClose: () => void }) {
+  const { name } = useContext(DbTitle);
+  const dbId = dbIdOf(path);
+  return (
+    <>
+      <div className="cx-drawer-top">
+        <Logo />
+        <button type="button" className="cx-icon-btn" onClick={onClose} aria-label="Close navigation">
+          <X size={20} strokeWidth={1.75} aria-hidden="true" />
+        </button>
+      </div>
+      {dbId && (
+        <nav aria-label="Database sections" className="cx-drawer-group">
+          <p className="cx-drawer-label">
+            Database <span className="mono">{name || dbId}</span>
+          </p>
+          <DbSectionLinks onNavigate={onClose} />
+        </nav>
+      )}
+      <nav aria-label="Organization pages" className="cx-drawer-group">
+        <p className="cx-drawer-label">Organization</p>
+        <PageLinks pages={ORG_PAGES} onNavigate={onClose} />
+      </nav>
+      <nav aria-label="Organization settings" className="cx-drawer-group">
+        <p className="cx-drawer-label">Settings</p>
+        <PageLinks pages={SETTINGS_PAGES} onNavigate={onClose} />
+      </nav>
+      <span className="cx-rail-fill" />
+      <a href={DOCS_URL} target="_blank" rel="noreferrer" className="cx-sub-link cx-drawer-docs">
+        <BookOpen size={18} strokeWidth={1.75} aria-hidden="true" />
+        Documentation
+      </a>
+      <div className="cx-drawer-account">
+        <AccountMenu />
+      </div>
+    </>
+  );
+}
+
+function Crumbs({ path, orgName }: { path: string; orgName: string }) {
+  const { name } = useContext(DbTitle);
+  const area = AREAS.find((a) => a.match(path));
+  const dbId = dbIdOf(path);
+  const items: { label: string; to?: string; mono?: boolean }[] = [];
+  if (orgName) items.push({ label: orgName, to: "/overview" });
+  if (area) items.push({ label: area.label, to: area.to });
+  if (dbId) items.push({ label: name || dbId, mono: true });
+  return (
+    <nav aria-label="Where you are" className="cx-crumbs">
+      {items.map((c, i) => (
+        <span key={i} className="cx-crumb">
+          {i > 0 && (
+            <span className="cx-crumb-sep" aria-hidden="true">
+              /
+            </span>
+          )}
+          {c.to && i < items.length - 1 ? (
+            <Link to={c.to} className={c.mono ? "mono" : undefined}>
+              {c.label}
+            </Link>
+          ) : (
+            <span aria-current="page" className={c.mono ? "mono" : undefined}>
+              {c.label}
+            </span>
+          )}
+        </span>
+      ))}
     </nav>
   );
 }
 
 export function Shell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [dbName, setDbName] = useState("");
+  const [pinned, setPinned] = useState(() => {
+    try {
+      return localStorage.getItem(PIN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const { pathname } = useLocation();
   const drawer = useRef<HTMLElement>(null);
   const current = useCurrentOrg();
+  const orgName = current.status === "ready" ? current.name : "";
+  const orgSub = current.status === "ready" ? current.sub : "";
 
   useEffect(() => setOpen(false), [pathname]);
   // Widening the window past the breakpoint leaves no drawer behind.
@@ -62,53 +299,55 @@ export function Shell({ children }: { children: ReactNode }) {
   }, []);
   useFocusTrap(drawer, open, () => setOpen(false));
 
+  function togglePin() {
+    setPinned((p) => {
+      try {
+        localStorage.setItem(PIN_KEY, p ? "0" : "1");
+      } catch {
+        /* the choice lasts for this page only */
+      }
+      return !p;
+    });
+  }
+
   return (
-    <div className="shell">
-      <a href="#main" className="skip-link">
-        Skip to content
-      </a>
+    <DbTitle.Provider value={{ name: dbName, set: setDbName }}>
+      <div className="shell cx-shell">
+        <a href="#main" className="skip-link">
+          Skip to content
+        </a>
 
-      <aside className="sidebar" aria-label="Sidebar">
-        <div className="sidebar-inner">
-          <div className="sidebar-top">
-            <Logo />
-          </div>
-          <SideNav />
-          <div className="sidebar-bottom">
-            <AccountMenu />
-          </div>
-        </div>
-      </aside>
-
-      {open && <div className="scrim" onClick={() => setOpen(false)} aria-hidden="true" />}
-      <aside ref={drawer} className="drawer" role="dialog" aria-modal="true" aria-label="Navigation drawer" hidden={!open}>
-        <div className="sidebar-top">
-          <Logo />
-          <button type="button" className="icon-btn" onClick={() => setOpen(false)} aria-label="Close navigation">
-            <X size={20} strokeWidth={1.75} aria-hidden="true" />
-          </button>
-        </div>
-        <SideNav onNavigate={() => setOpen(false)} />
-        <div className="sidebar-bottom">
-          <AccountMenu />
-        </div>
-      </aside>
-
-      <div className="content">
-        <header className="topbar">
-          <span className="topbar-logo">
-            <Logo />
-          </span>
-          {current.status === "ready" && <span className="topbar-org">{current.name}</span>}
-          <button type="button" className="icon-btn menu-btn" onClick={() => setOpen(true)} aria-label="Open navigation" aria-expanded={open} style={current.status === "ready" ? undefined : { marginLeft: "auto" }}>
+        <header className="cx-top">
+          <button type="button" className="cx-icon-btn cx-menu" onClick={() => setOpen(true)} aria-label="Open navigation" aria-expanded={open}>
             <Menu size={20} strokeWidth={1.75} aria-hidden="true" />
           </button>
+          <Link to="/overview" className="cx-logo" aria-label="FENVIX, overview">
+            <Logo />
+          </Link>
+          <Crumbs path={pathname} orgName={orgName} />
+          <span className="cx-top-fill" />
+          <ThemeButton />
+          <div className="cx-account">
+            <AccountMenu />
+          </div>
         </header>
-        <main id="main" tabIndex={-1}>
-          <ReadOnlyNote />
-          {children}
-        </main>
+
+        <div className="cx-body">
+          <Rail path={pathname} pinned={pinned} onPin={togglePin} />
+          <SubNav path={pathname} orgName={orgName} orgSub={orgSub} />
+          <div className="cx-content">
+            <main id="main" tabIndex={-1}>
+              <ReadOnlyNote />
+              {children}
+            </main>
+          </div>
+        </div>
+
+        {open && <div className="scrim" onClick={() => setOpen(false)} aria-hidden="true" />}
+        <aside ref={drawer} className="cx-drawer" role="dialog" aria-modal="true" aria-label="Navigation" hidden={!open}>
+          <Drawer path={pathname} onClose={() => setOpen(false)} />
+        </aside>
       </div>
-    </div>
+    </DbTitle.Provider>
   );
 }

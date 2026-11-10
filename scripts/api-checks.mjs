@@ -194,7 +194,7 @@ const api = createServer((req, res) => {
 }).listen(API_PORT, "127.0.0.1");
 
 // ------------------------------------------------------------------ build and serve the app
-const env = { ...process.env, VITE_DATA_BACKEND: "", VITE_API_URL: API, VITE_SUPABASE_URL: `http://127.0.0.1:${SB_PORT}`, VITE_SUPABASE_ANON_KEY: "local-anon-key" };
+const env = { ...process.env, VITE_DATA_BACKEND: "supabase", VITE_API_URL: API, VITE_SUPABASE_URL: `http://127.0.0.1:${SB_PORT}`, VITE_SUPABASE_ANON_KEY: "local-anon-key" };
 if (spawnSync("npx", ["vite", "build", "--outDir", "dist-api", "--emptyOutDir"], { env, stdio: "ignore" }).status !== 0) {
   console.error("api checks: build failed");
   process.exit(1);

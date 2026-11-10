@@ -127,11 +127,11 @@ for (const [w, h] of SIZES) {
       await go(page, "databases");
       await settled(page);
       await page.getByRole("button", { name: "Open navigation" }).click();
-      await page.locator(".drawer .nav").waitFor();
+      await page.locator(".cx-drawer .cx-drawer-top").waitFor();
       await measure(page, "drawer", w);
       if (SAVE.has(w)) await page.screenshot({ path: `${OUT}/drawer-${w}.png` });
       await page.keyboard.press("Escape");
-      await page.locator(".drawer").waitFor({ state: "hidden" });
+      await page.locator(".cx-drawer").waitFor({ state: "hidden" });
       const back = await page.evaluate(() => document.activeElement?.getAttribute("aria-label"));
       if (back !== "Open navigation") fail(`drawer ${w}: focus is on ${back} after Escape`);
     }

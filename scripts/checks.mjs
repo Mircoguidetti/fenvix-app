@@ -22,9 +22,9 @@ async function toast(page, text) {
 async function openUserMenu(page, vp) {
   if (isMobile(vp)) {
     await page.getByRole("button", { name: "Open navigation" }).click();
-    await page.locator(".drawer .user-btn").click();
+    await page.locator(".cx-drawer .user-btn").click();
   } else {
-    await page.locator(".sidebar .user-btn").click();
+    await page.locator(".cx-account .user-btn").click();
   }
 }
 
@@ -86,9 +86,9 @@ const TESTS = {
         await settled(page);
       }
       const m = await page.evaluate(() => {
-        const t = document.querySelector(".topbar").getBoundingClientRect();
-        const b = document.querySelector(".menu-btn").getBoundingClientRect();
-        return { bar: t.height, above: b.top - t.top, below: t.bottom - b.bottom, long: document.querySelector(".content").scrollHeight > innerHeight };
+        const t = document.querySelector(".cx-top").getBoundingClientRect();
+        const b = document.querySelector(".cx-menu").getBoundingClientRect();
+        return { bar: t.height, above: b.top - t.top, below: t.bottom - b.bottom, long: document.querySelector(".cx-content").scrollHeight > innerHeight };
       });
       assert(m.bar >= 60, `${route}: the top bar is ${m.bar}px tall, not 60`);
       assert(m.above >= 12 && m.below >= 12, `${route}: the menu button has ${m.above}px above and ${m.below}px below`);
@@ -98,7 +98,7 @@ const TESTS = {
 
   async "sign in and out"(page, vp) {
     await go(page, "databases/db_0001");
-    await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
+    await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
     assert(!(await page.locator(".shell").count()), "the dashboard is visible while signed out");
     const order = await page.evaluate(() => [...document.querySelectorAll(".signin-card button, .signin-card [type=submit]")].map((b) => b.textContent.trim()));
     assert(/GitHub/.test(order[0]) && /Google/.test(order[1]) && /sign-in link/.test(order[2]), `sign-in buttons out of order: ${order}`);
@@ -113,14 +113,14 @@ const TESTS = {
     await page.getByRole("heading", { name: "orders-prod" }).waitFor();
     await openUserMenu(page, vp);
     await page.getByRole("button", { name: "Sign out" }).click();
-    await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
+    await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
     await toast(page, "Signed out");
 
     await page.getByRole("button", { name: "Continue with Google" }).click();
     await page.locator(".shell").waitFor();
     await openUserMenu(page, vp);
     await page.getByRole("button", { name: "Sign out" }).click();
-    await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
+    await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
     await toast(page, "Signed out");
 
     await page.getByLabel("Work email").fill("not-an-email");
@@ -828,7 +828,7 @@ const TESTS = {
 
   async "sidebar: brand and workspace"(page, vp) {
     await signIn(page, "overview");
-    const nav = isMobile(vp) ? ".drawer" : ".sidebar";
+    const nav = isMobile(vp) ? ".cx-drawer" : ".cx-account";
     const rename = async (name) => {
       await go(page, "settings");
       await settled(page);
@@ -840,7 +840,7 @@ const TESTS = {
       await eventually(async () => (await page.locator(`${nav} .workspace-name`).textContent()) === name.trim(), `the sidebar does not show ${name}`);
       if (isMobile(vp)) {
         await page.getByRole("button", { name: "Open navigation" }).click();
-        await page.locator(".drawer .nav").waitFor();
+        await page.locator(".cx-drawer .cx-drawer-top").waitFor();
       }
       // The block at the bottom: the person, with the organization and role under the name. Its accessible name holds
       // all of it and says what the button does.
@@ -874,7 +874,7 @@ const TESTS = {
 
     // The brand sits on its own at the top, outside the organization.
     if (isMobile(vp)) await page.getByRole("button", { name: "Open navigation" }).click();
-    const brand = page.locator(`${nav} .sidebar-top .logo`);
+    const brand = page.locator(isMobile(vp) ? ".cx-drawer .cx-drawer-top .logo" : ".cx-top .logo");
     await brand.waitFor();
     assert((await brand.innerText()).trim() === "FENVIX", "the brand is missing at the top of the navigation");
     if (isMobile(vp)) await page.getByRole("button", { name: "Close navigation" }).click();
@@ -887,13 +887,13 @@ const TESTS = {
     assert(!mine.empty.length, `empty elements in the organization box: ${mine.empty.join(", ")}`);
     assert(mine.tag === "BUTTON", "the organization box is not a button");
     assert(!mine.brandInside, "the brand is inside the organization box");
-    assert(mine.bg === "rgb(11, 18, 32)" && mine.fg === "rgb(255, 255, 255)", `the avatar is not the dark colour with a white initial: ${mine.bg} ${mine.fg}`);
+    assert(mine.bg === "rgb(9, 12, 20)" && mine.fg === "rgb(255, 255, 255)", `the avatar is not the dark colour with a white initial: ${mine.bg} ${mine.fg}`);
     // The logo mark is white (with its fade) on the dark navigation, not tinted.
     const mark = await page.evaluate(() => {
-      const svg = document.querySelector(".sidebar .logo svg");
+      const svg = document.querySelector(".cx-top .logo svg");
       return { svg: getComputedStyle(svg).color, stops: [...svg.querySelectorAll("stop")].map((s) => getComputedStyle(s).stopColor) };
     });
-    assert(mark.svg === "rgb(255, 255, 255)" && mark.stops.every((c) => c === "rgb(255, 255, 255)"), `the logo mark in the sidebar is ${mark.svg} (${mark.stops})`);
+    assert(mark.svg === "rgb(246, 246, 247)" && mark.stops.every((c) => c === "rgb(246, 246, 247)"), `the logo mark in the top bar is ${mark.svg} (${mark.stops})`);
 
     assert((await rename("🚀 Launch team")).initial === "🚀", "an emoji name does not show the emoji");
     const accented = await rename("élan studio");
@@ -902,11 +902,12 @@ const TESTS = {
 
     const long = "Northwind Cloud Platform Engineering, EU West production";
     const l = await rename(long);
-    assert(l.clipped && l.ellipsis, "a long name is not cut with an ellipsis");
+    // On a computer the top bar shows the account as an avatar only; the drawer on a phone shows the name, cut.
+    if (isMobile(vp)) assert(l.clipped && l.ellipsis, "a long name is not cut with an ellipsis");
     assert(l.inside, "a long name runs out of its box");
     assert(l.title === `Elena Marsh · ${long}`, `the tooltip does not hold the whole name: ${l.title}`);
 
-    // Keyboard order: skip link, then the first menu item (desktop) or the menu button (phone).
+    // Keyboard order: skip link, then the brand in the top bar (desktop) or the menu button (phone).
     await page.reload(); // a fresh load, so focus starts at the top of the document
     await page.locator(".shell").waitFor();
     await settled(page);
@@ -914,7 +915,7 @@ const TESTS = {
     assert(await page.evaluate(() => document.activeElement?.classList.contains("skip-link")), "the first Tab does not reach the skip link");
     await page.keyboard.press("Tab");
     const second = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") || document.activeElement?.textContent.trim());
-    assert(isMobile(vp) ? second === "Open navigation" : second === "Overview", `the second Tab reaches ${second}`);
+    assert(isMobile(vp) ? second === "Open navigation" : second === "FENVIX, overview", `the second Tab reaches ${second}`);
   },
 
   async "select: keyboard, mouse and one look for every dropdown"(page) {
