@@ -1385,5 +1385,5 @@ tr.row-open { cursor: pointer; }
 .timeline-wrap { position: relative; }
 .timeline-bar { cursor: crosshair; }
 .timeline-bar span[data-active] { outline: 2px solid var(--text); outline-offset: 1px; }
-:root[data-theme="dark"] .chart-tip { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chart-tip { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); } }
+:root[data-theme="dark"] .chart-tip { box-shadow: 0 8px 24px rgba(6, 8, 14, 0.6); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chart-tip { box-shadow: 0 8px 24px rgba(6, 8, 14, 0.6); } }
