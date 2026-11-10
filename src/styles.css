@@ -8,27 +8,27 @@
   --black: #06080e;
   --bg: #ffffff; /* cards, fields, dialogs */
   --page: #f6f6f7; /* the page behind the cards */
-  --surface: #f5f6f8;
-  --surface-2: #eff0f4;
-  --border: #e1e4ec;
-  --border-strong: #d1d6e2;
-  --line-soft: #eff1f5; /* row separators inside a table */
+  --surface: #f3f5f9;
+  --surface-2: #eaeef5;
+  --border: #dbe1ed;
+  --border-strong: #c5cee2;
+  --line-soft: #eceff6; /* row separators inside a table */
   --text: var(--black);
-  --muted: #4d5a78; /* secondary text: 5.5:1 on the page */
-  --muted-2: #525f80; /* hints, column headings: 4.5:1 or more on every light surface */
+  --muted: #525e7a; /* secondary text: 5.5:1 on the page */
+  --muted-2: #566381; /* hints, column headings: 4.5:1 or more on every light surface */
   --on-text: #f6f6f7; /* text on a primary (ink) fill */
   --on-text-muted: #a8a8a8;
-  --primary-hover: #1c212c;
+  --primary-hover: #212631;
   --nav-bg: var(--black);
   --nav-text: #f6f6f7;
-  --nav-muted: #a8b1c7;
-  --nav-label: #8c98b5;
+  --nav-muted: #a9b5d1;
+  --nav-label: #8898bf;
   --nav-border: #1d222e;
-  --nav-hover: rgba(120, 150, 220, 0.08);
-  --nav-active: rgba(120, 150, 220, 0.16);
-  --grid: #e8eaf0;
-  --ink-2: #7886a8;
-  --ink-3: #c0c6d6;
+  --nav-hover: rgba(110, 145, 230, 0.1);
+  --nav-active: rgba(110, 145, 230, 0.2);
+  --grid: #e4e8f2;
+  --ink-2: #7583a3;
+  --ink-3: #b4bfda;
   --chart: var(--text);
   --shadow: none;
   --shadow-lg: 0 12px 32px rgba(6, 8, 14, 0.16);
@@ -495,7 +495,7 @@ html:has(.signin-page), body:has(.signin-page) { background: var(--page); }
 .key-block { width: 11px; height: 11px; border-radius: 3px; }
 .legend-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; }
 .legend-list li { display: inline-flex; align-items: center; gap: 6px; }
-:root { --stack-0: var(--black); --stack-1: #373e4c; --stack-2: #5f6778; --stack-3: #8a92a3; --stack-4: #b7bbc4; --stack-5: #dddfe4; }
+:root { --stack-0: #1f2533; --stack-1: #3a455f; --stack-2: #57688e; --stack-3: #8795b5; --stack-4: #b9c2d4; --stack-5: #dfe3ec; }
 :root[data-theme="dark"] { --stack-0: #f6f6f7; --stack-1: #c9ccd2; --stack-2: #979daa; --stack-3: #6a7487; --stack-4: #464f61; --stack-5: #2e343f; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --stack-0: #f6f6f7; --stack-1: #c9ccd2; --stack-2: #979daa; --stack-3: #6a7487; --stack-4: #464f61; --stack-5: #2e343f; } }
 
