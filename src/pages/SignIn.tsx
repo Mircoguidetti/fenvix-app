@@ -1,10 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CircleCheck } from "lucide-react";
+import { CircleCheck, Moon, Sun } from "lucide-react";
 import { Logo } from "../components/Logo";
 import { GitHubMark, GoogleMark } from "../components/marks";
 import { session, type AuthProvider } from "../session";
 import { useSession } from "../session/SessionProvider";
+import { HeroVisual } from "../components/HeroVisual";
+import { useTheme } from "../lib/theme";
 
 export function SignInPage() {
   const { setUser } = useSession();
@@ -14,6 +16,8 @@ export function SignInPage() {
   const [error, setError] = useState<string | null>(session.configError ?? null);
   const [busy, setBusy] = useState(false);
   const token = params.get("token");
+  const { theme, toggle } = useTheme();
+  const themeLabel = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
 
   // A link that reaches the page as ?token=… (the mock's email link) signs the browser in.
   useEffect(() => {
@@ -59,13 +63,33 @@ export function SignInPage() {
 
   return (
     <main id="main" className="signin-page" tabIndex={-1}>
-      <div className="signin-mark">
-        <Logo />
-      </div>
+      <section className="signin-hero" aria-label="FENVIX">
+        <HeroVisual />
+        <div className="signin-hero-logo">
+          <Logo />
+        </div>
+        <div className="signin-hero-copy">
+          <p className="signin-hero-title">
+            Your agents' history,
+            <br />
+            kept forever.
+          </p>
+          <p className="signin-hero-lead">Sign in to see every customer, every step, and any moment in the past.</p>
+        </div>
+      </section>
 
+      <section className="signin-side">
+        <div className="signin-side-top">
+          <span className="signin-mark">
+            <Logo />
+          </span>
+          <button type="button" className="signin-theme" onClick={toggle} aria-label={themeLabel} title={themeLabel}>
+            {theme === "dark" ? <Sun size={18} strokeWidth={1.75} aria-hidden="true" /> : <Moon size={18} strokeWidth={1.75} aria-hidden="true" />}
+          </button>
+        </div>
       <div className="signin-card">
-        <h1>Sign in to FENVIX</h1>
-        <p className="muted signin-lead">Use the account your fleet is on.</p>
+        <h1>Sign in</h1>
+        <p className="muted signin-lead">Welcome back. Pick how you want to sign in.</p>
 
         <div className="signin-providers">
           <button type="button" className="btn btn-block btn-lg" onClick={() => provider("github")} disabled={busy}>
@@ -79,7 +103,7 @@ export function SignInPage() {
         </div>
 
         <div className="divider" role="separator">
-          <span>or</span>
+          <span>or with email</span>
         </div>
 
         {sentTo ? (
@@ -118,6 +142,7 @@ export function SignInPage() {
           By continuing you agree to the <a href="https://fenvix.com/terms">Terms of Service</a> and the <a href="https://fenvix.com/privacy">Privacy Policy</a>.
         </p>
       </div>
+      </section>
     </main>
   );
 }

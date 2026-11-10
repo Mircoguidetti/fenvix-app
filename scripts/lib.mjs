@@ -132,9 +132,22 @@ export async function layoutProblems(page) {
       if (cs.display === "inline") return false;
       return onTop(e) && r.width && r.height && !e.closest("[hidden],dialog:not([open])") && !e.classList.contains("skip-link") && cs.visibility !== "hidden" && !(e.type === "radio" || e.type === "checkbox") && cs.position !== "absolute";
     });
+    // Only the part of an element that its scrolling containers let show: the page scrolls under the top bar, and
+    // what is hidden there is not on top of the bar's buttons.
+    const shown = (e) => {
+      const r = e.getBoundingClientRect();
+      let top = r.top, bottom = r.bottom, left = r.left, right = r.right;
+      for (let p = e.parentElement; p; p = p.parentElement) {
+        const cs = getComputedStyle(p);
+        if (!/(auto|scroll|hidden)/.test(cs.overflowY + cs.overflowX)) continue;
+        const c = p.getBoundingClientRect();
+        top = Math.max(top, c.top); bottom = Math.min(bottom, c.bottom); left = Math.max(left, c.left); right = Math.min(right, c.right);
+      }
+      return { top, bottom, left, right };
+    };
     for (let i = 0; i < hit.length; i++)
       for (let j = i + 1; j < hit.length; j++) {
-        const a = hit[i].getBoundingClientRect(), b = hit[j].getBoundingClientRect();
+        const a = shown(hit[i]), b = shown(hit[j]);
         const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
         const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
         if (w > 1 && h > 1 && !hit[i].contains(hit[j]) && !hit[j].contains(hit[i])) out.push(`overlap: ${hit[i].tagName}[${hit[i].textContent.trim().slice(0, 20)}] and ${hit[j].tagName}[${hit[j].textContent.trim().slice(0, 20)}]`);

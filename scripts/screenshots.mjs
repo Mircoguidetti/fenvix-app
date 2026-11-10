@@ -59,7 +59,7 @@ for (const [vpName, viewport] of VIEWPORTS) {
     const path = `screenshots/${name}-${vpName}.png`;
     if (fixed) return page.screenshot({ path });
     const needed = await page.evaluate(() => {
-      const el = document.querySelector(".content") ?? document.documentElement;
+      const el = document.querySelector(".cx-content") ?? document.documentElement;
       return Math.ceil(el.scrollHeight);
     });
     const height = Math.min(Math.max(needed, viewport.height), MAX_HEIGHT);
@@ -180,12 +180,12 @@ for (const [vpName, viewport] of VIEWPORTS) {
   // Navigation drawer and the account menu
   if (isMobile(viewport)) {
     await page.getByRole("button", { name: "Open navigation" }).click();
-    await page.locator(".drawer .nav").waitFor();
+    await page.locator(".cx-drawer .cx-drawer-top").waitFor();
     await check(`drawer ${vpName}`);
     await shot("drawer", true);
-    await page.locator(".drawer .user-btn").click();
+    await page.locator(".cx-drawer .user-btn").click();
   } else {
-    await page.locator(".sidebar .user-btn").click();
+    await page.locator(".cx-account .user-btn").click();
   }
   await page.getByRole("button", { name: "Sign out" }).waitFor();
   await check(`user-menu ${vpName}`);

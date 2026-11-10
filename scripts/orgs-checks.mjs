@@ -20,22 +20,22 @@ async function toast(page, text) {
 async function openSwitcher(page, vp) {
   if (isMobile(vp)) {
     await page.getByRole("button", { name: "Open navigation" }).click();
-    await page.locator(".drawer .account-btn").click();
-    return page.locator(".drawer .org-panel");
+    await page.locator(".cx-drawer .account-btn").click();
+    return page.locator(".cx-drawer .org-panel");
   }
-  await page.locator(".sidebar .account-btn").click();
-  return page.locator(".sidebar .org-panel");
+  await page.locator(".cx-account .account-btn").click();
+  return page.locator(".cx-account .org-panel");
 }
 
 async function signOut(page, vp) {
   if (isMobile(vp)) {
     await page.getByRole("button", { name: "Open navigation" }).click();
-    await page.locator(".drawer .user-btn").click();
+    await page.locator(".cx-drawer .user-btn").click();
   } else {
-    await page.locator(".sidebar .user-btn").click();
+    await page.locator(".cx-account .user-btn").click();
   }
   await page.getByRole("button", { name: "Sign out" }).click();
-  await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
+  await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
 }
 
 /** Signs in through the email link of the mock, as a given address. */
@@ -220,7 +220,7 @@ const TESTS = {
     // The invited person opens the link while signed out, signs in, and accepts.
     await signOut(page, vp);
     await page.goto(link);
-    await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
+    await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
     assert(!page.url().includes("token="), `the token stayed in the address bar: ${page.url()}`);
     await signInByEmail(page, "sam.rivera@northwind.cloud");
     await page.getByRole("heading", { name: "Join an organization" }).waitFor();
@@ -262,8 +262,8 @@ const TESTS = {
     const messages = [];
     for (const link of [other, revoked, `${BASE}invite#token=${"A".repeat(43)}`]) {
       await page.goto(link);
-      await page.getByRole("heading", { name: /Sign in to FENVIX|Join an organization/ }).waitFor();
-      if (await page.getByRole("heading", { name: "Sign in to FENVIX" }).count()) await signInByEmail(page, "sam.rivera@northwind.cloud");
+      await page.getByRole("heading", { name: /^Sign in$|Join an organization/ }).waitFor();
+      if (await page.getByRole("heading", { name: "Sign in", exact: true }).count()) await signInByEmail(page, "sam.rivera@northwind.cloud");
       await page.getByRole("heading", { name: "Join an organization" }).waitFor();
       await page.getByRole("button", { name: "Accept invitation" }).click();
       messages.push(await page.getByRole("alert").innerText());

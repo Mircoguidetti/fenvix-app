@@ -88,7 +88,7 @@ step("sign in with Google: the ?code= is exchanged before the router, the URL en
   const { ctx, page } = await newPage();
   ownerContext = { ctx, page };
   await page.goto(APP + "databases"); // asked for a deep link while signed out
-  await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
+  await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
   const seen = [];
   page.on("framenavigated", (f) => f === page.mainFrame() && seen.push(f.url()));
   await page.getByRole("button", { name: "Continue with Google" }).click();
@@ -104,10 +104,10 @@ step("sign in with Google: the ?code= is exchanged before the router, the URL en
 
 step("the user menu shows the real name, email and photo", async () => {
   const { page } = ownerContext;
-  await page.locator(".sidebar .user-btn").click();
+  await page.locator(".cx-account .user-btn").click();
   await page.locator(".account-panel .account-who").getByText("Mirco Guidetti").waitFor();
   await page.locator(".account-panel .account-who").getByText("mircoguidetti1994@gmail.com").waitFor();
-  const img = page.locator(".sidebar .user-btn img.avatar-photo");
+  const img = page.locator(".cx-account .user-btn img.avatar-photo");
   assert((await img.count()) === 1 && (await img.getAttribute("src")).includes("avatars.githubusercontent.com"), "the avatar is not shown");
   await page.keyboard.press("Escape");
 });
@@ -298,12 +298,12 @@ step("settings: saving renames the workspace everywhere", async () => {
 
 step("sign out clears the session, and the next sign-in is a fresh one", async () => {
   const { page } = ownerContext;
-  await page.locator(".sidebar .user-btn").click();
+  await page.locator(".cx-account .user-btn").click();
   await page.getByRole("button", { name: "Sign out" }).click();
-  await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
+  await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
   assert(!(await page.evaluate(() => Object.keys(localStorage).some((k) => /auth-token$/.test(k)))), "the session is still stored");
   await page.reload();
-  await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
+  await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
   await ownerContext.ctx.close();
 });
 
@@ -321,7 +321,7 @@ step("email link: the link comes back with ?code=, finishes before the router, l
   await page.goto(link); // what clicking the link in the mail does, in the same browser
   await dashboard(page);
   assert(!page.url().includes("code=") && new URL(page.url()).pathname === "/overview", page.url());
-  await page.locator(".sidebar .user-btn").click();
+  await page.locator(".cx-account .user-btn").click();
   await page.locator(".account-panel .account-who").getByText("elena.marsh@northwind.cloud").waitFor();
   // A brand-new person gets an empty workspace of their own and can see none of the seeded fleet.
   await page.goto(APP + "databases");
@@ -333,12 +333,12 @@ step("email link: the link comes back with ?code=, finishes before the router, l
 step("a replayed or tampered code is refused with a message, not a blank page", async () => {
   const { ctx, page } = await newPage();
   await page.goto(APP + "?code=does-not-exist");
-  await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
+  await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
   const text = await page.locator("[role=alert]").innerText();
   assert(/invalid flow state|flow state|code/i.test(text), `message was: ${text}`);
   assert(!page.url().includes("code="), "the bad code was left in the address bar");
   await page.goto(APP + "?error=access_denied&error_description=Access+denied");
-  await page.getByRole("heading", { name: "Sign in to FENVIX" }).waitFor();
+  await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
   assert(/access denied/i.test(await page.locator("[role=alert]").innerText()), "a provider error was not shown");
   await ctx.close();
 });
@@ -349,8 +349,8 @@ step("on a phone: sign in and the dashboard works", async () => {
   await page.getByRole("button", { name: "Continue with GitHub" }).click();
   await dashboard(page);
   await page.getByRole("button", { name: "Open navigation" }).click();
-  await page.locator(".drawer .user-btn").click();
-  await page.locator(".drawer .account-panel .account-who").getByText("Mirco Guidetti").waitFor();
+  await page.locator(".cx-drawer .user-btn").click();
+  await page.locator(".cx-drawer .account-panel .account-who").getByText("Mirco Guidetti").waitFor();
   assert(!(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)), "the page scrolls sideways");
   await ctx.close();
 });

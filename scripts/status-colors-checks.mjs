@@ -17,9 +17,9 @@ const DANGER = "rgb(214, 20, 10)";
 const WARNING = "rgb(161, 92, 0)";
 const SUCCESS_DARK = "rgb(61, 220, 132)";
 const DANGER_DARK = "rgb(255, 106, 92)";
-const BLACK = "rgb(11, 18, 32)"; // --black, the one dark colour (#0b1220)
-const WHITE = "rgb(255, 255, 255)";
-const CHART = "rgb(11, 18, 32)"; // --chart, the one dark colour of bars and lines
+const BLACK = "rgb(9, 12, 20)"; // --black, the one dark colour (#090c14, the landing's ink)
+const WHITE = "rgb(246, 246, 247)"; // --on-text, the paper white on a dark or red fill
+const CHART = "rgb(9, 12, 20)"; // --chart, the one dark colour of bars and lines
 const STATUS = [SUCCESS, DANGER, WARNING, SUCCESS_DARK, DANGER_DARK, "rgb(255, 176, 32)"];
 
 /** Computed colours of the first element matching `selector` (optionally of a pseudo-element). */
@@ -79,7 +79,7 @@ async function huesOnPage(page, allowed) {
 async function fits(page) {
   const wide = await page.evaluate(() => {
     const w = document.documentElement.clientWidth;
-    const content = document.querySelector(".content");
+    const content = document.querySelector(".cx-content");
     const out = [...document.querySelectorAll("main button, main a, main input, main .state, main .tag, dialog[open] button, .toast")]
       .filter((el) => el.getClientRects().length)
       .filter((el) => el.getBoundingClientRect().right > w + 0.5 || el.getBoundingClientRect().left < -0.5)
@@ -316,9 +316,9 @@ const TESTS = {
   async "overview and navigation: the selected menu item has no line under it, charts are slate, grey and silver"(page, viewport) {
     await signIn(page, "overview");
     if (isMobile(viewport)) await page.getByRole("button", { name: "Open navigation" }).click();
-    const scope = isMobile(viewport) ? ".drawer" : ".sidebar";
-    await noLine(page, `${scope} .nav-link.active`);
-    const item = await paint(page, `${scope} .nav-link.active`);
+    const scope = isMobile(viewport) ? ".cx-drawer" : ".cx-sub";
+    await noLine(page, `${scope} .cx-sub-link.active`);
+    const item = await paint(page, `${scope} .cx-sub-link.active`);
     assert(!STATUS.includes(item.color) && !STATUS.includes(item.bg), "the selected menu item is coloured");
     if (isMobile(viewport)) await page.getByRole("button", { name: "Close navigation" }).click();
     const area = await page.locator("#awake .chart-area").first().evaluate((e) => e.style.fill);

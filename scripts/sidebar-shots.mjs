@@ -29,7 +29,7 @@ for (const [vpName, viewport] of VIEWPORTS) {
     await page.waitForFunction((n) => document.querySelector(".workspace-name")?.textContent.includes(n), name);
     if (isMobile(viewport)) {
       await page.getByRole("button", { name: "Open navigation" }).click();
-      await page.locator(".drawer .nav").waitFor();
+      await page.locator(".cx-drawer .cx-drawer-top").waitFor();
     }
     await page.mouse.move(viewport.width - 2, viewport.height - 2);
     await page.waitForTimeout(250);
