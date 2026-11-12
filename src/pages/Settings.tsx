@@ -3,7 +3,7 @@ import { Link, NavLink } from "react-router-dom";
 import { client, type Settings } from "../data";
 import { orgs } from "../data/orgs-client";
 import { ROLE_NAMES, orgNameProblem } from "../data/orgs";
-import { Card, Message, PageHeader } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session/SessionProvider";
 import { useOrg } from "../session/OrgProvider";
@@ -115,7 +115,7 @@ export function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="Settings" description="Your organization, its members and your account." />
+      <PageHeader back={<Kicker>Organization</Kicker>} title="Settings" description="Your organization, its members and your account." />
       {org.status === "ready" && <SettingsTabs />}
 
       <div className="grid-2 even">

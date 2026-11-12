@@ -888,12 +888,12 @@ const TESTS = {
     assert(mine.tag === "BUTTON", "the organization box is not a button");
     assert(!mine.brandInside, "the brand is inside the organization box");
     assert(mine.bg === "rgb(6, 8, 14)" && mine.fg === "rgb(255, 255, 255)", `the avatar is not the dark colour with a white initial: ${mine.bg} ${mine.fg}`);
-    // The logo mark is white (with its fade) on the dark navigation, not tinted.
+    // The logo mark is the frame's ink (with its fade) on the light top bar, as in the console mockup; not tinted.
     const mark = await page.evaluate(() => {
       const svg = document.querySelector(".cx-top .logo svg");
       return { svg: getComputedStyle(svg).color, stops: [...svg.querySelectorAll("stop")].map((s) => getComputedStyle(s).stopColor) };
     });
-    assert(mark.svg === "rgb(246, 246, 247)" && mark.stops.every((c) => c === "rgb(246, 246, 247)"), `the logo mark in the top bar is ${mark.svg} (${mark.stops})`);
+    assert(mark.svg === "rgb(20, 22, 27)" && mark.stops.every((c) => c === "rgb(20, 22, 27)"), `the logo mark in the top bar is ${mark.svg} (${mark.stops})`);
 
     assert((await rename("🚀 Launch team")).initial === "🚀", "an emoji name does not show the emoji");
     const accented = await rename("élan studio");

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ArrowDown, ArrowUp, ArrowUpDown, Download } from "lucide-react";
 import { client, type UsageQuery, type UsageSort } from "../data";
-import { Card, Message, PageHeader } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { Pagination } from "../components/Pagination";
 import { Sparkline, StackedBars } from "../components/charts";
 import { TagChips } from "../components/Tags";
@@ -82,6 +82,7 @@ export function UsagePage() {
   return (
     <>
       <PageHeader
+        back={<Kicker />}
         title="Usage"
         description="Storage and requests for a month, per database or per tag. Export the table to bill your own customers."
         actions={

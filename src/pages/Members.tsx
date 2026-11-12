@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Card, Message, PageHeader } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { CopyButton } from "../components/CopyButton";
 import { useToast } from "../components/Toast";
@@ -54,7 +54,7 @@ export function MembersPage() {
   if (!orgs.available || !org.current || !role) {
     return (
       <>
-        <PageHeader title="Settings" description="Your organization, its members and your account." />
+        <PageHeader back={<Kicker>Organization</Kicker>} title="Settings" description="Your organization, its members and your account." />
         <SettingsTabs />
         <Message>Members need the FENVIX API, which this dashboard is not set up for (VITE_API_URL).</Message>
       </>
@@ -143,7 +143,7 @@ export function MembersPage() {
 
   return (
     <>
-      <PageHeader title="Settings" description="Your organization, its members and your account." />
+      <PageHeader back={<Kicker>Organization</Kicker>} title="Settings" description="Your organization, its members and your account." />
       <SettingsTabs />
 
       {actionError && (

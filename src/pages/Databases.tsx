@@ -3,7 +3,7 @@ import { useOrg } from "../session/OrgProvider";
 import { Link, useSearchParams } from "react-router-dom";
 import { ChevronDown, ChevronRight, Plus, SlidersHorizontal, X } from "lucide-react";
 import { client, type DatabaseFilter, type DatabaseSort } from "../data";
-import { PageHeader, Message } from "../components/PageHeader";
+import { PageHeader, Kicker, Message } from "../components/PageHeader";
 import { DbTable, COLUMNS, isTextSort, type Dir } from "../components/DbTable";
 import { BulkBar } from "../components/BulkBar";
 import { Select } from "../components/Select";
@@ -150,6 +150,7 @@ export function DatabasesPage() {
   return (
     <>
       <PageHeader
+        back={<Kicker />}
         title="Databases"
         description="Every database sleeps when idle and wakes on its first request."
         actions={

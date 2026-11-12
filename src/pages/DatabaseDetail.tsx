@@ -65,7 +65,8 @@ function DatabaseDetail({ id }: { id: string }) {
   const tabParam = params.get("tab");
   const tab = tabParam === "data" || tabParam === "users" || tabParam === "network" ? tabParam : "overview";
   const db = useAsync(() => client.getDatabase(id), [id]);
-  useDatabaseTitle(db.status === "ready" ? db.data?.name : undefined);
+  const loaded = db.status === "ready" ? db.data : null;
+  useDatabaseTitle(loaded?.name, loaded ? { region: loaded.region, state: loaded.keepAwake ? "Kept awake" : loaded.state === "awake" ? "Awake" : "Asleep", ok: loaded.state === "awake" || loaded.keepAwake, storage: formatStorage(loaded.storageMb), connectionString: loaded.connectionString } : undefined);
   const [range, setRange] = useState<UsageRange>("7d");
   const usage = useAsync(() => client.getUsage(id, range), [id, range]);
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -88,6 +89,11 @@ function DatabaseDetail({ id }: { id: string }) {
       <ArrowLeft size={16} aria-hidden="true" />
       All databases
     </Link>
+  );
+  const kicker = (name: string) => (
+    <p className="page-kicker">
+      <Link to="/databases">Databases</Link> / <span className="break-anywhere">{name}</span>
+    </p>
   );
 
   if (db.status === "loading") return <><PageHeader title="Database" back={back} /><Message>Loading database</Message></>;
@@ -186,12 +192,14 @@ function DatabaseDetail({ id }: { id: string }) {
   return (
     <>
       <PageHeader
-        title={<span className="mono">{d.name}</span>}
-        back={back}
+        title={d.name}
+        back={kicker(d.name)}
         meta={
           <>
             <StateBadge state={d.state} kept={keepAwake} />
-            <span className="mono muted small">{d.region}</span>
+            <span className="muted db-head-facts">
+              <span className="mono">{d.region}</span> · created {formatDate(d.createdAt)}
+            </span>
           </>
         }
       />
@@ -209,110 +217,98 @@ function DatabaseDetail({ id }: { id: string }) {
       {tab === "network" && <DatabaseNetwork db={d} />}
 
       {tab === "overview" && (
+        <>
+        <Card id="conn" title="Connect" tag={<span className="muted small conn-works">Works with any MongoDB driver: Python, Node.js, Go, Java</span>} description="Replace <password> with the password of your user: it was shown once when the user was made. Lost it? Reset it in Users.">
+          <Segmented label="Language" value={lang} onChange={setLang} options={LANGS} />
+          <label htmlFor="conn-string" className="sr-only">
+            Connection string
+          </label>
+          <div className="codebox">
+            <pre id="conn-string" className="mono" tabIndex={0} aria-label="Connection code">
+              {snippet(lang, d.connectionString)}
+            </pre>
+            <CopyButton value={snippet(lang, d.connectionString)} what={lang === "uri" ? "connection string" : "code"} />
+          </div>
+          <p className="help">
+            Standard MongoDB drivers work as they are. The connection always uses TLS, on port {conn.port}.{" "}
+            <button type="button" className="link-btn" onClick={() => setParams({ tab: "users" }, { replace: true })}>
+              {canManage ? "Manage users" : "View users"}
+            </button>
+          </p>
+          <dl className="facts facts-tight conn-facts">
+            <div>
+              <dt>Host</dt>
+              <dd className="mono ellipsis" title={d.host}>
+                {d.host}
+              </dd>
+            </div>
+            <div>
+              <dt>Port</dt>
+              <dd className="mono">{conn.port}</dd>
+            </div>
+            <div>
+              <dt>Database</dt>
+              <dd className="mono ellipsis" title={conn.database}>
+                {conn.database}
+              </dd>
+            </div>
+            <div>
+              <dt>User</dt>
+              <dd className="mono ellipsis">{connUser === "<username>" ? "None yet" : connUser}</dd>
+            </div>
+            <div>
+              <dt>TLS</dt>
+              <dd>Required</dd>
+            </div>
+          </dl>
+        </Card>
+
+          <dl className="status-facts db-kpis" id="status" aria-label="Status">
+            <div className="kpi">
+              <dt className="kpi-label">State</dt>
+              <dd>
+                <StateBadge state={d.state} kept={keepAwake} />
+              </dd>
+              <dd className="kpi-sub">{keepAwake ? "never sleeps" : d.state === "awake" ? "serving requests" : "wakes on its first request"}</dd>
+            </div>
+            <div className="kpi">
+              <dt className="kpi-label">Stored</dt>
+              <dd className="kpi-value">{formatStorage(d.storageMb)}</dd>
+              <dd className="kpi-sub">
+                region <span className="mono">{d.region}</span>
+              </dd>
+            </div>
+            <div className="kpi">
+              <dt className="kpi-label">Requests</dt>
+              <dd className="kpi-value">{formatCount(d.requests24h)}</dd>
+              <dd className="kpi-sub">last 24 hours</dd>
+            </div>
+            <div className="kpi">
+              <dt className="kpi-label">Last request</dt>
+              <dd className="kpi-value" title={formatDateTime(d.lastActiveAt)}>
+                {formatRelative(d.lastActiveAt, now)}
+              </dd>
+              <dd className="kpi-sub">created {formatDate(d.createdAt)}</dd>
+            </div>
+            {d.forkedFrom && (
+              <div className="kpi">
+                <dt className="kpi-label">Forked from</dt>
+                <dd className="kpi-value kpi-value-sm">
+                  <Link to={`/databases/${d.forkedFrom}`} className="row-link mono">
+                    {d.forkedFrom}
+                  </Link>
+                </dd>
+              </div>
+            )}
+            {d.restoredTo && (
+              <div className="kpi">
+                <dt className="kpi-label">Restored to</dt>
+                <dd className="kpi-value kpi-value-sm">{formatDateTime(d.restoredTo)}</dd>
+              </div>
+            )}
+          </dl>
         <div className="ov-grid">
           <div className="ov-main">
-            <Card id="conn" title="Connect" description="Use any standard MongoDB driver. Replace <password> with the password of your user: it was shown once when the user was made. Lost it? Reset it in Users.">
-              <Segmented label="Language" value={lang} onChange={setLang} options={LANGS} />
-              <label htmlFor="conn-string" className="sr-only">
-                Connection string
-              </label>
-              <div className="codebox">
-                <pre id="conn-string" className="mono" tabIndex={0} aria-label="Connection code">
-                  {snippet(lang, d.connectionString)}
-                </pre>
-                <CopyButton value={snippet(lang, d.connectionString)} what={lang === "uri" ? "connection string" : "code"} />
-              </div>
-              <p className="help">
-                Standard MongoDB drivers work as they are. The connection always uses TLS, on port {conn.port}.{" "}
-                <button type="button" className="link-btn" onClick={() => setParams({ tab: "users" }, { replace: true })}>
-                  {canManage ? "Manage users" : "View users"}
-                </button>
-              </p>
-              <dl className="facts facts-tight">
-                <div>
-                  <dt>Host</dt>
-                  <dd className="mono ellipsis" title={d.host}>
-                    {d.host}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Port</dt>
-                  <dd className="mono">{conn.port}</dd>
-                </div>
-                <div>
-                  <dt>Database</dt>
-                  <dd className="mono ellipsis" title={conn.database}>
-                    {conn.database}
-                  </dd>
-                </div>
-                <div>
-                  <dt>User</dt>
-                  <dd className="mono ellipsis">{connUser === "<username>" ? "None yet" : connUser}</dd>
-                </div>
-                <div>
-                  <dt>TLS</dt>
-                  <dd>Required</dd>
-                </div>
-              </dl>
-            </Card>
-
-            <Card id="status" title="Status">
-              <dl className="status-facts">
-                <div>
-                  <dt>State</dt>
-                  <dd>
-                    <StateBadge state={d.state} kept={keepAwake} />
-                  </dd>
-                </div>
-                <div>
-                  <dt>Region</dt>
-                  <dd className="mono">{d.region}</dd>
-                </div>
-                <div>
-                  <dt>Created</dt>
-                  <dd>{formatDate(d.createdAt)}</dd>
-                </div>
-                <div>
-                  <dt>Storage</dt>
-                  <dd>{formatStorage(d.storageMb)}</dd>
-                </div>
-                <div>
-                  <dt>Requests (24 h)</dt>
-                  <dd>{formatCount(d.requests24h)}</dd>
-                </div>
-                <div>
-                  <dt>Last request</dt>
-                  <dd title={formatDateTime(d.lastActiveAt)}>{formatRelative(d.lastActiveAt, now)}</dd>
-                </div>
-                {d.forkedFrom && (
-                  <div>
-                    <dt>Forked from</dt>
-                    <dd>
-                      <Link to={`/databases/${d.forkedFrom}`} className="row-link mono">
-                        {d.forkedFrom}
-                      </Link>
-                    </dd>
-                  </div>
-                )}
-                {d.restoredTo && (
-                  <div>
-                    <dt>Restored to</dt>
-                    <dd>{formatDateTime(d.restoredTo)}</dd>
-                  </div>
-                )}
-              </dl>
-            </Card>
-
-            <Card id="tags" title="Tags" description="Tags group and filter databases across the fleet, for example by customer or environment.">
-              {canManage ? (
-                <TagEditor db={d} onChanged={db.reload} />
-              ) : d.tags.length === 0 ? (
-                <p className="muted">This database has no tags yet.</p>
-              ) : (
-                <TagChips tags={d.tags} max={d.tags.length} />
-              )}
-            </Card>
-
             <Card
               id="usage"
               title="Activity"
@@ -346,6 +342,16 @@ function DatabaseDetail({ id }: { id: string }) {
                 </div>
               )}
             </Card>
+            <Card id="tags" title="Tags" description="Tags group and filter databases across the fleet, for example by customer or environment.">
+              {canManage ? (
+                <TagEditor db={d} onChanged={db.reload} />
+              ) : d.tags.length === 0 ? (
+                <p className="muted">This database has no tags yet.</p>
+              ) : (
+                <TagChips tags={d.tags} max={d.tags.length} />
+              )}
+            </Card>
+
           </div>
 
           <section className="actions-card" id="actions" aria-labelledby="actions-h">
@@ -397,6 +403,7 @@ function DatabaseDetail({ id }: { id: string }) {
             )}
           </section>
         </div>
+        </>
       )}
 
       <PasswordDialog

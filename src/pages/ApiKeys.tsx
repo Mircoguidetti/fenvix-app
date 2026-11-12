@@ -7,7 +7,7 @@ import {
   nameProblem, openApiUrl, type ExpiryChoice,
 } from "../data/public-keys";
 import { apiUrl, backend } from "../lib/env";
-import { Card, Message, PageHeader } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { CopyButton } from "../components/CopyButton";
 import { Select } from "../components/Select";
@@ -26,7 +26,7 @@ export function ApiKeysPage() {
   if (!canManage) {
     return (
       <>
-        <PageHeader title="API keys" description={DESCRIPTION} />
+        <PageHeader back={<Kicker>Organization</Kicker>} title="API keys" description={DESCRIPTION} />
         <Message>Only an owner or admin of this organization can see and manage API keys.</Message>
       </>
     );
@@ -35,7 +35,7 @@ export function ApiKeysPage() {
   if (backend !== "mock" && !apiUrl) {
     return (
       <>
-        <PageHeader title="API keys" description={DESCRIPTION} />
+        <PageHeader back={<Kicker>Organization</Kicker>} title="API keys" description={DESCRIPTION} />
         <Message>{PUBLIC_API_NOT_SET_UP}</Message>
       </>
     );
@@ -111,7 +111,7 @@ function ApiKeysManager() {
 
   return (
     <>
-      <PageHeader title="API keys" description={DESCRIPTION} />
+      <PageHeader back={<Kicker>Organization</Kicker>} title="API keys" description={DESCRIPTION} />
 
       <Card id="create" title="Create a key" description={`An organization can have up to ${MAX_ACTIVE_KEYS} active keys. Revoked and expired keys do not count.`}>
         <form onSubmit={create} className="inline-form" noValidate>

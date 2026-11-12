@@ -11,7 +11,6 @@ import { parseTag } from "../lib/tags";
 import { SecretOnce } from "../components/PasswordOnce";
 import { usernameProblem } from "../data/users";
 import { OperationNote } from "../components/OperationNote";
-import { Select } from "../components/Select";
 
 export function CreateDatabasePage() {
   const { canManage } = useOrg();
@@ -122,7 +121,15 @@ function CreateDatabaseForm() {
 
   return (
     <>
-      <PageHeader title="Create database" description="It starts empty, sleeps when idle and wakes on its first request." back={back} />
+      <PageHeader
+        title="Create database"
+        description="It starts empty, sleeps when idle and wakes on its first request."
+        back={
+          <p className="page-kicker">
+            <Link to="/databases">Databases</Link> / New
+          </p>
+        }
+      />
       <div className="create-layout">
         <form onSubmit={submit} className="form-card" noValidate aria-label="New database">
           <div className="form-section">
@@ -134,12 +141,22 @@ function CreateDatabaseForm() {
               </p>
             </div>
           </div>
-          <div className="form-section form-split">
+          <div className="form-section">
+            <fieldset className="plain-fieldset role-fieldset region-choices">
+              <legend>Region</legend>
+              {regions.status === "ready" &&
+                regions.data.map((r) => (
+                  <label key={r} className="choice" data-on={region === r || undefined}>
+                    <input type="radio" name="new-region" value={r} checked={region === r} onChange={() => setRegion(r)} />
+                    <span>
+                      <span className="choice-title mono">{r}</span>
+                    </span>
+                  </label>
+                ))}
+            </fieldset>
+          </div>
+          <div className="form-section">
             <div className="field">
-              <label htmlFor="new-region">Region</label>
-              <Select id="new-region" className="mono" value={region} onChange={setRegion} options={regions.status === "ready" ? regions.data.map((r) => ({ value: r, label: r })) : []} />
-            </div>
-            <div className="field grow">
               <label htmlFor="new-tags">Tags</label>
               <input id="new-tags" className="mono" value={tagText} onChange={(e) => (setTagText(e.target.value), setError(null))} placeholder="customer:acme-labs env:prod" autoComplete="off" autoCapitalize="none" spellCheck={false} aria-describedby="new-tags-help" />
               <p id="new-tags-help" className="help">

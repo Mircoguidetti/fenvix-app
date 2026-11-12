@@ -53,8 +53,9 @@ const NEUTRAL = 0.08;
 const isBlueFamily = (hex: string) => hue(hex) >= 205 && hue(hex) <= 240;
 
 const LIGHT = ["bg", "page", "surface", "surface-2"];
-// Dark surfaces: the navigation and its hover and selected rows; toasts are drawn on --text.
-const DARK = ["nav-bg", "nav-hover", "nav-active", "text"];
+// Dark surfaces in the light theme: toasts are drawn on --text, the brand ink. The navigation is light since the console
+// mockup (2026-11-12), so it is checked with the light surfaces' rules, not here.
+const DARK = ["black", "text"];
 const STATUS = ["success", "danger", "warning"];
 
 test("the status tokens are defined once, as flat hex colours, for the light content and the dark surfaces", () => {
@@ -111,7 +112,7 @@ test("silver is a cool, soft blue-slate gradient that stays visible on the white
   // Visible: its darkest stop on white, and its lightest stops on black, reach 3:1. Discreet: on white the light
   // stops stay below 2:1, so the line reads as a sheen, not a stripe.
   assert.ok(contrast(T["silver-3"], T.bg) >= 3, "silver is lost on white");
-  assert.ok(contrast(T["silver-1"], T["nav-bg"]) >= 3, "silver is lost on the navigation");
+  assert.ok(contrast(T["silver-1"], T.black) >= 3, "silver is lost on the black surfaces");
   assert.ok(contrast(T["silver-1"], T.text) >= 3, "silver is lost on a selected (black) tab");
   assert.ok(contrast(T["silver-1"], T.bg) < 2, "silver is loud on white");
 });
@@ -306,4 +307,12 @@ test("dialogs have no border and no coloured line, destructive or not", () => {
   for (const [sel, body] of rules())
     if (/\.dialog(-danger|-wide)?\b(?![-\w])/.test(sel) && !/ /.test(sel.replace(/,\s*/g, ",")))
       assert.ok(!/border(-top|-bottom|-left|-right)?:\s*(?!0)[^;]*(solid|var\()|inset/.test(body), `${sel} draws a border or a line`);
+});
+
+test("the light frame (top bar, rails, selected item) keeps its text at 4.5:1 or more", () => {
+  const pairs: [string, string][] = [["nav-text", "nav-bg"], ["nav-muted", "nav-bg"], ["nav-label", "nav-bg"], ["nav-on", "nav-active"], ["muted", "nav-sub"], ["muted", "nav-box"], ["nav-text", "nav-hover"]];
+  for (const [fg, bg] of pairs) {
+    const c = contrast(T[fg], T[bg]);
+    assert.ok(c >= 4.5, `--${fg} ${T[fg]} on --${bg} ${T[bg]} is ${c.toFixed(2)}:1`);
+  }
 });

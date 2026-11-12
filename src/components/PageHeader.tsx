@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { CircleAlert, TriangleAlert } from "lucide-react";
+import { useCurrentOrg } from "./AccountMenu";
 
 /** `meta` sits next to the title (a state badge, a region); `actions` sit at the far end. */
 export function PageHeader({ title, description, actions, back, meta }: { title: ReactNode; description?: ReactNode; actions?: ReactNode; back?: ReactNode; meta?: ReactNode }) {
@@ -59,4 +60,11 @@ export function Message({ children, role = "status", tone }: { children: ReactNo
       {children}
     </p>
   );
+}
+
+/** The small line above a page title: where the page sits (the organization's name, or a fixed word). */
+export function Kicker({ children }: { children?: ReactNode }) {
+  const current = useCurrentOrg();
+  const text = children ?? (current.status === "ready" ? current.name : " ");
+  return <p className="page-kicker">{text}</p>;
 }

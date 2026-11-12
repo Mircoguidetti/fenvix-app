@@ -14,7 +14,7 @@ const assert = (cond, msg) => {
 // The tokens of src/styles.css, as the browser reports them.
 const SUCCESS = "rgb(6, 122, 58)";
 const DANGER = "rgb(214, 20, 10)";
-const WARNING = "rgb(161, 92, 0)";
+const WARNING = "rgb(156, 89, 0)"; // --warning, #9c5900
 const SUCCESS_DARK = "rgb(61, 220, 132)";
 const DANGER_DARK = "rgb(255, 106, 92)";
 const BLACK = "rgb(6, 8, 14)"; // --black, the one dark colour (#06080e, chosen by the founder)

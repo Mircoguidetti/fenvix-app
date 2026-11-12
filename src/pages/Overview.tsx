@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { client, type UsageRange } from "../data";
-import { Card, Message, PageHeader } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { AwakeAreaChart, CostLineChart, HBars, Sparkline, TimeBarsChart } from "../components/charts";
 import { useAsync } from "../lib/useAsync";
 import { useWorkspaceVersion } from "../lib/workspace";
@@ -57,6 +57,7 @@ export function OverviewPage() {
   return (
     <>
       <PageHeader
+        back={<Kicker>Overview</Kicker>}
         title={settings.status === "ready" ? settings.data.workspaceName : "Overview"}
         description="Your fleet right now: what is awake, what it serves and what it costs."
         actions={

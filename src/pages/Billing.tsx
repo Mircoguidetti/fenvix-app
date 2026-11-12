@@ -1,6 +1,6 @@
 import { Check, Download } from "lucide-react";
 import { client } from "../data";
-import { Card, Message, PageHeader } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { MonthBars } from "../components/charts";
 import { InvoiceStatus } from "../components/StateBadge";
 import { useToast } from "../components/Toast";
@@ -37,7 +37,7 @@ export function BillingPage() {
 
   return (
     <>
-      <PageHeader title="Billing" description="What you pay FENVIX: this month so far, your invoices, your payment method and your plan." />
+      <PageHeader back={<Kicker />} title="Billing" description="What you pay FENVIX: this month so far, your invoices, your payment method and your plan." />
 
       {billing.status === "loading" && <Message>Loading billing</Message>}
       {billing.status === "error" && <Message role="alert">{billing.message}</Message>}
