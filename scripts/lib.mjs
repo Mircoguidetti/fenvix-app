@@ -130,7 +130,8 @@ export async function layoutProblems(page) {
       const cs = getComputedStyle(e);
       // Inline links wrap across lines, so their boxes overlap by design.
       if (cs.display === "inline") return false;
-      return onTop(e) && r.width && r.height && !e.closest("[hidden],dialog:not([open])") && !e.classList.contains("skip-link") && cs.visibility !== "hidden" && !(e.type === "radio" || e.type === "checkbox") && cs.position !== "absolute";
+      // A toast floats over the page by design (fixed, at the bottom); what it covers for a few seconds is not a layout fault.
+      return onTop(e) && r.width && r.height && !e.closest("[hidden],dialog:not([open]),.toasts") && !e.classList.contains("skip-link") && cs.visibility !== "hidden" && !(e.type === "radio" || e.type === "checkbox") && cs.position !== "absolute";
     });
     // Only the part of an element that its scrolling containers let show: the page scrolls under the top bar, and
     // what is hidden there is not on top of the bar's buttons.

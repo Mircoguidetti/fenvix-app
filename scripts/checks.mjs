@@ -230,7 +230,7 @@ const TESTS = {
     await page.getByRole("link", { name: "Open database" }).click();
     await page.getByRole("heading", { name: "check-create-01" }).waitFor();
     await page.getByText("customer:checkco").first().waitFor();
-    await page.getByText("us-east").first().waitFor();
+    await page.locator("main").getByText("us-east").first().waitFor();
     assert(!(await page.content()).includes(password), "the password is still on the page after leaving the creation screen");
     await openSection(page, "Users");
     await userCell(page, "app").waitFor();
