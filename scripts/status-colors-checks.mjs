@@ -109,6 +109,13 @@ async function noLine(page, selector) {
   assert(weight >= 500, `${selector} is not bold (${weight})`);
 }
 
+
+/** The selected database section: the link in the second bar on a computer, the tab on a phone. */
+async function selectedSection(page) {
+  const side = page.locator(".cx-sub .cx-sub-link.active");
+  return (await side.count()) && (await side.first().isVisible()) ? ".cx-sub .cx-sub-link.active" : '.tabs button[aria-pressed="true"]';
+}
+
 const TESTS = {
   async "databases: awake is green with its word, asleep stays grey"(page) {
     await signIn(page, "databases");
@@ -126,9 +133,11 @@ const TESTS = {
 
   async "database: erase is red, its dialog has no border and a red confirm button; restore opens the same red dialog from a neutral button; the selected tab is black and bold, with no line under it"(page) {
     await signIn(page, "databases/db_0001");
-    await noLine(page, '.tabs button[aria-pressed="true"]');
-    const tab = await paint(page, '.tabs button[aria-pressed="true"]');
-    assert(tab.color === BLACK, `the selected tab is not the dark colour (${tab.color})`);
+    const sel = await selectedSection(page);
+    await noLine(page, sel);
+    const tab = await paint(page, sel);
+    // On a phone the tab is the dark ink; on a computer the section is the frame's blue on its pale tint (the mockup).
+    assert(sel.startsWith(".tabs") ? tab.color === BLACK : !STATUS.includes(tab.color), `the selected section is ${tab.color}`);
     const erase = await paint(page, "#actions .action-erase .action-name");
     assert(erase.text === "Erase" && erase.color === DANGER, `erase action: ${erase.color}`);
     const fork = await paint(page, "#actions .action-btn >> nth=0");
@@ -174,7 +183,7 @@ const TESTS = {
 
   async "network: blocked addresses are red with an icon, a bad entry is a red error, unsaved changes are amber, saving says so in green"(page) {
     await signIn(page, "databases/db_0001?tab=network");
-    await noLine(page, '.tabs button[aria-pressed="true"]');
+    await noLine(page, await selectedSection(page));
     const blocked = await paint(page, "#blocks .blocked-until");
     assert(blocked.color === DANGER && blocked.svg && /^Blocked until/.test(blocked.text), `blocked: ${blocked.color} "${blocked.text}"`);
     const clear = await paint(page, "#allowlist .btn-danger");

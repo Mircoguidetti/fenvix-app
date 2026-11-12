@@ -157,7 +157,7 @@ step("create, duplicate name, tags, keep awake, fork, restore, export, erase", a
   const { page } = ownerContext;
   await page.goto(APP + "databases/new");
   await page.getByLabel("Name", { exact: true }).fill("e2e-created-01");
-  await choose(page, page.getByLabel("Region"), "us-east");
+  await page.getByRole("radio", { name: "us-east" }).check();
   await page.getByLabel("Tags").fill("customer:acme-labs env:prod");
   await page.getByRole("button", { name: "Create database" }).click();
   await page.getByRole("link", { name: "Open database" }).waitFor();

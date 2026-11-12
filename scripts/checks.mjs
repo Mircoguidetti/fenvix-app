@@ -207,7 +207,7 @@ const TESTS = {
     await signIn(page, "databases");
     await page.getByRole("link", { name: "Create database" }).click();
     await page.getByLabel("Name", { exact: true }).fill("check-create-01");
-    await choose(page, page.getByLabel("Region"), "us-east");
+    await page.getByRole("radio", { name: "us-east" }).check(); // the regions are cards to pick, as in the mockup
     await page.getByLabel("Tags").fill("customer:checkco env:dev");
     await page.getByRole("button", { name: "Create database" }).click();
     await page.getByRole("link", { name: "Open database" }).waitFor();

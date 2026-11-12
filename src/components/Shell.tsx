@@ -92,11 +92,13 @@ function ThemeButton() {
 
 function DbSectionLinks({ onNavigate }: { onNavigate?: () => void }) {
   const [params] = useSearchParams();
+  const { pathname } = useLocation();
   const tab = params.get("tab") ?? "overview";
   return (
     <>
+      {/* The frame sits outside the routes, so "." would mean the root: the database's own path is given in full. */}
       {DB_SECTIONS.map((s) => (
-        <Link key={s.tab} to={s.tab === "overview" ? "." : `?tab=${s.tab}`} replace onClick={onNavigate} className={tab === s.tab ? "cx-sub-link active" : "cx-sub-link"} aria-current={tab === s.tab ? "page" : undefined}>
+        <Link key={s.tab} to={s.tab === "overview" ? pathname : `${pathname}?tab=${s.tab}`} replace onClick={onNavigate} className={tab === s.tab ? "cx-sub-link active" : "cx-sub-link"} aria-current={tab === s.tab ? "page" : undefined}>
           {s.label}
         </Link>
       ))}
@@ -168,10 +170,10 @@ function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgS
             )}
             {info.connectionString ? (
               <span className="cx-sub-copy">
-                <CopyButton value={info.connectionString} label="Copy connection string" what="connection string" />
+                <CopyButton value={info.connectionString} what="connection string" text="Copy connection string" />
               </span>
             ) : (
-              <Link to="?tab=users" replace className="btn btn-primary btn-sm">
+              <Link to={`/databases/${dbId}?tab=users`} replace className="btn btn-primary btn-sm">
                 Database users
               </Link>
             )}

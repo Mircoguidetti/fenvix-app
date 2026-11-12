@@ -1277,7 +1277,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
 /* ================= Console frame (components/Shell.tsx), as in the console mockup ================= */
 html:has(.cx-shell), body:has(.cx-shell) { height: 100%; overflow: hidden; background: var(--page); }
 .cx-shell { display: flex; flex-direction: column; height: 100dvh; background: var(--page); color: var(--text); }
-.cx-top { position: relative; z-index: 30; flex-shrink: 0; display: flex; align-items: center; gap: 8px; min-height: calc(68px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) max(12px, env(safe-area-inset-right, 0px)) 0 max(8px, env(safe-area-inset-left, 0px)); background: var(--nav-bg); color: var(--nav-text); border-bottom: 1px solid var(--nav-border); }
+.cx-top { position: relative; z-index: 30; flex-shrink: 0; display: flex; align-items: center; gap: 8px; min-height: calc(68px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) max(12px, env(safe-area-inset-right, 0px)) 0 max(8px, env(safe-area-inset-left, 0px)); background: var(--nav-bg); color: var(--nav-text); box-shadow: inset 0 -1px 0 var(--nav-border); }
 .cx-top .logo, .cx-drawer .logo { color: var(--nav-text); }
 .cx-top .logo-word, .cx-drawer .logo-word { font-size: 15px; }
 .cx-logo { display: inline-flex; align-items: center; min-height: var(--touch); padding: 0 8px; border-radius: 8px; }
@@ -1593,3 +1593,7 @@ input:focus-visible, textarea:focus-visible, .select-btn:focus-visible { border-
 @media (max-width: 1099px) { .ex-grid { grid-template-columns: minmax(0, 1fr); } }
 .region-choices .choice { align-items: center; padding: 14px 16px; }
 .region-choices .choice input { margin: 0; }
+.switch[aria-checked="true"]::after { background: var(--bg); }
+.db-name.mono { font-family: var(--font); font-size: 14px; font-weight: 600; }
+input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-invalid="true"] { border-color: var(--danger); }
+table.data.dbs thead th { font-size: 12px; }

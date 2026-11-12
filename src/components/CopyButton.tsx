@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
 
-export function CopyButton({ value, label = "Copy", what }: { value: string; label?: string; what: string }) {
+/** `text` replaces the visible word ("Copy") when the button stands alone, for example in the side bar. */
+export function CopyButton({ value, label = "Copy", what, text }: { value: string; label?: string; what: string; text?: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   async function copy() {
     try {
@@ -16,7 +17,7 @@ export function CopyButton({ value, label = "Copy", what }: { value: string; lab
     <>
       <button type="button" className={state === "copied" ? "btn copy-done" : "btn"} onClick={copy} aria-label={`${label} ${what}`}>
         {state === "copied" ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
-        {state === "copied" ? "Copied" : label}
+        {state === "copied" ? "Copied" : (text ?? label)}
       </button>
       <span className="sr-only" role="status">
         {state === "copied" ? `${what} copied` : state === "failed" ? "Copy failed. Select the text and copy it manually." : ""}
