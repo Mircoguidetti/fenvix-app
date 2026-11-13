@@ -488,7 +488,7 @@ a.btn { text-decoration: none; }
 .signin-page { min-height: 100vh; min-height: 100dvh; width: 100%; max-width: none; background: var(--page); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; padding: 40px 20px; }
 .signin-mark { color: var(--text); }
 .signin-mark .logo-word { font-size: 20px; }
-html:has(.signin-page), body:has(.signin-page) { background: var(--page); }
+html:has(.signin-page), body:has(.signin-page) { background: var(--bg); }
 .signin-card { width: min(400px, 100%); display: flex; flex-direction: column; gap: 18px; background: var(--bg); border: 1px solid var(--border); border-radius: 14px; padding: 28px; }
 .signin-card h1 { font-size: 24px; }
 .signin-lead { margin-top: -12px; }
@@ -1405,7 +1405,7 @@ a.cx-crumb-btn:hover, button.cx-crumb-btn:hover, .cx-crumb-btn[aria-expanded="tr
 }
 
 /* ================= Sign-in, as in the mockup: the landing's black hero beside the form ================= */
-.signin-page { min-height: 100vh; min-height: 100dvh; width: 100%; max-width: none; margin: 0; padding: 0; gap: 0; display: flex; flex-direction: row; flex-wrap: wrap; align-items: stretch; justify-content: stretch; background: var(--page); }
+.signin-page { min-height: 100vh; min-height: 100dvh; width: 100%; max-width: none; margin: 0; padding: 0; gap: 0; display: flex; flex-direction: row; flex-wrap: wrap; align-items: stretch; justify-content: stretch; background: var(--bg); }
 .signin-hero { display: none; position: relative; overflow: hidden; flex: 1.25 1 520px; padding: 36px 48px 48px; background: var(--black); color: #f6f6f7; }
 .hero-visual { position: absolute; top: 0; bottom: 0; left: -30%; width: 160%; }
 .hero-visual canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
@@ -1414,7 +1414,7 @@ a.cx-crumb-btn:hover, button.cx-crumb-btn:hover, .cx-crumb-btn[aria-expanded="tr
 .signin-hero-copy { position: relative; display: flex; flex-direction: column; gap: 18px; max-width: 560px; margin: min(22vh, 200px) auto 0; text-align: center; }
 .signin-hero-title { font-size: clamp(36px, 3.6vw, 52px); line-height: 1.02; letter-spacing: -0.04em; font-weight: 600; }
 .signin-hero-lead { max-width: 40ch; margin: 0 auto; font-size: 18px; color: #d6d6d6; }
-.signin-side { position: relative; flex: 1 1 420px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 88px 16px 40px; background: var(--page); }
+.signin-side { position: relative; flex: 1 1 420px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 88px 16px 40px; background: var(--bg); }
 .signin-side-top { position: absolute; top: 16px; left: 16px; right: 16px; display: flex; align-items: center; justify-content: space-between; }
 .signin-mark .logo-word { font-size: 16px; }
 .signin-theme { display: grid; place-items: center; width: var(--touch); height: var(--touch); border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--text); cursor: pointer; }
