@@ -1540,10 +1540,10 @@ input:focus-visible, textarea:focus-visible, .select-btn:focus-visible { border-
 
 /* Sign-in, light: the landing's hero. White sky turning blue at the horizon, a band of small blue squares rising from
    the bottom, a few squares lighting up (LandingSparks), and the landing's title type. Same values as fenvix-landing. */
-.signin-hero { color: #0b0d12; background: radial-gradient(70% 46% at 50% 104%, rgba(13, 79, 163, 0.2), rgba(13, 79, 163, 0) 70%), linear-gradient(180deg, #ffffff 0%, #ffffff 40%, #f3f6fb 60%, #e5edf8 80%, #d8e4f4 100%); }
-.signin-hero::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: conic-gradient(from 270deg at 1.2px 1.2px, rgba(13, 79, 163, 0.42) 25%, rgba(13, 79, 163, 0) 0); background-size: 5px 5px; -webkit-mask-image: linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0.55) 22%, rgba(0, 0, 0, 0) 52%); mask-image: linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0.55) 22%, rgba(0, 0, 0, 0) 52%); }
+.signin-hero { color: var(--text); background: radial-gradient(70% 46% at 50% 104%, rgba(13, 79, 163, 0.2), rgba(13, 79, 163, 0) 70%), linear-gradient(180deg, #ffffff 0%, #ffffff 40%, #f3f6fb 60%, #e5edf8 80%, #d8e4f4 100%); }
+.signin-hero::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: conic-gradient(from 270deg at 1.2px 1.2px, rgba(13, 79, 163, 0.42) 25%, rgba(13, 79, 163, 0) 0); background-size: 5px 5px; -webkit-mask-image: linear-gradient(to top, #fff 0%, rgba(255, 255, 255, 0.55) 22%, rgba(255, 255, 255, 0) 52%); mask-image: linear-gradient(to top, #fff 0%, rgba(255, 255, 255, 0.55) 22%, rgba(255, 255, 255, 0) 52%); }
 .signin-sparks { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
-.signin-hero .logo { color: #0b0d12; }
+.signin-hero .logo { color: var(--text); }
 .signin-hero .hero-visual { display: none; }
 .signin-hero-title { font-size: clamp(40px, 4.4vw, 64px); line-height: 1; letter-spacing: -0.045em; font-weight: 600; }
 .signin-hero-lead { color: #5f636b; font-size: clamp(16.5px, 1.3vw, 19px); line-height: 1.5; }
