@@ -34,10 +34,11 @@
   --nav-on: #0d4fa3; /* its text and icon */
   --nav-box: #f3f3f5; /* the box at the bottom of the second bar */
   --grid: #ececef;
-  --ink-2: #0d4fa3; /* the second line of a chart, dashed */
+  --ink-2: #6f9bd8; /* the second line of a chart, dashed: a lighter blue */
   --ink-3: #c9d8ef; /* the soft part of a bar */
-  --chart: #06080e;
-  --chart-fill: rgba(6, 8, 14, 0.06);
+  --chart: #0d4fa3; /* chart lines and bars: the landing blue */
+  --chart-fill: rgba(13, 79, 163, 0.06);
+  --area-1: #0d4fa3; --area-1-o: 0.16; --area-2: #0d4fa3; --area-2-o: 0.05; /* the fade under chart lines */
   --shadow: none;
   --shadow-lg: 0 12px 32px rgba(6, 8, 14, 0.12);
   --focus: 0 0 0 3px rgba(13, 79, 163, 0.18);
@@ -101,6 +102,7 @@
   --silver-1: #4560a1;
   --silver-2: #1f2b47;
   --silver-3: #819bda;
+  --area-1: var(--silver-3); --area-1-o: 0.32; --area-2: var(--silver-1); --area-2-o: 0.22;
   --shadow-lg: 0 12px 32px rgba(6, 8, 14, 0.7);
   --focus: 0 0 0 3px rgba(246, 246, 247, 0.2);
   --success: #3ddc84;
@@ -142,6 +144,7 @@
     --silver-1: #4560a1;
     --silver-2: #1f2b47;
     --silver-3: #819bda;
+    --area-1: var(--silver-3); --area-1-o: 0.32; --area-2: var(--silver-1); --area-2-o: 0.22;
     --shadow-lg: 0 12px 32px rgba(6, 8, 14, 0.7);
     --focus: 0 0 0 3px rgba(246, 246, 247, 0.2);
     --success: #3ddc84;
@@ -512,9 +515,9 @@ html:has(.signin-page), body:has(.signin-page) { background: var(--bg); }
 .kpi-spark { margin-top: auto; padding-top: 8px; }
 .spark { display: block; width: 100%; height: 30px; }
 .spark-line { stroke: var(--chart); stroke-width: 1.25; stroke-linejoin: round; }
-.spark-area { fill: rgba(6, 8, 14, 0.07); } /* fallback; the charts fill it with the silver gradient */
+.spark-area { fill: rgba(13, 79, 163, 0.07); } /* fallback; the charts fill it with the silver gradient */
 
-.chart-area { fill: rgba(6, 8, 14, 0.1); }
+.chart-area { fill: rgba(13, 79, 163, 0.08); }
 .chart-line { stroke: var(--chart); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
 .chart-line-dash { stroke: var(--ink-2); stroke-width: 1.5; stroke-dasharray: 5 4; }
 .chart-dot { fill: var(--chart); }
@@ -529,7 +532,7 @@ html:has(.signin-page), body:has(.signin-page) { background: var(--bg); }
 .key-block { width: 11px; height: 11px; border-radius: 3px; }
 .legend-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; }
 .legend-list li { display: inline-flex; align-items: center; gap: 6px; }
-:root { --stack-0: #06080e; --stack-1: #0d4fa3; --stack-2: #4a7bc4; --stack-3: #8eaedb; --stack-4: #c9d8ef; --stack-5: #e4e6ea; }
+:root { --stack-0: #0d4fa3; --stack-1: #3f72bd; --stack-2: #7199d3; --stack-3: #a3bfe5; --stack-4: #cfdcf0; --stack-5: #e4e6ea; }
 :root[data-theme="dark"] { --stack-0: #dae1f1; --stack-1: #a6b7dd; --stack-2: #728dca; --stack-3: #4364b1; --stack-4: #30477e; --stack-5: #1f2e51; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --stack-0: #dae1f1; --stack-1: #a6b7dd; --stack-2: #728dca; --stack-3: #4364b1; --stack-4: #30477e; --stack-5: #1f2e51; } }
 
@@ -808,8 +811,8 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
 /* Silver: the border of the current plan and the fill under chart lines. The selected tab and menu item are shown by
    their background and weight, with no line under them. */
 .plan-current { border: 2px solid transparent; box-shadow: none; background: linear-gradient(var(--bg), var(--bg)) padding-box, linear-gradient(135deg, var(--silver-3), var(--silver-1) 30%, var(--silver-2) 50%, var(--silver-1) 70%, var(--silver-3)) border-box; }
-.silver-stop-1 { stop-color: var(--silver-3); stop-opacity: 0.32; }
-.silver-stop-2 { stop-color: var(--silver-1); stop-opacity: 0.22; }
+.silver-stop-1 { stop-color: var(--area-1); stop-opacity: var(--area-1-o); }
+.silver-stop-2 { stop-color: var(--area-2); stop-opacity: var(--area-2-o); }
 .silver-stop-3 { stop-color: var(--silver-2); stop-opacity: 0; }
 .op-note { flex-basis: 100%; margin: 0; }
 
