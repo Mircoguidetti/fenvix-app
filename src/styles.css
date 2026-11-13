@@ -1544,26 +1544,13 @@ input:focus-visible, textarea:focus-visible, .select-btn:focus-visible { border-
 .signin-hero::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: conic-gradient(from 270deg at 1.2px 1.2px, rgba(13, 79, 163, 0.42) 25%, rgba(13, 79, 163, 0) 0); background-size: 5px 5px; -webkit-mask-image: linear-gradient(to top, #fff 0%, rgba(255, 255, 255, 0.55) 22%, rgba(255, 255, 255, 0) 52%); mask-image: linear-gradient(to top, #fff 0%, rgba(255, 255, 255, 0.55) 22%, rgba(255, 255, 255, 0) 52%); }
 .signin-sparks { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
 .signin-hero .logo { color: var(--text); }
-.signin-hero .hero-visual { display: none; }
 .signin-hero-title { font-size: clamp(40px, 4.4vw, 64px); line-height: 1; letter-spacing: -0.045em; font-weight: 600; }
 .signin-hero-lead { color: #5f636b; font-size: clamp(16.5px, 1.3vw, 19px); line-height: 1.5; }
 .signin-card .btn-lg:not(.btn-primary) { border-color: var(--border); background: var(--bg); }
 
 /* The dark theme keeps its black hero with the moving drawing, and its dark code boxes. */
-:root[data-theme="dark"] .signin-hero { background: var(--black); color: #f6f6f7; }
-:root[data-theme="dark"] .signin-hero::before { content: none; }
-:root[data-theme="dark"] .signin-hero .logo { color: #f6f6f7; }
-:root[data-theme="dark"] .signin-hero .hero-visual { display: block; }
-:root[data-theme="dark"] .signin-hero .signin-sparks { display: none; }
-:root[data-theme="dark"] .signin-hero-lead { color: #d6d6d6; }
 :root[data-theme="dark"] .preview { background: var(--black); border-color: var(--border); }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .signin-hero { background: var(--black); color: #f6f6f7; }
-  :root:not([data-theme="light"]) .signin-hero::before { content: none; }
-  :root:not([data-theme="light"]) .signin-hero .logo { color: #f6f6f7; }
-  :root:not([data-theme="light"]) .signin-hero .hero-visual { display: block; }
-  :root:not([data-theme="light"]) .signin-hero .signin-sparks { display: none; }
-  :root:not([data-theme="light"]) .signin-hero-lead { color: #d6d6d6; }
   :root:not([data-theme="light"]) .preview { background: var(--black); border-color: var(--border); }
 }
 

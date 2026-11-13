@@ -1,13 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CircleCheck, Moon, Sun } from "lucide-react";
+import { CircleCheck } from "lucide-react";
 import { Logo } from "../components/Logo";
 import { GitHubMark, GoogleMark } from "../components/marks";
 import { session, type AuthProvider } from "../session";
 import { useSession } from "../session/SessionProvider";
-import { HeroVisual } from "../components/HeroVisual";
 import { LandingSparks } from "../components/LandingSparks";
-import { useTheme } from "../lib/theme";
+import { applyTheme, storedTheme } from "../lib/theme";
 
 export function SignInPage() {
   const { setUser } = useSession();
@@ -17,8 +16,12 @@ export function SignInPage() {
   const [error, setError] = useState<string | null>(session.configError ?? null);
   const [busy, setBusy] = useState(false);
   const token = params.get("token");
-  const { theme, toggle } = useTheme();
-  const themeLabel = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
+
+  // The sign-in page is light only, as in the mockup. The person's own theme comes back once they are in.
+  useEffect(() => {
+    applyTheme("light");
+    return () => applyTheme(storedTheme());
+  }, []);
 
   // A link that reaches the page as ?token=… (the mock's email link) signs the browser in.
   useEffect(() => {
@@ -65,7 +68,6 @@ export function SignInPage() {
   return (
     <main id="main" className="signin-page" tabIndex={-1}>
       <section className="signin-hero" aria-label="FENVIX">
-        <HeroVisual />
         <LandingSparks />
         <div className="signin-hero-logo">
           <Logo />
@@ -85,9 +87,6 @@ export function SignInPage() {
           <span className="signin-mark">
             <Logo />
           </span>
-          <button type="button" className="signin-theme" onClick={toggle} aria-label={themeLabel} title={themeLabel}>
-            {theme === "dark" ? <Sun size={18} strokeWidth={1.75} aria-hidden="true" /> : <Moon size={18} strokeWidth={1.75} aria-hidden="true" />}
-          </button>
         </div>
       <div className="signin-card">
         <h1>Sign in</h1>
