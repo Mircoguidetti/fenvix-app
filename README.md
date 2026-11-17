@@ -1,13 +1,18 @@
-# FENVIX dashboard (olvix-app)
+# fenvix dashboard
 
-Customer dashboard for FENVIX. A static React app (Vite) that talks to Supabase: Supabase Auth for
-sign-in (Google, GitHub, email link) and Postgres, behind row level security, for the data.
-The dashboard changes rows only. There is no database engine behind it yet, so "fork", "restore",
-"erase" and the rest update records, they do not touch a running engine.
+Customer dashboard for fenvix: CI test runs made deterministic on `runs-on: fenvix`, tests skipped with proof, flaky
+tests turned into reproducible defects. A static React app (Vite) that talks to Supabase: Supabase Auth for sign-in
+(GitHub, Google, email link) and Postgres, behind row level security, for the data.
 
-Pages: Overview, Databases (list, tags, grouping, bulk actions), the database page (connection string,
-tags, activity, fork, restore, export, erase, keep awake), Usage (per database or per tag, CSV export),
-Billing (month to date, invoices, payment method, plans), API keys and Settings.
+Pages: Overview (runs, minutes saved, time to green before and with fenvix, GitHub-hosted cost against the plan),
+Projects, Connect a project (GitHub App install and the setup pull request), the project page (runs, skip share over
+time, the `runs-on: fenvix` snippet, settings), the run page (every test's outcome, skip receipts), Defects (families,
+cause, minimal order, seed, fingerprint, replay command), Usage (per project, CSV), Billing (plans by runs, no prices
+set yet), API keys, Members and Settings.
+
+The records the dashboard shows are defined in `docs/data-contract.md` (runner → dashboard). The tables are
+`supabase/migrations/0011_ci_runs.sql`. The earlier product's database screens were removed from the app; their
+migrations, `control-plane/` and `infra/` are untouched.
 
 ## Run it
 
@@ -44,8 +49,9 @@ page says which one, instead of showing a blank page.
 
 ## Set up Supabase
 
-1. **Create the schema.** Supabase dashboard → SQL editor → New query. Paste
-   `supabase/migrations/0001_init.sql` and Run. It can be run again safely.
+1. **Create the schema.** Supabase dashboard → SQL editor → New query. Run, in order, `0001_init.sql`,
+   `0002_control_plane.sql`, `0008_organizations.sql` and `0011_ci_runs.sql` from `supabase/migrations/`. Each can be
+   run again safely. 0011 holds the CI dashboard's tables and plans (with no prices).
 2. **Auth URLs.** Authentication → URL Configuration. Set *Site URL* to the production address and add
    every address the app is served from to *Redirect URLs*, each with a trailing slash: for example
    `https://app.fenvix.dev/`, `http://localhost:5173/`, and for Vercel previews a wildcard such as
@@ -62,9 +68,8 @@ page says which one, instead of showing a blank page.
    The secrets go into the Supabase dashboard only, never into this repository.
 4. **First sign-in.** Open the site and sign in once as `mircoguidetti1994@gmail.com`. The first sign-in
    creates a personal workspace for that account.
-5. **Seed.** SQL editor → paste `supabase/seed.sql` → Run. It fills that account's workspace with about
-   3,000 databases over 200 customers, 61 days of usage, wake-ups, six months of invoices and two API keys.
-   Running it again changes nothing. (To start over, delete the databases and run it again.)
+5. **Data.** The CI tables are written by the fenvix runner through the control plane (not built yet). There is no
+   Supabase seed for them: to see the dashboard with sample data, build with `VITE_DATA_BACKEND=mock`.
 
 ## Deploy on Vercel
 
@@ -96,10 +101,10 @@ After a provider or email sign-in the user lands on `/overview`, not on the page
 
 | Command | What it covers | Needs |
 | --- | --- | --- |
-| `npm run check` | Behaviour checks on desktop and phone, accessibility and layout checks, screenshots, all with the mock backend | Playwright browsers |
-| `npm run test:unit` | Query builders, row mapping, error messages, CSV, API-key hashing | Node 22 |
-| `npm run test:rls` | Runs the migration twice, `supabase/tests/rls.sql` (user A cannot read or write user B's rows), `supabase/tests/functions.sql` (every function, all-or-nothing changes) and the seed twice | A scratch Postgres 15+ |
-| `npm run test:e2e` | The built app with the real supabase-js, through sign-in, the hash-router redirect and every screen, against a local stand-in for Supabase | A scratch Postgres 15+ |
+| `npm run check` | Behaviour checks on desktop and phone (onboarding, runs, receipts, defects, usage CSV, billing, organizations), status colours, accessibility and layout checks, screenshots, all with the mock backend | Playwright browsers |
+| `npm run test:unit` | Overview, usage, billing and defect logic (`src/data/ci.ts`), row mapping, error messages, CSV, API-key hashing, colours | Node 22 |
+| `npm run test:rls` | Runs the migrations twice each, `supabase/tests/rls.sql`, `functions.sql`, `orgs-rls.sql`, `ci-rls.sql` (the CI tables: members read, nobody reads another organization, only owners and admins change project settings, only the control plane writes runs and defects) and the old seed twice | A scratch Postgres 15+ |
+| `npm run test:e2e` | **Out of date**: it drives the earlier product's database screens, which are gone. It still documents the real supabase-js sign-in path; it must be rewritten for the CI screens | A scratch Postgres 15+ |
 
 The last two take `TEST_DATABASE_URL`, the address of an **empty, disposable** Postgres database, for example:
 
@@ -119,7 +124,8 @@ and how the real GoTrue and PostgREST behave. That needs a real sign-in.
 ## Where things are
 
 - `src/data/client.ts` is the interface the screens use. `src/data/supabase.ts` implements it on Supabase,
-  `src/data/mock.ts` is the mock. `src/data/index.ts` picks one.
+  `src/data/mock.ts` is the sample data (from fenvix's measured shapes, labelled "Sample data" on every page).
+  `src/data/index.ts` picks one. `src/data/ci.ts` turns rows into what the screens show, for both.
 - `src/session/` is the same for sign-in. `src/lib/env.ts` reads the environment.
 - `supabase/migrations/0001_init.sql`: tables, indexes, row level security, the sign-up trigger and every function.
 - `docs/control-plane-api.md` describes the HTTP API the engine team will implement, and how the Supabase

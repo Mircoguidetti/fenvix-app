@@ -72,7 +72,14 @@ white, so on the white content it reads as a sheen rather than a stripe.
 
 | Place | State | Colour | Word or icon | Class |
 | --- | --- | --- | --- | --- |
-| Database state badge (list, detail header, status card) | awake | green dot and border | "Awake" | `.state-awake` |
+| Run status (project runs, run page, projects list) | passed / failed / running | green, red, amber dot and border | "Passed", "Failed", "Running" ("Cancelled" stays grey) | `.state-ok`, `.state-danger`, `.state-warn` (`RunStatusPill`) |
+| Test outcome (run page) | failed | red dot and border | "Failed" or "Failed: flaky defect" ("Skipped with proof" stays grey) | `.state-danger` (`OutcomePill`) |
+| Failed count in the runs table | failed | red number | the number, and "(n flaky)" | `.fail-count` |
+| Project setup | on fenvix / waiting | green / amber | "On fenvix", "Pull request open", "Waiting for setup" | `.state-ok`, `.state-warn` (`SetupStatePill`) |
+| Defect replay | reproduced / unstable | green / amber | "Replays 10/10" / "Replays 10/10, fingerprints differ" | `.state-ok`, `.state-warn` (`ReplayStatus`) |
+| Defect state | open / fixed | red / green | "Open" / "Fixed" | `.state-danger`, `.state-ok` |
+| Onboarding step done | done | green circle | a tick and "(done)" for screen readers | `.step[data-done] .step-n` |
+| The setup pull request's diff (on a dark box) | removed / added line | red / green, dark-surface shades | "-" and "+" before each line | `.diff-del`, `.diff-add` |
 | API key status | active | green dot and border | "Active" | `.state-ok` (`KeyStatus`) |
 | Invoice status (Billing) | paid | green dot and border | "Paid" | `.state-ok` (`InvoiceStatus`) |
 | Invoice status (Billing) | open, waiting for payment | amber ring and border | "Open" | `.state-warn` (`InvoiceStatus`) |
@@ -94,8 +101,8 @@ white, so on the white content it reads as a sheen rather than a stripe.
 | Form and dialog errors everywhere | error | red text | "Error: " written before the message | `.error` |
 | A field with an error | error | red border | the error below it | `input[aria-invalid="true"]` |
 | Load failures (lists, pages, charts, the engine not answering, 403, network errors) | error | red text and icon | alert circle, the message | `.message-error` (`Message role="alert"`) |
-| Erase (database page and bulk bar), Delete user, Delete document, Revoke key, Remove member, Revoke invitation, Clear list | destructive | red text and border; red fill on hover | the word on the button | `.btn-danger` |
-| The dialogs of those actions, Leave organization, and Restore to a point in time | destructive | the confirm button filled red with white text (the dialog itself has no border or line) | the title and text say what is lost; the button says the action | `.dialog-danger` (`ConfirmDialog danger`) |
+| Revoke key, Remove member, Revoke invitation | destructive | red text and border; red fill on hover | the word on the button | `.btn-danger` |
+| The dialogs of those actions, and Leave organization | destructive | the confirm button filled red with white text, a darker red on hover (the dialog itself has no border or line) | the title and text say what is lost; the button says the action | `.dialog-danger` (`ConfirmDialog danger`) |
 | Selected database tab | — | — | filled black, bold; no line under it | `.seg button[aria-pressed]` |
 | Selected settings tab | — | none (the black fill is enough) | the tab is filled black | — |
 | Selected menu item (sidebar and drawer) | — | — | filled dark grey, bold; no line under it | `.nav-link.active` |

@@ -206,7 +206,7 @@ export function RunPage() {
         <div className="kpi">
           <strong className="kpi-value">{formatCount(run.tests.failed)}</strong>
           <span className="kpi-label">Failed</span>
-          <span className="kpi-sub muted small">{run.tests.flakyDefects ? `${run.tests.flakyDefects} reproducible flaky defect` : "real failures"}</span>
+          <span className="kpi-sub muted small">{run.tests.flakyDefects ? `${run.tests.flakyDefects} flaky, reproducible` : run.tests.failed ? "real failures" : "none"}</span>
         </div>
         <div className="kpi">
           <strong className="kpi-value">{formatDuration(run.durationMs)}</strong>
