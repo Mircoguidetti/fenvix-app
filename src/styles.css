@@ -597,8 +597,11 @@ table.data.dbs tbody tr { height: 58px; }
 @media (min-width: 821px) and (max-width: 1239px) { .col-requests { display: none; } }
 @media (min-width: 821px) and (max-width: 1099px) { .col-region { display: none; } }
 .field-seg { gap: 6px; flex: 0 0 auto !important; }
-.field-seg .seg { height: 40px; }
-.field-seg .seg button { height: 38px; }
+/* Same outer height as a select beside it (var(--field)): 1px border + 4px padding on each side leave the field height
+   minus 10px for the buttons, so the chosen pill sits centred with equal gaps instead of spilling out at the bottom. On a
+   phone the buttons keep their 44px touch height and the box grows around them. */
+.field-seg .seg { height: auto; min-height: var(--field); box-sizing: border-box; align-items: center; }
+.field-seg .seg button { height: calc(var(--field) - 10px); }
 .card > .hbars { flex: 1; justify-content: space-evenly; }
 .toolbar .field.grow { flex: 1 1 260px; max-width: 420px; }
 
