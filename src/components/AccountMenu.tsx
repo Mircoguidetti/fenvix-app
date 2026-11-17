@@ -171,7 +171,7 @@ export function AccountMenu() {
       {switcher && (
         <ConfirmDialog danger open={leaving} title="Leave this organization?" confirmLabel="Leave organization" busy={busy} onConfirm={leave} onCancel={() => setLeaving(false)}>
           <p>
-            You will lose access to <strong className="break-anywhere">{switcher.name}</strong> and its databases. To come back, someone has to invite you again.
+            You will lose access to <strong className="break-anywhere">{switcher.name}</strong> and its projects. To come back, someone has to invite you again.
           </p>
           {error && (
             <p className="error" role="alert">

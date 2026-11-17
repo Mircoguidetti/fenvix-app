@@ -1,78 +1,70 @@
-import type { BillingOverview, BulkResult, Database, ExportResult, NewDatabase, DatabaseFilter, DatabaseQuery, GroupedDatabases, Invoice, OperationOptions, Overview, Page, Plan, TagBreakdownRow, UsageTrend, Settings, TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport, UsageHistoryPoint } from "./types";
+import type {
+  BillingOverview, Defect, DefectFamily, DefectQuery, ExportResult, GitHubConnection, GitHubRepository, Overview, Page, Plan,
+  Project, ProjectRow, ProjectSettings, Run, Settings, SetupChange, SetupPullRequest, SkipReceipt, TestPage, TestQuery, UsageReport,
+} from "./types";
 import type { CreatedPublicKey, NewPublicKey, PublicApiKey, PublicKeyPage } from "./public-keys";
 
+export interface RunQuery {
+  /** "pr" keeps pull request runs, "default" keeps the default branch. */
+  scope?: "all" | "pr" | "default";
+  status?: "all" | "passed" | "failed";
+  page?: number;
+  pageSize?: number;
+}
+
 /**
- * Everything the dashboard needs from a backend. The screens only talk to this interface.
- * `./index.ts` picks the implementation: the control plane over HTTP (api-http.ts) when VITE_API_URL is set,
- * otherwise the mock or Supabase.
+ * Everything the dashboard needs from a backend (docs/data-contract.md). The screens only talk to this interface.
+ * `./index.ts` picks the implementation: the mock (VITE_DATA_BACKEND=mock) or Supabase.
  */
 export interface DataClient {
-  /** "now" used for relative times. A real client returns the current time. */
+  /** "now" used for relative times and for "this month". A real client returns the current time. */
   now(): Date;
-  /** Filtered, sorted, paged list. Default sort is last active first, 50 per page. */
-  listDatabases(query?: DatabaseQuery): Promise<Page<Database>>;
-  /** Ids of every database matching the filter, for "select all matching". */
-  listDatabaseIds(filter?: DatabaseFilter): Promise<string[]>;
-  /** Matching databases counted per value of one tag key. */
-  groupDatabases(groupBy: string, filter?: DatabaseFilter): Promise<GroupedDatabases>;
-  /** Every tag in use with its database count. */
-  listTags(): Promise<TagCount[]>;
-  getDatabase(id: string): Promise<Database | null>;
-  /** Everything the overview page shows for one time range. */
-  getOverview(range: UsageRange): Promise<Overview>;
-  /** Storage and requests per value of one tag key, biggest first. */
-  getTagBreakdown(key: string, limit?: number): Promise<TagBreakdownRow[]>;
-  /** Daily requests of one month split by the values of a tag key. */
-  getUsageTrend(month: string, tagKey: string): Promise<UsageTrend>;
-  /** The plans on offer, with the one the workspace is on marked. */
-  listPlans(): Promise<Plan[]>;
-  listRegions(): Promise<string[]>;
-  /*
-   * The next five are long operations. Each resolves once the work is done and rejects with the reason when it failed;
-   * `options.onProgress` reports the status on the way (a client whose operations are instant may not call it).
-   */
-  /** The connection string is on the returned database. Names are unique, lowercase, 3 to 48 characters. */
-  createDatabase(input: NewDatabase, options?: OperationOptions): Promise<Database>;
-  /** Instant copy under a new name, with the same region and tags. The copy starts asleep. */
-  forkDatabase(id: string, name: string, options?: OperationOptions): Promise<Database>;
-  /** Rolls the data back to `at` (ISO time, between creation and now). */
-  restoreDatabase(id: string, at: string, options?: OperationOptions): Promise<Database>;
-  /** Prepares a download of the data of one or more databases. */
-  exportDatabases(ids: string[], options?: OperationOptions): Promise<ExportResult>;
-  /** Permanently deletes databases and their data. */
-  eraseDatabases(ids: string[], options?: OperationOptions): Promise<BulkResult>;
-  /** Keeps databases awake (true) or lets them sleep when idle (false). */
-  setKeepAwake(ids: string[], enabled: boolean): Promise<BulkResult>;
-  /** Replaces the tags of one database. */
-  setTags(id: string, tags: string[]): Promise<Database>;
-  /** Adds tags to several databases. A key already on a database gets the new value. */
-  addTags(ids: string[], tags: string[]): Promise<BulkResult>;
-  /** Removes tags from several databases. "key:value" removes that value, a bare "key" removes the key. */
-  removeTags(ids: string[], tags: string[]): Promise<BulkResult>;
-  getUsage(databaseId: string, range: UsageRange): Promise<UsagePoint[]>;
-  /** Months that have a usage report, newest first, as "YYYY-MM". */
+  /** True when the screens show sample data (the mock): they say so. */
+  readonly sample: boolean;
+
+  getOverview(): Promise<Overview>;
+
+  listProjects(): Promise<ProjectRow[]>;
+  getProject(id: string): Promise<ProjectRow | null>;
+  saveProjectSettings(id: string, settings: ProjectSettings): Promise<Project>;
+  /** Newest first. */
+  listRuns(projectId: string, query?: RunQuery): Promise<Page<Run>>;
+  /** Share of test time skipped with proof per day, median over that day's runs, for the last `days` days. */
+  getSkipShareSeries(projectId: string, days: number): Promise<{ at: string; value: number; runs: number }[]>;
+
+  getRun(id: string): Promise<{ run: Run; project: Project } | null>;
+  listTestResults(runId: string, query?: TestQuery): Promise<TestPage>;
+  getSkipReceipt(id: string): Promise<SkipReceipt | null>;
+
+  listDefects(query?: DefectQuery): Promise<Defect[]>;
+  listDefectFamilies(query?: DefectQuery): Promise<DefectFamily[]>;
+  getDefect(id: string): Promise<Defect | null>;
+
+  /** Months that have runs, newest first, as "YYYY-MM". */
   listUsageMonths(): Promise<string[]>;
-  /** Storage and requests for a month, per database or per tag, sorted and paged. */
-  getUsageReport(query: UsageQuery): Promise<UsageReport>;
-  /** Totals for every month with a report, oldest first. */
-  getUsageHistory(): Promise<UsageHistoryPoint[]>;
-  /** The same report as a CSV file, all rows, ignoring paging. */
-  exportUsageReport(query: UsageQuery): Promise<ExportResult>;
-  /** What the customer pays FENVIX: plan, month-to-date cost and payment method. */
+  getUsage(month: string): Promise<UsageReport>;
+  exportUsage(month: string): Promise<ExportResult>;
+
+  listPlans(): Promise<Plan[]>;
   getBilling(): Promise<BillingOverview>;
-  listInvoices(page?: number, pageSize?: number): Promise<Page<Invoice>>;
-  /** A PDF of one invoice. */
-  downloadInvoice(id: string): Promise<ExportResult>;
-  /*
-   * Public API keys (fvx_, control-plane/docs/public-api.md, "API keys"): the keys customers use. Owner or admin only.
-   * The dashboard's own fnx_ keys are not offered here.
-   */
-  /** Newest first, up to 100 per page; `cursor` is the previous page's nextCursor. */
+
+  /* Onboarding: the fenvix GitHub App. Installing happens on GitHub; GitHub sends the browser back with installation_id. */
+  getGitHubConnection(): Promise<GitHubConnection>;
+  listGitHubRepositories(): Promise<GitHubRepository[]>;
+  /** Mock only: stands in for GitHub's own install page, where the person picks repositories. Returns the installation id. */
+  installGitHubApp(repositories: string[]): Promise<number>;
+  /** After GitHub sent the browser back: the repositories of that installation become projects. */
+  completeInstallation(installationId: number): Promise<Project[]>;
+  /** The change the setup pull request makes to the test job. */
+  getSetupChange(projectId: string): Promise<SetupChange>;
+  /** Opens a pull request on the repository that changes the test job to `runs-on: fenvix`. */
+  openSetupPullRequest(projectId: string): Promise<SetupPullRequest>;
+
+  /* Public API keys (fvx_), as before. Owner or admin only. */
   listPublicApiKeys(cursor?: string | null): Promise<PublicKeyPage>;
-  /** The whole key is in `token`, in this answer only. */
   createPublicApiKey(input: NewPublicKey): Promise<CreatedPublicKey>;
-  /** Takes effect on the next request made with the key. Keys it created are revoked with it. */
   revokePublicApiKey(id: string): Promise<PublicApiKey>;
+
   getSettings(): Promise<Settings>;
   saveSettings(next: Settings): Promise<Settings>;
 }

@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import type { UsageRange } from "../data";
 import { formatCompact, formatCount } from "../lib/format";
+
+/** The time span of a chart: hourly buckets for "24h", daily ticks otherwise. */
+export type UsageRange = "24h" | "7d" | "30d";
 
 /** Width of a container, so charts size themselves instead of guessing. */
 export function useMeasure<T extends HTMLElement>(min = 240): [React.RefObject<T | null>, number] {

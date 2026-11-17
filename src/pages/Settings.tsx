@@ -135,7 +135,7 @@ export function SettingsPage() {
                 )}
                 <label className="check">
                   <input type="checkbox" checked={form.emailNotices} onChange={(e) => { setSaved(false); setForm({ ...form, emailNotices: e.target.checked }); }} />
-                  Email me about usage and account notices
+                  Email me about new defects, runs nearing the plan's limit and account notices
                 </label>
               </fieldset>
               {error && <p id="ws-error" className="error" role="alert">{error}</p>}
@@ -163,7 +163,7 @@ export function SettingsPage() {
               <dt>Plan</dt>
               <dd>
                 <Link to="/billing" className="row-link">
-                  Managed
+                  See billing
                 </Link>
               </dd>
             </div>

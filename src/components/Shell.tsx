@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { BookOpen, Building2, ChartColumn, ChevronDown, CreditCard, Database, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, X, type LucideIcon } from "lucide-react";
+import { Bug, BookOpen, Building2, ChartColumn, ChevronDown, CreditCard, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, X, type LucideIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { AccountMenu, OrgAvatar, useCurrentOrg } from "./AccountMenu";
 import { CopyButton } from "./CopyButton";
@@ -8,14 +8,14 @@ import { useToast } from "./Toast";
 import { useFocusTrap } from "../lib/useFocusTrap";
 import { useOrg } from "../session/OrgProvider";
 import { useTheme } from "../lib/theme";
-import { client, type Database as Db } from "../data";
+import { client, type ProjectRow } from "../data";
 import { ROLE_NAMES } from "../data/orgs";
 
 /*
  * The console's frame, laid out like the mockup (fenvix-brain, Fenvix console 3):
- * - a top bar: the logo, where you are as switchers (Org ▾ / Database), "Search or jump to", the theme and the account;
+ * - a top bar: the logo, where you are as switchers (Org ▾ / Project), "Search or jump to", the theme and the account;
  * - a thin bar of area icons on the left that widens over the page on hover, or stays open when pinned;
- * - a second bar, always there: what is open (the organization, its settings, or one database) with its pages, and a
+ * - a second bar, always there: what is open (the organization, its settings, or one project) with its pages, and a
  *   box at the bottom with the one thing you most often do from there.
  * Below 900px the bars become one drawer. Every page, route and action is the one it was.
  */
@@ -26,7 +26,8 @@ const RAIL_KEY = "fenvix-rail-open";
 type Area = { key: string; label: string; icon: LucideIcon; to: string; match: (path: string) => boolean };
 const AREAS: Area[] = [
   { key: "overview", label: "Overview", icon: LayoutDashboard, to: "/overview", match: (p) => p.startsWith("/overview") },
-  { key: "databases", label: "Databases", icon: Database, to: "/databases", match: (p) => p.startsWith("/databases") },
+  { key: "projects", label: "Projects", icon: FolderGit2, to: "/projects", match: (p) => p.startsWith("/projects") },
+  { key: "defects", label: "Defects", icon: Bug, to: "/defects", match: (p) => p.startsWith("/defects") },
   { key: "usage", label: "Usage", icon: ChartColumn, to: "/usage", match: (p) => p.startsWith("/usage") },
   { key: "billing", label: "Billing", icon: CreditCard, to: "/billing", match: (p) => p.startsWith("/billing") },
   { key: "org", label: "Organization", icon: Building2, to: "/settings/members", match: (p) => p.startsWith("/settings") || p.startsWith("/api-keys") },
@@ -34,7 +35,8 @@ const AREAS: Area[] = [
 
 const ORG_PAGES = [
   { to: "/overview", label: "Overview", end: true },
-  { to: "/databases", label: "Databases", end: false },
+  { to: "/projects", label: "Projects", end: false },
+  { to: "/defects", label: "Defects", end: false },
   { to: "/usage", label: "Usage", end: false },
   { to: "/billing", label: "Billing", end: false },
 ];
@@ -43,29 +45,28 @@ const SETTINGS_PAGES = [
   { to: "/settings/members", label: "Members", end: false },
   { to: "/api-keys", label: "API keys", end: false },
 ];
-const DB_SECTIONS = [
-  { tab: "overview", label: "Overview" },
-  { tab: "data", label: "Data explorer" },
-  { tab: "users", label: "Users" },
-  { tab: "network", label: "Network" },
+const PROJECT_SECTIONS = [
+  { tab: "runs", label: "Runs" },
+  { tab: "setup", label: "Setup" },
+  { tab: "settings", label: "Settings" },
 ] as const;
 
-/** What the frame shows about the open database. Set by its page; layout only. */
-export type DbInfo = { name: string; region?: string; state?: string; ok?: boolean; storage?: string; connectionString?: string };
-const DbTitle = createContext<{ info: DbInfo; set: (info: DbInfo) => void }>({ info: { name: "" }, set: () => {} });
-export function useDatabaseTitle(name: string | undefined, more?: Omit<DbInfo, "name">) {
-  const { set } = useContext(DbTitle);
+/** What the frame shows about the open project. Set by its pages; layout only. */
+export type ProjectInfo = { name: string; language?: string; runner?: string; snippet?: string };
+const ProjectTitle = createContext<{ info: ProjectInfo; set: (info: ProjectInfo) => void }>({ info: { name: "" }, set: () => {} });
+export function useProjectTitle(name: string | undefined, more?: Omit<ProjectInfo, "name">) {
+  const { set } = useContext(ProjectTitle);
   const key = JSON.stringify(more ?? {});
   useEffect(() => {
-    set({ name: name ?? "", ...(JSON.parse(key) as Omit<DbInfo, "name">) });
+    set({ name: name ?? "", ...(JSON.parse(key) as Omit<ProjectInfo, "name">) });
     return () => set({ name: "" });
   }, [name, key, set]);
 }
 
-/** A database page: /databases/<id>, not the list and not /databases/new. */
-function dbIdOf(path: string): string | null {
-  const m = /^\/databases\/([^/]+)/.exec(path);
-  return m && m[1] !== "new" ? m[1] : null;
+/** A project page: /projects/<id> and its runs, not the list and not /projects/connect. */
+function projectIdOf(path: string): string | null {
+  const m = /^\/projects\/([^/]+)/.exec(path);
+  return m && m[1] !== "connect" ? m[1] : null;
 }
 const isSettings = (path: string) => path.startsWith("/settings") || path.startsWith("/api-keys");
 
@@ -80,6 +81,17 @@ function ReadOnlyNote() {
   );
 }
 
+/** The mock backend is on: every number is sample data, and the screens say so. */
+function SampleNote() {
+  if (!client.sample) return null;
+  return (
+    <p className="sample-note" role="note">
+      <span className="sample-badge">Sample data</span>
+      <span className="muted small">Made up from the shapes fenvix measured on real repositories. Connect a project to see your own runs.</span>
+    </p>
+  );
+}
+
 function ThemeButton() {
   const { theme, toggle } = useTheme();
   const label = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
@@ -90,15 +102,16 @@ function ThemeButton() {
   );
 }
 
-function DbSectionLinks({ onNavigate }: { onNavigate?: () => void }) {
+function ProjectSectionLinks({ projectId, onNavigate }: { projectId: string; onNavigate?: () => void }) {
   const [params] = useSearchParams();
   const { pathname } = useLocation();
-  const tab = params.get("tab") ?? "overview";
+  const onRun = pathname.includes("/runs/");
+  const tab = onRun ? "runs" : (params.get("tab") ?? "runs");
   return (
     <>
-      {/* The frame sits outside the routes, so "." would mean the root: the database's own path is given in full. */}
-      {DB_SECTIONS.map((s) => (
-        <Link key={s.tab} to={s.tab === "overview" ? pathname : `${pathname}?tab=${s.tab}`} replace onClick={onNavigate} className={tab === s.tab ? "cx-sub-link active" : "cx-sub-link"} aria-current={tab === s.tab ? "page" : undefined}>
+      {/* The frame sits outside the routes, so the project's own path is given in full. */}
+      {PROJECT_SECTIONS.map((s) => (
+        <Link key={s.tab} to={s.tab === "runs" ? `/projects/${projectId}` : `/projects/${projectId}?tab=${s.tab}`} onClick={onNavigate} className={tab === s.tab ? "cx-sub-link active" : "cx-sub-link"} aria-current={tab === s.tab && !onRun ? "page" : undefined}>
           {s.label}
         </Link>
       ))}
@@ -120,23 +133,22 @@ function PageLinks({ pages, onNavigate }: { pages: typeof ORG_PAGES; onNavigate?
 
 /** The second bar: what is open, its pages, and a box at the bottom. */
 function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgSub: string }) {
-  const { info } = useContext(DbTitle);
-  const dbId = dbIdOf(path);
+  const { info } = useContext(ProjectTitle);
+  const projectId = projectIdOf(path);
   const settings = isSettings(path);
   return (
     <aside className="cx-sub" aria-label="Pages">
-      {dbId ? (
+      {projectId ? (
         <>
           <div className="cx-sub-head">
-            <span className="cx-sub-kind">Database</span>
+            <span className="cx-sub-kind">Project</span>
             <span className="cx-sub-title">
-              <span className="break-anywhere">{info.name || dbId}</span>
-              {info.ok && <span className="cx-sub-dot" aria-hidden="true" />}
+              <span className="break-anywhere">{info.name || " "}</span>
             </span>
-            {(info.region || info.state) && <span className="cx-sub-meta">{[info.region, info.state].filter(Boolean).join(" · ")}</span>}
+            {(info.language || info.runner) && <span className="cx-sub-meta">{[info.language, info.runner].filter(Boolean).join(" · ")}</span>}
           </div>
-          <nav aria-label="Database sections" className="cx-sub-nav">
-            <DbSectionLinks />
+          <nav aria-label="Project sections" className="cx-sub-nav">
+            <ProjectSectionLinks projectId={projectId} />
           </nav>
         </>
       ) : (
@@ -153,29 +165,16 @@ function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgS
       )}
       <span className="cx-sub-fill" />
       <div className="cx-sub-box">
-        {dbId ? (
+        {projectId ? (
           <>
-            <span className="cx-sub-box-title">Connect</span>
-            {info.storage && (
-              <span className="cx-sub-box-line">
-                <span>Stored</span>
-                <span>{info.storage}</span>
-              </span>
-            )}
-            {info.region && (
-              <span className="cx-sub-box-line">
-                <span>Region</span>
-                <span className="mono">{info.region}</span>
-              </span>
-            )}
-            {info.connectionString ? (
+            <span className="cx-sub-box-title">Run on fenvix</span>
+            <span className="cx-sub-box-text">
+              One line in the test job: <span className="mono">runs-on: fenvix</span>
+            </span>
+            {info.snippet && (
               <span className="cx-sub-copy">
-                <CopyButton value={info.connectionString} what="connection string" text="Copy connection string" />
+                <CopyButton value={info.snippet} what="setup snippet" text="Copy the test job" />
               </span>
-            ) : (
-              <Link to={`/databases/${dbId}?tab=users`} replace className="btn btn-primary btn-sm">
-                Database users
-              </Link>
             )}
           </>
         ) : settings ? (
@@ -188,10 +187,10 @@ function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgS
           </>
         ) : (
           <>
-            <span className="cx-sub-box-title">Databases</span>
-            <span className="cx-sub-box-text">Each one sleeps when idle and wakes on its first request.</span>
-            <Link to="/databases/new" className="btn btn-primary btn-sm">
-              New database
+            <span className="cx-sub-box-title">Projects</span>
+            <span className="cx-sub-box-text">Install the fenvix GitHub App on a repository and move its test job to fenvix.</span>
+            <Link to="/projects/connect" className="btn btn-primary btn-sm">
+              Connect a project
             </Link>
           </>
         )}
@@ -252,8 +251,8 @@ function Rail({ path }: { path: string }) {
 
 /** Below 900px: one drawer with every area and its pages. */
 function Drawer({ path, onClose }: { path: string; onClose: () => void }) {
-  const { info } = useContext(DbTitle);
-  const dbId = dbIdOf(path);
+  const { info } = useContext(ProjectTitle);
+  const projectId = projectIdOf(path);
   return (
     <>
       <div className="cx-drawer-top">
@@ -265,12 +264,12 @@ function Drawer({ path, onClose }: { path: string; onClose: () => void }) {
         </button>
       </div>
       <div className="cx-drawer-body">
-        {dbId && (
-          <nav aria-label="Database sections" className="cx-drawer-group">
+        {projectId && (
+          <nav aria-label="Project sections" className="cx-drawer-group">
             <p className="cx-drawer-label">
-              Database <span className="cx-drawer-label-name">{info.name || dbId}</span>
+              Project <span className="cx-drawer-label-name">{info.name}</span>
             </p>
-            <DbSectionLinks onNavigate={onClose} />
+            <ProjectSectionLinks projectId={projectId} onNavigate={onClose} />
           </nav>
         )}
         <nav aria-label="Organization pages" className="cx-drawer-group">
@@ -357,8 +356,8 @@ function OrgCrumb({ name }: { name: string }) {
 }
 
 function Crumbs({ path, orgName }: { path: string; orgName: string }) {
-  const { info } = useContext(DbTitle);
-  const dbId = dbIdOf(path);
+  const { info } = useContext(ProjectTitle);
+  const projectId = projectIdOf(path);
   const area = AREAS.find((a) => a.match(path));
   return (
     <nav aria-label="Where you are" className="cx-crumbs">
@@ -368,8 +367,8 @@ function Crumbs({ path, orgName }: { path: string; orgName: string }) {
           <span className="cx-crumb-sep" aria-hidden="true">
             /
           </span>
-          {dbId ? (
-            <Link to="/databases" className="cx-crumb-btn cx-crumb-area">
+          {projectId ? (
+            <Link to="/projects" className="cx-crumb-btn cx-crumb-area">
               <span className="cx-crumb-name">{area.label}</span>
             </Link>
           ) : (
@@ -379,15 +378,15 @@ function Crumbs({ path, orgName }: { path: string; orgName: string }) {
           )}
         </>
       )}
-      {dbId && (
+      {projectId && info.name && (
         <>
           <span className="cx-crumb-sep" aria-hidden="true">
             /
           </span>
-          <span className="cx-crumb-btn" aria-current="page">
-            <span className="cx-crumb-kind">Database</span>
-            <span className="cx-crumb-name cx-crumb-db">{info.name || dbId}</span>
-          </span>
+          <Link to={`/projects/${projectId}`} className="cx-crumb-btn" aria-current={path === `/projects/${projectId}` ? "page" : undefined}>
+            <span className="cx-crumb-kind">Project</span>
+            <span className="cx-crumb-name cx-crumb-db">{info.name}</span>
+          </Link>
         </>
       )}
     </nav>
@@ -396,8 +395,9 @@ function Crumbs({ path, orgName }: { path: string; orgName: string }) {
 
 const JUMP_PAGES = [
   { label: "Overview", to: "/overview" },
-  { label: "Databases", to: "/databases" },
-  { label: "New database", to: "/databases/new" },
+  { label: "Projects", to: "/projects" },
+  { label: "Connect a project", to: "/projects/connect" },
+  { label: "Defects", to: "/defects" },
   { label: "Usage", to: "/usage" },
   { label: "Billing", to: "/billing" },
   { label: "Organization settings", to: "/settings" },
@@ -405,13 +405,13 @@ const JUMP_PAGES = [
   { label: "API keys", to: "/api-keys" },
 ];
 
-/** "Search or jump to": pages and databases by name. ⌘K or Ctrl+K puts the cursor in it. */
+/** "Search or jump to": pages and projects by name. ⌘K or Ctrl+K puts the cursor in it. */
 function JumpSearch() {
   const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
-  const [dbs, setDbs] = useState<Db[]>([]);
+  const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const listId = useId();
   const term = q.trim().toLowerCase();
@@ -426,23 +426,24 @@ function JumpSearch() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  // The projects are loaded once, the first time someone types.
   useEffect(() => {
-    if (!term) return setDbs([]);
+    if (!term || projects) return;
     let live = true;
-    const t = setTimeout(() => {
-      client
-        .listDatabases({ search: term, pageSize: 6, sort: "name", dir: "asc" })
-        .then((p) => live && setDbs(p.items))
-        .catch(() => live && setDbs([]));
-    }, 150);
+    client
+      .listProjects()
+      .then((p) => live && setProjects(p))
+      .catch(() => live && setProjects([]));
     return () => {
       live = false;
-      clearTimeout(t);
     };
-  }, [term]);
+  }, [term, projects]);
 
   const items = term
-    ? [...JUMP_PAGES.filter((p) => p.label.toLowerCase().includes(term)).map((p) => ({ key: p.to, label: p.label, kind: "Page", to: p.to })), ...dbs.map((d) => ({ key: d.id, label: d.name, kind: "Database", to: `/databases/${d.id}` }))]
+    ? [
+        ...JUMP_PAGES.filter((p) => p.label.toLowerCase().includes(term)).map((p) => ({ key: p.to, label: p.label, kind: "Page", to: p.to })),
+        ...(projects ?? []).filter((p) => p.fullName.toLowerCase().includes(term)).slice(0, 6).map((p) => ({ key: p.id, label: p.fullName, kind: "Project", to: `/projects/${p.id}` })),
+      ]
     : [];
   const show = open && term.length > 0;
   const go = useCallback(
@@ -483,7 +484,7 @@ function JumpSearch() {
         ⌘K
       </kbd>
       {show && (
-        <ul id={listId} role="listbox" className="cx-pop cx-search-list" aria-label="Pages and databases">
+        <ul id={listId} role="listbox" className="cx-pop cx-search-list" aria-label="Pages and projects">
           {items.length === 0 && (
             <li className="cx-search-none" role="presentation">
               Nothing matches
@@ -491,7 +492,7 @@ function JumpSearch() {
           )}
           {items.map((it, i) => (
             <li key={it.key} id={`${listId}-${i}`} role="option" aria-selected={i === active} className="cx-search-item" onMouseDown={(e) => (e.preventDefault(), go(it.to))} onMouseEnter={() => setActive(i)}>
-              <span className={it.kind === "Database" ? "mono ellipsis" : "ellipsis"}>{it.label}</span>
+              <span className={it.kind === "Project" ? "mono ellipsis" : "ellipsis"}>{it.label}</span>
               <span className="cx-search-kind">{it.kind}</span>
             </li>
           ))}
@@ -503,7 +504,7 @@ function JumpSearch() {
 
 export function Shell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
-  const [dbInfo, setDbInfo] = useState<DbInfo>({ name: "" });
+  const [projectInfo, setProjectInfo] = useState<ProjectInfo>({ name: "" });
   const { pathname } = useLocation();
   const drawer = useRef<HTMLElement>(null);
   const current = useCurrentOrg();
@@ -521,7 +522,7 @@ export function Shell({ children }: { children: ReactNode }) {
   useFocusTrap(drawer, open, () => setOpen(false));
 
   return (
-    <DbTitle.Provider value={{ info: dbInfo, set: setDbInfo }}>
+    <ProjectTitle.Provider value={{ info: projectInfo, set: setProjectInfo }}>
       <div className="shell cx-shell">
         <a href="#main" className="skip-link">
           Skip to content
@@ -536,7 +537,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </Link>
           <Crumbs path={pathname} orgName={orgName} />
           <span className="cx-top-fill" />
-          <span className="cx-top-where">{dbInfo.name && dbIdOf(pathname) ? dbInfo.name : orgName}</span>
+          <span className="cx-top-where">{projectInfo.name && projectIdOf(pathname) ? projectInfo.name : orgName}</span>
           <JumpSearch />
           <ThemeButton />
           <div className="cx-account">
@@ -549,6 +550,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <SubNav path={pathname} orgName={orgName} orgSub={orgSub} />
           <div className="cx-content">
             <main id="main" tabIndex={-1}>
+              <SampleNote />
               <ReadOnlyNote />
               {children}
             </main>
@@ -560,6 +562,6 @@ export function Shell({ children }: { children: ReactNode }) {
           <Drawer path={pathname} onClose={() => setOpen(false)} />
         </aside>
       </div>
-    </DbTitle.Provider>
+    </ProjectTitle.Provider>
   );
 }

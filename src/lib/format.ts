@@ -33,3 +33,29 @@ export function formatRelative(iso: string, now: Date): string {
   const d = Math.floor(h / 24);
   return `${d} ${d === 1 ? "day" : "days"} ago`;
 }
+
+/** 0.973 → "97%". Under 1% and above 99% keep one decimal, so 0.4% never reads as 0%. */
+export function formatPercent(share: number): string {
+  const p = share * 100;
+  if (p > 0 && p < 1) return `${p.toFixed(1)}%`;
+  if (p > 99 && p < 100) return `${Math.floor(p * 10) / 10}%`;
+  return `${Math.round(p)}%`;
+}
+
+/** Milliseconds as "850 ms", "42 s", "3 min 05 s" or "1 h 02 min". */
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ${String(s % 60).padStart(2, "0")} s`;
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
+}
+
+/** Minutes with one decimal under 100, whole above: "8.8 min", "1,240 min". */
+export function formatMinutes(min: number): string {
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: min < 100 ? 1 : 0 }).format(min)} min`;
+}
+
+/** Seven characters of a commit SHA, as GitHub shows it. */
+export const shortSha = (sha: string) => sha.slice(0, 7);

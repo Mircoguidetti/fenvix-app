@@ -123,8 +123,8 @@ The dashboard record adds the lists behind those counts, taken from the test's e
 | `modules` | `{ path, kind: "content" \| "skeleton" \| "hooks", digest }[]` | whole files, module skeletons and conftest hook sets the test depends on |
 | `filesRead` | `{ path, dep }[]` | `Entry.data`; `dep` is `f:<digest>` (file), `d:<digest>` (directory listing), `missing`, or `s:<kind>` |
 | `envRead` | `{ name, digest }[]` | `Entry.env`; `digest` is `-` when the variable was unset, the name `*` means the whole environment |
-| `runtime` | `{ digest, python, system, machine, libc, distributions }` | the runtime identity (`runtime` digests `{python, cache_tag, executable, libpython, system, machine, libc, stdlib, distributions, n_distributions}`) |
-| `config` | `{ digest, pytest, detpy, inifile, options }` | the configuration identity (`config` digests the pytest and Level 0 settings) |
+| `runtime` | `{ digest, interpreter, system, machine, libc, distributions }` | the runtime identity; `interpreter` is e.g. `python 3.12.7` or `node 22.11.0` (`runtime` digests `{python, cache_tag, executable, libpython, system, machine, libc, stdlib, distributions, n_distributions}`) |
+| `config` | `{ digest, runner, engine, inifile, options }` | the configuration identity (`runner` e.g. `pytest 8.3.3`, `engine` e.g. `detpy 0.1.0`) (`config` digests the pytest and Level 0 settings) |
 | `changedFilesProven` | number | `n_changed_files_proven`: files changed since the reused run that were proven irrelevant |
 
 Gap today: `receipts.jsonl` carries only the counts; the lists exist in `proof-cache.json`. The runner must send

@@ -1,6 +1,6 @@
 import { backend, configError } from "../lib/env";
 import { getSupabase } from "../lib/supabaseClient";
-import { friendlyError } from "../data/queries";
+import { friendlyError } from "../data/ci-rows";
 
 let redirectError: string | null = null;
 

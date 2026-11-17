@@ -165,7 +165,7 @@ export function MembersPage() {
                 id="invite-role"
                 value={inviteRole}
                 onChange={(v) => setInviteRole(v as InviteRole)}
-                options={[{ value: "member", label: "Member: can view, cannot change" }, ...(role === "owner" ? [{ value: "admin", label: "Admin: can manage databases and members" }] : [])]}
+                options={[{ value: "member", label: "Member: can view, cannot change" }, ...(role === "owner" ? [{ value: "admin", label: "Admin: can manage projects and members" }] : [])]}
               />
             </div>
             <button type="submit" className="btn btn-primary" disabled={busy}>
@@ -304,7 +304,7 @@ export function MembersPage() {
 
       <ConfirmDialog danger open={removing !== null} title="Remove this member?" confirmLabel="Remove member" busy={busy} onConfirm={remove} onCancel={() => setRemoving(null)}>
         <p>
-          <strong className="break-anywhere">{removing?.name}</strong> will lose access to this organization and its databases.
+          <strong className="break-anywhere">{removing?.name}</strong> will lose access to this organization and its projects.
         </p>
       </ConfirmDialog>
 

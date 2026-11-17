@@ -7,7 +7,7 @@ import { Segmented } from "../components/Segmented";
 import { Select } from "../components/Select";
 import { SearchInput } from "../components/SearchInput";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { StateBadge, StatusPill } from "../components/StateBadge";
+import { RunStatusPill, StatusPill } from "../components/StateBadge";
 import { LogoMark } from "../components/Logo";
 import { useToast } from "../components/Toast";
 
@@ -38,8 +38,8 @@ export function StyleguidePage() {
           ))}
         </div>
         <p style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-0.02em" }}>Geist 600, 28 px: Databases</p>
-        <p>Geist 400, 14 px. Every database sleeps when idle and wakes on its first request.</p>
-        <p className="mono">Geist Mono: acme-orders, db_a1b2, eu-west-1, mongodb://app:&lt;password&gt;@host:27018</p>
+        <p>Geist 400, 14 px. Every flaky test becomes a reproducible defect with a replay command.</p>
+        <p className="mono">JetBrains Mono: northwind/homehub, 6fc828330e79296ba4e94163743199dd, pytest --det --det-seed=3</p>
         <div className="sg-dark">
           <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
             <LogoMark />
@@ -76,7 +76,7 @@ export function StyleguidePage() {
           <button type="button" className="icon-btn" aria-label="Search">
             <Search size={16} strokeWidth={1.75} aria-hidden="true" />
           </button>
-          <Link to="/databases" className="btn">
+          <Link to="/projects" className="btn">
             Link as button
           </Link>
         </div>
@@ -117,18 +117,19 @@ export function StyleguidePage() {
 
       <Card id="sg-controls" title="Switch and segmented control">
         <div className="stack wide">
-          <Switch id="sg-sw" checked={on} onChange={setOn} label="Keep awake" help="The database never sleeps, so its first request is never slow." />
+          <Switch id="sg-sw" checked={on} onChange={setOn} label="Skip tests with proof" help="Reuse a result only when everything the test read is proven unchanged." />
           <Switch id="sg-sw2" checked={false} onChange={() => {}} label="Off" />
           <Switch id="sg-sw3" checked disabled onChange={() => {}} label="Disabled" />
-          <Segmented label="State" value={seg} onChange={setSeg} options={[{ value: "all", label: "All", count: 12 }, { value: "awake", label: "Awake", count: 2 }, { value: "asleep", label: "Asleep", count: 9 }, { value: "keep", label: "Kept awake", count: 1 }]} />
+          <Segmented label="State" value={seg} onChange={setSeg} options={[{ value: "all", label: "All", count: 12 }, { value: "awake", label: "Passed", count: 9 }, { value: "asleep", label: "Failed", count: 2 }, { value: "keep", label: "Skipped", count: 1 }]} />
         </div>
       </Card>
 
       <Card id="sg-badges" title="Status and chips" description="A word always comes with the colour.">
         <div className="sg-grid">
-          <StateBadge state="awake" />
-          <StateBadge state="asleep" />
-          <StateBadge state="awake" kept />
+          <RunStatusPill status="passed" />
+          <RunStatusPill status="failed" />
+          <RunStatusPill status="running" />
+          <RunStatusPill status="cancelled" />
           <StatusPill tone="ok">Active</StatusPill>
           <StatusPill tone="warn">Open</StatusPill>
           <StatusPill tone="neutral">Revoked</StatusPill>
@@ -153,7 +154,7 @@ export function StyleguidePage() {
           <button type="button" className="btn btn-danger" onClick={() => (setTyped(""), setDialog("danger"))}>
             Open a confirmation
           </button>
-          <button type="button" className="btn" onClick={() => toast("Created database acme-orders", "success")}>
+          <button type="button" className="btn" onClick={() => toast("Opened pull request #412", "success")}>
             Success toast
           </button>
           <button type="button" className="btn" onClick={() => toast("Could not reach the server.", "error")}>
@@ -168,11 +169,11 @@ export function StyleguidePage() {
           <input id="sg-dlg" className="mono" placeholder="customer:acme-labs" autoComplete="off" />
         </div>
       </ConfirmDialog>
-      <ConfirmDialog danger open={dialog === "danger"} title="Erase this database?" confirmLabel="Erase database" confirmDisabled={typed !== "acme-orders"} onConfirm={() => setDialog(null)} onCancel={() => setDialog(null)}>
-        <p>This permanently deletes the database and all its data. It cannot be undone.</p>
+      <ConfirmDialog danger open={dialog === "danger"} title="Disconnect this project?" confirmLabel="Disconnect project" confirmDisabled={typed !== "homehub"} onConfirm={() => setDialog(null)} onCancel={() => setDialog(null)}>
+        <p>fenvix stops running its tests and forgets its runs and defects. It cannot be undone.</p>
         <div className="field">
           <label htmlFor="sg-type">
-            Type <span className="mono">acme-orders</span> to confirm
+            Type <span className="mono">homehub</span> to confirm
           </label>
           <input id="sg-type" className="mono" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} />
         </div>

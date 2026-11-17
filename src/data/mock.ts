@@ -1,79 +1,37 @@
-// All mock data lives in this file. Every number and name here is made up.
+/*
+ * Sample data for VITE_DATA_BACKEND=mock. Every name is made up; the shapes come from what fenvix measured
+ * (fenvix-engine-cli, harness/skip_study2/REPORT.md and the Block 2 defect bundles, read 2026-11-17):
+ *
+ *   project (stands for)              tests   share of test time skipped with proof   time to green before
+ *   northwind/homehub (home-assistant) 11,889  median 97%, mean 82%                    417 s
+ *   northwind/docs-site (docusaurus)    3,199  median 98%, mean 81%                     30 s
+ *   northwind/ledger (prometheus, terraform: Go) 28,526  25% to 56%                    135 s
+ *   northwind/storefront (saleor: Django) 1,721  median 0%, mean 9%                    289 s
+ *
+ * Run durations add the measured capture overhead (x2.13 home-assistant, x1.55 Vitest, x2.8 saleor; Go none).
+ * Defects follow real bundles: 2-test minimal orders with a named polluter, seeds the engine used, 32-hex fingerprints.
+ * The screens say "Sample data" whenever this client is in use.
+ */
 import { assertMockCanManage, mockOrgName, mockRole } from "./orgs-mock";
-import type { DataClient } from "./client";
+import { activeOrgId } from "../lib/org";
+import type { DataClient, RunQuery } from "./client";
 import type {
-  AwakePoint, BillingOverview, BulkResult, CostPoint, Database, DatabaseFilter, DatabaseGroup, DatabaseSort,
-  DbState, ExportResult, GroupedDatabases, Invoice, Overview, Page, Plan, RequestPoint, Settings, TagBreakdownRow,
-  TagCount, UsagePoint, UsageQuery, UsageRange, UsageReport, UsageRow, UsageSort, UsageTrend, WakeUp,
+  Baseline, Defect, DefectCause, GitHubRate, GitHubRepository, Language, Page, Plan, Project, Run, RunTrigger, Settings,
+  SetupPullRequest, SkipReceipt, TestOutcome, TestPage, TestResult, TestRunner,
 } from "./types";
-import { simplePdf } from "./pdf";
 import { ExplorerError } from "./explorer";
 import { MAX_ACTIVE_KEYS, PAGE_LIMIT, keyStatus, nameProblem, type PublicApiKey } from "./public-keys";
-import { matchesTagFilter, mergeTags, parseTag, sortTags, splitTag } from "../lib/tags";
+import { billingFrom, dayStart, familiesOf, familyKeyOf, median, monthOf, overviewFrom, projectRow, setupChange, usageCsv, usageCsvName, usageFrom } from "./ci";
+import { blobUrl } from "./files";
 
-const NOW = new Date("2026-10-26T12:00:00Z");
+export const NOW = new Date("2026-11-17T12:00:00Z");
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
-
-export { DB_HOST, connectionStringFor } from "./connection";
-import { connectionStringFor } from "./connection";
-import { mockInitialUser } from "./users-mock";
-import { usernameProblem } from "./users";
-export const WORKSPACE = "Northwind Cloud";
-export const REGIONS = ["eu-west", "us-east", "us-west", "ap-south"];
-
+const HISTORY_DAYS = 60;
 const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
-const round2 = (n: number) => Math.round(n * 100) / 100;
-const formatNumber = (n: number) => new Intl.NumberFormat("en-US").format(n);
 
-interface Seed {
-  id: string;
-  name: string;
-  state: DbState;
-  storageMb: number;
-  requests24h: number;
-  lastActiveMs: number;
-  ageDays: number;
-  region: string;
-  tags: string[];
-  keepAwake?: boolean;
-}
-
-const SEEDS: Seed[] = [
-  { id: "db_0001", name: "orders-prod", state: "awake", storageMb: 4820, requests24h: 182340, lastActiveMs: 2 * MIN, ageDays: 210, region: "eu-west", tags: ["customer:northwind", "env:prod", "app:orders"], keepAwake: true },
-  { id: "db_0002", name: "agent-memory", state: "awake", storageMb: 912, requests24h: 54210, lastActiveMs: 9 * MIN, ageDays: 64, region: "us-east", tags: ["customer:northwind", "env:prod", "app:agents"] },
-  { id: "db_0003", name: "orders-staging", state: "asleep", storageMb: 1730, requests24h: 1204, lastActiveMs: 5 * HOUR, ageDays: 120, region: "eu-west", tags: ["customer:northwind", "env:staging", "app:orders"] },
-  { id: "db_0004", name: "ci-4417", state: "asleep", storageMb: 38, requests24h: 311, lastActiveMs: 19 * HOUR, ageDays: 2, region: "us-east", tags: ["customer:northwind", "env:dev"] },
-  { id: "db_0005", name: "analytics-archive", state: "asleep", storageMb: 12400, requests24h: 0, lastActiveMs: 6 * DAY, ageDays: 300, region: "eu-west", tags: ["customer:northwind", "env:dev", "app:analytics"] },
-  { id: "db_0006", name: "support-bot", state: "awake", storageMb: 256, requests24h: 9120, lastActiveMs: 41 * MIN, ageDays: 33, region: "ap-south", tags: ["customer:northwind", "env:prod", "app:agents"] },
-  { id: "db_0007", name: "feature-flags", state: "asleep", storageMb: 12, requests24h: 4410, lastActiveMs: 3 * HOUR, ageDays: 400, region: "eu-west", tags: ["customer:northwind", "env:prod"] },
-  { id: "db_0008", name: "acme-labs-prod", state: "asleep", storageMb: 640, requests24h: 87, lastActiveMs: 2 * DAY, ageDays: 18, region: "us-east", tags: ["customer:acme-labs", "env:prod"] },
-  { id: "db_0009", name: "billing-events", state: "awake", storageMb: 7305, requests24h: 98560, lastActiveMs: 30_000, ageDays: 180, region: "us-east", tags: ["customer:northwind", "env:prod", "app:billing"] },
-  { id: "db_0010", name: "branch-982", state: "asleep", storageMb: 54, requests24h: 0, lastActiveMs: 11 * DAY, ageDays: 12, region: "eu-west", tags: ["customer:northwind", "env:sandbox"] },
-  { id: "db_0011", name: "research-notes", state: "asleep", storageMb: 2210, requests24h: 530, lastActiveMs: 8 * HOUR, ageDays: 75, region: "ap-south", tags: ["customer:northwind", "env:dev"] },
-  { id: "db_0012", name: "bench-run-12", state: "asleep", storageMb: 20480, requests24h: 12, lastActiveMs: 26 * HOUR, ageDays: 5, region: "us-east", tags: ["customer:northwind", "env:dev"] },
-];
-
-function makeDatabase(s: Seed): Database {
-  return {
-    id: s.id,
-    name: s.name,
-    state: s.keepAwake ? "awake" : s.state,
-    storageMb: s.storageMb,
-    requests24h: s.requests24h,
-    lastActiveAt: ago(s.lastActiveMs),
-    createdAt: ago(s.ageDays * DAY),
-    region: s.region,
-    ...connectionStringFor(s.name),
-    tags: sortTags(s.tags),
-    keepAwake: !!s.keepAwake,
-    forkedFrom: null,
-    restoredTo: null,
-  };
-}
-
-/** Small deterministic pseudo-random generator so screens are stable. */
+/** Small deterministic pseudo-random generator so the screens are stable. */
 function rng(seed: number) {
   let t = seed >>> 0;
   return () => {
@@ -84,400 +42,535 @@ function rng(seed: number) {
   };
 }
 
-/** Stable number from a string, for seeding. */
 function hash(text: string): number {
   let h = 2166136261;
   for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
-  return (h >>> 0) % 100000;
+  return h >>> 0;
 }
 
-const FLEET_SIZE = 3000;
-const CUSTOMER_FIRST = ["acme", "brio", "cald", "dyna", "elan", "fenn", "glim", "hexa", "ivor", "juno", "kest", "lumo", "mera", "nova", "orbi", "pyra", "quil", "rhea", "sova", "tavi"];
-const CUSTOMER_SECOND = ["labs", "works", "corp", "soft", "pay", "data", "logic", "cloud", "bank", "mart"];
-/** 200 customers: the workspace itself plus 199 generated names. */
-const CUSTOMERS = ["northwind", ...CUSTOMER_FIRST.flatMap((a) => CUSTOMER_SECOND.map((b) => `${a}-${b}`)).slice(0, 199)];
-const ENVS = ["prod", "prod", "prod", "staging", "dev", "dev", "sandbox"];
-const APPS = ["orders", "agents", "analytics", "billing"];
-
-/** About 3,000 databases over 200 customers, a few large ones and a long tail. Around 9 in 10 are asleep. */
-function buildFleet(): Database[] {
-  const fleet = SEEDS.map(makeDatabase);
-  const rand = rng(20261026);
-  const weights = CUSTOMERS.map((_, i) => 1 / (i + 1) ** 0.75);
-  const remaining = FLEET_SIZE - fleet.length;
-  const sum = weights.reduce((a, b) => a + b, 0);
-  const counts = weights.map((w) => Math.max(2, Math.round((remaining * w) / sum)));
-  counts[0] += remaining - counts.reduce((a, b) => a + b, 0);
-  let n = fleet.length;
-  CUSTOMERS.forEach((customer, ci) => {
-    const perEnv = new Map<string, number>();
-    for (let k = 0; k < counts[ci]; k++) {
-      n++;
-      const env = ENVS[Math.floor(rand() * ENVS.length)];
-      const seq = (perEnv.get(env) ?? 0) + 1;
-      perEnv.set(env, seq);
-      const awake = rand() < 0.085;
-      const tags = [`customer:${customer}`, `env:${env}`];
-      if (rand() < 0.3) tags.push(`app:${APPS[Math.floor(rand() * APPS.length)]}`);
-      fleet.push(
-        makeDatabase({
-          id: `db_${String(n).padStart(4, "0")}`,
-          name: `${customer}-${env}-${String(seq).padStart(2, "0")}`,
-          state: awake ? "awake" : "asleep",
-          storageMb: awake ? Math.round(200 + rand() * 8800) : Math.max(2, Math.round(Math.exp(Math.log(5) + rand() * Math.log(800)))),
-          requests24h: awake ? Math.round((5000 + rand() * 195000) * (rand() < 0.04 ? 3 + rand() * 5 : 1)) : rand() < 0.6 ? Math.round(rand() * 50) : Math.round(rand() * 3000),
-          lastActiveMs: awake ? Math.round(rand() * 25 * MIN) : HOUR + Math.round(rand() ** 2 * 45 * DAY),
-          ageDays: 1 + Math.round(rand() * 500),
-          region: REGIONS[Math.floor(rand() * REGIONS.length)],
-          tags,
-          keepAwake: awake && rand() < 0.2,
-        }),
-      );
-    }
-  });
-  return fleet;
-}
-
-let databases: Database[] = buildFleet();
-
-function matches(d: Database, f: DatabaseFilter): boolean {
-  if (f.state && d.state !== f.state) return false;
-  if (f.keepAwake !== undefined && d.keepAwake !== f.keepAwake) return false;
-  if (f.search && !d.name.toLowerCase().includes(f.search.trim().toLowerCase())) return false;
-  return (f.tags ?? []).every((t) => matchesTagFilter(d.tags, t));
-}
-
-function compareBy(a: Database, b: Database, key: DatabaseSort): number {
-  if (key === "name" || key === "state") return a[key].localeCompare(b[key]);
-  if (key === "keepAwake") return Number(a.keepAwake) - Number(b.keepAwake);
-  if (key === "lastActiveAt") return new Date(a.lastActiveAt).getTime() - new Date(b.lastActiveAt).getTime();
-  return a[key] - b[key];
-}
-
-const copy = (d: Database): Database => ({ ...d, tags: [...d.tags] });
-const copyOrNull = (d: Database | undefined): Database | null => (d ? copy(d) : null);
-
-function mutate(ids: string[], change: (d: Database) => Database): BulkResult {
-  const wanted = new Set(ids);
-  let affected = 0;
-  databases = databases.map((d) => {
-    if (!wanted.has(d.id)) return d;
-    affected++;
-    return change(d);
-  });
-  return { affected };
-}
-
-function blank(name: string, region: string): Database {
-  return makeDatabase({ id: `db_${randomHex(8)}`, name, state: "asleep", storageMb: 0, requests24h: 0, lastActiveMs: 0, ageDays: 0, region, tags: [] });
-}
-
-function checkName(name: string): string {
-  const clean = name.trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9-]{1,46}[a-z0-9]$/.test(clean)) throw new Error("Use 3 to 48 lowercase letters, numbers or dashes, starting and ending with a letter or number.");
-  if (databases.some((d) => d.name === clean)) throw new Error(`A database named ${clean} already exists.`);
-  return clean;
-}
-
-function checkTags(tags: string[]): string[] {
-  const next = sortTags(parseTags(tags));
-  if (new Set(next.map((t) => splitTag(t).key)).size !== next.length) throw new Error("A database can have one value per tag key.");
-  if (next.length > 20) throw new Error("A database can have up to 20 tags.");
-  return next;
-}
-
-export { blobUrl } from "./files";
-import { blobUrl, usageCsv, usageCsvName } from "./files";
-
-/** Like parseTags, but a bare "key" is allowed (removes the key). */
-function parseTagsOrKeys(tags: string[]): string[] {
-  return tags.map((t) => (t.includes(":") ? parseTags([t])[0] : t.trim().toLowerCase()));
-}
-
-function parseTags(tags: string[]): string[] {
-  return tags.map((t) => {
-    const parsed = parseTag(t);
-    if ("error" in parsed) throw new Error(parsed.error);
-    return parsed.tag;
-  });
-}
-
-function usageFor(db: Database, range: UsageRange): UsagePoint[] {
-  const seed = hash(db.id) * 7919;
-  const rand = rng(seed + range.length);
-  const [count, step] = range === "24h" ? [24, HOUR] : range === "7d" ? [7 * 4, 6 * HOUR] : [30, DAY];
-  const perBucket = Math.max(db.requests24h, 40) / (range === "24h" ? 24 : range === "7d" ? 4 : 1);
-  const startStorage = db.storageMb * 0.82;
-  const points = Array.from({ length: count }, (_, i) => {
-    const at = new Date(NOW.getTime() - (count - 1 - i) * step).toISOString();
-    const wave = 0.55 + 0.45 * Math.sin((i / count) * Math.PI * (range === "24h" ? 2 : 4) + seed);
-    const idle = db.state === "asleep" && rand() < 0.45 ? 0.04 : 1;
-    const requests = Math.round(perBucket * wave * idle * (0.6 + rand() * 0.8));
-    const storageMb = Math.round(startStorage + (db.storageMb - startStorage) * (i / (count - 1)));
-    return { at, requests, storageMb, awake: false };
-  });
-  // A database is awake for a bucket when it kept serving in it, not for a single stray request.
-  const peak = Math.max(...points.map((p) => p.requests), 1);
-  return points.map((p) => ({ ...p, awake: db.keepAwake || p.requests >= Math.max(3, peak * 0.22) }));
-}
-
-// ---------------------------------------------------------------- usage and billing
-
-const USAGE_MONTHS = ["2026-10", "2026-09", "2026-08", "2026-07", "2026-06", "2026-05"];
-const STORAGE_RATE = 0.25; // per GB-month
-const REQUEST_RATE = 0.4; // per million requests
-
-/** Usage of one database in a month. The current month is counted up to "now". */
-function monthlyUsage(d: Database, month: string): { requests: number; storageGb: number } {
-  const [y, m] = month.split("-").map(Number);
-  const start = Date.UTC(y, m - 1, 1);
-  const end = Math.min(Date.UTC(y, m, 1), NOW.getTime());
-  const created = new Date(d.createdAt).getTime();
-  if (end <= created || end <= start) return { requests: 0, storageGb: 0 };
-  const active = Math.min(1, (end - Math.max(start, created)) / (end - start));
-  const days = (end - start) / DAY;
-  const jitter = 0.7 + 0.6 * (hash(d.id + month) / 100000);
-  const index = USAGE_MONTHS.indexOf(month);
-  const trend = 1 - 0.04 * (index < 0 ? 0 : index);
-  return { requests: Math.round(d.requests24h * days * active * jitter), storageGb: round2((d.storageMb / 1024) * active * trend) };
-}
-
-function usageRows(q: UsageQuery): { rows: UsageRow[]; totals: UsageReport["totals"] } {
-  // Only databases that existed during the month are billed for it.
-  const per = databases.map((d) => ({ d, u: monthlyUsage(d, q.month) })).filter((x) => x.u.storageGb > 0 || x.u.requests > 0);
-  const totals = { databases: per.length, storageGb: round2(per.reduce((a, x) => a + x.u.storageGb, 0)), requests: per.reduce((a, x) => a + x.u.requests, 0) };
-  if (q.by === "database") {
-    return { rows: per.map(({ d, u }) => ({ id: d.id, name: d.name, tags: d.tags, databases: 1, storageGb: u.storageGb, requests: u.requests })), totals };
+/** Deterministic lowercase hex of any length, like a digest of `text`. */
+function hex(text: string, length = 32): string {
+  let out = "";
+  let h = hash(text);
+  while (out.length < length) {
+    h = Math.imul(h ^ (h >>> 13), 0x5bd1e995) >>> 0;
+    out += h.toString(16).padStart(8, "0");
+    h = (h + hash(out)) >>> 0;
   }
-  const groups = new Map<string, UsageRow>();
-  for (const { d, u } of per) {
-    const labels = q.tagKey ? [d.tags.find((t) => splitTag(t).key === q.tagKey) ?? `${q.tagKey}:(none)`] : d.tags;
-    for (const label of labels) {
-      const g = groups.get(label) ?? { id: label, name: label, tags: [], databases: 0, storageGb: 0, requests: 0 };
-      g.databases++;
-      g.storageGb = round2(g.storageGb + u.storageGb);
-      g.requests += u.requests;
-      groups.set(label, g);
-    }
-  }
-  return { rows: [...groups.values()], totals };
+  return out.slice(0, length);
 }
 
-function sortUsage(rows: UsageRow[], sort: UsageSort, dir: "asc" | "desc"): UsageRow[] {
-  const sign = dir === "asc" ? 1 : -1;
-  return [...rows].sort((a, b) => sign * (sort === "name" ? a.name.localeCompare(b.name) : a[sort] - b[sort]) || a.name.localeCompare(b.name));
+// ---------------------------------------------------------------- projects and their test suites
+
+interface Module {
+  file: string;
+  tests: string[];
+  /** Sum of the tests' durations. */
+  timeMs: number;
+  durations: number[];
 }
 
-function monthTotals(month: string) {
-  return usageRows({ month, by: "database" }).totals;
+interface Spec {
+  id: string;
+  fullName: string;
+  language: Language;
+  testRunner: TestRunner;
+  testCount: number;
+  moduleCount: number;
+  /** Sum of every test's duration: the time of a full run without fenvix. */
+  fullTestMs: number;
+  overhead: number;
+  setupMs: number;
+  runsPerWeekday: number;
+  /** Skip share of one run: a mixture that matches the measured median and mean. */
+  skip: (r: () => number) => number;
+  failRate: number;
+  baseline: Baseline;
+  connectedDaysAgo: number;
+  firstRunNumber: number;
+  modulePath: (i: number, r: () => number) => string;
+  testName: (file: string, j: number, r: () => number) => string;
+  env: string[];
+  interpreter: string;
+  runner: string;
 }
 
-function costs(t: { storageGb: number; requests: number }, fraction = 1) {
-  return { storage: round2(t.storageGb * STORAGE_RATE * fraction), requests: round2((t.requests / 1e6) * REQUEST_RATE) };
-}
+const pick = <T,>(r: () => number, xs: readonly T[]) => xs[Math.floor(r() * xs.length)];
+const HA = ["mqtt", "zwave_js", "hue", "sonos", "recorder", "automation", "esphome", "shelly", "template", "sensor", "climate", "light", "matter", "zha", "homekit", "unifi", "cast", "google_assistant", "alexa", "tibber", "netatmo", "tado", "fritz", "bluetooth", "http", "websocket_api", "history", "logbook", "energy", "scene"];
+const HA_TESTS = ["test_setup_entry", "test_unload_entry", "test_state_update", "test_discovery", "test_config_flow_user", "test_options_flow", "test_reauth", "test_availability", "test_attributes", "test_service_call", "test_reconnect", "test_device_info"];
+const DOCS = ["docusaurus", "docusaurus-utils", "docusaurus-mdx-loader", "docusaurus-plugin-content-docs", "docusaurus-plugin-content-blog", "docusaurus-theme-common", "docusaurus-theme-classic", "docusaurus-logger", "docusaurus-types", "create-docusaurus", "docusaurus-plugin-sitemap", "docusaurus-remark-plugin-npm2yarn"];
+const DOCS_TESTS = ["handles empty input", "resolves relative links", "keeps front matter", "sorts sidebar items", "localizes paths", "escapes html", "reads versions", "generates ids", "merges config", "validates options"];
+const GO = ["promql", "storage/remote", "tsdb", "tsdb/chunkenc", "tsdb/wlog", "scrape", "rules", "notifier", "discovery/kubernetes", "discovery/file", "model/labels", "model/relabel", "web/api/v1", "util/strutil", "config", "cmd/ledger"];
+const GO_TESTS = ["TestAppend", "TestQuery", "TestCompaction", "TestReload", "TestEncode", "TestDecode", "TestRelabel", "TestParse", "TestValidate", "TestRoundTrip", "TestConcurrentWrites", "TestTimeout"];
+const DJ = ["checkout", "order", "payment", "discount", "product", "account", "shipping", "warehouse", "giftcard", "webhook", "graphql/checkout", "graphql/order", "plugins/stripe", "tax"];
+const DJ_TESTS = ["test_create", "test_update", "test_delete", "test_total", "test_permissions", "test_mutation", "test_query", "test_validation", "test_with_voucher", "test_webhook_sent", "test_complete"];
 
-const monthFraction = (month: string) => (month === "2026-10" ? NOW.getUTCDate() / 31 : 1);
-const monthCost = (month: string) => {
-  const c = costs(monthTotals(month), monthFraction(month));
-  return round2(c.storage + c.requests);
-};
+/** Mixture: most runs near the median, a share invalidated (a dependency bump, a conftest change). */
+const mixture = (high: number, spread: number, lowShare: number, lowMax: number) => (r: () => number) =>
+  r() < lowShare ? r() * lowMax : Math.min(0.995, Math.max(0, high + (r() - 0.5) * spread));
 
-const INVOICES: Invoice[] = USAGE_MONTHS.slice(1).map((month) => {
-  const [y, m] = month.split("-").map(Number);
-  return { id: `inv_${month}`, number: `FNX-${month}`, month, issuedAt: new Date(Date.UTC(y, m, 1)).toISOString(), amount: monthCost(month), currency: "USD", status: "paid" as const };
-});
-
-const PLANS: Plan[] = [
-  { id: "open-source", name: "Open source", price: "Free", period: "", description: "One database, run by you, on your machine or your cloud storage.", features: ["The complete engine", "MongoDB drivers and tools", "Community support"], current: false },
-  { id: "managed", name: "Managed", price: "$29", period: "/ month", description: "Includes 10 GB and 10 million requests, then pay for what you use.", features: ["Unlimited databases", "Asleep databases cost only storage", "Fork, restore, export, erase", "Usage per customer"], current: true },
-  { id: "dedicated", name: "Dedicated", price: "$499", period: "/ month", description: "Your own environment in the region you choose, plus usage.", features: ["Servers for you alone", "Region of your choice", "Keep busy customers awake", "Priority support"], current: false },
-  { id: "in-your-cloud", name: "In your cloud", price: "Custom", period: "", description: "Runs in your own cloud account. Your data never leaves it.", features: ["Your cloud, your region", "Single sign-on and audit log", "Support with an agreed response time"], current: false },
+const SPECS: Spec[] = [
+  {
+    id: "prj_homehub", fullName: "northwind/homehub", language: "python", testRunner: "pytest", testCount: 11889, moduleCount: 776,
+    fullTestMs: 410_000, overhead: 2.13, setupMs: 9_000, runsPerWeekday: 24, skip: mixture(0.975, 0.03, 0.18, 0.55), failRate: 0.05,
+    baseline: { medianTimeToGreenS: 417, medianJobMinutes: 8.8, runsSampled: 400, from: "2026-08-01", to: "2026-08-31" }, connectedDaysAgo: 80, firstRunNumber: 3104,
+    modulePath: (i, r) => `tests/components/${HA[i % HA.length]}/test_${pick(r, ["init", "config_flow", "sensor", "light", "switch", "binary_sensor", "climate", "diagnostics", "services", "coordinator"])}_${i}.py`,
+    testName: (file, j, r) => `${file}::${pick(r, HA_TESTS)}_${j}`,
+    env: ["TZ", "HOME", "HOMEHUB_TEST_DB_URL", "PYTHONASYNCIODEBUG"], interpreter: "python 3.12.7", runner: "pytest 8.3.3",
+  },
+  {
+    id: "prj_docs", fullName: "northwind/docs-site", language: "node", testRunner: "vitest", testCount: 3199, moduleCount: 202,
+    fullTestMs: 29_500, overhead: 1.55, setupMs: 4_000, runsPerWeekday: 13, skip: mixture(0.985, 0.02, 0.2, 0.5), failRate: 0.03,
+    baseline: { medianTimeToGreenS: 30, medianJobMinutes: 1.5, runsSampled: 260, from: "2026-08-01", to: "2026-08-31" }, connectedDaysAgo: 70, firstRunNumber: 1408,
+    modulePath: (i, r) => `packages/${DOCS[i % DOCS.length]}/src/__tests__/${pick(r, ["utils", "index", "config", "routes", "sidebars", "versions", "markdown", "i18n", "slug", "toc"])}${i}.test.ts`,
+    testName: (file, j, r) => `${file} > ${pick(r, ["parse", "load", "render", "resolve", "normalize"])} > ${pick(r, DOCS_TESTS)} ${j}`,
+    env: ["NODE_ENV", "CI", "DOCUSAURUS_SITE_URL"], interpreter: "node 22.11.0", runner: "vitest 2.1.4",
+  },
+  {
+    id: "prj_ledger", fullName: "northwind/ledger", language: "go", testRunner: "go test", testCount: 28526, moduleCount: 90,
+    fullTestMs: 132_000, overhead: 1.0, setupMs: 8_000, runsPerWeekday: 9, skip: (r) => (r() < 0.15 ? r() * 0.15 : 0.25 + r() * 0.31), failRate: 0.04,
+    baseline: { medianTimeToGreenS: 135, medianJobMinutes: 5.6, runsSampled: 180, from: "2026-08-01", to: "2026-08-31" }, connectedDaysAgo: 64, firstRunNumber: 922,
+    modulePath: (i) => `${GO[i % GO.length]}${i >= GO.length ? `/part${Math.floor(i / GO.length)}` : ""}`,
+    testName: (file, j, r) => `${file}.${pick(r, GO_TESTS)}/case_${j}`,
+    env: ["GOFLAGS", "TZ"], interpreter: "go 1.23.3", runner: "go test",
+  },
+  {
+    id: "prj_storefront", fullName: "northwind/storefront", language: "python", testRunner: "pytest", testCount: 1721, moduleCount: 112,
+    fullTestMs: 285_000, overhead: 2.8, setupMs: 14_000, runsPerWeekday: 7, skip: (r) => (r() < 0.86 ? 0 : 0.35 + r() * 0.4), failRate: 0.08,
+    baseline: { medianTimeToGreenS: 289, medianJobMinutes: 6.2, runsSampled: 150, from: "2026-08-01", to: "2026-08-31" }, connectedDaysAgo: 45, firstRunNumber: 5120,
+    modulePath: (i, r) => `storefront/${DJ[i % DJ.length]}/tests/test_${pick(r, ["models", "views", "mutations", "queries", "utils", "tasks", "signals"])}_${i}.py`,
+    testName: (file, j, r) => `${file}::${pick(r, DJ_TESTS)}_${j}`,
+    env: ["DATABASE_URL", "DJANGO_SETTINGS_MODULE", "SECRET_KEY", "TZ"], interpreter: "python 3.12.7", runner: "pytest 8.3.3",
+  },
 ];
 
-function getBillingOverview(): BillingOverview {
-  const t = monthTotals("2026-10");
-  const fraction = monthFraction("2026-10");
-  const c = costs(t, fraction);
-  return {
-    currency: "USD",
-    plan: { name: "Managed", description: "Includes 10 GB and 10 million requests, then pay for what you use." },
-    monthToDate: {
-      periodLabel: "October 1 to 26, 2026",
-      lines: [
-        { label: "Storage", quantity: `${formatNumber(round2(t.storageGb * fraction))} GB-months`, rate: `$${STORAGE_RATE.toFixed(2)} per GB-month`, cost: c.storage },
-        { label: "Requests", quantity: `${formatNumber(t.requests)} requests`, rate: `$${REQUEST_RATE.toFixed(2)} per million`, cost: c.requests },
-      ],
-      total: round2(c.storage + c.requests),
-    },
-    paymentMethod: { brand: "Visa", last4: "4242", expires: "08/2028" },
-  };
+const suites = new Map<string, Module[]>();
+
+/** The project's test files and tests, built once. The test count and total time match the spec exactly. */
+function suite(spec: Spec): Module[] {
+  const cached = suites.get(spec.id);
+  if (cached) return cached;
+  const r = rng(hash(spec.id));
+  const weights = Array.from({ length: spec.moduleCount }, () => 0.2 + r() ** 3 * 4);
+  const wsum = weights.reduce((a, b) => a + b, 0);
+  let left = spec.testCount;
+  const counts = weights.map((w, i) => {
+    const n = i === weights.length - 1 ? left : Math.max(1, Math.min(left - (weights.length - 1 - i), Math.round((w / wsum) * spec.testCount)));
+    left -= n;
+    return n;
+  });
+  const perTest = spec.fullTestMs / spec.testCount;
+  const modules = counts.map((n, i) => {
+    const file = spec.modulePath(i, r);
+    const tests = Array.from({ length: n }, (_, j) => spec.testName(file, j, r));
+    const durations = tests.map(() => Math.max(1, Math.round(perTest * (0.2 + r() * 1.6))));
+    return { file, tests, durations, timeMs: durations.reduce((a, b) => a + b, 0) };
+  });
+  suites.set(spec.id, modules);
+  return modules;
 }
 
-// ---------------------------------------------------------------- overview
+// ---------------------------------------------------------------- defects (from real bundle shapes)
 
-const BUCKETS: Record<UsageRange, { count: number; step: number }> = {
-  "24h": { count: 24, step: HOUR },
-  "7d": { count: 7, step: DAY },
-  "30d": { count: 30, step: DAY },
+interface DefectSeed {
+  id: string;
+  projectId: string;
+  testId: string;
+  /** The test file: the defect's test runs whenever this file runs. */
+  cause: DefectCause;
+  causeTests: string[];
+  seed: number | null;
+  prefixLength: number;
+  exception: Defect["exception"];
+  outcome: string;
+  divergence: Defect["divergence"];
+  status?: Defect["status"];
+  fixedDaysAgo?: number;
+  firstDaysAgo: number;
+}
+
+const OUTCOME_ONLY = "identical observed events, different outcome (passed vs failed): the cause is a source Level 0 does not observe";
+const DEFECT_SEEDS: DefectSeed[] = [
+  {
+    id: "dfx_7c21", projectId: "prj_homehub", testId: "tests/components/mqtt/test_discovery.py::test_discovery_update_attr",
+    cause: "polluter", causeTests: ["tests/components/mqtt/test_init.py::test_subscribe_topic_not_initialize"], seed: 3, prefixLength: 412,
+    exception: { type: "AssertionError", phase: "call", message: "AssertionError: assert 'unavailable' == 'on'", location: "tests/components/mqtt/test_discovery.py:221" },
+    outcome: "failed", divergence: { index: 1, reason: "outcome-only", description: OUTCOME_ONLY }, firstDaysAgo: 38,
+  },
+  {
+    id: "dfx_7c22", projectId: "prj_homehub", testId: "tests/components/mqtt/test_sensor.py::test_expiration_on_discovery_and_discovery_update",
+    cause: "polluter", causeTests: ["tests/components/mqtt/test_init.py::test_subscribe_topic_not_initialize"], seed: 7, prefixLength: 655,
+    exception: { type: "KeyError", phase: "call", message: "KeyError: 'sensor.test_expiring'", location: "homehub/components/mqtt/discovery.py:148" },
+    outcome: "failed", divergence: { index: 1, reason: "outcome-only", description: OUTCOME_ONLY }, firstDaysAgo: 31,
+  },
+  {
+    id: "dfx_7c30", projectId: "prj_homehub", testId: "tests/components/recorder/test_purge.py::test_purge_old_states",
+    cause: "state_setter", causeTests: ["tests/components/recorder/test_init.py::test_setup_without_migration"], seed: 16, prefixLength: 98,
+    exception: { type: "AssertionError", phase: "call", message: "AssertionError: assert 4 == 2", location: "tests/components/recorder/test_purge.py:96" },
+    outcome: "failed", divergence: { index: 7, reason: "time", description: "the runs read a different clock value at homehub/components/recorder/purge.py:61" }, firstDaysAgo: 22,
+  },
+  {
+    id: "dfx_7c41", projectId: "prj_homehub", testId: "tests/helpers/test_event.py::test_track_point_in_time_drift_rearm",
+    cause: "fails_alone", causeTests: [], seed: 22, prefixLength: 1,
+    exception: { type: "AssertionError", phase: "call", message: "AssertionError: assert 0 == 1", location: "tests/helpers/test_event.py:4410" },
+    outcome: "failed", divergence: { index: 3, reason: "time", description: "the runs read a different clock value at homehub/helpers/event.py:1502" }, firstDaysAgo: 55, fixedDaysAgo: 19,
+  },
+  {
+    id: "dfx_9a10", projectId: "prj_storefront", testId: "storefront/checkout/tests/test_checkout_complete.py::test_checkout_complete_with_voucher",
+    cause: "polluter", causeTests: ["storefront/discount/tests/test_voucher_cache.py::test_voucher_cache_warm"], seed: 1, prefixLength: 214,
+    exception: { type: "AssertionError", phase: "call", message: "assert Decimal('80.00') == Decimal('90.00')", location: "storefront/checkout/tests/test_checkout_complete.py:512" },
+    outcome: "failed", divergence: { index: 1, reason: "outcome-only", description: OUTCOME_ONLY }, firstDaysAgo: 29,
+  },
+  {
+    id: "dfx_9a11", projectId: "prj_storefront", testId: "storefront/order/tests/test_order_totals.py::test_order_total_with_voucher",
+    cause: "polluter", causeTests: ["storefront/discount/tests/test_voucher_cache.py::test_voucher_cache_warm"], seed: 2, prefixLength: 377,
+    exception: { type: "AssertionError", phase: "call", message: "assert 422 == 400", location: "storefront/order/tests/test_order_totals.py:88" },
+    outcome: "failed", divergence: { index: 1, reason: "outcome-only", description: OUTCOME_ONLY }, firstDaysAgo: 17,
+  },
+  {
+    id: "dfx_9a17", projectId: "prj_storefront", testId: "storefront/account/tests/test_password_reset.py::test_password_reset_email_sent",
+    cause: "polluter", causeTests: ["storefront/webhook/tests/test_tasks.py::test_send_webhook_using_scheme_method"], seed: 32, prefixLength: 61,
+    exception: { type: "ValueError", phase: "teardown", message: "ValueError: I/O operation on closed file", location: "storefront/core/emails.py:40" },
+    outcome: "error+teardown-error", divergence: { index: 2, reason: "fs", description: "the runs saw a different file at /tmp/storefront-mail/outbox.eml" }, firstDaysAgo: 9,
+  },
+  {
+    id: "dfx_9a20", projectId: "prj_storefront", testId: "storefront/payment/tests/test_webhooks.py::test_webhook_retry_backoff",
+    cause: "fails_alone", causeTests: [], seed: 7, prefixLength: 1, status: "replay_unstable",
+    exception: { type: "TimeoutError", phase: "call", message: "TimeoutError: webhook worker did not finish", location: "storefront/payment/webhooks.py:203" },
+    outcome: "failed", divergence: { index: 12, reason: "thread", description: "a thread outside the engine's control ran in a different order" }, firstDaysAgo: 6,
+  },
+  {
+    id: "dfx_3b05", projectId: "prj_docs", testId: "packages/docusaurus-utils/src/__tests__/i18n7.test.ts > localize > localizes paths 3",
+    cause: "fails_alone", causeTests: [], seed: 32, prefixLength: 1,
+    exception: { type: "AssertionError", phase: "call", message: "expected '2026-11-02' to be '2026-11-03'", location: "packages/docusaurus-utils/src/__tests__/i18n7.test.ts:41" },
+    outcome: "failed", divergence: { index: 2, reason: "time", description: "the runs read a different clock value at packages/docusaurus-utils/src/dateUtils.ts:18" }, firstDaysAgo: 26,
+  },
+];
+
+const fileOf = (testId: string) => testId.split(/::| > /)[0];
+
+// ---------------------------------------------------------------- the sample organization
+
+interface Store {
+  projects: Project[];
+  runs: Run[];
+  /** Per run: the test files that ran, and the failed tests. */
+  detail: Map<string, { ran: Set<number>; failures: { testId: string; defectId: string | null }[] }>;
+  defects: Defect[];
+  githubAccount: string | null;
+  repos: GitHubRepository[];
+  planId: string;
+  settings: Settings;
+  apiKeys: PublicApiKey[];
+  installations: Map<number, string[]>;
+}
+
+const RATE: GitHubRate = { usdPerMinute: 0.008, runner: "GitHub-hosted Linux, 2 cores", source: "GitHub Actions pricing page, as quoted in PRODUCT.md (to verify)", checkedOn: "2026-11-16" };
+
+const PLANS: Omit<Plan, "current">[] = [
+  { id: "starter", name: "Starter", description: "One project with a steady flow of pull requests.", runsPerMonth: 500, maxProjects: 1, priceUsdMonth: null, features: ["Skip with proof", "Flaky tests turned into defects", "Pull request comments"] },
+  { id: "team", name: "Team", description: "A few projects, a team pushing every day.", runsPerMonth: 2000, maxProjects: 5, priceUsdMonth: null, features: ["Everything in Starter", "Nightly exploration", "Members and roles"] },
+  { id: "scale", name: "Scale", description: "Many projects or a large monorepo.", runsPerMonth: 10000, maxProjects: 25, priceUsdMonth: null, features: ["Everything in Team", "Priority machines", "Audit log"] },
+  { id: "enterprise", name: "Enterprise", description: "Your own limits, agreed with us.", runsPerMonth: null, maxProjects: null, priceUsdMonth: null, features: ["Everything in Scale", "Single sign-on", "Agreed response time"] },
+];
+
+const COMMIT_WORDS = ["Fix", "Add", "Update", "Refactor", "Bump", "Handle", "Speed up", "Remove", "Rename", "Document"];
+const COMMIT_THINGS: Record<string, string[]> = {
+  prj_homehub: ["mqtt discovery payloads", "zwave_js config flow", "recorder purge batching", "hue bridge reconnect", "esphome entity names", "sonos favorites", "energy dashboard units", "matter commissioning", "template sensor availability", "aiohttp to 3.11"],
+  prj_docs: ["sidebar autogeneration", "blog pagination", "i18n path helpers", "mdx loader cache", "theme toggle", "search plugin options", "sitemap priority", "front matter validation", "docs versions dropdown", "vitest to 2.1"],
+  prj_ledger: ["chunk encoding", "remote write retries", "WAL replay", "rule evaluation", "label matcher cache", "scrape timeouts", "compaction planner", "query engine limits", "config reload", "go to 1.23"],
+  prj_storefront: ["checkout totals", "voucher cache", "order webhooks", "stripe payment intents", "gift card balance", "warehouse allocation", "tax rounding", "graphql permissions", "password reset email", "Django to 5.1"],
 };
 
-/** Bucket starts for a range, oldest first, ending at the bucket "now" is in. */
-function bucketStarts(range: UsageRange): string[] {
-  const { count, step } = BUCKETS[range];
-  const end = Math.floor(NOW.getTime() / step) * step;
-  return Array.from({ length: count }, (_, i) => new Date(end - (count - 1 - i) * step).toISOString());
+/** Which files run in a run: a seeded walk that stops at the run's share of test time. */
+function ranModules(spec: Spec, runSeed: number, skipShare: number, force: number[]): Set<number> {
+  const modules = suite(spec);
+  const r = rng(runSeed);
+  const order = modules.map((_, i) => i).sort(() => r() - 0.5);
+  const target = spec.fullTestMs * (1 - skipShare);
+  const ran = new Set<number>(force);
+  let time = force.reduce((a, i) => a + modules[i].timeMs, 0);
+  for (const i of order) {
+    if (time >= target) break;
+    if (ran.has(i)) continue;
+    ran.add(i);
+    time += modules[i].timeMs;
+  }
+  return ran;
 }
 
-/** Fleet-wide daily rhythm: busier in the European working day, quieter at the weekend. */
-function fleetShape(at: Date, range: UsageRange): number {
-  const hour = at.getUTCHours() + (range === "24h" ? 0 : 12);
-  const day = at.getUTCDay();
-  const ofDay = range === "24h" ? 0.62 + 0.38 * Math.sin(((hour - 4) / 24) * 2 * Math.PI) : 1;
-  const ofWeek = day === 0 || day === 6 ? 0.72 : 1;
-  return ofDay * ofWeek;
+function moduleIndexOf(spec: Spec, testId: string): number {
+  const file = fileOf(testId);
+  const modules = suite(spec);
+  const i = modules.findIndex((m) => m.file === file);
+  return i;
 }
 
-function awakeSeries(range: UsageRange): AwakePoint[] {
-  const total = databases.length;
-  const awakeNow = databases.filter((d) => d.state === "awake").length;
-  const rand = rng(hash(`awake-${range}`));
-  return bucketStarts(range).map((at, i, all) => {
-    const shape = fleetShape(new Date(at), range);
-    const drift = 1 - 0.12 * ((all.length - 1 - i) / all.length);
-    const awake = Math.max(40, Math.round(awakeNow * shape * drift * (0.94 + rand() * 0.12)));
-    return { at, awake: i === all.length - 1 ? awakeNow : awake, total: Math.round(total * drift) };
+/** Defect tests live in files of their own, added to the suite (they keep the test count within a few tests). */
+function ensureDefectFiles(spec: Spec) {
+  const modules = suite(spec);
+  for (const d of DEFECT_SEEDS.filter((x) => x.projectId === spec.id)) {
+    for (const t of [d.testId, ...d.causeTests]) {
+      const file = fileOf(t);
+      let m = modules.find((x) => x.file === file);
+      if (!m) {
+        m = { file, tests: [], durations: [], timeMs: 0 };
+        modules.push(m);
+      }
+      if (!m.tests.includes(t)) {
+        m.tests.push(t);
+        m.durations.push(180);
+        m.timeMs += 180;
+      }
+    }
+  }
+}
+
+function buildSample(): Store {
+  const runs: Run[] = [];
+  const detail: Store["detail"] = new Map();
+  const occurrences = new Map<string, Run[]>();
+  const projects: Project[] = SPECS.map((s) => ({
+    id: s.id, fullName: s.fullName, language: s.language, testRunner: s.testRunner, defaultBranch: "main", installationId: 51_204_331,
+    setupState: "active", setupPullRequest: { number: { prj_homehub: 18204, prj_docs: 10433, prj_ledger: 4412, prj_storefront: 16031 }[s.id]!, url: `https://github.com/${s.fullName}/pull/${{ prj_homehub: 18204, prj_docs: 10433, prj_ledger: 4412, prj_storefront: 16031 }[s.id]}`, state: "merged" },
+    connectedAt: ago(s.connectedDaysAgo * DAY), baseline: s.baseline,
+    settings: { skipWithProof: true, commentOnPullRequests: true, nightlyExploration: s.id !== "prj_ledger", testCommand: "" },
+  }));
+
+  for (const spec of SPECS) {
+    ensureDefectFiles(spec);
+    const modules = suite(spec);
+    const total = modules.reduce((a, m) => a + m.tests.length, 0);
+    const r = rng(hash(`runs:${spec.id}`));
+    const start = Math.min(HISTORY_DAYS, spec.connectedDaysAgo - 1);
+    let number = spec.firstRunNumber;
+    let pr = { prj_homehub: 129_400, prj_docs: 11_020, prj_ledger: 15_300, prj_storefront: 17_800 }[spec.id]!;
+    const projectDefects = DEFECT_SEEDS.filter((d) => d.projectId === spec.id);
+    for (let d = start; d >= 0; d--) {
+      const dayAt = dayStart(new Date(NOW.getTime() - d * DAY));
+      const weekday = dayAt.getUTCDay() % 6 !== 0;
+      const n = Math.round(spec.runsPerWeekday * (weekday ? 0.8 + r() * 0.4 : 0.25 + r() * 0.2));
+      // Spread across working hours (UTC 07 to 20), sorted, and never in the future.
+      const times = Array.from({ length: n }, () => dayAt.getTime() + (7 + r() * 13) * HOUR).filter((t) => t < NOW.getTime() - 20 * MIN).sort((a, b) => a - b);
+      let lastSha = "";
+      let lastFailed = false;
+      for (const t of times) {
+        const rerun = lastFailed && r() < 0.55;
+        const sha = rerun ? lastSha : hex(`${spec.id}:${number}`, 40);
+        const trigger: RunTrigger = rerun ? "pull_request" : r() < 0.58 ? "pull_request" : r() < 0.85 ? "push" : r() < 0.6 ? "merge_group" : "workflow_dispatch";
+        const prNumber = trigger === "pull_request" ? (rerun ? pr : ++pr) : null;
+        const skipShare = spec.skip(r);
+        const failing = r() < spec.failRate;
+        const open = projectDefects.filter((x) => x.firstDaysAgo >= d && (x.fixedDaysAgo === undefined || x.fixedDaysAgo < d));
+        const defect = failing && open.length && r() < 0.6 ? pick(r, open) : null;
+        const force = defect ? [moduleIndexOf(spec, defect.testId)] : [];
+        const seed = hash(`${spec.id}#${number}`);
+        const ran = ranModules(spec, seed, skipShare, force.filter((i) => i >= 0));
+        let ranTests = 0;
+        let ranMs = 0;
+        for (const i of ran) {
+          ranTests += modules[i].tests.length;
+          ranMs += modules[i].timeMs;
+        }
+        const failures: { testId: string; defectId: string | null }[] = [];
+        if (defect) failures.push({ testId: defect.testId, defectId: defect.id });
+        else if (failing) {
+          const ranList = [...ran];
+          const k = 1 + Math.floor(r() * 3);
+          for (let f = 0; f < k; f++) {
+            const m = modules[pick(r, ranList)];
+            const id = pick(r, m.tests);
+            if (!failures.some((x) => x.testId === id)) failures.push({ testId: id, defectId: null });
+          }
+        }
+        const skippedMs = Math.max(0, spec.fullTestMs - ranMs);
+        const durationMs = Math.round(spec.setupMs + ranMs * spec.overhead * (0.9 + r() * 0.2));
+        const queuedMs = 4_000 + r() * 20_000;
+        const pushedAt = new Date(t - queuedMs);
+        const status = failures.length ? "failed" : "passed";
+        const id = `run_${spec.id.slice(4)}_${number}`;
+        const run: Run = {
+          id, projectId: spec.id, number, engineRunId: `${new Date(t).toISOString().replace(/[-:]/g, "").slice(0, 15)}-${1000 + (hash(id) % 8999)}`,
+          commitSha: sha, commitMessage: `${pick(r, COMMIT_WORDS)} ${pick(r, COMMIT_THINGS[spec.id])}`,
+          branch: trigger === "pull_request" ? `${pick(r, ["fix", "feat", "chore", "agent"])}/${hex(`${sha}b`, 6)}` : trigger === "merge_group" ? `gh-readonly-queue/main/pr-${pr}` : "main",
+          pullRequest: prNumber, trigger, status, pushedAt: pushedAt.toISOString(), startedAt: new Date(t).toISOString(),
+          finishedAt: new Date(t + durationMs).toISOString(), durationMs,
+          tests: { total, ran: ranTests, passed: ranTests - failures.length, failed: failures.length, skippedWithProof: total - ranTests, flakyDefects: failures.filter((x) => x.defectId).length },
+          testTimeMs: { ran: ranMs, skipped: skippedMs },
+          skipShare: Math.round((skippedMs / (ranMs + skippedMs)) * 10000) / 10000,
+          minutesSaved: Math.round((skippedMs / MIN) * 100) / 100,
+          githubEquivalentMinutes: spec.baseline.medianJobMinutes,
+          engineVersion: spec.language === "node" ? "detjs 0.1.0" : spec.language === "go" ? "detgo 0.1.0" : "detpy 0.1.0",
+          seed: seed % 100,
+        };
+        runs.push(run);
+        detail.set(id, { ran, failures });
+        if (defect) (occurrences.get(defect.id) ?? occurrences.set(defect.id, []).get(defect.id)!).push(run);
+        lastSha = sha;
+        lastFailed = status === "failed";
+        number++;
+      }
+    }
+  }
+
+  const defects: Defect[] = DEFECT_SEEDS.map((s) => {
+    const seen = occurrences.get(s.id) ?? [];
+    const spec = SPECS.find((p) => p.id === s.projectId)!;
+    const runsN = 10;
+    return {
+      id: s.id, projectId: s.projectId, projectName: spec.fullName, testId: s.testId, status: s.status ?? "reproduced", state: s.fixedDaysAgo !== undefined ? "fixed" : "open",
+      cause: s.cause, causeTests: s.causeTests, minimalOrder: s.cause === "polluter" ? [...s.causeTests, s.testId] : [s.testId], prefixLength: s.prefixLength,
+      seed: s.seed, fingerprint: hex(`fp:${s.id}`), replays: { runs: runsN, fails: 10, identicalFingerprint: s.status !== "replay_unstable" },
+      outcome: s.outcome, exception: s.exception, divergence: s.divergence, familyKey: familyKeyOf(s.causeTests),
+      firstSeenAt: seen[0]?.startedAt ?? ago(s.firstDaysAgo * DAY), lastSeenAt: seen[seen.length - 1]?.startedAt ?? ago(s.firstDaysAgo * DAY),
+      firstRunId: seen[0]?.id ?? null, lastRunId: seen[seen.length - 1]?.id ?? null, occurrences: Math.max(1, seen.length),
+      engineVersion: spec.language === "node" ? "detjs 0.1.0" : "detpy 0.1.0", language: spec.language === "node" ? "node" : "python", testRunner: spec.testRunner,
+    };
   });
-}
 
-function requestSeries(range: UsageRange): RequestPoint[] {
-  const perDay = databases.reduce((a, d) => a + d.requests24h, 0);
-  const perBucket = range === "24h" ? perDay / 24 : perDay;
-  const rand = rng(hash(`requests-${range}`));
-  return bucketStarts(range).map((at) => ({ at, requests: Math.round(perBucket * fleetShape(new Date(at), range) * (0.88 + rand() * 0.24)) }));
-}
-
-/** Cost so far this month by day, with the same days of the month before for reference. */
-function costSeries(): CostPoint[] {
-  const thisMonth = monthCost("2026-10");
-  const lastMonth = monthCost("2026-09");
-  const days = NOW.getUTCDate();
-  const rand = rng(hash("cost"));
-  const weights = Array.from({ length: 30 }, (_, i) => fleetShape(new Date(Date.UTC(2026, 9, i + 1, 12)), "30d") * (0.9 + rand() * 0.2));
-  const totalWeight = weights.slice(0, days).reduce((a, b) => a + b, 0);
-  const lastWeight = weights.reduce((a, b) => a + b, 0);
-  let run = 0;
-  let runRef = 0;
-  return Array.from({ length: 30 }, (_, i) => {
-    const at = new Date(Date.UTC(2026, 9, i + 1)).toISOString();
-    runRef += (lastMonth * weights[i]) / lastWeight;
-    if (i < days) run += (thisMonth * weights[i]) / totalWeight;
-    return { at, cost: i < days ? round2(run) : 0, reference: round2(runRef) };
-  }).slice(0, days + 4);
-}
-
-function sparkFrom(values: number[], points = 12): number[] {
-  if (values.length <= points) return values.map(round2);
-  const step = values.length / points;
-  return Array.from({ length: points }, (_, i) => round2(values[Math.min(values.length - 1, Math.round(i * step))]));
-}
-
-const WAKE_MINUTES = [2, 6, 13, 21, 34, 52, 78, 115];
-
-function recentWakeUps(): WakeUp[] {
-  const rand = rng(hash("wake-ups"));
-  return [...databases]
-    .filter((d) => !d.keepAwake && d.requests24h > 0)
-    .sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime())
-    .slice(0, WAKE_MINUTES.length)
-    .map((d, i) => ({ id: d.id, name: d.name, at: ago(WAKE_MINUTES[i] * MIN), latencyMs: 180 + Math.round(rand() * 760) }));
-}
-
-function overviewFor(range: UsageRange): Overview {
-  const awake = awakeSeries(range);
-  const requests = requestSeries(range);
-  const cost = costSeries();
-  const awakeNow = databases.filter((d) => d.state === "awake").length;
-  const storageGb = round2(databases.reduce((a, d) => a + d.storageMb, 0) / 1024);
-  const totalRequests = requests.reduce((a, p) => a + p.requests, 0);
-  const paid = cost.filter((p) => p.cost > 0);
+  runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   return {
-    range,
-    totals: {
-      databases: databases.length,
-      awake: awakeNow,
-      asleep: databases.length - awakeNow,
-      asleepPercent: Math.round(((databases.length - awakeNow) / databases.length) * 100),
-      requests: totalRequests,
-      storageGb,
-      costMtd: paid.length ? paid[paid.length - 1].cost : 0,
-      currency: "USD",
-    },
-    sparks: {
-      databases: sparkFrom(awake.map((p) => p.total)),
-      awake: sparkFrom(awake.map((p) => p.awake)),
-      requests: sparkFrom(requests.map((p) => p.requests)),
-      storageGb: sparkFrom(awake.map((_, i) => round2((storageGb * (0.93 + (0.07 * i) / awake.length))))),
-      cost: sparkFrom(paid.map((p) => p.cost)),
-    },
-    awakeSeries: awake,
-    requestSeries: requests,
-    costSeries: cost,
-    topDatabases: [...databases].sort((a, b) => b.requests24h - a.requests24h).slice(0, 10).map((d) => ({ id: d.id, name: d.name, requests: d.requests24h })),
-    recentWakeUps: recentWakeUps(),
+    projects, runs, detail, defects, githubAccount: "northwind",
+    repos: [
+      ...projects.map((p) => ({ fullName: p.fullName, private: true, language: p.language, testRunner: p.testRunner, connected: true })),
+      { fullName: "northwind/billing-worker", private: true, language: "python", testRunner: "pytest", connected: false },
+      { fullName: "northwind/mobile-app", private: true, language: "node", testRunner: "jest", connected: false },
+      { fullName: "northwind/infra-scripts", private: false, language: "python", testRunner: "pytest", connected: false },
+    ],
+    planId: "team",
+    settings: { workspaceName: "Northwind Cloud", emailNotices: true },
+    apiKeys: seedKeys(),
+    installations: new Map(),
   };
 }
 
-function tagBreakdown(key: string, limit: number): TagBreakdownRow[] {
-  const rows = new Map<string, TagBreakdownRow>();
-  for (const d of databases) {
-    const tag = d.tags.find((t) => splitTag(t).key === key);
-    const value = tag ? splitTag(tag).value : "(none)";
-    const r = rows.get(value) ?? { value, databases: 0, storageGb: 0, requests: 0 };
-    r.databases++;
-    r.storageGb = round2(r.storageGb + d.storageMb / 1024);
-    r.requests += d.requests24h;
-    rows.set(value, r);
-  }
-  return [...rows.values()].sort((a, b) => b.requests - a.requests || b.storageGb - a.storageGb).slice(0, limit);
-}
-
-/** Daily requests of a month, split over the five biggest values of a tag key plus "Other". */
-function usageTrend(month: string, tagKey: string): UsageTrend {
-  const [y, m] = month.split("-").map(Number);
-  const lastDay = month === "2026-10" ? NOW.getUTCDate() : new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const days = Array.from({ length: lastDay }, (_, i) => new Date(Date.UTC(y, m - 1, i + 1)).toISOString());
-  const perValue = new Map<string, number>();
-  for (const d of databases) {
-    const tag = d.tags.find((t) => splitTag(t).key === tagKey);
-    const value = tag ? splitTag(tag).value : "(none)";
-    perValue.set(value, (perValue.get(value) ?? 0) + monthlyUsage(d, month).requests);
-  }
-  const sorted = [...perValue.entries()].sort((a, b) => b[1] - a[1]);
-  const top = sorted.slice(0, 5);
-  const otherTotal = sorted.slice(5).reduce((a, x) => a + x[1], 0);
-  const entries = otherTotal > 0 ? [...top, ["Other", otherTotal] as [string, number]] : top;
-  const weights = days.map((at) => fleetShape(new Date(at), "30d"));
-  const weightSum = weights.reduce((a, b) => a + b, 0);
+/** Another organization: nothing connected yet, so its dashboard starts with "Connect a project". */
+function emptyStore(name: string): Store {
   return {
-    days,
-    series: entries.map(([label, total]) => ({ label, values: weights.map((w) => Math.round((total * w) / weightSum)) })),
+    projects: [], runs: [], detail: new Map(), defects: [], githubAccount: null,
+    repos: [
+      { fullName: `${slug(name)}/api`, private: true, language: "python", testRunner: "pytest", connected: false },
+      { fullName: `${slug(name)}/web`, private: true, language: "node", testRunner: "vitest", connected: false },
+      { fullName: `${slug(name)}/pipelines`, private: true, language: "python", testRunner: "pytest", connected: false },
+    ],
+    planId: "starter", settings: { workspaceName: name, emailNotices: true }, apiKeys: [], installations: new Map(),
   };
 }
 
-// ---------------------------------------------------------------- keys and settings
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "acme";
 
-// Public API keys (fvx_), with the rules of control-plane/src/services/apikeys.ts. Newest first, like the API.
+const stores = new Map<string, Store>();
+function store(): Store {
+  const org = activeOrgId() ?? "org_northwind";
+  let s = stores.get(org);
+  if (!s) {
+    s = org === "org_northwind" ? buildSample() : emptyStore(mockOrgName() ?? "Acme");
+    stores.set(org, s);
+  }
+  return s;
+}
+
+// ---------------------------------------------------------------- per-test detail, built when a run is opened
+
+function specOf(projectId: string): Spec | undefined {
+  return SPECS.find((s) => s.id === projectId);
+}
+
+function testsOf(run: Run): TestResult[] {
+  const spec = specOf(run.projectId);
+  const d = store().detail.get(run.id);
+  if (!spec || !d) return [];
+  const failures = new Map(d.failures.map((f) => [f.testId, f]));
+  const defects = store().defects;
+  const out: TestResult[] = [];
+  suite(spec).forEach((m, i) => {
+    const ran = d.ran.has(i);
+    m.tests.forEach((testId, j) => {
+      const f = failures.get(testId);
+      const defect = f?.defectId ? defects.find((x) => x.id === f.defectId) : null;
+      const r = rng(hash(`${run.id}:${testId}`));
+      out.push({
+        runId: run.id, testId, file: m.file,
+        outcome: f ? "failed" : ran ? "passed" : "skipped_with_proof",
+        durationMs: Math.round(m.durations[j] * (ran ? spec.overhead * (0.85 + r() * 0.3) : 1)),
+        failure: f
+          ? defect
+            ? { kind: "flaky_defect", phase: defect.exception.phase, exceptionType: defect.exception.type, message: defect.exception.message, location: defect.exception.location, defectId: defect.id }
+            : { kind: "real", phase: "call", exceptionType: "AssertionError", message: realFailure(testId, r), location: `${m.file}:${20 + Math.floor(r() * 400)}`, defectId: null }
+          : null,
+        receiptId: ran || f ? null : `rcp_${run.id}_${i}_${j}`,
+      });
+    });
+  });
+  return out;
+}
+
+function realFailure(testId: string, r: () => number): string {
+  const name = testId.split(/::|\.|>/).pop()?.trim() ?? "value";
+  return pick(r, [`assert response.status_code == 200 (got 500) in ${name}`, `AssertionError: expected 3 items, got 2`, `TypeError: cannot read properties of undefined (reading 'id')`, `assert total == Decimal("12.40")`]);
+}
+
+function receiptOf(id: string): SkipReceipt | null {
+  const m = /^rcp_(run_[a-z]+_\d+)_(\d+)_(\d+)$/.exec(id);
+  if (!m) return null;
+  const s = store();
+  const run = s.runs.find((r) => r.id === m[1]);
+  const spec = run && specOf(run.projectId);
+  if (!run || !spec) return null;
+  const mi = Number(m[2]);
+  const ti = Number(m[3]);
+  const mod = suite(spec)[mi];
+  const testId = mod?.tests[ti];
+  if (!testId) return null;
+  // The run it reuses: the latest earlier run of the project where this file ran and passed.
+  const earlier = s.runs.filter((r) => r.projectId === run.projectId && r.startedAt < run.startedAt && r.status === "passed");
+  const reused = earlier.find((r) => s.detail.get(r.id)?.ran.has(mi)) ?? earlier[earlier.length - 1] ?? null;
+  const r = rng(hash(id));
+  const pkg = spec.language === "python" ? mod.file.replace(/^tests\//, "").replace(/\/test_[^/]+$/, "").replace(/^storefront\/([^/]+)\/tests.*/, "storefront/$1") : mod.file.replace(/\/src\/__tests__.*/, "/src");
+  const source = spec.language === "python" ? (pkg.startsWith("storefront") ? pkg : `homehub/${pkg}`) : pkg;
+  const names = ["setup_entry", "async_update", "_handle_message", "build_payload", "validate", "resolve", "load", "apply"];
+  const n = 3 + Math.floor(r() * 6);
+  const code = Array.from({ length: n }, (_, k) => {
+    const file = spec.language === "python" ? `${source}/${pick(r, ["__init__", "entity", "const", "helpers", "models", "views"])}.py` : spec.language === "go" ? `${mod.file}/${pick(r, ["db", "head", "query", "encode"])}.go` : `${source}/${pick(r, ["index", "utils", "config"])}.ts`;
+    const q = spec.language === "python" ? pick(r, names) : spec.language === "go" ? pick(r, ["Append", "Select", "Encode", "Compact"]) : pick(r, ["resolve", "normalize", "load", "render"]);
+    return { path: file, qualname: q, digest: hex(`${id}:u${k}`) };
+  });
+  const modules = [
+    { path: mod.file, kind: "skeleton" as const, digest: hex(`${id}:s0`) },
+    ...(spec.language === "python" ? [{ path: `${mod.file.split("/").slice(0, -1).join("/")}/conftest.py`, kind: "hooks" as const, digest: hex(`${id}:h0`) }] : []),
+    { path: spec.language === "python" ? "pyproject.toml" : spec.language === "go" ? "go.mod" : "package.json", kind: "content" as const, digest: hex(`${id}:c0`) },
+  ];
+  const filesRead = Array.from({ length: Math.floor(r() * 4) }, (_, k) => ({
+    path: spec.language === "python" ? `${mod.file.split("/").slice(0, -1).join("/")}/fixtures/${pick(r, ["config", "payload", "state", "device"])}_${k}.json` : `${mod.file.split("/").slice(0, -1).join("/")}/__fixtures__/${pick(r, ["doc", "sidebar", "site"])}${k}.md`,
+    dep: `f:${hex(`${id}:f${k}`)}`,
+  }));
+  if (r() < 0.3) filesRead.push({ path: spec.language === "python" ? "/etc/localtime" : "/tmp/fenvix-cache", dep: r() < 0.5 ? "missing" : `d:${hex(`${id}:d`)}` });
+  const envRead = spec.env.filter(() => r() < 0.6).map((name) => ({ name, digest: name === "PYTHONASYNCIODEBUG" ? "-" : hex(`${id}:e:${name}`) }));
+  return {
+    id, runId: run.id, testId, cacheKey: hex(`${id}:key`), reusedRunId: reused?.id ?? null, reusedEngineRunId: reused?.engineRunId ?? "20260920T091500-4412",
+    reusedRunNumber: reused?.number ?? null, reusedOutcome: "passed", fingerprint: hex(`${spec.id}:${testId}:fp`), reusedDurationMs: mod.durations[ti],
+    code, modules, filesRead, envRead,
+    runtime: { digest: hex(`${spec.id}:runtime`), interpreter: spec.interpreter, system: "Linux", machine: "x86_64", libc: "glibc 2.39", distributions: spec.language === "python" ? 412 : spec.language === "node" ? 1186 : 64 },
+    config: { digest: hex(`${spec.id}:config`), runner: spec.runner, engine: run.engineVersion, inifile: spec.language === "python" ? "pyproject.toml" : spec.language === "node" ? "vitest.config.ts" : "go.mod", options: spec.language === "python" ? "--det --det-cache=/cache -p no:randomly" : "--det" },
+    changedFilesProven: Math.floor(r() * 9),
+  };
+}
+
+// ---------------------------------------------------------------- keys and settings (as before)
+
 const later = (ms: number) => new Date(NOW.getTime() + ms).toISOString();
 const seedKey = (k: Omit<PublicApiKey, "status">): PublicApiKey => ({ ...k, status: keyStatus(k, NOW) });
-let apiKeys: PublicApiKey[] = [
-  seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b01", name: "Agent runner", role: "read_only", prefix: "fvx_Qm3xT8aL", createdAt: ago(12 * DAY), lastUsedAt: ago(3 * DAY), expiresAt: later(78 * DAY), revokedAt: null }),
-  seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b02", name: "Deploy pipeline", role: "admin", prefix: "fvx_k2Vd9PqW", createdAt: ago(41 * DAY), lastUsedAt: ago(19 * HOUR), expiresAt: null, revokedAt: null }),
-  seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b03", name: "Production backend", role: "admin", prefix: "fvx_7HcR0ZyN", createdAt: ago(90 * DAY), lastUsedAt: ago(4 * MIN), expiresAt: null, revokedAt: null }),
-  seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b04", name: "Quarterly report", role: "read_only", prefix: "fvx_bT5uE1sJ", createdAt: ago(130 * DAY), lastUsedAt: ago(40 * DAY), expiresAt: ago(10 * DAY), revokedAt: null }),
-  seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b05", name: "Old laptop", role: "admin", prefix: "fvx_Lw8gY4nC", createdAt: ago(200 * DAY), lastUsedAt: ago(120 * DAY), expiresAt: null, revokedAt: ago(100 * DAY) }),
-];
+function seedKeys(): PublicApiKey[] {
+  return [
+    seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b01", name: "Coding agent", role: "read_only", prefix: "fvx_Qm3xT8aL", createdAt: ago(12 * DAY), lastUsedAt: ago(3 * DAY), expiresAt: later(78 * DAY), revokedAt: null }),
+    seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b02", name: "Release pipeline", role: "admin", prefix: "fvx_k2Vd9PqW", createdAt: ago(41 * DAY), lastUsedAt: ago(19 * HOUR), expiresAt: null, revokedAt: null }),
+    seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b03", name: "Defect triage bot", role: "read_only", prefix: "fvx_7HcR0ZyN", createdAt: ago(30 * DAY), lastUsedAt: ago(4 * MIN), expiresAt: null, revokedAt: null }),
+    seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b04", name: "Quarterly report", role: "read_only", prefix: "fvx_bT5uE1sJ", createdAt: ago(130 * DAY), lastUsedAt: ago(40 * DAY), expiresAt: ago(10 * DAY), revokedAt: null }),
+    seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b05", name: "Old laptop", role: "admin", prefix: "fvx_Lw8gY4nC", createdAt: ago(200 * DAY), lastUsedAt: ago(120 * DAY), expiresAt: null, revokedAt: ago(100 * DAY) }),
+  ];
+}
 
-const mockKeyError = (code: string, status: number, message: string, field?: string) => new ExplorerError(code, message, status, field);
+const mockError = (code: string, status: number, message: string, field?: string) => new ExplorerError(code, message, status, field);
 
 /** `fvx_` and 32 random bytes in base64url (43 characters), like the API's keys. */
 function newPublicToken(): string {
@@ -485,195 +578,216 @@ function newPublicToken(): string {
   return `fvx_${btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
 }
 
-let settings: Settings = { workspaceName: WORKSPACE, idleMinutes: 5, emailNotices: true };
-
 const wait = <T,>(value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(value), 90));
+const copy = <T,>(v: T): T => structuredClone(v);
 
-function randomHex(n: number) {
-  const bytes = new Uint8Array(n);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("").slice(0, n);
+function plans(): Plan[] {
+  return PLANS.map((p) => ({ ...p, features: [...p.features], current: p.id === store().planId }));
+}
+
+function filterRuns(projectId: string, q: RunQuery): Run[] {
+  const s = store();
+  const project = s.projects.find((p) => p.id === projectId);
+  return s.runs.filter(
+    (r) =>
+      r.projectId === projectId &&
+      (q.scope === "pr" ? r.pullRequest !== null : q.scope === "default" ? r.branch === project?.defaultBranch : true) &&
+      (q.status === "passed" || q.status === "failed" ? r.status === q.status : true),
+  );
+}
+
+function defectsFor(q: { projectId?: string; state?: "open" | "fixed" | "all" } = {}): Defect[] {
+  return store()
+    .defects.filter((d) => (!q.projectId || d.projectId === q.projectId) && (q.state === "all" ? true : d.state === (q.state ?? "open")))
+    .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
 }
 
 export const mockClient: DataClient = {
   now: () => NOW,
-  listDatabases(query = {}) {
-    const { sort = "name", dir = "asc", page = 1, pageSize = 50 } = query;
-    const sign = dir === "asc" ? 1 : -1;
-    const rows = databases.filter((d) => matches(d, query)).sort((a, b) => sign * compareBy(a, b, sort) || a.name.localeCompare(b.name));
-    const items = rows.slice((page - 1) * pageSize, page * pageSize).map(copy);
-    return wait<Page<Database>>({ items, total: rows.length, page, pageSize });
+  sample: true,
+
+  getOverview() {
+    const s = store();
+    return wait(copy(overviewFrom(s.projects, s.runs, s.defects, plans().find((p) => p.current) ?? null, RATE, NOW)));
   },
-  listDatabaseIds: (filter = {}) => wait(databases.filter((d) => matches(d, filter)).map((d) => d.id)),
-  groupDatabases(groupBy, filter = {}) {
-    const groups = new Map<string | null, DatabaseGroup>();
-    let total = 0;
-    for (const d of databases) {
-      if (!matches(d, filter)) continue;
-      total++;
-      const tag = d.tags.find((t) => splitTag(t).key === groupBy);
-      const value = tag ? splitTag(tag).value : null;
-      const g = groups.get(value) ?? { value, count: 0, awake: 0, keepAwake: 0, storageMb: 0 };
-      g.count++;
-      g.awake += d.state === "awake" ? 1 : 0;
-      g.keepAwake += d.keepAwake ? 1 : 0;
-      g.storageMb += d.storageMb;
-      groups.set(value, g);
+
+  listProjects() {
+    const s = store();
+    return wait(copy(s.projects.map((p) => projectRow(p, s.runs, s.defects, NOW))));
+  },
+  getProject(id) {
+    const s = store();
+    const p = s.projects.find((x) => x.id === id);
+    return wait(p ? copy(projectRow(p, s.runs, s.defects, NOW)) : null);
+  },
+  async saveProjectSettings(id, settings) {
+    assertMockCanManage();
+    const s = store();
+    const p = s.projects.find((x) => x.id === id);
+    if (!p) throw mockError("not_found", 404, "That project does not exist.");
+    if (settings.testCommand.length > 500) throw mockError("validation_failed", 400, "Use at most 500 characters for the test command.", "testCommand");
+    p.settings = { ...settings, testCommand: settings.testCommand.trim() };
+    return wait(copy(p));
+  },
+  listRuns(projectId, q = {}) {
+    const { page = 1, pageSize = 25 } = q;
+    const rows = filterRuns(projectId, q);
+    return wait<Page<Run>>(copy({ items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize }));
+  },
+  getSkipShareSeries(projectId, days) {
+    const from = dayStart(new Date(NOW.getTime() - (days - 1) * DAY));
+    const byDay = new Map<string, number[]>();
+    for (const r of store().runs) {
+      if (r.projectId !== projectId || r.startedAt < from.toISOString() || r.status === "running" || r.status === "cancelled") continue;
+      const k = dayStart(new Date(r.startedAt)).toISOString();
+      (byDay.get(k) ?? byDay.set(k, []).get(k)!).push(r.skipShare);
     }
-    const list = [...groups.values()].sort((a, b) => (a.value === null ? 1 : b.value === null ? -1 : b.count - a.count || a.value.localeCompare(b.value)));
-    return wait<GroupedDatabases>({ groupBy, groups: list, total });
+    const out = [];
+    for (let t = from.getTime(); t <= NOW.getTime(); t += DAY) {
+      const k = new Date(t).toISOString();
+      const v = byDay.get(k) ?? [];
+      out.push({ at: k, value: median(v) ?? 0, runs: v.length });
+    }
+    return wait(out);
   },
-  listTags() {
-    const counts = new Map<string, number>();
-    for (const d of databases) for (const t of d.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
-    const tags: TagCount[] = [...counts].map(([t, count]) => ({ ...splitTag(t), count })).sort((a, b) => a.key.localeCompare(b.key) || b.count - a.count || a.value.localeCompare(b.value));
-    return wait(tags);
+
+  getRun(id) {
+    const s = store();
+    const run = s.runs.find((r) => r.id === id);
+    const project = run && s.projects.find((p) => p.id === run.projectId);
+    return wait(run && project ? copy({ run, project }) : null);
   },
-  getDatabase: (id) => wait(copyOrNull(databases.find((d) => d.id === id))),
-  getOverview: (range) => wait(overviewFor(range)),
-  getTagBreakdown: (key, limit = 8) => wait(tagBreakdown(key, limit)),
-  getUsageTrend: (month, tagKey) => wait(usageTrend(month, tagKey)),
-  listPlans: () => wait(PLANS.map((p) => ({ ...p, features: [...p.features] }))),
-  listRegions: () => wait([...REGIONS]),
-  async createDatabase({ name, region, tags, appUser }) {
+  listTestResults(runId, q = {}) {
+    const run = store().runs.find((r) => r.id === runId);
+    const all = run ? testsOf(run) : [];
+    const counts: Record<TestOutcome, number> = { passed: 0, failed: 0, skipped_with_proof: 0 };
+    for (const t of all) counts[t.outcome]++;
+    const term = q.search?.trim().toLowerCase() ?? "";
+    // Failures first, then the tests that ran, then the skipped ones.
+    const rank: Record<TestOutcome, number> = { failed: 0, passed: 1, skipped_with_proof: 2 };
+    const rows = all.filter((t) => (!q.outcome || q.outcome === "all" || t.outcome === q.outcome) && (!term || t.testId.toLowerCase().includes(term))).sort((a, b) => rank[a.outcome] - rank[b.outcome]);
+    const { page = 1, pageSize = 50 } = q;
+    return wait<TestPage>({ items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize, counts });
+  },
+  getSkipReceipt: (id) => wait(receiptOf(id)),
+
+  listDefects: (q) => wait(copy(defectsFor(q))),
+  listDefectFamilies: (q) => wait(copy(familiesOf(defectsFor(q)))),
+  getDefect: (id) => wait(copy(store().defects.find((d) => d.id === id) ?? null)),
+
+  listUsageMonths() {
+    const months = [...new Set(store().runs.map((r) => monthOf(r.startedAt)))].sort().reverse();
+    return wait(months.length ? months : [monthOf(NOW)]);
+  },
+  getUsage(month) {
+    const s = store();
+    return wait(copy(usageFrom(month, s.projects, s.runs, plans().find((p) => p.current) ?? null, RATE)));
+  },
+  async exportUsage(month) {
+    const s = store();
+    const report = usageFrom(month, s.projects, s.runs, plans().find((p) => p.current) ?? null, RATE);
+    return wait({ filename: usageCsvName(month), mimeType: "text/csv", downloadUrl: blobUrl(usageCsv(report), "text/csv") });
+  },
+
+  listPlans: () => wait(plans()),
+  getBilling() {
+    const s = store();
+    return wait(copy(billingFrom(plans(), s.projects, s.runs, NOW)));
+  },
+
+  getGitHubConnection() {
+    return wait({ account: store().githubAccount, installUrl: "https://github.com/apps/fenvix/installations/new" });
+  },
+  listGitHubRepositories: () => wait(copy(store().repos)),
+  async installGitHubApp(repositories) {
     assertMockCanManage();
-    const clean = checkName(name);
-    if (!REGIONS.includes(region)) throw new Error("Choose a region.");
-    const next = checkTags(tags);
-    const user = appUser?.trim() || "app";
-    const problem = usernameProblem(user);
-    if (problem) throw new Error(problem);
-    const db: Database = { ...blank(clean, region), tags: next };
-    db.connectionString = db.connectionString.replace("app:<password>", `${user}:<password>`);
-    databases = [db, ...databases];
-    // Like the control plane: the first user's password is in this answer only, never on the stored database.
-    return wait({ ...copy(db), initialUser: mockInitialUser(db.id, clean, user) });
+    if (repositories.length === 0) throw mockError("validation_failed", 400, "Choose at least one repository.", "repositories");
+    const s = store();
+    const id = 60_000_000 + s.installations.size + 1;
+    s.installations.set(id, repositories);
+    s.githubAccount = s.githubAccount ?? repositories[0].split("/")[0];
+    return wait(id);
   },
-  async forkDatabase(id, name) {
+  async completeInstallation(installationId) {
     assertMockCanManage();
-    const source = databases.find((d) => d.id === id);
-    if (!source) throw new Error("Database not found");
-    const clean = checkName(name);
-    const db: Database = { ...blank(clean, source.region), tags: [...source.tags], storageMb: source.storageMb, forkedFrom: source.id };
-    databases = [db, ...databases];
-    return wait({ ...copy(db), initialUser: mockInitialUser(db.id, clean) });
+    const s = store();
+    const names = s.installations.get(installationId);
+    if (!names) throw mockError("not_found", 404, "GitHub did not confirm this installation. Install the app again.");
+    const added: Project[] = [];
+    for (const name of names) {
+      const repo = s.repos.find((r) => r.fullName === name);
+      if (!repo || repo.connected) continue;
+      repo.connected = true;
+      const r = rng(hash(name));
+      const project: Project = {
+        id: `prj_${slug(name.split("/")[1])}_${installationId % 1000}`, fullName: name, language: repo.language, testRunner: repo.testRunner, defaultBranch: "main",
+        installationId, setupState: "app_installed", setupPullRequest: null, connectedAt: NOW.toISOString(),
+        baseline: { medianTimeToGreenS: Math.round(90 + r() * 400), medianJobMinutes: Math.round((2 + r() * 9) * 10) / 10, runsSampled: Math.round(60 + r() * 300), from: "2026-10-18", to: "2026-11-16" },
+        settings: { skipWithProof: true, commentOnPullRequests: true, nightlyExploration: false, testCommand: "" },
+      };
+      s.projects.push(project);
+      added.push(project);
+    }
+    s.installations.delete(installationId);
+    return wait(copy(added));
   },
-  async restoreDatabase(id, at) {
+  getSetupChange(projectId) {
+    const p = store().projects.find((x) => x.id === projectId);
+    if (!p) return Promise.reject(mockError("not_found", 404, "That project does not exist."));
+    return wait(setupChange(p));
+  },
+  async openSetupPullRequest(projectId) {
     assertMockCanManage();
-    const source = databases.find((d) => d.id === id);
-    if (!source) throw new Error("Database not found");
-    const t = new Date(at).getTime();
-    if (Number.isNaN(t)) throw new Error("Choose a date and time.");
-    if (t > NOW.getTime()) throw new Error("Choose a time in the past.");
-    if (t < new Date(source.createdAt).getTime()) throw new Error("That is before this database was created.");
-    mutate([id], (d) => ({ ...d, restoredTo: new Date(t).toISOString(), lastActiveAt: NOW.toISOString() }));
-    return wait(copy(databases.find((d) => d.id === id)!));
+    const s = store();
+    const p = s.projects.find((x) => x.id === projectId);
+    if (!p) throw mockError("not_found", 404, "That project does not exist.");
+    if (!p.setupPullRequest) {
+      const number = 100 + (hash(p.fullName) % 900);
+      p.setupPullRequest = { number, url: `https://github.com/${p.fullName}/pull/${number}`, state: "open" } satisfies SetupPullRequest;
+      p.setupState = "pr_open";
+    }
+    return wait(copy(p.setupPullRequest));
   },
-  async exportDatabases(ids) {
-    assertMockCanManage();
-    const picked = databases.filter((d) => ids.includes(d.id));
-    if (picked.length === 0) throw new Error("Nothing to export.");
-    const body = { exportedAt: NOW.toISOString(), databases: picked.map((d) => ({ name: d.name, region: d.region, tags: d.tags, storageMb: d.storageMb, collections: [{ name: "orders", documents: 18204 }, { name: "users", documents: 412 }] })) };
-    const filename = picked.length === 1 ? `fenvix-export-${picked[0].name}.json` : `fenvix-export-${picked.length}-databases.json`;
-    return wait<ExportResult>({ filename, mimeType: "application/json", downloadUrl: blobUrl(JSON.stringify(body, null, 2), "application/json") });
-  },
-  async eraseDatabases(ids) {
-    assertMockCanManage();
-    const gone = new Set(ids);
-    const before = databases.length;
-    databases = databases.filter((d) => !gone.has(d.id));
-    return wait({ affected: before - databases.length });
-  },
-  async setKeepAwake(ids, enabled) {
-    assertMockCanManage();
-    return wait(mutate(ids, (d) => ({ ...d, keepAwake: enabled, state: enabled ? "awake" : d.state })));
-  },
-  async setTags(id, tags) {
-    assertMockCanManage();
-    const next = checkTags(tags);
-    if (!databases.some((d) => d.id === id)) throw new Error("Database not found");
-    mutate([id], (d) => ({ ...d, tags: next }));
-    return wait(copy(databases.find((d) => d.id === id)!));
-  },
-  async addTags(ids, tags) {
-    assertMockCanManage();
-    const add = parseTags(tags);
-    return wait(mutate(ids, (d) => ({ ...d, tags: mergeTags(d.tags, add) })));
-  },
-  async removeTags(ids, tags) {
-    assertMockCanManage();
-    const drop = parseTagsOrKeys(tags);
-    return wait(mutate(ids, (d) => ({ ...d, tags: d.tags.filter((t) => !drop.some((x) => matchesTagFilter([t], x))) })));
-  },
-  getUsage: (id, range) => {
-    const db = databases.find((d) => d.id === id);
-    return wait(db ? usageFor(db, range) : []);
-  },
-  listUsageMonths: () => wait([...USAGE_MONTHS]),
-  async getUsageReport(q) {
-    if (!USAGE_MONTHS.includes(q.month)) throw new Error("No usage report for this month.");
-    const { rows, totals } = usageRows(q);
-    const { sort = "requests", dir = "desc", page = 1, pageSize = 50 } = q;
-    const sorted = sortUsage(rows, sort, dir);
-    return wait<UsageReport>({ month: q.month, items: sorted.slice((page - 1) * pageSize, page * pageSize), total: sorted.length, page, pageSize, totals });
-  },
-  getUsageHistory: () => wait([...USAGE_MONTHS].reverse().map((month) => ({ month, ...monthTotals(month) }))),
-  async exportUsageReport(q) {
-    const { rows } = usageRows(q);
-    const sorted = sortUsage(rows, q.sort ?? "requests", q.dir ?? "desc");
-    return wait<ExportResult>({ filename: usageCsvName(q.month, q.by, q.tagKey), mimeType: "text/csv", downloadUrl: blobUrl(usageCsv(sorted, q.by), "text/csv") });
-  },
-  getBilling: () => wait(getBillingOverview()),
-  listInvoices(page = 1, pageSize = 12) {
-    return wait<Page<Invoice>>({ items: INVOICES.slice((page - 1) * pageSize, page * pageSize), total: INVOICES.length, page, pageSize });
-  },
-  async downloadInvoice(id) {
-    assertMockCanManage();
-    const inv = INVOICES.find((i) => i.id === id);
-    if (!inv) throw new Error("Invoice not found");
-    const pdf = simplePdf(["FENVIX", "", `Invoice ${inv.number}`, `Workspace: ${settings.workspaceName}`, `Month: ${inv.month}`, `Issued: ${inv.issuedAt.slice(0, 10)}`, `Amount: ${inv.currency} ${inv.amount.toFixed(2)}`, `Status: ${inv.status}`]);
-    return wait<ExportResult>({ filename: `${inv.number}.pdf`, mimeType: "application/pdf", downloadUrl: blobUrl(pdf, "application/pdf") });
-  },
+
   async listPublicApiKeys(cursor) {
     if (mockRole() === "member") assertMockCanManage();
+    const keys = store().apiKeys;
     const from = cursor ? Number(cursor) : 0;
-    const items = apiKeys.slice(from, from + PAGE_LIMIT).map((k) => ({ ...k, status: keyStatus(k, NOW) }));
-    return wait({ items, nextCursor: from + PAGE_LIMIT < apiKeys.length ? String(from + PAGE_LIMIT) : null });
+    const items = keys.slice(from, from + PAGE_LIMIT).map((k) => ({ ...k, status: keyStatus(k, NOW) }));
+    return wait({ items, nextCursor: from + PAGE_LIMIT < keys.length ? String(from + PAGE_LIMIT) : null });
   },
   async createPublicApiKey({ name, role, expiresAt }) {
     assertMockCanManage();
-    const problem = nameProblem(name);
-    if (problem) throw mockKeyError("validation_failed", 400, `Use 1 to 60 characters for the name, on one line.`, "name");
-    if (role !== "admin" && role !== "read_only") throw mockKeyError("validation_failed", 400, "Choose a role: admin or read_only.", "role");
+    const s = store();
+    if (nameProblem(name)) throw mockError("validation_failed", 400, `Use 1 to 60 characters for the name, on one line.`, "name");
+    if (role !== "admin" && role !== "read_only") throw mockError("validation_failed", 400, "Choose a role: admin or read_only.", "role");
     if (expiresAt !== null) {
       const t = new Date(expiresAt).getTime();
-      if (Number.isNaN(t)) throw mockKeyError("validation_failed", 400, "expiresAt must be a date and time, for example 2027-01-31T00:00:00Z.", "expiresAt");
-      if (t <= NOW.getTime() + MIN) throw mockKeyError("validation_failed", 400, "expiresAt must be at least a minute from now.", "expiresAt");
-      if (t > NOW.getTime() + 3 * 365 * DAY) throw mockKeyError("validation_failed", 400, "expiresAt can be at most 1095 days from now.", "expiresAt");
+      if (Number.isNaN(t)) throw mockError("validation_failed", 400, "expiresAt must be a date and time, for example 2027-01-31T00:00:00Z.", "expiresAt");
+      if (t <= NOW.getTime() + MIN) throw mockError("validation_failed", 400, "expiresAt must be at least a minute from now.", "expiresAt");
+      if (t > NOW.getTime() + 3 * 365 * DAY) throw mockError("validation_failed", 400, "expiresAt can be at most 1095 days from now.", "expiresAt");
     }
-    if (apiKeys.filter((k) => keyStatus(k, NOW) === "active").length >= MAX_ACTIVE_KEYS) {
-      throw mockKeyError("conflict", 409, `An organization can have up to ${MAX_ACTIVE_KEYS} active API keys. Revoke one first.`);
+    if (s.apiKeys.filter((k) => keyStatus(k, NOW) === "active").length >= MAX_ACTIVE_KEYS) {
+      throw mockError("conflict", 409, `An organization can have up to ${MAX_ACTIVE_KEYS} active API keys. Revoke one first.`);
     }
     const token = newPublicToken();
-    const id = crypto.randomUUID?.() ?? `${randomHex(8)}-${randomHex(4)}-4${randomHex(3)}-8${randomHex(3)}-${randomHex(12)}`;
-    const key: PublicApiKey = { id, name: name.trim(), role, prefix: token.slice(0, 12), status: "active", createdAt: NOW.toISOString(), lastUsedAt: null, expiresAt, revokedAt: null };
-    apiKeys = [key, ...apiKeys];
+    const key: PublicApiKey = { id: crypto.randomUUID(), name: name.trim(), role, prefix: token.slice(0, 12), status: "active", createdAt: NOW.toISOString(), lastUsedAt: null, expiresAt, revokedAt: null };
+    s.apiKeys = [key, ...s.apiKeys];
     return wait({ key: { ...key }, token });
   },
   async revokePublicApiKey(id) {
     assertMockCanManage();
-    const found = apiKeys.find((k) => k.id === id);
-    if (!found) throw mockKeyError("not_found", 404, "That API key does not exist.");
-    // Revoking twice changes nothing, as on the API.
+    const s = store();
+    const found = s.apiKeys.find((k) => k.id === id);
+    if (!found) throw mockError("not_found", 404, "That API key does not exist.");
     const next: PublicApiKey = { ...found, revokedAt: found.revokedAt ?? NOW.toISOString(), status: "revoked" };
-    apiKeys = apiKeys.map((k) => (k.id === id ? next : k));
+    s.apiKeys = s.apiKeys.map((k) => (k.id === id ? next : k));
     return wait({ ...next });
   },
-  getSettings: () => wait({ ...settings, workspaceName: mockOrgName() ?? settings.workspaceName }),
+  getSettings: () => wait({ ...store().settings, workspaceName: mockOrgName() ?? store().settings.workspaceName }),
   async saveSettings(next) {
     assertMockCanManage();
-    // The name belongs to the organization (renamed in Settings → Organization); these are the other settings.
-    settings = { ...next };
-    return wait({ ...settings, workspaceName: mockOrgName() ?? settings.workspaceName });
+    store().settings = { ...next };
+    return wait({ ...store().settings, workspaceName: mockOrgName() ?? next.workspaceName });
   },
 };

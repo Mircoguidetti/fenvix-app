@@ -1,254 +1,222 @@
-// The DataClient on Supabase. Every method is one call to a database function (see
-// supabase/migrations/0001_init.sql), so each change is a single transaction: a failure
-// leaves nothing half done. The functions run as the signed-in user, so row level security
-// decides what they can see and change.
+// The DataClient on Supabase: reads the CI tables of supabase/migrations/0011_ci_runs.sql as the signed-in user, so
+// row level security decides what is visible. The numbers on the screens are computed by src/data/ci.ts from those rows,
+// exactly as for the mock. Writes the browser may make: a project's settings (owner or admin) and the organization's
+// notification setting. Connecting a repository needs the fenvix GitHub App and the control plane, which this
+// deployment does not have yet: those calls say so.
 import type { DataClient } from "./client";
-import type { BillingOverview, ExportResult, Overview, Plan, Settings, UsageRange } from "./types";
+import type { Defect, Page, Plan, Project, Run, Settings, TestOutcome, TestPage } from "./types";
 import { getSupabase } from "../lib/supabaseClient";
-import { blobUrl, usageCsv, usageCsvName } from "./files";
-import { connectionStringFor } from "./connection";
-import { simplePdf } from "./pdf";
+import { activeOrgId } from "../lib/org";
+import { blobUrl } from "./files";
 import { PUBLIC_API_NOT_SET_UP } from "./public-keys";
-import {
-  filterArgs, friendlyError, isUuid, listArgs, mapBreakdown, mapDatabase, mapGroup, mapInvoice, mapPage, mapTag, mapTrend,
-  mapUsagePoint, mapUsageRow, monthStart, sparkFrom, usageArgs, type Row,
-} from "./queries";
+import { billingFrom, dayStart, familiesOf, median, monthBounds, monthOf, overviewFrom, projectRow, setupChange, usageCsv, usageCsvName, usageFrom } from "./ci";
+import { mapDefect, mapPlan, mapProject, mapRate, mapReceipt, mapRun, mapTestResult, friendlyError, type Row } from "./ci-rows";
 
-const REGIONS = ["eu-west", "us-east", "us-west", "ap-south"];
+const DAY = 86_400_000;
+const NO_GITHUB_APP = "Connecting repositories needs the fenvix GitHub App, which is not set up for this deployment yet.";
 
-const PLANS: Omit<Plan, "current">[] = [
-  { id: "open-source", name: "Open source", price: "Free", period: "", description: "One database, run by you, on your machine or your cloud storage.", features: ["The complete engine", "MongoDB drivers and tools", "Community support"] },
-  { id: "managed", name: "Managed", price: "$29", period: "/ month", description: "Includes 10 GB and 10 million requests, then pay for what you use.", features: ["Unlimited databases", "Asleep databases cost only storage", "Fork, restore, export, erase", "Usage per customer"] },
-  { id: "dedicated", name: "Dedicated", price: "$499", period: "/ month", description: "Your own environment in the region you choose, plus usage.", features: ["Servers for you alone", "Region of your choice", "Keep busy customers awake", "Priority support"] },
-  { id: "in-your-cloud", name: "In your cloud", price: "Custom", period: "", description: "Runs in your own cloud account. Your data never leaves it.", features: ["Your cloud, your region", "Single sign-on and audit log", "Support with an agreed response time"] },
-];
+type Query = PromiseLike<{ data: unknown; error: { message: string } | null; count?: number | null }>;
 
-const number = (n: number) => new Intl.NumberFormat("en-US").format(n);
-const dayLabel = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+async function rows<T = Row>(q: Query): Promise<T[]> {
+  const { data, error } = await q;
+  if (error) throw new Error(friendly(error.message));
+  return (data as T[]) ?? [];
+}
 
-/** One database function call. Failures become messages a person can read. */
-async function call<T = unknown>(fn: string, args: Record<string, unknown> = {}): Promise<T> {
-  try {
-    const { data, error } = await getSupabase().rpc(fn, args);
-    if (error) throw new Error(friendlyError(error));
-    return data as T;
-  } catch (e) {
-    if (e instanceof Error) throw new Error(friendlyError({ message: e.message }));
-    throw new Error(friendlyError(null));
+const friendly = (message: string) => friendlyError({ message });
+
+const db = () => getSupabase();
+
+/** The organization the browser shows (current_workspace() honours the X-Fenvix-Workspace header for a member). */
+const workspaces = new Map<string, Promise<string>>();
+function ws(): Promise<string> {
+  const key = activeOrgId() ?? "";
+  let found = workspaces.get(key);
+  if (!found) {
+    found = (async () => {
+      const { data, error } = await db().rpc("current_workspace");
+      if (error || !data) throw new Error(error ? friendly(error.message) : "You are not a member of any organization yet.");
+      return String(data);
+    })();
+    found.catch(() => workspaces.delete(key));
+    workspaces.set(key, found);
   }
+  return found;
 }
 
-const toDatabase = (row: Row) => mapDatabase(row, connectionStringFor);
-
-const noPublicApi = () => new Error(PUBLIC_API_NOT_SET_UP);
-
-function download(filename: string, mimeType: string, content: string): ExportResult {
-  return { filename, mimeType, downloadUrl: blobUrl(content, mimeType) };
+async function projects(): Promise<Project[]> {
+  return (await rows(db().from("ci_projects").select("*").eq("workspace_id", await ws()).order("full_name"))).map(mapProject);
 }
+
+/** Runs since `from`, newest first. */
+async function runsSince(from: Date): Promise<Run[]> {
+  const q = db().from("ci_runs").select("*").eq("workspace_id", await ws()).gte("started_at", from.toISOString()).order("started_at", { ascending: false }).limit(20000);
+  return (await rows(q)).map(mapRun);
+}
+
+async function defects(): Promise<Defect[]> {
+  const [ps, rs] = await Promise.all([projects(), rows(db().from("ci_defects").select("*").eq("workspace_id", await ws()).order("last_seen_at", { ascending: false }))]);
+  const byId = new Map(ps.map((p) => [p.id, p]));
+  return rs.map((r) => mapDefect(r, byId.get(String(r.project_id))));
+}
+
+async function plans(): Promise<Plan[]> {
+  const [ps, sub] = await Promise.all([rows(db().from("ci_plans").select("*").order("sort")), rows(db().from("ci_subscriptions").select("plan_id").eq("workspace_id", await ws()))]);
+  const current = sub[0] ? String(sub[0].plan_id) : null;
+  return ps.map((p) => mapPlan(p, current));
+}
+
+async function rate() {
+  const r = await rows(db().from("ci_reference_rates").select("*").eq("key", "github-linux-2core"));
+  return mapRate(r[0]);
+}
+
+const startOfPreviousMonth = (now: Date) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
 
 export const supabaseClient: DataClient = {
   now: () => new Date(),
+  sample: false,
 
-  async listDatabases(query) {
-    const json = await call<Row>("fenvix_list_databases", listArgs(query));
-    return mapPage(json, ((json.items as Row[]) ?? []).map(toDatabase));
+  async getOverview() {
+    const now = new Date();
+    const [ps, rs, ds, pl, rt] = await Promise.all([projects(), runsSince(new Date(Math.min(startOfPreviousMonth(now).getTime(), now.getTime() - 30 * DAY))), defects(), plans(), rate()]);
+    return overviewFrom(ps, rs, ds, pl.find((p) => p.current) ?? null, rt, now);
   },
 
-  async listDatabaseIds(filter) {
-    return (await call<string[]>("fenvix_database_ids", filterArgs(filter))) ?? [];
+  async listProjects() {
+    const now = new Date();
+    const [ps, rs, ds] = await Promise.all([projects(), runsSince(monthBounds(monthOf(now)).start), defects()]);
+    return ps.map((p) => projectRow(p, rs, ds, now));
+  },
+  async getProject(id) {
+    return (await this.listProjects()).find((p) => p.id === id) ?? null;
+  },
+  async saveProjectSettings(id, s) {
+    const q = db()
+      .from("ci_projects")
+      .update({ skip_with_proof: s.skipWithProof, comment_on_pull_requests: s.commentOnPullRequests, nightly_exploration: s.nightlyExploration, test_command: s.testCommand.trim() })
+      .eq("id", id)
+      .select("*");
+    const r = await rows(q);
+    if (!r[0]) throw new Error("Your role in this organization is read only. Ask an owner or admin to do this.");
+    return mapProject(r[0]);
+  },
+  async listRuns(projectId, q = {}) {
+    const { page = 1, pageSize = 25 } = q;
+    let query = db().from("ci_runs").select("*", { count: "exact" }).eq("project_id", projectId);
+    if (q.scope === "pr") query = query.not("pull_request", "is", null);
+    if (q.status === "passed" || q.status === "failed") query = query.eq("status", q.status);
+    const { data, error, count } = await query.order("started_at", { ascending: false }).range((page - 1) * pageSize, page * pageSize - 1);
+    if (error) throw new Error(friendly(error.message));
+    let items = ((data as Row[]) ?? []).map(mapRun);
+    if (q.scope === "default") {
+      const p = (await projects()).find((x) => x.id === projectId);
+      items = items.filter((r) => r.branch === p?.defaultBranch);
+    }
+    return { items, total: count ?? items.length, page, pageSize } satisfies Page<Run>;
+  },
+  async getSkipShareSeries(projectId, days) {
+    const now = new Date();
+    const from = dayStart(new Date(now.getTime() - (days - 1) * DAY));
+    const rs = (await rows(db().from("ci_runs").select("started_at, skip_share, status").eq("project_id", projectId).gte("started_at", from.toISOString()))).filter((r) => r.status === "passed" || r.status === "failed");
+    const out = [];
+    for (let t = from.getTime(); t <= now.getTime(); t += DAY) {
+      const k = new Date(t).toISOString().slice(0, 10);
+      const v = rs.filter((r) => String(r.started_at).slice(0, 10) === k).map((r) => Number(r.skip_share));
+      out.push({ at: new Date(t).toISOString(), value: median(v) ?? 0, runs: v.length });
+    }
+    return out;
   },
 
-  async groupDatabases(groupBy, filter) {
-    const json = await call<Row>("fenvix_group_databases", { p_group_by: groupBy, ...filterArgs(filter) });
-    return { groupBy, total: Number(json.total ?? 0), groups: ((json.groups as Row[]) ?? []).map(mapGroup) };
+  async getRun(id) {
+    const r = await rows(db().from("ci_runs").select("*").eq("id", id));
+    if (!r[0]) return null;
+    const p = await rows(db().from("ci_projects").select("*").eq("id", String(r[0].project_id)));
+    return p[0] ? { run: mapRun(r[0]), project: mapProject(p[0]) } : null;
+  },
+  async listTestResults(runId, q = {}) {
+    const { page = 1, pageSize = 50 } = q;
+    let query = db().from("ci_test_results").select("*", { count: "exact" }).eq("run_id", runId);
+    if (q.outcome && q.outcome !== "all") query = query.eq("outcome", q.outcome);
+    if (q.search?.trim()) query = query.ilike("test_id", `%${q.search.trim().replace(/[%_]/g, (c) => `\\${c}`)}%`);
+    const { data, error, count } = await query.order("outcome").order("test_id").range((page - 1) * pageSize, page * pageSize - 1);
+    if (error) throw new Error(friendly(error.message));
+    const run = await rows(db().from("ci_runs").select("tests_passed, tests_failed, tests_skipped").eq("id", runId));
+    const counts: Record<TestOutcome, number> = { passed: Number(run[0]?.tests_passed ?? 0), failed: Number(run[0]?.tests_failed ?? 0), skipped_with_proof: Number(run[0]?.tests_skipped ?? 0) };
+    return { items: ((data as Row[]) ?? []).map(mapTestResult), total: count ?? 0, page, pageSize, counts } satisfies TestPage;
+  },
+  async getSkipReceipt(id) {
+    const r = await rows(db().from("ci_skip_receipts").select("*").eq("id", id));
+    if (!r[0]) return null;
+    const reused = r[0].reused_run_id ? await rows(db().from("ci_runs").select("number").eq("id", String(r[0].reused_run_id))) : [];
+    return mapReceipt(r[0], reused[0] ? Number(reused[0].number) : null);
   },
 
-  async listTags() {
-    return ((await call<Row[]>("fenvix_list_tags")) ?? []).map(mapTag);
+  async listDefects(q = {}) {
+    return (await defects()).filter((d) => (!q.projectId || d.projectId === q.projectId) && (q.state === "all" || d.state === (q.state ?? "open")));
   },
-
-  async getDatabase(id) {
-    if (!isUuid(id)) return null;
-    const row = await call<Row | null>("fenvix_get_database", { p_id: id });
-    return row ? toDatabase(row) : null;
+  async listDefectFamilies(q) {
+    return familiesOf(await this.listDefects(q));
   },
-
-  async getOverview(range: UsageRange): Promise<Overview> {
-    const json = await call<Row>("fenvix_overview", { p_range: range });
-    const totals = (json.totals as Row) ?? {};
-    const awakeSeries = ((json.awakeSeries as Row[]) ?? []).map((p) => ({ at: String(p.at), awake: Number(p.awake), total: Number(p.total) }));
-    const requestSeries = ((json.requestSeries as Row[]) ?? []).map((p) => ({ at: String(p.at), requests: Number(p.requests) }));
-    const costSeries = ((json.costSeries as Row[]) ?? []).map((p) => ({ at: String(p.at), cost: Number(p.cost), reference: p.reference === null ? null : Number(p.reference) }));
-    const storage = ((json.storageSeries as unknown[]) ?? []).map(Number);
-    const paid = costSeries.filter((p) => p.cost > 0).map((p) => p.cost);
-    return {
-      range,
-      totals: {
-        databases: Number(totals.databases ?? 0),
-        awake: Number(totals.awake ?? 0),
-        asleep: Number(totals.asleep ?? 0),
-        asleepPercent: Number(totals.asleepPercent ?? 0),
-        requests: Number(totals.requests ?? 0),
-        storageGb: Number(totals.storageGb ?? 0),
-        costMtd: Number(totals.costMtd ?? 0),
-        currency: String(totals.currency ?? "USD"),
-      },
-      sparks: {
-        databases: sparkFrom(awakeSeries.map((p) => p.total)),
-        awake: sparkFrom(awakeSeries.map((p) => p.awake)),
-        requests: sparkFrom(requestSeries.map((p) => p.requests)),
-        storageGb: sparkFrom(storage),
-        cost: sparkFrom(paid),
-      },
-      awakeSeries,
-      requestSeries,
-      costSeries,
-      topDatabases: ((json.topDatabases as Row[]) ?? []).map((d) => ({ id: String(d.id), name: String(d.name), requests: Number(d.requests) })),
-      recentWakeUps: ((json.recentWakeUps as Row[]) ?? []).map((w) => ({ id: String(w.id), name: String(w.name), at: String(w.at), latencyMs: Number(w.latencyMs) })),
-    };
-  },
-
-  async getTagBreakdown(key, limit = 8) {
-    return ((await call<Row[]>("fenvix_tag_breakdown", { p_key: key, p_limit: limit })) ?? []).map(mapBreakdown);
-  },
-
-  async getUsageTrend(month, tagKey) {
-    return mapTrend(await call<Row>("fenvix_usage_trend", { p_month: monthStart(month), p_tag_key: tagKey }));
-  },
-
-  async listPlans() {
-    const settings = await call<Row>("fenvix_settings");
-    const current = String(settings?.plan ?? "managed");
-    return PLANS.map((p) => ({ ...p, features: [...p.features], current: p.id === current }));
-  },
-
-  listRegions: async () => [...REGIONS],
-
-  async createDatabase({ name, region, tags }) {
-    return toDatabase(await call<Row>("fenvix_create_database", { p_name: name, p_region: region, p_tags: tags }));
-  },
-
-  async forkDatabase(id, name) {
-    return toDatabase(await call<Row>("fenvix_fork_database", { p_id: id, p_name: name }));
-  },
-
-  async restoreDatabase(id, at) {
-    return toDatabase(await call<Row>("fenvix_restore_database", { p_id: id, p_at: at }));
-  },
-
-  async exportDatabases(ids) {
-    if (ids.length === 0) throw new Error("Nothing to export.");
-    const rows = (await call<Row[]>("fenvix_export_databases", { p_ids: ids })) ?? [];
-    if (rows.length === 0) throw new Error("Nothing to export.");
-    const filename = rows.length === 1 ? `fenvix-export-${String(rows[0].name)}.json` : `fenvix-export-${rows.length}-databases.json`;
-    return download(filename, "application/json", JSON.stringify({ exportedAt: new Date().toISOString(), databases: rows }, null, 2));
-  },
-
-  async eraseDatabases(ids) {
-    return { affected: Number((await call<Row>("fenvix_erase_databases", { p_ids: ids })).affected ?? 0) };
-  },
-
-  async setKeepAwake(ids, enabled) {
-    return { affected: Number((await call<Row>("fenvix_set_keep_awake", { p_ids: ids, p_enabled: enabled })).affected ?? 0) };
-  },
-
-  async setTags(id, tags) {
-    return toDatabase(await call<Row>("fenvix_set_tags", { p_id: id, p_tags: tags }));
-  },
-
-  async addTags(ids, tags) {
-    return { affected: Number((await call<Row>("fenvix_add_tags", { p_ids: ids, p_tags: tags })).affected ?? 0) };
-  },
-
-  async removeTags(ids, tags) {
-    return { affected: Number((await call<Row>("fenvix_remove_tags", { p_ids: ids, p_tags: tags })).affected ?? 0) };
-  },
-
-  async getUsage(databaseId, range) {
-    if (!isUuid(databaseId)) return [];
-    return ((await call<Row[]>("fenvix_usage_series", { p_database: databaseId, p_range: range })) ?? []).map(mapUsagePoint);
+  async getDefect(id) {
+    return (await defects()).find((d) => d.id === id) ?? null;
   },
 
   async listUsageMonths() {
-    return (await call<string[]>("fenvix_usage_months")) ?? [];
+    const rs = await rows(db().from("ci_runs").select("started_at").eq("workspace_id", await ws()).order("started_at", { ascending: true }).limit(1));
+    const now = new Date();
+    const first = rs[0] ? new Date(String(rs[0].started_at)) : now;
+    const out: string[] = [];
+    for (let d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)); d >= new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), 1)); d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1))) out.push(monthOf(d));
+    return out;
+  },
+  async getUsage(month) {
+    const { start, end } = monthBounds(month);
+    const [ps, pl, rt, rs] = await Promise.all([projects(), plans(), rate(), runsSince(start)]);
+    return usageFrom(month, ps, rs.filter((r) => r.startedAt < end.toISOString()), pl.find((p) => p.current) ?? null, rt);
+  },
+  async exportUsage(month) {
+    const report = await this.getUsage(month);
+    return { filename: usageCsvName(month), mimeType: "text/csv", downloadUrl: blobUrl(usageCsv(report), "text/csv") };
   },
 
-  async getUsageReport(query) {
-    const json = await call<Row>("fenvix_usage_report", usageArgs(query));
-    const totals = (json.totals as Row) ?? {};
-    return {
-      ...mapPage(json, ((json.items as Row[]) ?? []).map(mapUsageRow)),
-      month: String(json.month ?? query.month),
-      totals: { databases: Number(totals.databases ?? 0), storageGb: Number(totals.storage_gb ?? 0), requests: Number(totals.requests ?? 0) },
-    };
+  listPlans: () => plans(),
+  async getBilling() {
+    const now = new Date();
+    const [pl, ps, rs] = await Promise.all([plans(), projects(), runsSince(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1)))]);
+    return billingFrom(pl, ps, rs, now);
   },
 
-  async getUsageHistory() {
-    return ((await call<Row[]>("fenvix_usage_history")) ?? []).map((r) => ({ month: String(r.month), databases: Number(r.databases), storageGb: Number(r.storage_gb), requests: Number(r.requests) }));
+  async getGitHubConnection() {
+    const sub = await rows(db().from("ci_subscriptions").select("github_account").eq("workspace_id", await ws()));
+    return { account: sub[0]?.github_account ? String(sub[0].github_account) : null, installUrl: null };
   },
-
-  async exportUsageReport(query) {
-    const json = await call<Row>("fenvix_usage_export", {
-      p_month: monthStart(query.month),
-      p_by: query.by,
-      p_tag_key: query.by === "tag" && query.tagKey ? query.tagKey : null,
-      p_sort: query.sort ?? "requests",
-      p_dir: query.dir ?? "desc",
-    });
-    const rows = ((json.items as Row[]) ?? []).map(mapUsageRow);
-    return download(usageCsvName(query.month, query.by, query.tagKey), "text/csv", usageCsv(rows, query.by));
+  async listGitHubRepositories() {
+    return (await projects()).map((p) => ({ fullName: p.fullName, private: true, language: p.language, testRunner: p.testRunner, connected: true }));
   },
-
-  async getBilling(): Promise<BillingOverview> {
-    const b = await call<Row>("fenvix_billing");
-    const plan = PLANS.find((p) => p.id === b.plan) ?? PLANS[1];
-    const start = String(b.periodStart ?? "");
-    const end = String(b.periodEnd ?? "");
-    const year = end.slice(0, 4);
-    const payment = (b.paymentMethod as Row) ?? {};
-    return {
-      currency: String(b.currency ?? "USD"),
-      plan: { name: plan.name, description: plan.description },
-      monthToDate: {
-        periodLabel: `${dayLabel(start)} to ${dayLabel(end).replace(/^\w+ /, "")}, ${year}`,
-        lines: [
-          { label: "Storage", quantity: `${number(Number(b.storageGbMonths ?? 0))} GB-months`, rate: `$${Number(b.storageRate ?? 0).toFixed(2)} per GB-month`, cost: Number(b.storageCost ?? 0) },
-          { label: "Requests", quantity: `${number(Number(b.requests ?? 0))} requests`, rate: `$${Number(b.requestRate ?? 0).toFixed(2)} per million`, cost: Number(b.requestCost ?? 0) },
-        ],
-        total: Number(b.total ?? 0),
-      },
-      paymentMethod: { brand: String(payment.brand ?? ""), last4: String(payment.last4 ?? ""), expires: String(payment.expires ?? "") },
-    };
+  installGitHubApp: () => Promise.reject(new Error(NO_GITHUB_APP)),
+  completeInstallation: () => Promise.reject(new Error(NO_GITHUB_APP)),
+  async getSetupChange(projectId) {
+    const p = (await projects()).find((x) => x.id === projectId);
+    if (!p) throw new Error("That project does not exist.");
+    return setupChange(p);
   },
+  openSetupPullRequest: () => Promise.reject(new Error(NO_GITHUB_APP)),
 
-  async listInvoices(page = 1, pageSize = 12) {
-    const json = await call<Row>("fenvix_list_invoices", { p_page: page, p_page_size: pageSize });
-    return mapPage(json, ((json.items as Row[]) ?? []).map(mapInvoice));
-  },
-
-  async downloadInvoice(id) {
-    if (!isUuid(id)) throw new Error("Invoice not found");
-    const inv = await call<Row | null>("fenvix_get_invoice", { p_id: id });
-    if (!inv) throw new Error("Invoice not found");
-    const amount = Number(inv.amount ?? 0).toFixed(2);
-    const pdf = simplePdf(["FENVIX", "", `Invoice ${String(inv.number)}`, `Workspace: ${String(inv.workspace ?? "")}`, `Month: ${String(inv.month)}`, `Issued: ${String(inv.issuedAt).slice(0, 10)}`, `Amount: ${String(inv.currency)} ${amount}`, `Status: ${String(inv.status)}`]);
-    return { filename: `${String(inv.number)}.pdf`, mimeType: "application/pdf", downloadUrl: blobUrl(pdf, "application/pdf") };
-  },
-
-  // Public API keys live in the control plane only: without VITE_API_URL there is nothing to manage them with. The
-  // page says so before calling these (pages/ApiKeys.tsx).
-  listPublicApiKeys: () => Promise.reject(noPublicApi()),
-  createPublicApiKey: () => Promise.reject(noPublicApi()),
-  revokePublicApiKey: () => Promise.reject(noPublicApi()),
+  listPublicApiKeys: () => Promise.reject(new Error(PUBLIC_API_NOT_SET_UP)),
+  createPublicApiKey: () => Promise.reject(new Error(PUBLIC_API_NOT_SET_UP)),
+  revokePublicApiKey: () => Promise.reject(new Error(PUBLIC_API_NOT_SET_UP)),
 
   async getSettings(): Promise<Settings> {
-    const s = await call<Row>("fenvix_settings");
-    return { workspaceName: String(s?.workspaceName ?? ""), idleMinutes: Number(s?.idleMinutes ?? 5), emailNotices: s?.emailNotices === true };
+    const { data, error } = await db().rpc("fenvix_settings");
+    if (error) throw new Error(friendly(error.message));
+    const s = (data ?? {}) as Row;
+    return { workspaceName: String(s.workspaceName ?? ""), emailNotices: s.emailNotices === true };
   },
-
   async saveSettings(next) {
-    const s = await call<Row>("fenvix_save_settings", { p_name: next.workspaceName, p_idle: next.idleMinutes, p_notices: next.emailNotices });
-    return { workspaceName: String(s.workspaceName), idleMinutes: Number(s.idleMinutes), emailNotices: s.emailNotices === true };
+    const { data, error } = await db().rpc("fenvix_save_settings", { p_name: next.workspaceName, p_idle: 5, p_notices: next.emailNotices });
+    if (error) throw new Error(friendly(error.message));
+    const s = (data ?? {}) as Row;
+    return { workspaceName: String(s.workspaceName ?? next.workspaceName), emailNotices: s.emailNotices === true };
   },
 };
-

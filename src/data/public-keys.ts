@@ -54,8 +54,8 @@ export const PAGE_LIMIT = 100;
 
 export const ROLE_LABELS: Record<PublicKeyRole, string> = { admin: "Admin", read_only: "Read only" };
 export const ROLE_HELP: Record<PublicKeyRole, string> = {
-  admin: "Can do everything an organization admin can: create and erase databases, manage users, allowlists and keys.",
-  read_only: "Can read databases, users, allowlists and usage. Cannot change anything or see other keys.",
+  admin: "Can do everything an organization admin can: change project settings, open setup pull requests and manage keys.",
+  read_only: "Can read projects, runs, defects and usage, and pull defect bundles. Cannot change anything or see other keys.",
 };
 export const STATUS_LABELS: Record<PublicKeyStatus, string> = { active: "Active", expired: "Expired", revoked: "Revoked" };
 
@@ -161,6 +161,6 @@ export function curlExample(apiUrl: string): string {
   return [
     `export FENVIX_API=${publicApiUrl(apiUrl)}`,
     "export FENVIX_KEY=...   # paste the key from your secret store; never commit it",
-    'curl -sS "$FENVIX_API/databases" -H "Authorization: Bearer $FENVIX_KEY"',
+    'curl -sS "$FENVIX_API/defects?state=open" -H "Authorization: Bearer $FENVIX_KEY"',
   ].join("\n");
 }

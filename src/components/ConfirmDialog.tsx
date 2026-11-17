@@ -12,6 +12,7 @@ export function ConfirmDialog({
   onCancel,
   hideCancel,
   danger,
+  wide,
 }: {
   open: boolean;
   title: string;
@@ -25,6 +26,8 @@ export function ConfirmDialog({
   hideCancel?: boolean;
   /** The action cannot be undone (erase, delete, revoke, restore): a red confirm button. */
   danger?: boolean;
+  /** Room for a long body (a receipt, a list). */
+  wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -37,7 +40,7 @@ export function ConfirmDialog({
   }, [open]);
 
   return (
-    <dialog ref={ref} className={danger ? "dialog dialog-danger" : "dialog"} aria-labelledby={titleId} onCancel={(e) => (e.preventDefault(), onCancel())} onClose={() => open && onCancel()}>
+    <dialog ref={ref} className={`dialog${danger ? " dialog-danger" : ""}${wide ? " dialog-wide" : ""}`} aria-labelledby={titleId} onCancel={(e) => (e.preventDefault(), onCancel())} onClose={() => open && onCancel()}>
       {open && (
         <form
           onSubmit={(e) => {

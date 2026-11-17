@@ -1,25 +1,14 @@
 import { backend } from "../lib/env";
 import type { DataClient } from "./client";
-import { createHttpDataClient } from "./api-http";
-import { httpConfig } from "./explorer-http";
-import { httpRequest } from "./http";
 
 /**
  * The single place that picks the data source:
- *   - VITE_DATA_BACKEND=mock: the mock, loaded on demand (a real build never downloads it or builds its fake fleet);
- *   - VITE_API_URL set: the control plane over HTTP, the same way as the Data Explorer, users, network and
- *     organizations (session token as Bearer, the chosen organization's header, the same errors). The test is on
- *     import.meta.env itself so the build can see it: a build with VITE_API_URL does not contain the Supabase data
- *     client at all;
- *   - otherwise: the Supabase functions, as before the control plane existed.
+ *   - VITE_DATA_BACKEND=mock: the sample data, loaded on demand (a real build never downloads it);
+ *   - otherwise: the CI tables on Supabase (supabase/migrations/0011_ci_runs.sql), read under row level security.
+ * Organizations and members still go to the control plane when VITE_API_URL is set (src/data/orgs-client.ts).
  */
-export const client: DataClient =
-  backend === "mock"
-    ? (await import("./mock")).mockClient
-    : import.meta.env.VITE_API_URL
-      ? createHttpDataClient({ request: (method, path, opts) => httpRequest(httpConfig, method, path, opts) })
-      : (await import("./supabase")).supabaseClient;
-export type { DataClient } from "./client";
+export const client: DataClient = backend === "mock" ? (await import("./mock")).mockClient : (await import("./supabase")).supabaseClient;
+export type { DataClient, RunQuery } from "./client";
 export * from "./types";
 
 // The Playwright checks call the mock "server" directly to show that it refuses what a member's screens hide.

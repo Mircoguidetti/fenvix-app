@@ -4,9 +4,11 @@ import { SessionProvider, useSession } from "./session/SessionProvider";
 import { SignInPage } from "./pages/SignIn";
 import { Shell } from "./components/Shell";
 import { OverviewPage } from "./pages/Overview";
-import { DatabasesPage } from "./pages/Databases";
-import { CreateDatabasePage } from "./pages/CreateDatabase";
-import { DatabaseDetailPage } from "./pages/DatabaseDetail";
+import { ProjectsPage } from "./pages/Projects";
+import { ConnectPage } from "./pages/Connect";
+import { ProjectPage } from "./pages/Project";
+import { RunPage } from "./pages/Run";
+import { DefectPage, DefectsPage } from "./pages/Defects";
 import { UsagePage } from "./pages/Usage";
 import { BillingPage } from "./pages/Billing";
 import { ApiKeysPage } from "./pages/ApiKeys";
@@ -24,9 +26,9 @@ function NotFound() {
         404
       </span>
       <h1>Page not found</h1>
-      <p className="muted">The page you asked for does not exist. The link may be old, or the database was erased.</p>
-      <Link to="/databases" className="btn btn-primary">
-        Back to your databases
+      <p className="muted">The page you asked for does not exist. The link may be old, or the project was disconnected.</p>
+      <Link to="/projects" className="btn btn-primary">
+        Back to your projects
       </Link>
     </div>
   );
@@ -66,9 +68,12 @@ function Dashboard() {
       <Routes>
         <Route path="/" element={<Navigate to="/overview" replace />} />
         <Route path="/overview" element={<OverviewPage />} />
-        <Route path="/databases" element={<DatabasesPage />} />
-        <Route path="/databases/new" element={<CreateDatabasePage />} />
-        <Route path="/databases/:id" element={<DatabaseDetailPage />} />
+        <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/projects/connect" element={<ConnectPage />} />
+        <Route path="/projects/:id" element={<ProjectPage />} />
+        <Route path="/projects/:projectId/runs/:runId" element={<RunPage />} />
+        <Route path="/defects" element={<DefectsPage />} />
+        <Route path="/defects/:id" element={<DefectPage />} />
         <Route path="/usage" element={<UsagePage />} />
         <Route path="/billing" element={<BillingPage />} />
         <Route path="/api-keys" element={<ApiKeysPage />} />
@@ -82,7 +87,7 @@ function Dashboard() {
   );
 }
 
-// BrowserRouter: real URLs (/overview, /databases/…). The host must answer every path with index.html (see vercel.json).
+// BrowserRouter: real URLs (/overview, /projects/…). The host must answer every path with index.html (see vercel.json).
 // Signed-out visitors see the sign-in page on every route.
 export default function App() {
   return (

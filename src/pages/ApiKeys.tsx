@@ -15,7 +15,7 @@ import { KeyStatus } from "../components/StateBadge";
 import { useAsync } from "../lib/useAsync";
 import { formatDate, formatRelative } from "../lib/format";
 
-const DESCRIPTION = "Your code uses these keys to call the FENVIX API and manage databases. Each key is shown in full only once.";
+const DESCRIPTION = "Your scripts and coding agents use these keys to call the fenvix API: read runs and defects, and pull defect bundles. Each key is shown in full only once.";
 
 /** The documented address of the API, for the example when the dashboard runs on the mock (which has no API address). */
 const DOCUMENTED_API_URL = "https://api.fenvix.cloud/v1";
@@ -166,7 +166,7 @@ function ApiKeysManager() {
         <div className="empty">
           <h2>No API keys yet</h2>
           <p className="muted">
-            A key lets your code, scripts and CI create and manage databases through the FENVIX API, without signing in. Give it a name above, pick a role and create
+            A key lets your scripts and coding agents read runs and defects and pull replay bundles through the fenvix API, without signing in. Give it a name above, pick a role and create
             your first key.
           </p>
         </div>
@@ -275,7 +275,7 @@ function CreatedKey({ created, onDismiss }: { created: CreatedPublicKey; onDismi
         <CopyButton value={created.token} what="new key" />
       </div>
       <div className="field">
-        <label htmlFor="key-example">Try it: list your databases</label>
+        <label htmlFor="key-example">Try it: list your open defects</label>
         <textarea id="key-example" className="code" readOnly rows={3} wrap="off" value={example} onFocus={(e) => e.currentTarget.select()} />
         <div className="row-actions">
           <CopyButton value={example} label="Copy example" what="curl example" />
