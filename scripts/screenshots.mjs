@@ -1,27 +1,26 @@
 // Regenerates every screenshot in screenshots/ and checks layout, rendering and accessibility on each one.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: npm run screenshots
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
-import { BANNED, BASE, VIEWPORTS, axeViolations, go, isMobile, launch, layoutProblems, makeReporter, newPage, renderProblems, settled, visibleText, openFilters } from "./lib.mjs";
+import { BANNED, BASE, VIEWPORTS, axeViolations, flakyRun, go, isMobile, launch, layoutProblems, makeReporter, newPage, renderProblems, settled, visibleText } from "./lib.mjs";
 
 const { fail, state } = makeReporter();
 const MAX_HEIGHT = 2600; // long lists are cut here so the files stay a sensible size
 
 const SCREENS = [
   ["overview", "overview"],
-  ["databases", "databases"],
-  ["databases-filtered", "databases?tag=customer:acme-labs&state=awake"],
-  ["databases-grouped", "databases?group=customer&q=acme"],
-  ["database-detail", "databases/db_0001"],
-  ["database-detail-asleep", "databases/db_0011"],
-  ["create-database", "databases/new"],
-  ["database-users", "databases/db_0001?tab=users"],
-  ["database-users-empty", "databases/db_0002?tab=users"],
-  ["database-network", "databases/db_0001?tab=network"],
-  ["database-network-empty", "databases/db_0002?tab=network"],
+  ["projects", "projects"],
+  ["project-runs", "projects/prj_homehub"],
+  ["project-runs-failed", "projects/prj_storefront?status=failed"],
+  ["project-setup", "projects/prj_docs?tab=setup"],
+  ["project-settings", "projects/prj_homehub?tab=settings"],
+  ["connect", "projects/connect"],
+  ["defects", "defects"],
+  ["defect", "defects/dfx_9a10"],
+  ["defect-node", "defects/dfx_3b05"],
   ["usage", "usage"],
-  ["usage-by-tag", "usage?by=tag&key=customer"],
   ["billing", "billing"],
   ["api-keys", "api-keys"],
+  ["members", "settings/members"],
   ["settings", "settings"],
 ];
 
@@ -95,84 +94,70 @@ for (const [vpName, viewport] of VIEWPORTS) {
     await shot(name);
   }
 
-  // A select, open: the list under it with the choice ticked.
-  await go(page, "databases");
+  // A run with a flaky failure, its failed tests, and a skip receipt.
+  const flaky = await flakyRun(page);
+  await go(page, `projects/${flaky.projectId}/runs/${flaky.runId}`);
+  await page.waitForSelector("main h1");
   await settled(page);
-  await openFilters(page);
-  await page.getByLabel("Sort by").click();
+  await page.waitForTimeout(250);
+  await check(`run ${vpName}`);
+  await shot("run");
+  await page.locator("#tests").getByRole("button", { name: /^Failed/ }).click();
+  await page.locator(".test-failure").first().waitFor();
+  await check(`run-failed ${vpName}`);
+  await shot("run-failed");
+  await page.locator("#tests").getByRole("button", { name: /^Skipped/ }).click();
+  await page.waitForFunction(() => document.querySelector(".test-row")?.dataset.outcome === "skipped_with_proof");
+  await page.locator(".test-row").first().getByRole("button", { name: /^Receipt for / }).click();
+  await page.getByRole("dialog").getByText("Cache key").waitFor();
+  await check(`receipt ${vpName}`);
+  await shot("skip-receipt", true);
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+
+  // A select, open: the list under it with the choice ticked.
+  await go(page, "defects");
+  await settled(page);
+  await page.getByLabel("Project").click();
   await page.getByRole("listbox").waitFor();
   await check(`select-open ${vpName}`);
   await shot("select-open", true);
   await page.keyboard.press("Escape");
 
-  // Grouped list with a group open and the bulk bar showing.
-  await go(page, "databases?group=customer&q=acme");
+  // Onboarding: GitHub's install page (stood in for), then the setup pull request.
+  await go(page, "projects/connect");
   await settled(page);
-  await page.locator(".group-toggle").first().click();
-  await page.getByRole("button", { name: /^Select all \d+ in / }).click();
-  await page.getByRole("region", { name: "Bulk actions" }).waitFor();
-  await check(`databases-bulk ${vpName}`);
-  await shot("databases-bulk");
-
-  // Dialogs
-  await go(page, "databases/db_0001");
-  await settled(page);
-  for (const [name, button, dialogName] of [
-    ["fork-dialog", "Fork", "Fork this database"],
-    ["restore-dialog", "Restore to a point in time", "Restore to a point in time"],
-    ["erase-dialog", "Erase", "Erase this database?"],
-  ]) {
-    await page.getByRole("button", { name: button, exact: true }).click();
-    await page.getByRole("dialog", { name: dialogName }).waitFor();
-    await check(`${name} ${vpName}`);
-    await shot(name, true);
-    await page.keyboard.press("Escape");
-    await page.getByRole("dialog").waitFor({ state: "hidden" });
-  }
-
-  // Database users: the password shown once, after a user is made and after a database is created.
-  await go(page, "databases/db_0001?tab=users");
-  await settled(page);
-  await page.locator("#users td .user-name").filter({ hasText: /^reporting$/ }).waitFor();
-  await page.getByLabel("User name").fill("shot-user");
-  await check(`database-users-add ${vpName}`);
-  await shot("database-users-new-user");
-  await page.getByRole("button", { name: "Create user" }).click();
-  await page.getByRole("dialog", { name: "User shot-user created" }).waitFor();
-  await check(`database-users-password ${vpName}`);
-  await shot("database-users-password-dialog", true);
-  await page.getByRole("button", { name: "I have saved it" }).click();
-  await page.getByRole("dialog").waitFor({ state: "hidden" });
-  await page.getByRole("button", { name: "Delete user shot-user" }).click();
-  await page.getByRole("dialog", { name: "Delete this user?" }).waitFor();
-  await check(`database-users-delete ${vpName}`);
-  await shot("database-users-delete-dialog", true);
-  await page.keyboard.press("Escape");
-  await page.getByRole("dialog").waitFor({ state: "hidden" });
-
-  await go(page, "databases/new");
-  await settled(page);
-  await page.getByLabel("Name", { exact: true }).fill(`shot-created-${vpName}`);
-  await page.getByRole("button", { name: "Create database" }).click();
-  await page.getByRole("link", { name: "Open database" }).waitFor();
+  await page.getByRole("button", { name: "Add repositories on GitHub" }).click();
+  await page.getByRole("dialog").getByRole("checkbox").first().check();
+  await check(`connect-install ${vpName}`);
+  await shot("connect-install-dialog", true);
+  await page.getByRole("dialog").getByRole("button", { name: "Install" }).click();
+  await page.locator(".setup-row").first().waitFor();
   await page.locator(".toast").getByRole("button", { name: "Dismiss message" }).click();
-  await check(`database-created ${vpName}`);
-  await shot("database-created");
+  await check(`connect-setup ${vpName}`);
+  await shot("connect-setup");
+  await page.locator(".setup-row").first().getByRole("button", { name: "Open the pull request" }).click();
+  await page.locator(".setup-done").first().waitFor();
+  await page.locator(".toast").getByRole("button", { name: "Dismiss message" }).click();
+  await check(`connect-pr ${vpName}`);
+  await shot("connect-pull-request");
 
   await go(page, "api-keys");
   await settled(page);
-  await page.getByRole("button", { name: "Revoke key Deploy pipeline" }).click();
+  await page.getByRole("button", { name: "Revoke key Release pipeline" }).click();
   await page.getByRole("dialog").waitFor();
+  await page.waitForTimeout(300); // the dialog has finished appearing before its colours are measured
+  await page.waitForFunction(() => !document.querySelector(".toast"), null, { timeout: 15000 }).catch(() => {});
   await check(`revoke-dialog ${vpName}`);
   await shot("api-keys-revoke-dialog", true);
   await page.keyboard.press("Escape");
 
   // A confirmation message
-  await go(page, "databases/db_0001");
+  await go(page, "projects/prj_homehub?tab=settings");
   await settled(page);
-  await page.getByLabel("Add a tag").fill("team:data");
-  await page.getByRole("button", { name: "Add tag", exact: true }).click();
-  await page.getByText("Added tag team:data").waitFor();
+  await page.getByRole("switch", { name: /Comment on pull requests/ }).click();
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await page.getByText("Project settings saved").waitFor();
   await shot("confirmation", true);
   await page.locator(".toast").getByRole("button", { name: "Dismiss message" }).click();
   await page.locator(".toast").waitFor({ state: "hidden" });

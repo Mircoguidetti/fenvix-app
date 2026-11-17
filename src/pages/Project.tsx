@@ -63,7 +63,7 @@ function RunsTab({ project }: { project: ProjectRow }) {
         {runs.status === "ready" && runs.data.items.length === 0 && <p className="muted">No runs match. The first run arrives once the test job uses runs-on: fenvix.</p>}
         {runs.status === "ready" && runs.data.items.length > 0 && (
           <>
-            <div className="table-card flush table-scroll">
+            <div className="table-card flush">
               <table className="data responsive runs-table">
                 <caption className="sr-only">Runs</caption>
                 <thead>
@@ -71,7 +71,6 @@ function RunsTab({ project }: { project: ProjectRow }) {
                     <th scope="col">Run</th>
                     <th scope="col">Commit</th>
                     <th scope="col">Branch or pull request</th>
-                    <th scope="col">Trigger</th>
                     <th scope="col" className="num">
                       Duration
                     </th>
@@ -79,7 +78,7 @@ function RunsTab({ project }: { project: ProjectRow }) {
                       Ran
                     </th>
                     <th scope="col" className="num">
-                      Skipped with proof
+                      Skipped
                     </th>
                     <th scope="col" className="num">
                       Failed
@@ -94,13 +93,13 @@ function RunsTab({ project }: { project: ProjectRow }) {
                     <tr key={r.id}>
                       <td data-label="Run">
                         <span className="name-cell">
-                          <Link to={`/projects/${project.id}/runs/${r.id}`} className="row-link mono">
-                            #{r.number}
-                          </Link>
                           <span className="inline-pair">
+                            <Link to={`/projects/${project.id}/runs/${r.id}`} className="row-link mono">
+                              #{r.number}
+                            </Link>
                             <RunStatusPill status={r.status} />
-                            <span className="muted small">{formatRelative(r.startedAt, now)}</span>
                           </span>
+                          <span className="muted small">{formatRelative(r.startedAt, now)}</span>
                         </span>
                       </td>
                       <td data-label="Commit">
@@ -111,12 +110,14 @@ function RunsTab({ project }: { project: ProjectRow }) {
                           </span>
                         </span>
                       </td>
-                      <td data-label="Branch or pull request" className="mono">
-                        <span className="ellipsis branch-cell" title={r.branch}>
-                          {r.pullRequest ? `#${r.pullRequest}` : r.branch}
+                      <td data-label="Branch or pull request">
+                        <span className="name-cell">
+                          <span className="mono ellipsis branch-cell" title={r.branch}>
+                            {r.pullRequest ? `#${r.pullRequest}` : r.branch}
+                          </span>
+                          <span className="muted small">{triggerLabel(r.trigger)}</span>
                         </span>
                       </td>
-                      <td data-label="Trigger">{triggerLabel(r.trigger)}</td>
                       <td data-label="Duration" className="num mono">
                         {formatDuration(r.durationMs)}
                       </td>

@@ -8,8 +8,12 @@ export const VIEWPORTS = [
   ["mobile", { width: 390, height: 844 }],
 ];
 
-/** Nothing in the product may read as a demo, a draft or a stand-in. */
-export const BANNED = /sample|demo|test|placeholder|coming soon|planned|preview|lorem/i;
+/**
+ * Nothing in the product may read as a demo, a draft or a stand-in. The one exception is the "Sample data" note the
+ * shell shows while the mock backend is on (.sample-note): visibleText leaves it out, and the checks look for it.
+ * ("test" is no longer banned: tests are the product's subject.)
+ */
+export const BANNED = /sample|demo|placeholder|coming soon|planned|preview|lorem/i;
 
 export const launch = () => chromium.launch();
 
@@ -95,13 +99,20 @@ export async function settled(page) {
 /** Visible text of the page, with the text of inputs and selects. */
 export async function visibleText(page) {
   return page.evaluate(() => {
-    const parts = [document.body.innerText];
+    const clone = document.body.cloneNode(true);
+    clone.querySelectorAll(".sample-note").forEach((n) => n.remove());
+    // innerText of a detached node ignores layout, so the clone is attached hidden for a moment.
+    clone.style.cssText = "position:absolute;left:-99999px;top:0;width:1200px";
+    document.documentElement.appendChild(clone);
+    const parts = [clone.innerText];
+    clone.remove();
     for (const el of document.querySelectorAll("input, textarea")) {
+      if (el.closest(".sample-note")) continue;
       if (el.type === "checkbox" || el.type === "radio") continue;
       parts.push(el.value, el.placeholder ?? "");
     }
     for (const s of document.querySelectorAll("select")) parts.push(...[...s.options].map((o) => o.textContent));
-    for (const el of document.querySelectorAll("[aria-label], [title]")) parts.push(el.getAttribute("aria-label") ?? "", el.getAttribute("title") ?? "");
+    for (const el of document.querySelectorAll("[aria-label], [title]")) if (!el.closest(".sample-note")) parts.push(el.getAttribute("aria-label") ?? "", el.getAttribute("title") ?? "");
     return parts.join("\n");
   });
 }
@@ -187,18 +198,14 @@ export async function renderProblems(page) {
 
 export async function axeViolations(page) {
   const axe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
-  return axe.violations.map((v) => `axe ${v.id} (${v.nodes.length}) ${v.nodes[0]?.target}`);
+  return axe.violations.map((v) => `axe ${v.id} (${v.nodes.length}) ${v.nodes[0]?.target}: ${v.nodes[0]?.any?.[0]?.message ?? ""}`);
 }
 
-/** On a phone the state, group, sort and tag filters sit behind the "Filters" button: opens them when they are shut. */
-export async function openFilters(page) {
-  const toggle = page.getByRole("button", { name: /^Filters/ });
-  if ((await toggle.count()) && (await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
-}
-
-/** Opens one of a database's sections: the link in the second bar on a computer, the tab on a phone. */
-export async function openSection(page, name) {
-  const link = page.locator(".cx-sub").getByRole("link", { name, exact: true });
-  if (await link.isVisible()) await link.click();
-  else await page.getByRole("button", { name, exact: true }).click();
+/** A failed run of northwind/homehub whose failure is a reproducible flaky defect, read from the mock "server". */
+export async function flakyRun(page) {
+  return page.evaluate(async () => {
+    const page = await window.__fenvixMock.listRuns("prj_homehub", { status: "failed", pageSize: 500 });
+    const run = page.items.find((r) => r.tests.flakyDefects > 0 && r.skipShare > 0.9);
+    return { projectId: run.projectId, runId: run.id, number: run.number };
+  });
 }

@@ -102,7 +102,7 @@ export function UsagePage() {
                   </div>
                 </dl>
                 <p className="muted small">
-                  {formatMoney(u.rate.usdPerMinute)} a minute, {u.rate.runner}, as stated on GitHub's pricing page ({u.rate.checkedOn}).
+                  ${u.rate.usdPerMinute} a minute, {u.rate.runner}, as stated on GitHub's pricing page ({u.rate.checkedOn}).
                 </p>
               </Card>
             </div>

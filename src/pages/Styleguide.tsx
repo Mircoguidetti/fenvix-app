@@ -154,7 +154,7 @@ export function StyleguidePage() {
           <button type="button" className="btn btn-danger" onClick={() => (setTyped(""), setDialog("danger"))}>
             Open a confirmation
           </button>
-          <button type="button" className="btn" onClick={() => toast("Opened pull request #412", "success")}>
+          <button type="button" className="btn" onClick={() => toast("Opened the setup pull request", "success")}>
             Success toast
           </button>
           <button type="button" className="btn" onClick={() => toast("Could not reach the server.", "error")}>

@@ -2,7 +2,7 @@
 // state is actually drawn in, that a coloured state also has a word or an icon, that no other hue shows anywhere, that
 // silver is only where it belongs, and that nothing sticks out of the screen.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: node scripts/status-colors-checks.mjs
-import { VIEWPORTS, go, isMobile, launch, layoutProblems, makeReporter, newPage, settled, signIn } from "./lib.mjs";
+import { VIEWPORTS, go, isMobile, launch, layoutProblems, makeReporter, newPage, settled, signIn, flakyRun } from "./lib.mjs";
 
 const { fail, pass, state } = makeReporter();
 const browser = await launch();
@@ -110,149 +110,66 @@ async function noLine(page, selector) {
 }
 
 
-/** The selected database section: the link in the second bar on a computer, the tab on a phone. */
-async function selectedSection(page) {
-  const side = page.locator(".cx-sub .cx-sub-link.active");
-  return (await side.count()) && (await side.first().isVisible()) ? ".cx-sub .cx-sub-link.active" : '.tabs button[aria-pressed="true"]';
-}
-
 const TESTS = {
-  async "databases: awake is green with its word, asleep stays grey"(page) {
-    await signIn(page, "databases");
-    const awake = await paint(page, "table.dbs .state-awake");
-    assert(awake.text === "Awake" && awake.border === SUCCESS, `awake badge: "${awake.text}" ${awake.border}`);
-    const dot = await paint(page, "table.dbs .state-awake .dot");
-    assert(dot.bg === SUCCESS, `awake dot is ${dot.bg}`);
-    const asleep = await paint(page, "table.dbs .state-asleep");
-    assert(asleep.text === "Asleep" && !STATUS.includes(asleep.border), `asleep badge is coloured: ${asleep.border}`);
-    const hollow = await paint(page, "table.dbs .state-asleep .dot");
-    assert(hollow.bg === "rgba(0, 0, 0, 0)", "the asleep dot is filled");
+  async "projects: on fenvix and passed are green with their word, failed is red with its word"(page) {
+    await signIn(page, "projects");
+    const on = await paint(page, "main tbody .state-ok");
+    assert(on.border === SUCCESS && on.text.length > 0, `on fenvix / passed: "${on.text}" ${on.border}`);
+    const failed = page.locator("main tbody .state-danger");
+    if (await failed.count()) {
+      const f = await paint(page, "main tbody .state-danger");
+      assert(f.text === "Failed" && f.border === DANGER && f.color === DANGER, `failed: "${f.text}" ${f.border}`);
+    }
     await huesOnPage(page, STATUS);
     await fits(page);
   },
 
-  async "database: erase is red, its dialog has no border and a red confirm button; restore opens the same red dialog from a neutral button; the selected tab is black and bold, with no line under it"(page) {
-    await signIn(page, "databases/db_0001");
-    const sel = await selectedSection(page);
-    await noLine(page, sel);
-    const tab = await paint(page, sel);
-    // On a phone the tab is the dark ink; on a computer the section is the frame's blue on its pale tint (the mockup).
-    assert(sel.startsWith(".tabs") ? tab.color === BLACK : !STATUS.includes(tab.color), `the selected section is ${tab.color}`);
-    const erase = await paint(page, "#actions .action-erase .action-name");
-    assert(erase.text === "Erase" && erase.color === DANGER, `erase action: ${erase.color}`);
-    const fork = await paint(page, "#actions .action-btn >> nth=0");
-    assert(!STATUS.includes(fork.color), "a plain action is coloured");
-    await page.getByRole("button", { name: "Erase", exact: true }).click();
-    await noBorder(page, "erase");
-    const confirm = await paint(page, "dialog[open] .btn-primary");
-    assert(confirm.bg === DANGER && confirm.border === DANGER && confirm.color === WHITE && confirm.text === "Erase database", `the erase confirm is ${confirm.bg} / ${confirm.color}`);
-    await huesOnPage(page, STATUS);
-    await fits(page);
-    await page.getByRole("button", { name: "Cancel" }).click();
-    // Restore drops the changes made after the chosen moment: a red dialog, opened from a neutral button.
-    const restoreBtn = await paint(page, '#actions .action-btn:has-text("Restore to a point in time")');
-    assert(!STATUS.includes(restoreBtn.color) && !STATUS.includes(restoreBtn.border), `the Restore button is coloured (${restoreBtn.color})`);
-    await page.getByRole("button", { name: "Restore to a point in time" }).click();
-    await noBorder(page, "restore");
-    const restore = await paint(page, "dialog[open] .btn-primary");
-    assert(restore.bg === DANGER && restore.color === WHITE && restore.text === "Restore database", `the restore confirm is ${restore.bg} / ${restore.color}`);
-    await huesOnPage(page, STATUS);
-    await fits(page);
-    await page.getByRole("button", { name: "Cancel" }).click();
-    // A dialog that changes nothing for good is not marked danger, and has no border either.
-    await page.getByRole("button", { name: "Fork" }).click();
-    await page.locator("dialog[open]").waitFor();
-    assert(!(await page.locator("dialog.dialog-danger[open]").count()), "the fork dialog is marked danger");
-    await noBorder(page, "fork");
-    assert((await paint(page, "dialog[open] .btn-primary")).bg === BLACK, "the fork confirm is not black");
-  },
-
-  async "database: the area under the storage line is the silver fill"(page) {
-    await signIn(page, "databases/db_0001");
-    const area = page.locator("#usage .chart-area").first();
-    await area.waitFor();
-    const fill = await area.evaluate((e) => e.style.fill);
-    const id = /url\("?#([^")]+)"?\)/.exec(fill)?.[1];
-    assert(id, `the area is not filled with a gradient (${fill})`);
-    const stops = await page.evaluate((i) => [...document.getElementById(i).querySelectorAll("stop")].map((s) => `${getComputedStyle(s).stopColor} ${getComputedStyle(s).stopOpacity}`), id);
-    const want = ["rgb(124, 130, 139) 0.32", "rgb(196, 200, 206) 0.22", "rgb(244, 245, 247) 0"];
-    assert(stops.join("|") === want.join("|"), `the stops are not the light silver fill: ${stops.join(", ")}`);
-    const line = await paint(page, "#usage .chart-line");
-    assert(!STATUS.includes(line.color) && (await page.locator("#usage .chart-bar").first().evaluate((e) => getComputedStyle(e).fill)) === CHART, "the charts are not slate and grey");
-  },
-
-  async "network: blocked addresses are red with an icon, a bad entry is a red error, unsaved changes are amber, saving says so in green"(page) {
-    await signIn(page, "databases/db_0001?tab=network");
-    await noLine(page, await selectedSection(page));
-    const blocked = await paint(page, "#blocks .blocked-until");
-    assert(blocked.color === DANGER && blocked.svg && /^Blocked until/.test(blocked.text), `blocked: ${blocked.color} "${blocked.text}"`);
-    const clear = await paint(page, "#allowlist .btn-danger");
-    assert(clear.text === "Clear list" && clear.color === DANGER, `clear list: ${clear.color}`);
-
-    await page.getByLabel("Address or network").fill("db.example.com");
-    await page.getByRole("button", { name: "Add", exact: true }).click();
-    const error = await paint(page, "#allowlist .error");
-    assert(error.color === DANGER, `the error is ${error.color}`);
-    const prefix = await page.locator("#allowlist .error").evaluate((e) => getComputedStyle(e, "::before").content);
-    assert(prefix.includes("Error:"), "the error does not say Error:");
-    const input = await paint(page, "#net-add");
-    assert(input.border === DANGER, `the invalid field's border is ${input.border}`);
-
-    await page.getByRole("button", { name: "Remove 198.51.100.7/32" }).click();
-    const tag = await paint(page, "#allowlist .tag-warning");
-    assert(tag.text === "Unsaved changes" && tag.border === WARNING, `unsaved: ${tag.border}`);
-    await huesOnPage(page, STATUS);
-    await fits(page);
-
-    await page.getByRole("button", { name: "Save list" }).click();
-    const warn = await paint(page, "dialog[open] .once-warning svg");
-    assert(warn.color === WARNING, `the save warning icon is ${warn.color}`);
-    await page.getByLabel("I have checked that the addresses of my applications are in the list").check();
-    await page.locator("dialog[open]").getByRole("button", { name: "Save list" }).click();
-    const toast = page.locator(".toast-success", { hasText: "Saved the IP allowlist" });
-    await toast.waitFor();
-    const icon = await paint(page, ".toast-success .toast-icon");
-    assert(icon.color === SUCCESS_DARK, `the success toast icon is ${icon.color}`);
-    await huesOnPage(page, STATUS);
-    await fits(page);
-
-    await page.getByRole("button", { name: "Unblock 203.0.113.45" }).click();
-    await page.locator(".toast-success", { hasText: "Unblocked 203.0.113.45" }).waitFor();
-  },
-
-  async "network: a list different from the engine's and a Data Explorer the server does not trust are amber warnings with an icon"(page) {
-    await signIn(page, "databases/db_0003?tab=network");
-    const callout = await paint(page, "#allowlist .callout-warning");
-    assert(callout.borderWidth === "0px 0px 0px 0px" && callout.shadow === "none" && callout.svg && /different list/.test(callout.text), `different list: ${callout.borderWidth} ${callout.shadow}`);
-    assert((await paint(page, "#allowlist .callout-warning svg")).color === WARNING, "the icon is not amber");
-    const apply = await paint(page, "#allowlist .callout-warning .btn");
-    assert(!STATUS.includes(apply.color), "Apply again is coloured");
-    await huesOnPage(page, STATUS);
-    await fits(page);
-
-    await page.goto(page.url().replace("db_0003", "db_0004"));
+  async "a run: failed is red with its word, skipped with proof stays grey, the receipt dialog has no border"(page) {
+    await signIn(page, "overview");
+    const { projectId, runId } = await flakyRun(page);
+    await go(page, `projects/${projectId}/runs/${runId}`);
     await settled(page);
-    const trust = await paint(page, "#allowlist .once-warning");
-    assert(trust.borderWidth === "0px 0px 0px 0px" && trust.shadow === "none" && trust.svg && /Data Explorer/.test(trust.text), `untrusted explorer: ${trust.borderWidth} ${trust.shadow}`);
-    assert((await paint(page, "#allowlist .once-warning svg")).color === WARNING, "the icon is not amber");
+    const head = await paint(page, ".page-header .state-danger");
+    assert(head.text === "Failed" && head.border === DANGER, `the run's state: "${head.text}" ${head.border}`);
+    await page.locator("#tests").getByRole("button", { name: /^Skipped/ }).click();
+    const skipped = page.locator(".test-row .state", { hasText: "Skipped with proof" }).first();
+    await skipped.waitFor();
+    assert(!STATUS.includes(await skipped.evaluate((e) => getComputedStyle(e).borderTopColor)), "skipped with proof is coloured");
     await huesOnPage(page, STATUS);
+    await fits(page);
+    await page.locator(".test-row").first().getByRole("button", { name: /^Receipt for / }).click();
+    await page.getByRole("dialog").getByText("Cache key").waitFor();
+    await noBorder(page, "receipt");
+    const close = await paint(page, "dialog[open] .btn-primary");
+    assert(close.bg === BLACK, `the receipt's Close button is ${close.bg}`);
     await fits(page);
   },
 
-  async "network: an engine that does not answer is a red error with an icon"(page) {
-    await signIn(page, "databases/db_0005?tab=network");
-    const msg = await paint(page, "#allowlist .message-error");
-    assert(msg.color === DANGER && msg.svg && msg.text.length > 10, `engine down: ${msg.color}`);
+  async "defects: open is red, replays 10/10 is green, both with their words"(page) {
+    await signIn(page, "defects/dfx_7c21");
+    const replays = await paint(page, ".page-header .state-ok");
+    assert(replays.text === "Replays 10/10" && replays.border === SUCCESS, `replays: "${replays.text}" ${replays.border}`);
+    const open = await paint(page, ".page-header .state-danger");
+    assert(open.text === "Open" && open.border === DANGER, `open: "${open.text}" ${open.border}`);
     await huesOnPage(page, STATUS);
     await fits(page);
+    await go(page, "defects/dfx_9a20");
+    await settled(page);
+    const unstable = await paint(page, ".page-header .state-warn");
+    assert(/fingerprints differ/.test(unstable.text) && unstable.border === WARNING, `an unstable replay is not amber with words: "${unstable.text}"`);
   },
 
-  async "data: waking a sleeping database is amber, with its words and the spinning icon"(page) {
-    await signIn(page, "databases");
-    await go(page, "databases/db_0012?tab=data"); // the mock takes a moment to wake a sleeping database
-    const waking = await paint(page, ".waking");
-    assert(waking.borderWidth === "0px 0px 0px 0px" && waking.shadow === "none" && waking.svg && /Waking the database/.test(waking.text), `waking: ${waking.borderWidth} ${waking.shadow}`);
-    assert((await paint(page, ".waking svg")).color === WARNING, "the waking icon is not amber");
+  async "connect: a done step is green with a tick, the diff is red and green with - and +"(page) {
+    await signIn(page, "projects/connect");
+    const done = await paint(page, ".step[data-done] .step-n");
+    assert(done.bg === SUCCESS && done.svg, `a done step is ${done.bg}`);
+    await page.getByRole("button", { name: "Add repositories on GitHub" }).click();
+    await page.getByRole("dialog").getByRole("checkbox").first().check();
+    await page.getByRole("dialog").getByRole("button", { name: "Install" }).click();
+    const del = await paint(page, ".diff-del");
+    const add = await paint(page, ".diff-add");
+    assert(del.text.startsWith("-") && add.text.startsWith("+"), "the diff lines do not start with - and +");
+    assert(del.color === "rgb(255, 106, 92)" && add.color === "rgb(61, 220, 132)", `the diff colours are ${del.color} / ${add.color}`);
     await huesOnPage(page, STATUS);
     await fits(page);
   },
@@ -285,36 +202,8 @@ const TESTS = {
     assert(revokeConfirm.bg === DANGER && revokeConfirm.color === WHITE, `the revoke confirm is ${revokeConfirm.bg} / ${revokeConfirm.color}`);
   },
 
-  async "database users: reset password stays neutral, its dialog is not red and warns in amber with an icon; delete is red"(page) {
-    await signIn(page, "databases/db_0001?tab=users");
-    const reset = page.getByRole("button", { name: /^Reset password of / }).first();
-    await reset.waitFor();
-    const resetPaint = await reset.evaluate((e) => ({ color: getComputedStyle(e).color, border: getComputedStyle(e).borderTopColor }));
-    assert(!STATUS.includes(resetPaint.color) && !STATUS.includes(resetPaint.border), `the Reset password button is coloured (${resetPaint.color})`);
-    await reset.click();
-    await page.getByRole("heading", { name: "Reset this password?" }).waitFor();
-    assert(!(await page.locator("dialog.dialog-danger[open]").count()), "the reset dialog is marked danger");
-    await noBorder(page, "reset");
-    const warn = await paint(page, "dialog[open] .once-warning");
-    assert(warn.borderWidth === "0px 0px 0px 0px" && warn.svg && warn.text === "Applications using the old password will stop working.", `reset warning: ${warn.borderWidth} "${warn.text}"`);
-    assert((await paint(page, "dialog[open] .once-warning svg")).color === WARNING, "the reset warning icon is not amber");
-    const confirm = await paint(page, "dialog[open] .btn-primary");
-    assert(confirm.bg === BLACK && confirm.text === "Reset password", `the reset confirm is ${confirm.bg}`);
-    await huesOnPage(page, STATUS);
-    await fits(page);
-    await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
-    await page.getByRole("button", { name: /^Delete user / }).first().click();
-    await noBorder(page, "delete");
-    const del = await paint(page, "dialog[open] .btn-primary");
-    assert(del.bg === DANGER && del.color === WHITE && del.text === "Delete user", `the delete confirm is ${del.bg} / ${del.color}`);
-    await fits(page);
-  },
-
-  async "billing: paid is green with its word; the current plan has the silver border and nothing else is coloured"(page) {
+  async "billing: the current plan has the silver border and nothing else is coloured"(page) {
     await signIn(page, "billing");
-    const paid = page.locator("#invoices .state", { hasText: "Paid" }).first();
-    await paid.waitFor();
-    assert((await paid.evaluate((e) => getComputedStyle(e).borderTopColor)) === SUCCESS, "paid is not green");
     const plan = await paint(page, ".plan-current");
     assert(/linear-gradient/.test(plan.bgImage) && plan.bgImage.includes("rgb(124, 130, 139)"), `the current plan has no silver border (${plan.bgImage})`);
     assert(/Current plan/.test(plan.text), "the current plan does not say so");
@@ -330,8 +219,8 @@ const TESTS = {
     const item = await paint(page, `${scope} .cx-sub-link.active`);
     assert(!STATUS.includes(item.color) && !STATUS.includes(item.bg), "the selected menu item is coloured");
     if (isMobile(viewport)) await page.getByRole("button", { name: "Close navigation" }).click();
-    const area = await page.locator("#awake .chart-area").first().evaluate((e) => e.style.fill);
-    assert(/url\(/.test(area), "the awake chart has no silver fill");
+    const area = await page.locator("#skipped .chart-area").first().evaluate((e) => e.style.fill);
+    assert(/url\(/.test(area), "the skipped-with-proof chart has no silver fill");
     await huesOnPage(page, STATUS);
     await fits(page);
   },

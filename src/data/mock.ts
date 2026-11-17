@@ -326,13 +326,14 @@ function ensureDefectFiles(spec: Spec) {
   }
 }
 
-function buildSample(): Store {
+function buildSample(owner: string, orgName: string, planId: string): Store {
+  const nameOf = (s: Pick<Spec, "fullName">) => `${owner}/${s.fullName.split("/")[1]}`;
   const runs: Run[] = [];
   const detail: Store["detail"] = new Map();
   const occurrences = new Map<string, Run[]>();
   const projects: Project[] = SPECS.map((s) => ({
-    id: s.id, fullName: s.fullName, language: s.language, testRunner: s.testRunner, defaultBranch: "main", installationId: 51_204_331,
-    setupState: "active", setupPullRequest: { number: { prj_homehub: 18204, prj_docs: 10433, prj_ledger: 4412, prj_storefront: 16031 }[s.id]!, url: `https://github.com/${s.fullName}/pull/${{ prj_homehub: 18204, prj_docs: 10433, prj_ledger: 4412, prj_storefront: 16031 }[s.id]}`, state: "merged" },
+    id: s.id, fullName: nameOf(s), language: s.language, testRunner: s.testRunner, defaultBranch: "main", installationId: 51_204_331,
+    setupState: "active", setupPullRequest: { number: { prj_homehub: 18204, prj_docs: 10433, prj_ledger: 4412, prj_storefront: 16031 }[s.id]!, url: `https://github.com/${nameOf(s)}/pull/${{ prj_homehub: 18204, prj_docs: 10433, prj_ledger: 4412, prj_storefront: 16031 }[s.id]}`, state: "merged" },
     connectedAt: ago(s.connectedDaysAgo * DAY), baseline: s.baseline,
     settings: { skipWithProof: true, commentOnPullRequests: true, nightlyExploration: s.id !== "prj_ledger", testCommand: "" },
   }));
@@ -418,7 +419,7 @@ function buildSample(): Store {
     const spec = SPECS.find((p) => p.id === s.projectId)!;
     const runsN = 10;
     return {
-      id: s.id, projectId: s.projectId, projectName: spec.fullName, testId: s.testId, status: s.status ?? "reproduced", state: s.fixedDaysAgo !== undefined ? "fixed" : "open",
+      id: s.id, projectId: s.projectId, projectName: nameOf(spec), testId: s.testId, status: s.status ?? "reproduced", state: s.fixedDaysAgo !== undefined ? "fixed" : "open",
       cause: s.cause, causeTests: s.causeTests, minimalOrder: s.cause === "polluter" ? [...s.causeTests, s.testId] : [s.testId], prefixLength: s.prefixLength,
       seed: s.seed, fingerprint: hex(`fp:${s.id}`), replays: { runs: runsN, fails: 10, identicalFingerprint: s.status !== "replay_unstable" },
       outcome: s.outcome, exception: s.exception, divergence: s.divergence, familyKey: familyKeyOf(s.causeTests),
@@ -430,15 +431,15 @@ function buildSample(): Store {
 
   runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   return {
-    projects, runs, detail, defects, githubAccount: "northwind",
+    projects, runs, detail, defects, githubAccount: owner,
     repos: [
       ...projects.map((p) => ({ fullName: p.fullName, private: true, language: p.language, testRunner: p.testRunner, connected: true })),
-      { fullName: "northwind/billing-worker", private: true, language: "python", testRunner: "pytest", connected: false },
-      { fullName: "northwind/mobile-app", private: true, language: "node", testRunner: "jest", connected: false },
-      { fullName: "northwind/infra-scripts", private: false, language: "python", testRunner: "pytest", connected: false },
+      { fullName: `${owner}/billing-worker`, private: true, language: "python", testRunner: "pytest", connected: false },
+      { fullName: `${owner}/mobile-app`, private: true, language: "node", testRunner: "jest", connected: false },
+      { fullName: `${owner}/infra-scripts`, private: false, language: "python", testRunner: "pytest", connected: false },
     ],
-    planId: "team",
-    settings: { workspaceName: "Northwind Cloud", emailNotices: true },
+    planId,
+    settings: { workspaceName: orgName, emailNotices: true },
     apiKeys: seedKeys(),
     installations: new Map(),
   };
@@ -464,7 +465,8 @@ function store(): Store {
   const org = activeOrgId() ?? "org_northwind";
   let s = stores.get(org);
   if (!s) {
-    s = org === "org_northwind" ? buildSample() : emptyStore(mockOrgName() ?? "Acme");
+    // The two organizations the sample account belongs to have runs; an organization made in this tab starts empty.
+    s = org === "org_northwind" ? buildSample("northwind", "Northwind Cloud", "team") : org === "org_harbor" ? buildSample("harbor-analytics", "Harbor Analytics", "scale") : emptyStore(mockOrgName() ?? "Acme");
     stores.set(org, s);
   }
   return s;

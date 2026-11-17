@@ -3,7 +3,7 @@
  * tests/unit/ci.test.ts covers it without a database.
  */
 import type { Defect, GitHubRate, Plan, Project, Run, SkipReceipt, TestResult, TestRunner } from "./types";
-import { familyKeyOf } from "./ci";
+import { familyKeyOf } from "./ci.ts";
 
 export type Row = Record<string, unknown>;
 

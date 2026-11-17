@@ -31,7 +31,7 @@ export function BillingPage() {
           <>
             <div className="grid-2">
               <Card id="current" title={b.plan ? `${b.plan.name} plan` : "No plan yet"} description={`This month: ${formatDate(b.period.start)} to ${formatDate(new Date(new Date(b.period.end).getTime() - 1).toISOString())}.`}>
-                <strong className="big-number mono">{b.plan ? priceText(b.plan) : "–"}</strong>
+                <strong className={b.plan?.priceUsdMonth != null ? "big-number mono" : "big-number"}>{b.plan ? priceText(b.plan) : "–"}</strong>
                 <RunsMeter used={b.runsUsed} included={b.runsIncluded} />
                 {b.plan && <p className="muted small">{limitText(b.plan)}.</p>}
               </Card>

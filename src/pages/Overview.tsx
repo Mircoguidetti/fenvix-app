@@ -61,12 +61,12 @@ export function OverviewPage() {
         return (
           <>
             <div className="kpis">
-              <Kpi label="Runs" value={formatCount(o.runs.thisMonth)} sub={`${month} so far · ${formatCount(o.runs.lastMonthSameDays)} same days before`} spark={o.runs.perDay.map((p) => p.value)} />
-              <Kpi label="Minutes saved" value={formatMinutes(o.minutesSaved.thisMonth)} sub="test time skipped with proof" spark={o.minutesSaved.perDay.map((p) => p.value)} />
-              <Kpi label="Skipped with proof" value={o.skipShare.median === null ? "–" : formatPercent(o.skipShare.median)} sub="median share of test time per run" spark={o.skipShare.perDay.map((p) => p.value)} />
-              <Kpi label="Time to green" value={ttgWith === null ? "–" : seconds(ttgWith)} sub={ttgBefore === null ? "median, push to green" : `median · ${seconds(ttgBefore)} before fenvix`} />
-              <Kpi label="On GitHub-hosted" value={formatMoney(o.cost.githubEquivalentUsd)} sub={`what ${month}'s runs would cost there`} />
-              <Kpi label="Open defects" value={formatCount(o.openDefects)} sub="flaky tests made reproducible" />
+              <Kpi label="Runs" value={formatCount(o.runs.thisMonth)} sub={`${month} so far · ${formatCount(o.runs.lastMonthSameDays)} before`} spark={o.runs.perDay.map((p) => p.value)} />
+              <Kpi label="Minutes saved" value={formatMinutes(o.minutesSaved.thisMonth)} sub="test time not run again" spark={o.minutesSaved.perDay.map((p) => p.value)} />
+              <Kpi label="Skipped with proof" value={o.skipShare.median === null ? "–" : formatPercent(o.skipShare.median)} sub="median, test time per run" spark={o.skipShare.perDay.map((p) => p.value)} />
+              <Kpi label="Time to green" value={ttgWith === null ? "–" : seconds(ttgWith)} sub={ttgBefore === null ? "median, push to green" : `median · was ${seconds(ttgBefore)}`} />
+              <Kpi label="On GitHub-hosted" value={formatMoney(o.cost.githubEquivalentUsd)} sub="same runs at GitHub's rate" />
+              <Kpi label="Open defects" value={formatCount(o.openDefects)} sub="flaky, now reproducible" />
             </div>
 
             <div className="grid-2 even">
@@ -95,14 +95,14 @@ export function OverviewPage() {
                 <dl className="compare">
                   <div>
                     <dt>On GitHub-hosted runners</dt>
-                    <dd className="mono">{formatMoney(o.cost.githubEquivalentUsd)}</dd>
+                    <dd className="compare-value">{formatMoney(o.cost.githubEquivalentUsd)}</dd>
                     <dd className="muted small">
-                      {formatMinutes(o.cost.githubEquivalentMinutes)} at {formatMoney(o.cost.rate.usdPerMinute)} a minute ({o.cost.rate.runner})
+                      {formatMinutes(o.cost.githubEquivalentMinutes)} at ${o.cost.rate.usdPerMinute} a minute ({o.cost.rate.runner})
                     </dd>
                   </div>
                   <div>
                     <dt>Your plan{o.cost.plan ? `: ${o.cost.plan.name}` : ""}</dt>
-                    <dd className="mono">{price === null ? "Price not set" : formatMoney(price)}</dd>
+                    <dd className="compare-value">{price === null ? "Price not set" : formatMoney(price)}</dd>
                     <dd className="muted small">
                       {o.cost.plan?.runsPerMonth ? `${formatCount(o.runs.thisMonth)} of ${formatCount(o.cost.plan.runsPerMonth)} runs used` : "No run limit"}
                     </dd>

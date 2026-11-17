@@ -168,6 +168,11 @@ const MAP: [string, string][] = [
   [".btn-danger", "danger"],
   [".dialog-danger .dialog-actions .btn-primary", "danger"],
   ['input[aria-invalid="true"]', "danger"],
+  [".state-danger .dot", "danger"],
+  [".fail-count", "danger"],
+  [".step[data-done] .step-n", "success"],
+  [".diff-del", "danger-on-dark"],
+  [".diff-add", "success-on-dark"],
   [".toast-success .toast-icon", "success-on-dark"],
   [".toast-error .toast-icon", "danger-on-dark"],
 ];
@@ -201,7 +206,7 @@ test("every coloured state also says it in words or with an icon", () => {
   assert.match(CSS, /\.error::before\s*\{[^}]*content:\s*"Error: "/);
   // Pills: a dot and a word.
   const badge = src("components/StateBadge.tsx");
-  for (const word of ["Awake", "Asleep", "Active", "Revoked", "Paid", "Open"]) assert.ok(badge.includes(`"${word}"`), `no word "${word}" in the state pills`);
+  for (const word of ["Passed", "Failed", "Running", "Cancelled", "Active", "Revoked", "Expired"]) assert.ok(badge.includes(`"${word}"`), `no word "${word}" in the state pills`);
   // Toasts and messages: an icon with each tone.
   const toast = src("components/Toast.tsx");
   assert.match(toast, /tone === "success" && <CircleCheck/);
@@ -209,33 +214,33 @@ test("every coloured state also says it in words or with an icon", () => {
   const message = src("components/PageHeader.tsx");
   assert.match(message, /message-error[\s\S]*?<CircleAlert/);
   assert.match(message, /message-warning[\s\S]*?<TriangleAlert/);
-  // Warnings and blocks in the Network tab come with an icon.
-  const net = src("components/DatabaseNetwork.tsx");
-  assert.match(net, /callout-warning[\s\S]*?<AlertTriangle/);
-  assert.match(net, /blocked-until[\s\S]*?<Ban[\s\S]*?Blocked until/);
-  assert.match(net, /once-warning[\s\S]*?<AlertTriangle/);
-  assert.match(src("components/DataExplorer.tsx"), /className="waking"[\s\S]*?<RefreshCw[\s\S]*?Waking the database/);
-  assert.match(src("components/PasswordOnce.tsx"), /once-warning[\s\S]*?<TriangleAlert/);
+  // Outcomes, replays and defect states: always a word.
+  const ci = src("components/ci.tsx");
+  for (const word of ["Passed", "Skipped with proof", "Failed: flaky defect", "Replays ", "fingerprints differ"]) assert.ok(ci.includes(word), `no words "${word}" for an outcome`);
+  const defects = src("pages/Defects.tsx");
+  assert.match(defects, /tone="danger">Open</);
+  assert.match(defects, /tone="ok">Fixed</);
+  // The setup diff says - and + as well as red and green; a done step shows a tick.
+  assert.match(src("pages/Connect.tsx"), /className="diff-del">- \{/);
+  assert.match(src("pages/Connect.tsx"), /className="diff-add">\+ \{/);
+  assert.match(src("pages/Connect.tsx"), /done \? <Check/);
 });
 
 test("the states in the inventory are wired to the right classes in the components", () => {
-  const net = src("components/DatabaseNetwork.tsx");
-  assert.match(net, /<span className="tag tag-warning">Unsaved changes<\/span>/);
-  assert.match(net, /data\.dataExplorer\.trusted === false && \(\s*<p className="once-warning"/);
-  assert.match(net, /data\.engine\.status === "different" && \(\s*<div className="callout callout-warning"/);
-  assert.match(net, /data\.engine\.status === "unavailable" && <Message tone="warning">/);
-  assert.match(net, /data\.engine\.enforced === false && <Message tone="warning">/);
-  assert.match(net, /className="btn btn-danger" onClick=\{\(\) => open\("clear"\)\}/);
-  assert.match(src("components/StateBadge.tsx"), /state === "awake" \? "state-awake"/);
-  assert.match(src("components/StateBadge.tsx"), /tone=\{status === "paid" \? "ok" : "warn"\}/);
-  assert.match(src("components/StateBadge.tsx"), /tone=\{status === "active" \? "ok" : "neutral"\}/);
-  assert.match(src("pages/Billing.tsx"), /<InvoiceStatus status=\{i\.status\} \/>/);
+  const badge = src("components/StateBadge.tsx");
+  assert.match(badge, /tone === "danger" \? "state state-danger"/);
+  assert.match(badge, /status === "passed" \? "ok" : status === "failed" \? "danger" : status === "running" \? "warn" : "neutral"/);
+  assert.match(badge, /tone=\{status === "active" \? "ok" : "neutral"\}/);
+  assert.match(src("pages/Project.tsx"), /<RunStatusPill status=\{r\.status\} \/>/);
+  assert.match(src("pages/Project.tsx"), /className="fail-count"/);
+  assert.match(src("components/ci.tsx"), /outcome === "failed"\) return <StatusPill tone="danger">/);
+  assert.match(src("components/ci.tsx"), /<StatusPill tone=\{ok \? "ok" : "warn"\}>/);
   assert.match(src("pages/ApiKeys.tsx"), /callout callout-success/);
   assert.match(src("pages/SignIn.tsx"), /callout callout-success/);
 });
 
 test("every action that cannot be undone has a dialog with a red confirm button and no border; the buttons that open them are red, except Restore", () => {
-  const files = ["pages/DatabaseDetail.tsx", "components/BulkBar.tsx", "components/DatabaseUsers.tsx", "components/DataExplorer.tsx", "pages/ApiKeys.tsx", "pages/Members.tsx", "components/AccountMenu.tsx", "components/DatabaseNetwork.tsx"];
+  const files = ["pages/ApiKeys.tsx", "pages/Members.tsx", "components/AccountMenu.tsx", "pages/Connect.tsx", "pages/Run.tsx"];
   let dialogs = 0;
   for (const f of files) {
     const text = src(f);
@@ -247,9 +252,9 @@ test("every action that cannot be undone has a dialog with a red confirm button 
       assert.equal(/\bdanger\b/.test(m[1]), destructive, `${f}: dialog "${name}" ${destructive ? "is not" : "should not be"} marked danger`);
     }
   }
-  assert.ok(dialogs >= 10, `only ${dialogs} destructive dialogs found`);
+  assert.ok(dialogs >= 4, `only ${dialogs} destructive dialogs found`);
   // The confirm button is the one primary button of the dialog; inside .dialog-danger it is filled red with white text.
-  assert.match(src("components/ConfirmDialog.tsx"), /className=\{danger \? "dialog dialog-danger" : "dialog"\}/);
+  assert.match(src("components/ConfirmDialog.tsx"), /className=\{`dialog\$\{danger \? " dialog-danger" : ""\}/);
   assert.match(src("components/ConfirmDialog.tsx"), /className="btn btn-primary" disabled=\{busy \|\| confirmDisabled\}/);
   const red = rules().find(([sel]) => sel === ".dialog-danger .dialog-actions .btn-primary")?.[1] ?? "";
   assert.match(red, /background:\s*var\(--danger\)/, "the confirm button of a destructive dialog is not filled red");
@@ -257,10 +262,6 @@ test("every action that cannot be undone has a dialog with a red confirm button 
   assert.match(red, /(^|[;\s])color:\s*var\(--on-text\)/, "the confirm button of a destructive dialog has no white text");
   assert.ok(contrast(T["on-text"], T.danger) >= 4.5, "white on red is below 4.5:1");
   const triggers: [string, RegExp][] = [
-    ["pages/DatabaseDetail.tsx", /className="action-row action-btn action-erase"[^>]*onClick=\{\(\) => open\("erase"\)\}/],
-    ["components/BulkBar.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setAction\("erase"\)\}/],
-    ["components/DatabaseUsers.tsx", /className="icon-btn icon-danger" onClick=\{\(\) => open\(\{ kind: "delete", user: u \}\)\}/],
-    ["components/DataExplorer.tsx", /className="btn btn-sm btn-danger" onClick=\{onDelete\}/],
     ["pages/ApiKeys.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setTarget\(k\)\}/],
     ["pages/Members.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setRemoving\(m\)\}/],
     ["pages/Members.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setRevoking\(i\)\}/],
@@ -284,21 +285,7 @@ test("every toast says whether it is a success or an error, except the plain not
       else assert.match(call, /"success"/, `${file}: toast(${call})`);
     }
   }
-  assert.ok(n >= 35, `only ${n} toasts found`);
-});
-
-test("Restore to a point in time: its dialog is destructive (red confirm), the button that opens it stays neutral", () => {
-  const detail = src("pages/DatabaseDetail.tsx");
-  assert.match(detail, /<ConfirmDialog danger open=\{dialog === "restore"\}[^>]*confirmLabel="Restore database"/);
-  assert.match(detail, /<button type="button" className="action-row action-btn"[^>]*onClick=\{\(\) => open\("restore"\)\}>/, "the Restore button is not neutral");
-});
-
-test("Reset password: the button stays neutral, its dialog is not destructive and warns in amber, with an icon", () => {
-  const users = src("components/DatabaseUsers.tsx");
-  assert.match(users, /<button type="button" className="icon-btn" onClick=\{\(\) => open\(\{ kind: "reset", user: u \}\)\}/, "the Reset password button is not neutral");
-  const dialog = /<ConfirmDialog open=\{dialog\?\.kind === "reset"\}[\s\S]*?<\/ConfirmDialog>/.exec(users)?.[0] ?? "";
-  assert.ok(dialog, "the reset dialog is not plain (it has the danger option, or is missing)");
-  assert.match(dialog, /<p className="once-warning" role="note">\s*<TriangleAlert[^>]*aria-hidden="true" \/>\s*<span>Applications using the old password will stop working\.<\/span>/);
+  assert.ok(n >= 15, `only ${n} toasts found`);
 });
 
 test("dialogs have no border and no coloured line, destructive or not", () => {

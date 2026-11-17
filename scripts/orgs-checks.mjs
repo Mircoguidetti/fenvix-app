@@ -66,7 +66,7 @@ const TESTS = {
   async "a new account names its organization first; hostile names stay text"(page, vp) {
     let alerted = false;
     page.on("dialog", (d) => ((alerted = true), d.dismiss()));
-    await go(page, "databases");
+    await go(page, "projects");
     await signInByEmail(page, "nadia.okafor@lumen.example");
     await page.getByRole("heading", { name: "Name your organization" }).waitFor();
     assert(!(await page.locator(".shell").count()), "the dashboard is visible before the organization is named");
@@ -116,43 +116,24 @@ const TESTS = {
     await page.locator(".readonly-note").getByText("view-only access").waitFor();
     assert((await page.locator(".workspace-sub").first().textContent()) === "Member", "the role under the name is not Member");
 
-    // Databases: no create, no selection, no bulk actions.
-    await go(page, "databases");
-    await settled(page);
-    await page.locator("table.dbs tbody tr").first().waitFor();
-    assert(!(await page.getByRole("link", { name: "Create database" }).count()), "a member is offered Create database");
-    assert(!(await page.locator("table.dbs input[type=checkbox]").count()), "a member can select databases");
-    // One database: no actions, tags read only, users and documents read only.
-    await go(page, "databases/db_0001");
-    await page.getByRole("heading", { name: "orders-prod" }).waitFor();
-    for (const name of ["Fork", "Erase", "Export", "Restore to a point in time", "Add tag"]) {
-      assert(!(await page.getByRole("button", { name, exact: true }).count()), `a member is offered ${name}`);
-    }
-    assert(!(await page.getByLabel("Keep awake").count()), "a member can switch keep awake");
-    await page.locator("#actions").getByText("view-only access").waitFor();
-    await go(page, "databases/db_0001?tab=users");
-    await page.locator("#users td .user-name").first().waitFor();
-    assert(!(await page.getByRole("button", { name: "Create user" }).count()), "a member can add database users");
-    // Network: the list read only, no blocked addresses.
-    await go(page, "databases/db_0001?tab=network");
-    await page.locator("#allowlist .net-entry").first().waitFor();
-    for (const name of ["Add", "Save list", "Import", "Clear list", "Apply again"]) {
-      assert(!(await page.getByRole("button", { name, exact: true }).count()), `a member is offered ${name} in Network`);
-    }
-    assert(!(await page.getByRole("button", { name: /^(Remove|Unblock) / }).count()), "a member can remove entries or unblock");
-    await page.locator("#allowlist .readonly-note").getByText("Only an owner or admin can change the IP allowlist.").waitFor();
-    await page.locator("#blocks .readonly-note").getByText("Only an owner or admin can see and unblock blocked addresses.").waitFor();
-    assert(!(await page.getByRole("list", { name: "Blocked addresses" }).count()), "a member sees blocked addresses");
-    assert(!(await page.getByRole("button", { name: /^Reset password of/ }).count()), "a member can reset passwords");
-    await go(page, "databases/new");
-    await page.getByText("Only an owner or admin of this organization can create databases").waitFor();
+    // Projects: settings read only, no setup pull request, no installing the GitHub App.
+    await go(page, "projects/prj_homehub?tab=settings");
+    await page.getByRole("heading", { name: "harbor-analytics/homehub" }).waitFor();
+    await page.locator("#project-settings").getByText("Only an owner or admin can change these.").waitFor();
+    assert(!(await page.getByRole("button", { name: "Save settings" }).count()), "a member can save project settings");
+    assert(await page.getByRole("switch", { name: /Nightly exploration/ }).isDisabled(), "a member can switch nightly exploration");
+    await go(page, "projects/connect");
+    await page.getByText("Only an owner or admin can connect repositories.").waitFor();
+    assert(await page.getByRole("button", { name: "Add repositories on GitHub" }).isDisabled(), "a member can install the GitHub App");
+    // Reading is open: runs, defects, usage.
+    await go(page, "defects");
+    await page.locator("main tbody tr").first().waitFor();
     await go(page, "api-keys");
     await page.getByText("Only an owner or admin of this organization can see and manage API keys").waitFor();
     await go(page, "settings");
     await page.locator("#organization").getByText("Harbor Analytics").waitFor();
     assert(!(await page.getByRole("button", { name: "Rename" }).count()), "a member can rename the organization");
-    assert(await page.getByLabel("Email me about usage and account notices").isDisabled(), "a member can change settings");
-    assert(!(await page.getByText("Sleep after idle").count()), "settings still offer Sleep after idle");
+    assert(await page.getByLabel(/Email me about new defects/).isDisabled(), "a member can change settings");
     await go(page, "settings/members");
     await page.locator("#members").getByText("Jonas Weber").waitFor();
     assert(!(await page.getByRole("button", { name: "Invite" }).count()), "a member can invite");
@@ -164,12 +145,11 @@ const TESTS = {
       const api = window.__fenvixMock;
       const out = [];
       for (const call of [
-        () => api.createDatabase({ name: "member-made-01", region: "eu-west", tags: [] }),
-        () => api.eraseDatabases(["db_0001"]),
-        () => api.forkDatabase("db_0001", "member-fork-01"),
-        () => api.setKeepAwake(["db_0001"], true),
+        () => api.saveProjectSettings("prj_homehub", { skipWithProof: false, commentOnPullRequests: false, nightlyExploration: true, testCommand: "" }),
+        () => api.installGitHubApp(["harbor-analytics/billing-worker"]),
+        () => api.openSetupPullRequest("prj_homehub"),
         () => api.createPublicApiKey({ name: "member key", role: "read_only", expiresAt: null }),
-        () => api.saveSettings({ workspaceName: "x", idleMinutes: 1, emailNotices: false }),
+        () => api.saveSettings({ workspaceName: "x", emailNotices: false }),
       ]) {
         try {
           await call();
@@ -187,8 +167,9 @@ const TESTS = {
     await panel.getByRole("button", { name: /Northwind Cloud/ }).click();
     await page.getByRole("heading", { name: "Northwind Cloud" }).waitFor();
     assert(!(await page.locator(".readonly-note").count()), "the read-only note stayed");
-    await go(page, "databases");
-    await page.getByRole("link", { name: "Create database" }).waitFor();
+    await go(page, "projects/connect");
+    await page.getByRole("button", { name: "Add repositories on GitHub" }).waitFor();
+    assert(!(await page.getByRole("button", { name: "Add repositories on GitHub" }).isDisabled()), "the owner cannot install the GitHub App");
   },
 
   async "invite, copy the link, accept as the invited person; the link works once"(page, vp) {
