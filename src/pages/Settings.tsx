@@ -10,7 +10,7 @@ import { useOrg } from "../session/OrgProvider";
 import { useToast } from "../components/Toast";
 import { workspaceChanged } from "../lib/workspace";
 
-/** General and Members, as two pages under Settings. */
+/** General, Members and API keys: the organization's settings, as tabs (there is no second bar). */
 export function SettingsTabs() {
   return (
     <nav className="seg settings-tabs" aria-label="Settings sections">
@@ -19,6 +19,9 @@ export function SettingsTabs() {
       </NavLink>
       <NavLink to="/settings/members" className={({ isActive }) => (isActive ? "seg-link active" : "seg-link")}>
         Members
+      </NavLink>
+      <NavLink to="/api-keys" className={({ isActive }) => (isActive ? "seg-link active" : "seg-link")}>
+        API keys
       </NavLink>
     </nav>
   );

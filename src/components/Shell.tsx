@@ -3,7 +3,6 @@ import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-
 import { Bug, BookOpen, Building2, ChartColumn, ChevronDown, CreditCard, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, X, type LucideIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { AccountMenu, OrgAvatar, useCurrentOrg } from "./AccountMenu";
-import { CopyButton } from "./CopyButton";
 import { useToast } from "./Toast";
 import { useFocusTrap } from "../lib/useFocusTrap";
 import { useOrg } from "../session/OrgProvider";
@@ -14,9 +13,8 @@ import { ROLE_NAMES } from "../data/orgs";
 /*
  * The console's frame, laid out like the mockup (fenvix-brain, Fenvix console 3):
  * - a top bar: the logo, where you are as switchers (Org ▾ / Project), "Search or jump to", the theme and the account;
- * - a thin bar of area icons on the left that widens over the page on hover, or stays open when pinned;
- * - a second bar, always there: what is open (the organization, its settings, or one project) with its pages, and a
- *   box at the bottom with the one thing you most often do from there.
+ * - a thin bar of area icons on the left that widens over the page on hover, or stays open when pinned. There is no
+ *   second bar (removed 2026-11-17, founder): a project's and the settings' sections are tabs on their pages.
  * Below 900px the bars become one drawer. Every page, route and action is the one it was.
  */
 
@@ -68,7 +66,6 @@ function projectIdOf(path: string): string | null {
   const m = /^\/projects\/([^/]+)/.exec(path);
   return m && m[1] !== "connect" ? m[1] : null;
 }
-const isSettings = (path: string) => path.startsWith("/settings") || path.startsWith("/api-keys");
 
 /** Shown to a member on every page: they can look, not change. The server refuses changes anyway. */
 function ReadOnlyNote() {
@@ -128,74 +125,6 @@ function PageLinks({ pages, onNavigate }: { pages: typeof ORG_PAGES; onNavigate?
         </NavLink>
       ))}
     </>
-  );
-}
-
-/** The second bar: what is open, its pages, and a box at the bottom. */
-function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgSub: string }) {
-  const { info } = useContext(ProjectTitle);
-  const projectId = projectIdOf(path);
-  const settings = isSettings(path);
-  return (
-    <aside className="cx-sub" aria-label="Pages">
-      {projectId ? (
-        <>
-          <div className="cx-sub-head">
-            <span className="cx-sub-kind">Project</span>
-            <span className="cx-sub-title">
-              <span className="break-anywhere">{info.name || " "}</span>
-            </span>
-            {(info.language || info.runner) && <span className="cx-sub-meta">{[info.language, info.runner].filter(Boolean).join(" · ")}</span>}
-          </div>
-          <nav aria-label="Project sections" className="cx-sub-nav">
-            <ProjectSectionLinks projectId={projectId} />
-          </nav>
-        </>
-      ) : (
-        <>
-          <div className="cx-sub-head">
-            <span className="cx-sub-kind">{settings ? "Organization settings" : "Organization"}</span>
-            <span className="cx-sub-title">{orgName || " "}</span>
-            {orgSub && <span className="cx-sub-meta">{orgSub}</span>}
-          </div>
-          <nav aria-label={settings ? "Organization settings" : "Organization pages"} className="cx-sub-nav">
-            <PageLinks pages={settings ? SETTINGS_PAGES : ORG_PAGES} />
-          </nav>
-        </>
-      )}
-      <span className="cx-sub-fill" />
-      <div className="cx-sub-box">
-        {projectId ? (
-          <>
-            <span className="cx-sub-box-title">Run on fenvix</span>
-            <span className="cx-sub-box-text">
-              One line in the test job: <span className="mono">runs-on: fenvix</span>
-            </span>
-            {info.snippet && (
-              <span className="cx-sub-copy">
-                <CopyButton value={info.snippet} what="setup snippet" text="Copy the test job" />
-              </span>
-            )}
-          </>
-        ) : settings ? (
-          <>
-            <span className="cx-sub-box-title">People</span>
-            <span className="cx-sub-box-text">Invite teammates and choose what they can change.</span>
-            <Link to="/settings/members" className="btn btn-primary btn-sm">
-              Manage members
-            </Link>
-          </>
-        ) : (
-          <>
-            <span className="cx-sub-box-title">Projects</span>
-            <span className="cx-sub-box-text">Install the fenvix GitHub App on a repository and move its test job to fenvix.</span>
-            <Link to="/projects/connect" className="btn btn-primary btn-sm">
-              Connect a project
-            </Link>
-          </>
-        )}
-      </div>
-    </aside>
   );
 }
 
@@ -509,7 +438,6 @@ export function Shell({ children }: { children: ReactNode }) {
   const drawer = useRef<HTMLElement>(null);
   const current = useCurrentOrg();
   const orgName = current.status === "ready" ? current.name : "";
-  const orgSub = current.status === "ready" ? current.sub : "";
 
   useEffect(() => setOpen(false), [pathname]);
   // Widening the window past the breakpoint leaves no drawer behind.
@@ -547,7 +475,6 @@ export function Shell({ children }: { children: ReactNode }) {
 
         <div className="cx-body">
           <Rail path={pathname} />
-          <SubNav path={pathname} orgName={orgName} orgSub={orgSub} />
           <div className="cx-content">
             <main id="main" tabIndex={-1}>
               <SampleNote />

@@ -213,12 +213,18 @@ const TESTS = {
 
   async "overview and navigation: the selected menu item has no line under it, charts are slate, grey and silver"(page, viewport) {
     await signIn(page, "overview");
-    if (isMobile(viewport)) await page.getByRole("button", { name: "Open navigation" }).click();
-    const scope = isMobile(viewport) ? ".cx-drawer" : ".cx-sub";
-    await noLine(page, `${scope} .cx-sub-link.active`);
-    const item = await paint(page, `${scope} .cx-sub-link.active`);
-    assert(!STATUS.includes(item.color) && !STATUS.includes(item.bg), "the selected menu item is coloured");
-    if (isMobile(viewport)) await page.getByRole("button", { name: "Close navigation" }).click();
+    if (isMobile(viewport)) {
+      await page.getByRole("button", { name: "Open navigation" }).click();
+      await noLine(page, ".cx-drawer .cx-sub-link.active");
+      const item = await paint(page, ".cx-drawer .cx-sub-link.active");
+      assert(!STATUS.includes(item.color) && !STATUS.includes(item.bg), "the selected menu item is coloured");
+      await page.getByRole("button", { name: "Close navigation" }).click();
+    } else {
+      // One bar of area icons only (no second bar): the current area is marked, not coloured.
+      assert(!(await page.locator(".cx-sub").count()), "the second bar is back");
+      const item = await paint(page, '.cx-rail .cx-rail-link[aria-current="page"]');
+      assert(!STATUS.includes(item.color) && !STATUS.includes(item.bg), "the selected area is coloured");
+    }
     const area = await page.locator("#skipped .chart-area").first().evaluate((e) => e.style.fill);
     assert(/url\(/.test(area), "the skipped-with-proof chart has no silver fill");
     await huesOnPage(page, STATUS);

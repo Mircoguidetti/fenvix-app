@@ -8,6 +8,7 @@ import {
 } from "../data/public-keys";
 import { apiUrl, backend } from "../lib/env";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
+import { SettingsTabs } from "./Settings";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { CopyButton } from "../components/CopyButton";
 import { Select } from "../components/Select";
@@ -27,6 +28,7 @@ export function ApiKeysPage() {
     return (
       <>
         <PageHeader back={<Kicker>Organization</Kicker>} title="API keys" description={DESCRIPTION} />
+        <SettingsTabs />
         <Message>Only an owner or admin of this organization can see and manage API keys.</Message>
       </>
     );
@@ -36,6 +38,7 @@ export function ApiKeysPage() {
     return (
       <>
         <PageHeader back={<Kicker>Organization</Kicker>} title="API keys" description={DESCRIPTION} />
+        <SettingsTabs />
         <Message>{PUBLIC_API_NOT_SET_UP}</Message>
       </>
     );
@@ -112,6 +115,7 @@ function ApiKeysManager() {
   return (
     <>
       <PageHeader back={<Kicker>Organization</Kicker>} title="API keys" description={DESCRIPTION} />
+        <SettingsTabs />
 
       <Card id="create" title="Create a key" description={`An organization can have up to ${MAX_ACTIVE_KEYS} active keys. Revoked and expired keys do not count.`}>
         <form onSubmit={create} className="inline-form" noValidate>

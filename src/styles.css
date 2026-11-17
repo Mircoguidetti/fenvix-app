@@ -352,7 +352,8 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; accent-
 .seg button[aria-pressed="true"] { background: var(--text); color: var(--on-text); }
 .seg button .seg-count { font-size: 12px; color: var(--muted-2); }
 .seg button[aria-pressed="true"] .seg-count { color: var(--on-text-muted); }
-.seg button:focus-visible { outline-offset: 1px; }
+/* Keyboard focus: a soft ring inside the pill, never a thick black box that touches the next option. */
+.seg button:focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px var(--nav-on), var(--focus); }
 
 /* Tables */
 .table-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
