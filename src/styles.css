@@ -1743,3 +1743,4 @@ table.data.dbs thead th { font-size: 12px; }
 .suite-legend { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; }
 .suite-legend li { display: inline-flex; align-items: center; gap: 6px; }
 .nowrap { white-space: nowrap; }
+.cx-sub-group { display: block; padding: 0 12px 4px; }

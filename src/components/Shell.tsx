@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { BookOpen, Bug, Building2, ChartColumn, Check, ChevronDown, CreditCard, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { BookOpen, Building2, ChartColumn, Check, ChevronDown, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { AccountMenu, OrgAvatar, useCurrentOrg } from "./AccountMenu";
 import { useToast } from "./Toast";
@@ -25,27 +25,33 @@ import { ROLE_NAMES } from "../data/orgs";
 const DOCS_URL = "https://docs.fenvix.dev/";
 const RAIL_KEY = "fenvix-rail-open";
 
-type Area = { key: string; label: string; icon: LucideIcon; to: string; match: (path: string) => boolean };
+/**
+ * The rail's icons are the areas; the second bar is the open area's own sub-menu, never a copy of the rail
+ * (founder, 2026-11-17). Overview has no sub-menu, so the second bar is not shown there.
+ */
+type AreaKey = "overview" | "projects" | "usage" | "org";
+type Area = { key: AreaKey; label: string; icon: LucideIcon; to: string; match: (path: string) => boolean };
 const AREAS: Area[] = [
   { key: "overview", label: "Overview", icon: LayoutDashboard, to: "/overview", match: (p) => p.startsWith("/overview") },
-  { key: "projects", label: "Projects", icon: FolderGit2, to: "/projects", match: (p) => p.startsWith("/projects") },
-  { key: "defects", label: "Defects", icon: Bug, to: "/defects", match: (p) => p.startsWith("/defects") },
-  { key: "usage", label: "Usage", icon: ChartColumn, to: "/usage", match: (p) => p.startsWith("/usage") },
-  { key: "billing", label: "Billing", icon: CreditCard, to: "/billing", match: (p) => p.startsWith("/billing") },
-  { key: "org", label: "Organization", icon: Building2, to: "/settings/members", match: (p) => p.startsWith("/settings") || p.startsWith("/api-keys") },
+  { key: "projects", label: "Projects", icon: FolderGit2, to: "/projects", match: (p) => p.startsWith("/projects") || p.startsWith("/defects") },
+  { key: "usage", label: "Usage and billing", icon: ChartColumn, to: "/usage", match: (p) => p.startsWith("/usage") || p.startsWith("/billing") },
+  { key: "org", label: "Organization", icon: Building2, to: "/settings", match: (p) => p.startsWith("/settings") || p.startsWith("/api-keys") },
 ];
+const areaOf = (path: string): AreaKey | null => AREAS.find((a) => a.match(path))?.key ?? null;
 
-const ORG_PAGES = [
-  { to: "/overview", label: "Overview", end: true },
-  { to: "/projects", label: "Projects", end: false },
-  { to: "/defects", label: "Defects", end: false },
+const USAGE_PAGES = [
   { to: "/usage", label: "Usage", end: false },
-  { to: "/billing", label: "Billing", end: false },
+  { to: "/billing", label: "Plans and billing", end: false },
 ];
 const SETTINGS_PAGES = [
   { to: "/settings", label: "General", end: true },
   { to: "/settings/members", label: "Members", end: false },
   { to: "/api-keys", label: "API keys", end: false },
+];
+const PROJECTS_PAGES = [
+  { to: "/projects", label: "All projects", end: true },
+  { to: "/defects", label: "All defects", end: true },
+  { to: "/projects/connect", label: "Connect a project", end: false },
 ];
 /**
  * The project's sections, as in the dashboard drawn in the landing (founder, 2026-11-17): the icons of the rail and the
@@ -62,11 +68,6 @@ const PROJECT_SECTIONS: Section[] = [
   { key: "settings", label: "Settings", icon: SlidersHorizontal, to: (id) => `/projects/${id}/settings` },
 ];
 const SECTION_OF: Record<string, SectionKey> = { defects: "defects", "skip-with-proof": "skip", nightly: "nightly", "time-to-green": "ttg", settings: "settings", runs: "runs" };
-/** Organization pages in the second bar, between the project's sections and its settings (as in the landing). */
-const PROJECT_ORG_PAGES = [
-  { to: "/usage", label: "Usage and plans", end: false },
-  { to: "/api-keys", label: "API keys", end: false },
-];
 const LAST_PROJECT = "fenvix-last-project";
 export function rememberProject(id: string) {
   try {
@@ -98,18 +99,13 @@ export function useProjectTitle(name: string | undefined, more?: Omit<ProjectInf
 /** The organization's projects, loaded once for the frame (switcher, the project the frame shows). */
 const ProjectsList = createContext<ProjectRow[] | null>(null);
 
-/**
- * The project the frame is about: the one in the address, otherwise the last one opened in this browser, otherwise the
- * first project. Null only when the organization has no project yet.
- */
+/** The project the frame is about: the one in the address (a project page, or the defects filtered to one project). */
 function useProjectContext(): { projectId: string | null; section: SectionKey | null } {
-  const { pathname } = useLocation();
-  const list = useContext(ProjectsList);
+  const { pathname, search } = useLocation();
   const m = /^\/projects\/([^/]+)(?:\/([^/]+))?/.exec(pathname);
   if (m && m[1] !== "connect") return { projectId: m[1], section: SECTION_OF[m[2] ?? "runs"] ?? "runs" };
-  const remembered = rememberedProject();
-  const id = list?.find((p) => p.id === remembered)?.id ?? list?.[0]?.id ?? null;
-  return { projectId: id, section: null };
+  const only = pathname === "/defects" ? new URLSearchParams(search).get("project") : null;
+  return only ? { projectId: only, section: "defects" } : { projectId: null, section: null };
 }
 
 /** The open project's name and runner: from its page when it set them, otherwise read once from the project list. */
@@ -177,7 +173,7 @@ function ProjectSectionLinks({ projectId, onNavigate, keys }: { projectId: strin
   );
 }
 
-function PageLinks({ pages, onNavigate }: { pages: typeof ORG_PAGES; onNavigate?: () => void }) {
+function PageLinks({ pages, onNavigate }: { pages: { to: string; label: string; end: boolean }[]; onNavigate?: () => void }) {
   return (
     <>
       {pages.map((p) => (
@@ -189,16 +185,16 @@ function PageLinks({ pages, onNavigate }: { pages: typeof ORG_PAGES; onNavigate?
   );
 }
 
-const isSettings = (path: string) => path.startsWith("/settings") || path.startsWith("/api-keys");
-
-/** The second bar, as in the landing: what is open (a project, the organization or its settings), its pages, a box. */
-function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgSub: string }) {
+/** The second bar: the sub-menu of the open area. Nothing on the Overview, which has no sub-menu. */
+function SubNav({ path, orgName }: { path: string; orgName: string }) {
+  const area = areaOf(path);
   const { projectId } = useProjectContext();
   const info = useProjectInfo(projectId);
-  const settings = isSettings(path);
+  const list = useContext(ProjectsList) ?? [];
+  if (area === null || area === "overview") return null;
   return (
     <aside className="cx-sub" aria-label="Pages">
-      {projectId ? (
+      {area === "projects" && projectId ? (
         <>
           <div className="cx-sub-head">
             <span className="cx-sub-kind">Project</span>
@@ -209,55 +205,48 @@ function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgS
             {info.runner && <span className="cx-sub-meta">GitHub Actions · {info.runner}</span>}
           </div>
           <nav aria-label="Project sections" className="cx-sub-nav">
-            <ProjectSectionLinks projectId={projectId} keys={["runs", "defects", "skip", "nightly", "ttg"]} />
-            <PageLinks pages={PROJECT_ORG_PAGES} />
-            <ProjectSectionLinks projectId={projectId} keys={["settings"]} />
+            <ProjectSectionLinks projectId={projectId} />
           </nav>
+        </>
+      ) : area === "projects" ? (
+        <>
+          <div className="cx-sub-head">
+            <span className="cx-sub-kind">Projects</span>
+            <span className="cx-sub-title">{orgName || " "}</span>
+          </div>
+          <nav aria-label="Projects" className="cx-sub-nav">
+            <PageLinks pages={PROJECTS_PAGES} />
+          </nav>
+          {list.length > 0 && (
+            <nav aria-label="Your projects" className="cx-sub-nav cx-sub-nav-more">
+              <span className="cx-sub-kind cx-sub-group">Your projects</span>
+              <PageLinks pages={list.map((p) => ({ to: `/projects/${p.id}`, label: p.fullName, end: false }))} />
+            </nav>
+          )}
         </>
       ) : (
         <>
           <div className="cx-sub-head">
-            <span className="cx-sub-kind">{settings ? "Organization settings" : "Organization"}</span>
+            <span className="cx-sub-kind">{area === "usage" ? "Usage and billing" : "Organization"}</span>
             <span className="cx-sub-title">{orgName || " "}</span>
-            {orgSub && <span className="cx-sub-meta">{orgSub}</span>}
           </div>
-          <nav aria-label={settings ? "Organization settings" : "Organization pages"} className="cx-sub-nav">
-            <PageLinks pages={settings ? SETTINGS_PAGES : ORG_PAGES} />
+          <nav aria-label={area === "usage" ? "Usage and billing" : "Organization settings"} className="cx-sub-nav">
+            <PageLinks pages={area === "usage" ? USAGE_PAGES : SETTINGS_PAGES} />
           </nav>
         </>
       )}
       <span className="cx-sub-fill" />
-      <div className="cx-sub-box">
-        {projectId ? (
-          <>
-            <span className="cx-sub-box-title">Run on fenvix</span>
-            <span className="cx-sub-box-text">
-              One line in the test job: <span className="mono">runs-on: fenvix</span>
-            </span>
-            {info.snippet && (
-              <span className="cx-sub-copy">
-                <CopyButton value={info.snippet} what="setup snippet" text="Copy the test job" />
-              </span>
-            )}
-          </>
-        ) : settings ? (
-          <>
-            <span className="cx-sub-box-title">People</span>
-            <span className="cx-sub-box-text">Invite teammates and choose what they can change.</span>
-            <Link to="/settings/members" className="btn btn-primary btn-sm">
-              Manage members
-            </Link>
-          </>
-        ) : (
-          <>
-            <span className="cx-sub-box-title">Projects</span>
-            <span className="cx-sub-box-text">Install the fenvix GitHub App on a repository and move its test job to fenvix.</span>
-            <Link to="/projects/connect" className="btn btn-primary btn-sm">
-              Connect a project
-            </Link>
-          </>
-        )}
-      </div>
+      {area === "projects" && projectId && info.snippet && (
+        <div className="cx-sub-box">
+          <span className="cx-sub-box-title">Run on fenvix</span>
+          <span className="cx-sub-box-text">
+            One line in the test job: <span className="mono">runs-on: fenvix</span>
+          </span>
+          <span className="cx-sub-copy">
+            <CopyButton value={info.snippet} what="setup snippet" text="Copy the test job" />
+          </span>
+        </div>
+      )}
     </aside>
   );
 }
@@ -275,7 +264,6 @@ function readPinned() {
  * "Keep this menu open" pins it open beside the page (remembered in this browser only).
  */
 function Rail({ path }: { path: string }) {
-  const { projectId, section } = useProjectContext();
   const [hover, setHover] = useState(false);
   const [pinned, setPinned] = useState(readPinned);
   const wide = pinned || hover;
@@ -292,19 +280,12 @@ function Rail({ path }: { path: string }) {
   return (
     <nav className="cx-rail" aria-label="Areas" data-wide={wide || undefined} data-open={pinned || undefined} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <div className="cx-rail-inner">
-        {projectId
-          ? PROJECT_SECTIONS.map((s) => (
-              <Link key={s.key} to={s.to(projectId)} className="cx-rail-link" aria-current={section === s.key ? "page" : undefined} title={s.label}>
-                <s.icon size={18} strokeWidth={1.75} aria-hidden="true" />
-                <span className="cx-rail-label">{s.label}</span>
-              </Link>
-            ))
-          : AREAS.map((a) => (
-              <Link key={a.key} to={a.to} className="cx-rail-link" aria-current={a.match(path) ? "page" : undefined} title={a.label}>
-                <a.icon size={18} strokeWidth={1.75} aria-hidden="true" />
-                <span className="cx-rail-label">{a.label}</span>
-              </Link>
-            ))}
+        {AREAS.map((a) => (
+          <Link key={a.key} to={a.to} className="cx-rail-link" aria-current={a.match(path) ? "page" : undefined} title={a.label}>
+            <a.icon size={18} strokeWidth={1.75} aria-hidden="true" />
+            <span className="cx-rail-label">{a.label}</span>
+          </Link>
+        ))}
         <span className="cx-rail-fill" />
         <span className="cx-rail-rule" />
         <a href={DOCS_URL} target="_blank" rel="noreferrer" className="cx-rail-link" title="Documentation">
@@ -335,6 +316,13 @@ function Drawer({ onClose }: { path: string; onClose: () => void }) {
         </button>
       </div>
       <div className="cx-drawer-body">
+        <nav aria-label="Overview" className="cx-drawer-group">
+          <PageLinks pages={[{ to: "/overview", label: "Overview", end: true }]} onNavigate={onClose} />
+        </nav>
+        <nav aria-label="Projects" className="cx-drawer-group">
+          <p className="cx-drawer-label">Projects</p>
+          <PageLinks pages={PROJECTS_PAGES} onNavigate={onClose} />
+        </nav>
         {projectId && (
           <nav aria-label="Project sections" className="cx-drawer-group">
             <p className="cx-drawer-label">
@@ -343,12 +331,12 @@ function Drawer({ onClose }: { path: string; onClose: () => void }) {
             <ProjectSectionLinks projectId={projectId} onNavigate={onClose} />
           </nav>
         )}
-        <nav aria-label="Organization pages" className="cx-drawer-group">
-          <p className="cx-drawer-label">Organization</p>
-          <PageLinks pages={ORG_PAGES} onNavigate={onClose} />
+        <nav aria-label="Usage and billing" className="cx-drawer-group">
+          <p className="cx-drawer-label">Usage and billing</p>
+          <PageLinks pages={USAGE_PAGES} onNavigate={onClose} />
         </nav>
         <nav aria-label="Organization settings" className="cx-drawer-group">
-          <p className="cx-drawer-label">Settings</p>
+          <p className="cx-drawer-label">Organization</p>
           <PageLinks pages={SETTINGS_PAGES} onNavigate={onClose} />
         </nav>
       </div>
@@ -473,18 +461,23 @@ function ProjectCrumb({ projectId, name }: { projectId: string; name: string }) 
   );
 }
 
-function Crumbs({ orgName }: { path: string; orgName: string }) {
+function Crumbs({ path, orgName }: { path: string; orgName: string }) {
   const { projectId } = useProjectContext();
   const info = useProjectInfo(projectId);
+  const area = AREAS.find((x) => x.match(path));
   return (
     <nav aria-label="Where you are" className="cx-crumbs">
       {orgName && <OrgCrumb name={orgName} />}
-      <span className="cx-crumb-sep" aria-hidden="true">
-        /
-      </span>
-      <Link to="/projects" className="cx-crumb-btn cx-crumb-area">
-        <span className="cx-crumb-name">Projects</span>
-      </Link>
+      {area && (
+        <span className="cx-crumb-sep" aria-hidden="true">
+          /
+        </span>
+      )}
+      {area && (
+        <Link to={area.to} className="cx-crumb-btn cx-crumb-area" aria-current={!projectId && path === area.to ? "page" : undefined}>
+          <span className="cx-crumb-name">{area.label}</span>
+        </Link>
+      )}
       {projectId && info.name && (
         <>
           <span className="cx-crumb-sep" aria-hidden="true">
@@ -621,7 +614,6 @@ export function Shell({ children }: { children: ReactNode }) {
   const drawer = useRef<HTMLElement>(null);
   const current = useCurrentOrg();
   const orgName = current.status === "ready" ? current.name : "";
-  const orgSub = current.status === "ready" ? current.sub : "";
 
   useEffect(() => setOpen(false), [pathname]);
   // Widening the window past the breakpoint leaves no drawer behind.
@@ -660,7 +652,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
         <div className="cx-body">
           <Rail path={pathname} />
-          <SubNav path={pathname} orgName={orgName} orgSub={orgSub} />
+          <SubNav path={pathname} orgName={orgName} />
           <div className="cx-content">
             <main id="main" tabIndex={-1}>
               <SampleNote />
