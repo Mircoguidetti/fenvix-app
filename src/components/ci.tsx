@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { CopyButton } from "./CopyButton";
-import { StatusPill } from "./StateBadge";
+import { STATE_ICONS, StatusPill } from "./StateBadge";
 import type { Defect, DefectCause, MinuteBreakdown, RunTrigger, TestOutcome } from "../data";
 import { formatPercent } from "../lib/format";
 
@@ -55,7 +55,7 @@ export function causeSentence(d: Pick<Defect, "cause" | "causeTests">): ReactNod
 export function ReplayStatus({ d }: { d: Pick<Defect, "replays" | "status"> }) {
   const ok = d.status === "reproduced";
   return (
-    <StatusPill tone={ok ? "ok" : "warn"}>
+    <StatusPill tone={ok ? "ok" : "warn"} icon={ok ? STATE_ICONS.seal : undefined}>
       Replays {d.replays.fails}/{d.replays.runs}
       {ok ? "" : ", fingerprints differ"}
     </StatusPill>
@@ -65,7 +65,11 @@ export function ReplayStatus({ d }: { d: Pick<Defect, "replays" | "status"> }) {
 export function OutcomePill({ outcome, flaky }: { outcome: TestOutcome; flaky?: boolean }) {
   if (outcome === "passed") return <StatusPill tone="ok">Passed</StatusPill>;
   if (outcome === "failed") return <StatusPill tone="danger">{flaky ? "Failed: flaky defect" : "Failed"}</StatusPill>;
-  return <StatusPill tone="neutral">Skipped with proof</StatusPill>;
+  return (
+    <StatusPill tone="neutral" icon={STATE_ICONS.seal}>
+      Skipped with proof
+    </StatusPill>
+  );
 }
 
 /** The last part of a test id, for tight places; the full id stays in the title. */

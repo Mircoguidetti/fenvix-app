@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { BookOpen, Bug, Building2, ChartColumn, ChevronDown, CreditCard, FileCode2, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { BookOpen, Bug, Building2, ChartColumn, Check, ChevronDown, CreditCard, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { AccountMenu, OrgAvatar, useCurrentOrg } from "./AccountMenu";
 import { useToast } from "./Toast";
@@ -47,20 +47,41 @@ const SETTINGS_PAGES = [
   { to: "/settings/members", label: "Members", end: false },
   { to: "/api-keys", label: "API keys", end: false },
 ];
-/** The project's sections: the icons at the top of the rail and the first links of the second bar (as in the landing). */
-type Section = { key: "runs" | "defects" | "setup" | "settings"; label: string; icon: LucideIcon; to: (id: string) => string };
+/**
+ * The project's sections, as in the dashboard drawn in the landing (founder, 2026-11-17): the icons of the rail and the
+ * first links of the second bar.
+ */
+type SectionKey = "runs" | "defects" | "skip" | "nightly" | "ttg" | "settings";
+type Section = { key: SectionKey; label: string; icon: LucideIcon; to: (id: string) => string };
 const PROJECT_SECTIONS: Section[] = [
   { key: "runs", label: "Runs", icon: Play, to: (id) => `/projects/${id}` },
-  { key: "defects", label: "Defects", icon: TriangleAlert, to: (id) => `/defects?project=${id}` },
-  { key: "setup", label: "Setup", icon: FileCode2, to: (id) => `/projects/${id}?tab=setup` },
-  { key: "settings", label: "Settings", icon: SlidersHorizontal, to: (id) => `/projects/${id}?tab=settings` },
+  { key: "defects", label: "Defects", icon: TriangleAlert, to: (id) => `/projects/${id}/defects` },
+  { key: "skip", label: "Skip with proof", icon: Check, to: (id) => `/projects/${id}/skip-with-proof` },
+  { key: "nightly", label: "Nightly exploration", icon: Moon, to: (id) => `/projects/${id}/nightly` },
+  { key: "ttg", label: "Time to green", icon: ChartColumn, to: (id) => `/projects/${id}/time-to-green` },
+  { key: "settings", label: "Settings", icon: SlidersHorizontal, to: (id) => `/projects/${id}/settings` },
 ];
-/** Organization pages listed under the project's sections, as in the landing. */
+const SECTION_OF: Record<string, SectionKey> = { defects: "defects", "skip-with-proof": "skip", nightly: "nightly", "time-to-green": "ttg", settings: "settings", runs: "runs" };
+/** Organization pages in the second bar, between the project's sections and its settings (as in the landing). */
 const PROJECT_ORG_PAGES = [
   { to: "/usage", label: "Usage and plans", end: false },
   { to: "/api-keys", label: "API keys", end: false },
-  { to: "/settings", label: "Organization settings", end: false },
 ];
+const LAST_PROJECT = "fenvix-last-project";
+export function rememberProject(id: string) {
+  try {
+    localStorage.setItem(LAST_PROJECT, id);
+  } catch {
+    /* private window */
+  }
+}
+export function rememberedProject(): string | null {
+  try {
+    return localStorage.getItem(LAST_PROJECT);
+  } catch {
+    return null;
+  }
+}
 
 /** What the frame shows about the open project. Set by its pages; layout only. */
 export type ProjectInfo = { name: string; language?: string; runner?: string; snippet?: string };
@@ -74,31 +95,33 @@ export function useProjectTitle(name: string | undefined, more?: Omit<ProjectInf
   }, [name, key, set]);
 }
 
-/** A project page: /projects/<id> and its runs, not the list and not /projects/connect. */
-function projectIdOf(path: string): string | null {
-  const m = /^\/projects\/([^/]+)/.exec(path);
-  return m && m[1] !== "connect" ? m[1] : null;
-}
+/** The organization's projects, loaded once for the frame (switcher, the project the frame shows). */
+const ProjectsList = createContext<ProjectRow[] | null>(null);
 
-/** The project the frame is about: a project page, or the defects page filtered to one project. */
-function useProjectContext(): { projectId: string | null; section: Section["key"] | null } {
+/**
+ * The project the frame is about: the one in the address, otherwise the last one opened in this browser, otherwise the
+ * first project. Null only when the organization has no project yet.
+ */
+function useProjectContext(): { projectId: string | null; section: SectionKey | null } {
   const { pathname } = useLocation();
-  const [params] = useSearchParams();
-  const fromPath = projectIdOf(pathname);
-  if (fromPath) {
-    const tab = params.get("tab");
-    return { projectId: fromPath, section: pathname.includes("/runs/") ? "runs" : tab === "setup" ? "setup" : tab === "settings" ? "settings" : "runs" };
-  }
-  if (pathname === "/defects" && params.get("project")) return { projectId: params.get("project"), section: "defects" };
-  return { projectId: null, section: null };
+  const list = useContext(ProjectsList);
+  const m = /^\/projects\/([^/]+)(?:\/([^/]+))?/.exec(pathname);
+  if (m && m[1] !== "connect") return { projectId: m[1], section: SECTION_OF[m[2] ?? "runs"] ?? "runs" };
+  const remembered = rememberedProject();
+  const id = list?.find((p) => p.id === remembered)?.id ?? list?.[0]?.id ?? null;
+  return { projectId: id, section: null };
 }
 
 /** The open project's name and runner: from its page when it set them, otherwise read once from the project list. */
 function useProjectInfo(projectId: string | null): ProjectInfo {
-  const { info } = useContext(ProjectTitle);
+  const { info: pageInfo } = useContext(ProjectTitle);
+  const list = useContext(ProjectsList);
+  const listed = list?.find((p) => p.id === projectId);
+  const info = pageInfo.name ? pageInfo : listed ? { name: listed.fullName, runner: listed.testRunner, snippet: setupSnippet(listed) } : pageInfo;
   const [loaded, setLoaded] = useState<ProjectRow | null>(null);
   useEffect(() => {
     if (!projectId || info.name) return;
+  rememberProject(projectId);
     let live = true;
     client.getProject(projectId).then((p) => live && setLoaded(p), () => live && setLoaded(null));
     return () => {
@@ -141,12 +164,11 @@ function ThemeButton() {
   );
 }
 
-function ProjectSectionLinks({ projectId, onNavigate }: { projectId: string; onNavigate?: () => void }) {
+function ProjectSectionLinks({ projectId, onNavigate, keys }: { projectId: string; onNavigate?: () => void; keys?: SectionKey[] }) {
   const { section } = useProjectContext();
   return (
     <>
-      {/* The frame sits outside the routes, so the project's own path is given in full. */}
-      {PROJECT_SECTIONS.map((s) => (
+      {PROJECT_SECTIONS.filter((s) => !keys || keys.includes(s.key)).map((s) => (
         <Link key={s.key} to={s.to(projectId)} onClick={onNavigate} className={section === s.key ? "cx-sub-link active" : "cx-sub-link"} aria-current={section === s.key ? "page" : undefined}>
           {s.label}
         </Link>
@@ -181,15 +203,15 @@ function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgS
           <div className="cx-sub-head">
             <span className="cx-sub-kind">Project</span>
             <span className="cx-sub-title">
-              <span className="break-anywhere mono">{info.name || " "}</span>
+              <span className="break-anywhere">{info.name || " "}</span>
+              <span className="cx-sub-dot" aria-hidden="true" />
             </span>
             {info.runner && <span className="cx-sub-meta">GitHub Actions · {info.runner}</span>}
           </div>
           <nav aria-label="Project sections" className="cx-sub-nav">
-            <ProjectSectionLinks projectId={projectId} />
-          </nav>
-          <nav aria-label="Organization pages" className="cx-sub-nav cx-sub-nav-more">
+            <ProjectSectionLinks projectId={projectId} keys={["runs", "defects", "skip", "nightly", "ttg"]} />
             <PageLinks pages={PROJECT_ORG_PAGES} />
+            <ProjectSectionLinks projectId={projectId} keys={["settings"]} />
           </nav>
         </>
       ) : (
@@ -270,23 +292,19 @@ function Rail({ path }: { path: string }) {
   return (
     <nav className="cx-rail" aria-label="Areas" data-wide={wide || undefined} data-open={pinned || undefined} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <div className="cx-rail-inner">
-        {projectId && (
-          <>
-            {PROJECT_SECTIONS.map((s) => (
+        {projectId
+          ? PROJECT_SECTIONS.map((s) => (
               <Link key={s.key} to={s.to(projectId)} className="cx-rail-link" aria-current={section === s.key ? "page" : undefined} title={s.label}>
                 <s.icon size={18} strokeWidth={1.75} aria-hidden="true" />
                 <span className="cx-rail-label">{s.label}</span>
               </Link>
+            ))
+          : AREAS.map((a) => (
+              <Link key={a.key} to={a.to} className="cx-rail-link" aria-current={a.match(path) ? "page" : undefined} title={a.label}>
+                <a.icon size={18} strokeWidth={1.75} aria-hidden="true" />
+                <span className="cx-rail-label">{a.label}</span>
+              </Link>
             ))}
-            <span className="cx-rail-rule" />
-          </>
-        )}
-        {AREAS.map((a) => (
-          <Link key={a.key} to={a.to} className="cx-rail-link" aria-current={!projectId && a.match(path) ? "page" : undefined} title={a.label}>
-            <a.icon size={18} strokeWidth={1.75} aria-hidden="true" />
-            <span className="cx-rail-label">{a.label}</span>
-          </Link>
-        ))}
         <span className="cx-rail-fill" />
         <span className="cx-rail-rule" />
         <a href={DOCS_URL} target="_blank" rel="noreferrer" className="cx-rail-link" title="Documentation">
@@ -408,38 +426,71 @@ function OrgCrumb({ name }: { name: string }) {
   );
 }
 
-function Crumbs({ path, orgName }: { path: string; orgName: string }) {
-  const { info } = useContext(ProjectTitle);
-  const projectId = projectIdOf(path);
-  const area = AREAS.find((a) => a.match(path));
+/** "Project <name> ▾": the organization's projects to switch to; the same section stays open. */
+function ProjectCrumb({ projectId, name }: { projectId: string; name: string }) {
+  const list = useContext(ProjectsList) ?? [];
+  const { section } = useProjectContext();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  const listId = useId();
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onClick = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onClick);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onClick);
+    };
+  }, [open]);
+  const target = PROJECT_SECTIONS.find((s) => s.key === (section ?? "runs")) ?? PROJECT_SECTIONS[0];
+  return (
+    <span className="cx-crumb-menu" ref={ref}>
+      <button type="button" className="cx-crumb-btn" aria-expanded={open} aria-controls={listId} aria-label={`Project: ${name}. Switch project`} onClick={() => setOpen((o) => !o)}>
+        <span className="cx-crumb-kind">Project</span>
+        <span className="cx-crumb-name cx-crumb-db">{name}</span>
+        <ChevronDown size={14} strokeWidth={2} aria-hidden="true" />
+      </button>
+      {open && (
+        <div id={listId} className="cx-pop" role="group" aria-label="Switch project">
+          {list.map((p) => (
+            <Link key={p.id} to={target.to(p.id)} className="org-item" aria-current={p.id === projectId ? "true" : undefined} onClick={() => setOpen(false)}>
+              <span className="org-item-text">
+                <span className="org-item-name mono">{p.fullName}</span>
+                <span className="org-item-role">{p.testRunner}</span>
+              </span>
+            </Link>
+          ))}
+          <Link to="/projects/connect" className="org-item" onClick={() => setOpen(false)}>
+            <span className="org-item-text">
+              <span className="org-item-name">Connect a project</span>
+            </span>
+          </Link>
+        </div>
+      )}
+    </span>
+  );
+}
+
+function Crumbs({ orgName }: { path: string; orgName: string }) {
+  const { projectId } = useProjectContext();
+  const info = useProjectInfo(projectId);
   return (
     <nav aria-label="Where you are" className="cx-crumbs">
       {orgName && <OrgCrumb name={orgName} />}
-      {area && (
-        <>
-          <span className="cx-crumb-sep" aria-hidden="true">
-            /
-          </span>
-          {projectId ? (
-            <Link to="/projects" className="cx-crumb-btn cx-crumb-area">
-              <span className="cx-crumb-name">{area.label}</span>
-            </Link>
-          ) : (
-            <span className="cx-crumb-btn cx-crumb-area" aria-current="page">
-              <span className="cx-crumb-name">{area.label}</span>
-            </span>
-          )}
-        </>
-      )}
+      <span className="cx-crumb-sep" aria-hidden="true">
+        /
+      </span>
+      <Link to="/projects" className="cx-crumb-btn cx-crumb-area">
+        <span className="cx-crumb-name">Projects</span>
+      </Link>
       {projectId && info.name && (
         <>
           <span className="cx-crumb-sep" aria-hidden="true">
             /
           </span>
-          <Link to={`/projects/${projectId}`} className="cx-crumb-btn" aria-current={path === `/projects/${projectId}` ? "page" : undefined}>
-            <span className="cx-crumb-kind">Project</span>
-            <span className="cx-crumb-name cx-crumb-db">{info.name}</span>
-          </Link>
+          <ProjectCrumb projectId={projectId} name={info.name.split("/").pop() ?? info.name} />
         </>
       )}
     </nav>
@@ -558,6 +609,14 @@ function JumpSearch() {
 export function Shell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [projectInfo, setProjectInfo] = useState<ProjectInfo>({ name: "" });
+  const [projects, setProjects] = useState<ProjectRow[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    client.listProjects().then((p) => live && setProjects(p), () => live && setProjects([]));
+    return () => {
+      live = false;
+    };
+  }, []);
   const { pathname } = useLocation();
   const drawer = useRef<HTMLElement>(null);
   const current = useCurrentOrg();
@@ -575,6 +634,7 @@ export function Shell({ children }: { children: ReactNode }) {
   useFocusTrap(drawer, open, () => setOpen(false));
 
   return (
+    <ProjectsList.Provider value={projects}>
     <ProjectTitle.Provider value={{ info: projectInfo, set: setProjectInfo }}>
       <div className="shell cx-shell">
         <a href="#main" className="skip-link">
@@ -590,7 +650,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </Link>
           <Crumbs path={pathname} orgName={orgName} />
           <span className="cx-top-fill" />
-          <span className="cx-top-where">{projectInfo.name && projectIdOf(pathname) ? projectInfo.name : orgName}</span>
+          <span className="cx-top-where">{projectInfo.name || orgName}</span>
           <JumpSearch />
           <ThemeButton />
           <div className="cx-account">
@@ -616,5 +676,6 @@ export function Shell({ children }: { children: ReactNode }) {
         </aside>
       </div>
     </ProjectTitle.Provider>
+    </ProjectsList.Provider>
   );
 }

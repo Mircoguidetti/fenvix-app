@@ -8,7 +8,11 @@ import { ProjectsPage } from "./pages/Projects";
 import { ConnectPage } from "./pages/Connect";
 import { ProjectPage } from "./pages/Project";
 import { RunPage } from "./pages/Run";
-import { DefectPage, DefectsPage } from "./pages/Defects";
+import { NightlyPage, SkipWithProofPage, TimeToGreenPage } from "./pages/ProjectSections";
+import { client } from "./data";
+import { rememberedProject } from "./components/Shell";
+import { useEffect, useState } from "react";
+import { DefectPage, DefectsPage, ProjectDefectsPage } from "./pages/Defects";
 import { UsagePage } from "./pages/Usage";
 import { BillingPage } from "./pages/Billing";
 import { ApiKeysPage } from "./pages/ApiKeys";
@@ -61,16 +65,43 @@ function Routed() {
   );
 }
 
+/**
+ * The first screen, as in the landing: the runs of the project opened last in this browser, or of the first project.
+ * An organization with no project yet starts on the Overview, which offers to connect one.
+ */
+function Home() {
+  const [to, setTo] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    client.listProjects().then(
+      (ps) => {
+        const id = ps.find((p) => p.id === rememberedProject())?.id ?? ps[0]?.id;
+        if (live) setTo(id ? `/projects/${id}` : "/overview");
+      },
+      () => live && setTo("/overview"),
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+  return to ? <Navigate to={to} replace /> : null;
+}
+
 /** Keyed by the organization: switching remounts every screen, so nothing of the previous one stays on show. */
 function Dashboard() {
   return (
     <Shell>
       <Routes>
-        <Route path="/" element={<Navigate to="/overview" replace />} />
+        <Route path="/" element={<Home />} />
         <Route path="/overview" element={<OverviewPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/connect" element={<ConnectPage />} />
         <Route path="/projects/:id" element={<ProjectPage />} />
+        <Route path="/projects/:id/defects" element={<ProjectDefectsPage />} />
+        <Route path="/projects/:id/skip-with-proof" element={<SkipWithProofPage />} />
+        <Route path="/projects/:id/nightly" element={<NightlyPage />} />
+        <Route path="/projects/:id/time-to-green" element={<TimeToGreenPage />} />
+        <Route path="/projects/:id/settings" element={<ProjectPage section="settings" />} />
         <Route path="/projects/:projectId/runs/:runId" element={<RunPage />} />
         <Route path="/defects" element={<DefectsPage />} />
         <Route path="/defects/:id" element={<DefectPage />} />

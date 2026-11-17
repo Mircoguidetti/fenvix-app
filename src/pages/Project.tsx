@@ -1,10 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
-import { client, type ProjectRow, type ProjectSettings, type RunQuery } from "../data";
+import { client, type Defect, type ProjectRow, type ProjectSettings, type Run, type RunQuery } from "../data";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
-import { AreaSeriesChart } from "../components/charts";
+import { BeforeWithChart, Sparkline } from "../components/charts";
 import { CodeBlock, MinuteSum, SAVED_NOTE, runMinutesNote, triggerLabel } from "../components/ci";
+import { CopyButton } from "../components/CopyButton";
+import { ActivityList, seconds as secs } from "./ProjectSections";
 import { RunStatusPill } from "../components/StateBadge";
 import { Pagination } from "../components/Pagination";
 import { Segmented } from "../components/Segmented";
@@ -14,12 +16,71 @@ import { useToast } from "../components/Toast";
 import { useAsync } from "../lib/useAsync";
 import { useOrg } from "../session/OrgProvider";
 import { formatCount, formatDate, formatDuration, formatMinutes, formatPercent, formatRelative, shortSha } from "../lib/format";
-import { runMinutes, setupSnippet } from "../data/ci";
+import { median, pullCommand, replayCommand, runMinutes, setupSnippet, timeToGreenPerCommit } from "../data/ci";
 import { SetupStatePill, languageLabel } from "./Projects";
 import { SetupDiff } from "./Connect";
 import { seconds } from "./Overview";
 
 const PAGE_SIZE = 25;
+
+/** The top of the Runs page, as in the landing: the latest run, its numbers, the replay command of the newest defect. */
+function LatestRun({ project, runs, openDefects }: { project: ProjectRow; runs: Run[] | null; openDefects: Defect[] | null }) {
+  if (!runs) return <Message>Loading the latest run</Message>;
+  const latest = runs.find((r) => r.status === "passed" || r.status === "failed");
+  if (!latest) return <p className="muted">No runs yet. The first one arrives once the test job uses runs-on: fenvix.</p>;
+  const finished = runs.filter((r) => r.status === "passed" || r.status === "failed").slice(0, 40).reverse();
+  const ttg = timeToGreenPerCommit(runs);
+  const ttgMed = median(ttg.map((x) => x.seconds));
+  const newest = openDefects?.[0];
+  return (
+    <section className="latest" aria-labelledby="latest-h">
+      <div className="latest-head">
+        <div>
+          <p className="page-kicker">{project.fullName} / Runs</p>
+          <div className="page-title-row">
+            <h2 id="latest-h" className="latest-title">
+              <Link to={`/projects/${project.id}/runs/${latest.id}`} className="row-link">
+                Run #{latest.number}
+              </Link>
+            </h2>
+            <RunStatusPill status={latest.status} />
+          </div>
+        </div>
+        {newest && (
+          <span className="latest-copy">
+            <CopyButton value={`${pullCommand(newest)}\n${replayCommand(newest)}`} what="replay command" text="Copy replay command" />
+          </span>
+        )}
+      </div>
+      <div className="kpis kpis-4">
+        <div className="kpi">
+          <span className="kpi-label">Tests run</span>
+          <strong className="kpi-value">{formatCount(latest.tests.ran)}</strong>
+          <span className="kpi-sub muted small">of {formatCount(latest.tests.total)} in the suite</span>
+          <div className="kpi-spark"><Sparkline values={finished.map((r) => r.tests.ran)} /></div>
+        </div>
+        <div className="kpi">
+          <span className="kpi-label">Skipped with proof</span>
+          <strong className="kpi-value">{formatPercent(latest.skipShare)}</strong>
+          <span className="kpi-sub muted small">each with a receipt</span>
+          <div className="kpi-spark"><Sparkline values={finished.map((r) => r.skipShare)} /></div>
+        </div>
+        <div className="kpi">
+          <span className="kpi-label">Time to green</span>
+          <strong className="kpi-value">{ttgMed === null ? "–" : secs(ttgMed)}</strong>
+          <span className="kpi-sub muted small">{project.baseline ? `before: ${secs(project.baseline.medianTimeToGreenS)}` : "median, 30 days"}</span>
+          <div className="kpi-spark"><Sparkline values={ttg.slice(-40).map((x) => x.seconds)} /></div>
+        </div>
+        <div className="kpi">
+          <span className="kpi-label">Open defects</span>
+          <strong className="kpi-value">{openDefects ? formatCount(openDefects.length) : "–"}</strong>
+          <span className="kpi-sub muted small">each with a replay command</span>
+          <div className="kpi-spark"><Sparkline values={finished.map((r) => r.tests.flakyDefects)} /></div>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 function RunsTab({ project }: { project: ProjectRow }) {
   const [params, setParams] = useSearchParams();
@@ -27,7 +88,10 @@ function RunsTab({ project }: { project: ProjectRow }) {
   const status = (["passed", "failed"].includes(params.get("status") ?? "") ? params.get("status") : "all") as NonNullable<RunQuery["status"]>;
   const page = Math.max(1, Number(params.get("page")) || 1);
   const runs = useAsync(() => client.listRuns(project.id, { scope, status, page, pageSize: PAGE_SIZE }), [project.id, scope, status, page]);
-  const series = useAsync(() => client.getSkipShareSeries(project.id, 60), [project.id]);
+  const since = new Date(client.now().getTime() - 30 * 86_400_000).toISOString();
+  const recent = useAsync(() => client.listRunsSince(project.id, since), [project.id]);
+  const defects = useAsync(() => client.listDefects({ projectId: project.id }), [project.id]);
+  const activity = useAsync(() => client.listActivity(project.id, 8), [project.id]);
   const now = client.now();
   const set = (k: string, v: string | null) =>
     setParams(
@@ -43,6 +107,20 @@ function RunsTab({ project }: { project: ProjectRow }) {
 
   return (
     <>
+      <LatestRun project={project} runs={recent.status === "ready" ? recent.data : null} openDefects={defects.status === "ready" ? defects.data : null} />
+      <div className="grid-2">
+        <Card id="ttg-per-run" title="Time to green, per run" description="Push to first green run, per commit, last 30 days.">
+          {recent.status === "ready" && timeToGreenPerCommit(recent.data).length > 1 ? (
+            <BeforeWithChart points={timeToGreenPerCommit(recent.data).map((x) => ({ at: x.at, value: x.seconds }))} before={project.baseline?.medianTimeToGreenS ?? null} format={(n) => secs(n)} />
+          ) : (
+            <Message>{recent.status === "ready" ? "Not enough green commits yet." : "Loading the chart"}</Message>
+          )}
+        </Card>
+        <Card id="activity" title="Live activity" description={project.fullName}>
+          {activity.status === "ready" ? <ActivityList items={activity.data} now={client.now()} /> : <Message>Loading</Message>}
+        </Card>
+      </div>
+
       <Card id="minutes" title="Minutes this month" description="The same runs on a GitHub-hosted runner, and what they are made of.">
         <p className="minute-line" id="project-minutes">
           <MinuteSum m={project.minutesThisMonth} />
@@ -52,9 +130,6 @@ function RunsTab({ project }: { project: ProjectRow }) {
         </p>
       </Card>
 
-      <Card id="skip-trend" title="Skipped with proof over time" description="Median share of test time skipped per run, day by day, over 60 days.">
-        {series.status === "ready" ? <AreaSeriesChart points={series.data} range="30d" valueLabel={(n) => formatPercent(n)} /> : <Message>Loading the chart</Message>}
-      </Card>
 
       <Card
         id="runs"
@@ -282,14 +357,15 @@ function SettingsTab({ project, onSaved }: { project: ProjectRow; onSaved: () =>
   );
 }
 
-export function ProjectPage() {
+export function ProjectPage({ section = "runs" }: { section?: "runs" | "settings" }) {
   const { id = "" } = useParams();
   const [params] = useSearchParams();
-  const tab = params.get("tab") === "setup" ? "setup" : params.get("tab") === "settings" ? "settings" : "runs";
   const project = useAsync(() => client.getProject(id), [id]);
   const p = project.status === "ready" ? project.data : null;
   useProjectTitle(p?.fullName, p ? { language: languageLabel(p.language), runner: p.testRunner, snippet: setupSnippet(p) } : undefined);
 
+  // Old links (?tab=setup, ?tab=settings) open the project's Settings.
+  if (params.get("tab")) return <Navigate to={`/projects/${id}/settings`} replace />;
   if (project.status === "loading") return <Message>Loading project</Message>;
   if (project.status === "error") return <Message role="alert">{project.message}</Message>;
   if (!p)
@@ -303,17 +379,21 @@ export function ProjectPage() {
       </div>
     );
 
+  if (section === "settings")
+    return (
+      <>
+        <PageHeader back={<Kicker>{p.fullName}</Kicker>} title="Settings" meta={<SetupStatePill state={p.setupState} />} description="How fenvix runs this project's tests, and the one line that moves its test job to fenvix." />
+        <SettingsTab project={p} onSaved={project.reload} />
+        <SetupTab project={p} />
+        <p className="muted small">
+          Organization: <Link to="/settings" className="row-link">settings</Link> · <Link to="/settings/members" className="row-link">members</Link> · <Link to="/billing" className="row-link">plans and billing</Link>
+        </p>
+      </>
+    );
   return (
     <>
-      <PageHeader
-        back={<Kicker>Project</Kicker>}
-        title={<span className="mono break-anywhere">{p.fullName}</span>}
-        meta={<SetupStatePill state={p.setupState} />}
-        description={`${languageLabel(p.language)} · ${p.testRunner} · ${formatCount(p.runsThisMonth)} runs this month · ${p.medianSkipShare === null ? "no runs yet" : `${formatPercent(p.medianSkipShare)} of test time skipped with proof (median)`}`}
-      />
-      {tab === "runs" && <RunsTab project={p} />}
-      {tab === "setup" && <SetupTab project={p} />}
-      {tab === "settings" && <SettingsTab project={p} onSaved={project.reload} />}
+      <h1 className="sr-only">{p.fullName}: runs</h1>
+      <RunsTab project={p} />
     </>
   );
 }

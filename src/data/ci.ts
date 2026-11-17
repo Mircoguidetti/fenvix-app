@@ -3,6 +3,7 @@
  * load rows, these turn them into what the screens show. No I/O here, so tests/unit/ci.test.ts covers all of it.
  */
 import type {
+  ActivityItem, Exploration, MissKind,
   BillingOverview, DayPoint, Defect, DefectFamily, GitHubRate, MinuteBreakdown, Overview, Plan, Project, ProjectRow, Run, SetupChange, UsageProjectRow, UsageReport,
 } from "./types";
 
@@ -276,4 +277,80 @@ export function setupSnippet(project: Pick<Project, "language" | "testRunner">):
   const run = project.testRunner === "pytest" ? "pytest" : project.testRunner === "go test" ? "go test ./..." : project.testRunner === "jest" ? "npx jest" : "npx vitest run";
   const install = project.language === "python" ? "pip install -e .[test]" : project.language === "node" ? "npm ci" : "go mod download";
   return ["jobs:", "  test:", "    runs-on: fenvix", "    steps:", "      - uses: actions/checkout@v4", `      - run: ${install}`, `      - run: ${run}`].join("\n");
+}
+
+/** Plain-English names of the reasons a test could not be reused. */
+export const MISS_LABELS: Record<MissKind, string> = {
+  code: "Code it runs changed",
+  data: "A file it reads changed",
+  env: "An environment variable changed",
+  runtime: "Runtime changed (interpreter, packages)",
+  config: "Configuration changed",
+  clock: "It reads the clock",
+  new: "New test",
+  "failed-before": "Failed before",
+};
+
+/** Why tests ran over a set of runs: totals by reason (largest first), and the details that made most tests run. */
+export function missSummary(runs: Run[]): { byKind: { kind: MissKind; tests: number }[]; details: { kind: MissKind; detail: string; tests: number; runs: number }[] } {
+  const kinds = new Map<MissKind, number>();
+  const details = new Map<string, { kind: MissKind; detail: string; tests: number; runs: number }>();
+  for (const r of runs) {
+    for (const [k, n] of Object.entries(r.skipMisses) as [MissKind, number][]) kinds.set(k, (kinds.get(k) ?? 0) + n);
+    for (const d of r.missDetails) {
+      const key = `${d.kind}|${d.detail}`;
+      const cur = details.get(key) ?? { kind: d.kind, detail: d.detail, tests: 0, runs: 0 };
+      cur.tests += d.tests;
+      cur.runs += 1;
+      details.set(key, cur);
+    }
+  }
+  return {
+    byKind: [...kinds.entries()].map(([kind, tests]) => ({ kind, tests })).sort((a, b) => b.tests - a.tests),
+    details: [...details.values()].sort((a, b) => b.tests - a.tests).slice(0, 8),
+  };
+}
+
+/** Time to green of each commit (first passing run), oldest first: seconds from push to green, with the run. */
+export function timeToGreenPerCommit(runs: Run[]): { at: string; seconds: number; run: Run }[] {
+  const first = new Map<string, Run>();
+  for (const r of runs) {
+    if (r.status !== "passed" || !r.finishedAt) continue;
+    const k = `${r.projectId}:${r.commitSha}`;
+    const seen = first.get(k);
+    if (!seen || r.finishedAt < seen.finishedAt!) first.set(k, r);
+  }
+  return [...first.values()]
+    .map((run) => ({ at: run.startedAt, seconds: (new Date(run.finishedAt!).getTime() - new Date(run.pushedAt).getTime()) / 1000, run }))
+    .sort((a, b) => a.at.localeCompare(b.at));
+}
+
+/** The value below which `share` of the values fall (0.9 = p90). */
+export function percentile(values: number[], share: number): number | null {
+  if (!values.length) return null;
+  const s = [...values].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor(share * s.length))];
+}
+
+const sha7 = (s: string) => s.slice(0, 7);
+
+/** Recent activity derived from what the dashboard already holds; newest first. */
+export function activityFrom(projects: Project[], runs: Run[], defects: Defect[], explorations: Exploration[], limit = 8): ActivityItem[] {
+  const name = new Map(projects.map((p) => [p.id, p.fullName]));
+  const items: ActivityItem[] = [];
+  for (const r of runs.slice(0, 60)) {
+    if (r.status !== "passed" && r.status !== "failed" || !r.finishedAt) continue;
+    items.push({
+      id: `run-${r.id}`, at: r.finishedAt, kind: r.status === "passed" ? "run_green" : "run_failed", projectId: r.projectId, to: `/projects/${r.projectId}/runs/${r.id}`,
+      title: r.status === "passed" ? `Run #${r.number} green` : `Run #${r.number} failed`,
+      detail: r.status === "passed" ? `${Math.round(r.skipShare * 100)}% skipped with proof · ${sha7(r.commitSha)}` : r.tests.flakyDefects ? `${r.tests.flakyDefects} flaky, reproducible · ${sha7(r.commitSha)}` : `${r.tests.failed} failed · ${sha7(r.commitSha)}`,
+    });
+  }
+  for (const d of defects)
+    items.push({ id: `defect-${d.id}`, at: d.firstSeenAt, kind: "defect_reproduced", projectId: d.projectId, to: `/defects/${d.id}`, title: `Defect reproduced ${d.replays.fails} of ${d.replays.runs}`, detail: d.testId.split(/::| > /).pop() ?? d.testId });
+  for (const e of explorations)
+    items.push({ id: `explore-${e.id}`, at: e.finishedAt, kind: "exploration", projectId: e.projectId, to: `/projects/${e.projectId}/nightly`, title: "Nightly exploration finished", detail: `${e.seeds} seeds · ${e.newDefectIds.length ? `${e.newDefectIds.length} new defect${e.newDefectIds.length > 1 ? "s" : ""}` : "no new defects"}` });
+  for (const p of projects)
+    if (p.setupPullRequest) items.push({ id: `pr-${p.id}`, at: p.connectedAt, kind: "setup_pr", projectId: p.id, to: `/projects/${p.id}/settings`, title: `Setup pull request #${p.setupPullRequest.number} ${p.setupPullRequest.state === "merged" ? "merged" : "opened"}`, detail: name.get(p.id) ?? "" });
+  return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
 }

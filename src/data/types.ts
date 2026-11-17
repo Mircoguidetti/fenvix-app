@@ -132,6 +132,60 @@ export interface Run {
   githubEquivalentMinutes: number;
   engineVersion: string;
   seed: number | null;
+  /** Tests that ran because they could not be reused, by reason. */
+  skipMisses: Partial<Record<MissKind, number>>;
+  /** The reasons that made the most tests run again: kind, detail (e.g. src/x.py::func), tests. */
+  missDetails: { kind: MissKind; detail: string; tests: number }[];
+}
+
+/** Why a test was not reused (receipts.jsonl: {"reused": false, "why": "<kind>: <detail>"}). */
+export type MissKind = "new" | "failed-before" | "config" | "runtime" | "clock" | "env" | "data" | "code";
+
+/** One night of exploration on a project (the engine's explore.json, docs/data-contract.md "Exploration"). */
+export interface Exploration {
+  id: string;
+  projectId: string;
+  startedAt: string;
+  finishedAt: string;
+  commitSha: string;
+  branch: string;
+  /** Seeds tried; every seed is one full run of the suite in a seeded order. */
+  seeds: number;
+  runs: number;
+  /** Tests collected. */
+  collected: number;
+  seconds: number;
+  /** Tests that failed under some seeds and passed under others. */
+  flakyFailing: string[];
+  /** Tests that failed under every seed: real failures, not flaky. */
+  alwaysFailing: string[];
+  /** Flaky tests the time budget did not allow to reproduce. */
+  notReproduced: string[];
+  /** Defects this night reproduced for the first time. */
+  newDefectIds: string[];
+  /** Families by polluter: key (cause tests joined by " + ", or "<none>") and how many tests. */
+  familiesByPolluter: { key: string; tests: number }[];
+  seedsLog: { seed: number; seconds: number; failing: number }[];
+}
+
+/** A run's tests by file, for the suite drawn as squares. */
+export interface RunFile {
+  file: string;
+  tests: number;
+  ran: number;
+  skipped: number;
+  failed: number;
+}
+
+/** What happened lately, newest first. Derived from runs, defects, explorations and setup pull requests. */
+export interface ActivityItem {
+  id: string;
+  at: string;
+  kind: "run_green" | "run_failed" | "defect_reproduced" | "exploration" | "setup_pr";
+  title: string;
+  detail: string;
+  projectId: string;
+  to: string;
 }
 
 export interface TestFailure {

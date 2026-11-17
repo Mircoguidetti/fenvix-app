@@ -16,12 +16,13 @@ import { assertMockCanManage, mockOrgName, mockRole } from "./orgs-mock";
 import { activeOrgId } from "../lib/org";
 import type { DataClient, RunQuery } from "./client";
 import type {
+  ActivityItem, Exploration, MissKind, RunFile,
   Baseline, Defect, DefectCause, GitHubRate, GitHubRepository, Language, Page, Plan, Project, Run, RunTrigger, Settings,
   SetupPullRequest, SkipReceipt, TestOutcome, TestPage, TestResult, TestRunner,
 } from "./types";
 import { ExplorerError } from "./explorer";
 import { MAX_ACTIVE_KEYS, PAGE_LIMIT, keyStatus, nameProblem, type PublicApiKey } from "./public-keys";
-import { billingFrom, dayStart, familiesOf, familyKeyOf, median, monthOf, overviewFrom, projectRow, setupChange, usageCsv, usageCsvName, usageFrom } from "./ci";
+import { activityFrom, billingFrom, dayStart, familiesOf, familyKeyOf, median, monthOf, overviewFrom, projectRow, setupChange, usageCsv, usageCsvName, usageFrom } from "./ci";
 import { blobUrl } from "./files";
 
 export const NOW = new Date("2026-11-17T12:00:00Z");
@@ -268,6 +269,7 @@ interface Store {
   settings: Settings;
   apiKeys: PublicApiKey[];
   installations: Map<number, string[]>;
+  explorations: Exploration[];
 }
 
 const RATE: GitHubRate = { usdPerMinute: 0.008, runner: "GitHub-hosted Linux, 2 cores", source: "GitHub Actions pricing page, as quoted in PRODUCT.md (to verify)", checkedOn: "2026-11-16" };
@@ -302,6 +304,43 @@ function ranModules(spec: Spec, runSeed: number, skipShare: number, force: numbe
     time += modules[i].timeMs;
   }
   return ran;
+}
+
+/** The source a test file exercises, for the reasons a test ran ("code: homehub/components/mqtt/discovery.py::async_discover"). */
+function sourceOf(spec: Spec, file: string, r: () => number): string {
+  const fn = pick(r, spec.language === "go" ? ["Append", "Select", "Encode", "Compact", "Reload"] : ["setup_entry", "async_update", "build_payload", "validate", "resolve", "load"]);
+  if (spec.language === "python") return `${file.replace(/^tests\//, spec.id === "prj_storefront" ? "" : "homehub/").replace(/\/tests\//, "/").replace(/test_([a-z_]+?)(_\d+)?\.py$/, "$1.py")}::${fn}`;
+  if (spec.language === "node") return `${file.replace(/\/src\/__tests__\/([a-z]+)\d*\.test\.ts$/, "/src/$1.ts")}::${pick(r, ["resolve", "normalize", "load", "render"])}`;
+  return `${file}/${pick(r, ["db", "head", "query", "encode"])}.go::${fn}`;
+}
+
+/**
+ * Why the tests of a run ran (the engine's "why" of each test that was not reused). An invalidating change (a
+ * dependency bump, a config change) makes most tests run for one reason; otherwise the changed code explains most.
+ */
+function missesFor(spec: Spec, ran: Set<number>, ranTests: number, skipShare: number, failedBefore: boolean, r: () => number): Pick<Run, "skipMisses" | "missDetails"> {
+  const modules = suite(spec);
+  const split = (shares: [MissKind, number][]) => {
+    const out: Partial<Record<MissKind, number>> = {};
+    let left = ranTests;
+    shares.forEach(([k, w], i) => {
+      const n = i === shares.length - 1 ? left : Math.min(left, Math.round(ranTests * w));
+      if (n > 0) out[k] = n;
+      left -= n;
+    });
+    return out;
+  };
+  const top = [...ran].map((i) => modules[i]).sort((a, b) => b.tests.length - a.tests.length).slice(0, 4);
+  if (skipShare < 0.6) {
+    const kind: MissKind = r() < 0.7 ? "runtime" : "config";
+    const detail = kind === "runtime" ? (spec.language === "python" ? "packages: uv.lock changed" : spec.language === "node" ? "packages: package-lock.json changed" : "go.sum changed") : spec.language === "python" ? "pyproject.toml [tool.pytest.ini_options]" : spec.language === "node" ? "vitest.config.ts" : "go.mod";
+    return { skipMisses: split([[kind, 0.86], ["code", 0.12], ["new", 0.02]]), missDetails: [{ kind, detail, tests: Math.round(ranTests * 0.86) }, ...top.slice(0, 2).map((m) => ({ kind: "code" as MissKind, detail: sourceOf(spec, m.file, r), tests: m.tests.length }))] };
+  }
+  const shares: [MissKind, number][] = [["code", 0.72], ["data", 0.1], ["env", 0.03], ["new", 0.06], ...(failedBefore ? ([["failed-before", 0.04]] as [MissKind, number][]) : []), ["clock", 0.05]];
+  const details = top.map((m) => ({ kind: "code" as MissKind, detail: sourceOf(spec, m.file, r), tests: m.tests.length }));
+  if (r() < 0.4) details.push({ kind: "data", detail: spec.language === "python" ? "tests/fixtures/config_entries.json" : "website/docs/intro.md", tests: Math.max(1, Math.round(ranTests * 0.1)) });
+  if (r() < 0.2) details.push({ kind: "env", detail: spec.env[0], tests: Math.max(1, Math.round(ranTests * 0.03)) });
+  return { skipMisses: split(shares), missDetails: details.sort((a, b) => b.tests - a.tests).slice(0, 5) };
 }
 
 function moduleIndexOf(spec: Spec, testId: string): number {
@@ -410,6 +449,7 @@ function buildSample(owner: string, orgName: string, planId: string): Store {
           githubEquivalentMinutes: Math.round(((ranMs + skippedMs) / MIN + otherStepMinutes) * 100) / 100,
           engineVersion: spec.language === "node" ? "detjs 0.1.0" : spec.language === "go" ? "detgo 0.1.0" : "detpy 0.1.0",
           seed: seed % 100,
+          ...missesFor(spec, ran, ranTests, skipShare, lastFailed, rng(seed)),
         };
         runs.push(run);
         detail.set(id, { ran, failures });
@@ -436,9 +476,51 @@ function buildSample(owner: string, orgName: string, planId: string): Store {
     };
   });
 
+  // Nights of exploration for the projects that have it on: seeds tried, flaky tests seen, defects found first at night.
+  const explorations: Exploration[] = [];
+  for (const spec of SPECS) {
+    const project = projects.find((p) => p.id === spec.id)!;
+    if (!project.settings.nightlyExploration) continue;
+    const modules = suite(spec);
+    const total = modules.reduce((a, m) => a + m.tests.length, 0);
+    const r = rng(hash(`nights:${spec.id}`));
+    const seeds = spec.id === "prj_docs" ? 100 : 50;
+    for (let d = Math.min(HISTORY_DAYS, spec.connectedDaysAgo - 1); d >= 1; d--) {
+      const day = dayStart(new Date(NOW.getTime() - d * DAY));
+      const open = DEFECT_SEEDS.filter((x) => x.projectId === spec.id && x.firstDaysAgo >= d && (x.fixedDaysAgo === undefined || x.fixedDaysAgo < d));
+      const flaky = open.filter(() => r() < 0.7).map((x) => x.testId);
+      const found = DEFECT_SEEDS.filter((x) => x.projectId === spec.id && x.firstDaysAgo === d).map((x) => x.id);
+      const always = r() < 0.06 ? [pick(r, pick(r, modules).tests)] : [];
+      const notReproduced = r() < 0.08 ? [pick(r, pick(r, modules).tests)] : [];
+      const perSeed = (spec.fullTestMs * spec.overhead) / 1000 / 8;
+      const seconds = Math.round(seeds * perSeed * (0.9 + r() * 0.2));
+      const startedAt = new Date(day.getTime() + 2 * HOUR);
+      const fams = new Map<string, number>();
+      for (const t of flaky) {
+        const seed = DEFECT_SEEDS.find((x) => x.testId === t)!;
+        const k = familyKeyOf(seed.causeTests);
+        fams.set(k, (fams.get(k) ?? 0) + 1);
+      }
+      explorations.push({
+        id: `exp_${spec.id.slice(4)}_${d}`, projectId: spec.id, startedAt: startedAt.toISOString(), finishedAt: new Date(startedAt.getTime() + seconds * 1000).toISOString(),
+        commitSha: hex(`${spec.id}:night:${d}`, 40), branch: "main", seeds, runs: seeds, collected: total, seconds,
+        flakyFailing: flaky, alwaysFailing: always, notReproduced, newDefectIds: found,
+        familiesByPolluter: [...fams.entries()].map(([key, tests]) => ({ key, tests })),
+        seedsLog: Array.from({ length: seeds }, (_, i) => ({ seed: i + 1, seconds: Math.round(perSeed * (0.9 + r() * 0.2)), failing: always.length + flaky.filter(() => r() < 0.12).length })),
+      });
+      // A defect found at night is first seen then, before any pull request hit it.
+      for (const id of found) {
+        const def = defects.find((x) => x.id === id);
+        const at = explorations[explorations.length - 1].finishedAt;
+        if (def && at < def.firstSeenAt) def.firstSeenAt = at;
+      }
+    }
+  }
+  explorations.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+
   runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   return {
-    projects, runs, detail, defects, githubAccount: owner,
+    projects, runs, detail, defects, explorations, githubAccount: owner,
     repos: [
       ...projects.map((p) => ({ fullName: p.fullName, private: true, language: p.language, testRunner: p.testRunner, connected: true })),
       { fullName: `${owner}/billing-worker`, private: true, language: "python", testRunner: "pytest", connected: false },
@@ -455,7 +537,7 @@ function buildSample(owner: string, orgName: string, planId: string): Store {
 /** Another organization: nothing connected yet, so its dashboard starts with "Connect a project". */
 function emptyStore(name: string): Store {
   return {
-    projects: [], runs: [], detail: new Map(), defects: [], githubAccount: null,
+    projects: [], runs: [], detail: new Map(), defects: [], explorations: [], githubAccount: null,
     repos: [
       { fullName: `${slug(name)}/api`, private: true, language: "python", testRunner: "pytest", connected: false },
       { fullName: `${slug(name)}/web`, private: true, language: "node", testRunner: "vitest", connected: false },
@@ -679,6 +761,28 @@ export const mockClient: DataClient = {
     return wait<TestPage>({ items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize, counts });
   },
   getSkipReceipt: (id) => wait(receiptOf(id)),
+  listRunFiles(runId) {
+    const s = store();
+    const run = s.runs.find((r) => r.id === runId);
+    const spec = run && specOf(run.projectId);
+    const d = s.detail.get(runId);
+    if (!run || !spec || !d) return wait<RunFile[]>([]);
+    const failed = new Set(d.failures.map((f) => fileOf(f.testId)));
+    return wait<RunFile[]>(
+      suite(spec).map((m, i) => {
+        const nFailed = failed.has(m.file) ? d.failures.filter((f) => fileOf(f.testId) === m.file).length : 0;
+        const ran = d.ran.has(i) || nFailed > 0;
+        return { file: m.file, tests: m.tests.length, ran: ran ? m.tests.length - nFailed : 0, skipped: ran ? 0 : m.tests.length, failed: nFailed };
+      }),
+    );
+  },
+  listExplorations: (projectId) => wait(copy(store().explorations.filter((e) => e.projectId === projectId))),
+  listActivity(projectId, limit = 8) {
+    const s = store();
+    const keep = <T extends { projectId: string }>(xs: T[]) => (projectId ? xs.filter((x) => x.projectId === projectId) : xs);
+    return wait<ActivityItem[]>(activityFrom(keep(s.projects.map((p) => ({ ...p, projectId: p.id }))), keep(s.runs), keep(s.defects), keep(s.explorations), limit));
+  },
+  listRunsSince: (projectId, since) => wait(copy(store().runs.filter((r) => r.projectId === projectId && r.startedAt >= since))),
 
   listDefects: (q) => wait(copy(defectsFor(q))),
   listDefectFamilies: (q) => wait(copy(familiesOf(defectsFor(q)))),

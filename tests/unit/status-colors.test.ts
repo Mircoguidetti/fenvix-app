@@ -218,7 +218,7 @@ test("every coloured state also says it in words or with an icon", () => {
   const ci = src("components/ci.tsx");
   for (const word of ["Passed", "Skipped with proof", "Failed: flaky defect", "Replays ", "fingerprints differ"]) assert.ok(ci.includes(word), `no words "${word}" for an outcome`);
   const defects = src("pages/Defects.tsx");
-  assert.match(defects, /tone="danger">Open</);
+  assert.match(defects, /tone="danger" icon=\{STATE_ICONS\.alert\}>\s*Open/);
   assert.match(defects, /tone="ok">Fixed</);
   // The setup diff says - and + as well as red and green; a done step shows a tick.
   assert.match(src("pages/Connect.tsx"), /className="diff-del">- \{/);
@@ -234,7 +234,13 @@ test("the states in the inventory are wired to the right classes in the componen
   assert.match(src("pages/Project.tsx"), /<RunStatusPill status=\{r\.status\} \/>/);
   assert.match(src("pages/Project.tsx"), /className="fail-count"/);
   assert.match(src("components/ci.tsx"), /outcome === "failed"\) return <StatusPill tone="danger">/);
-  assert.match(src("components/ci.tsx"), /<StatusPill tone=\{ok \? "ok" : "warn"\}>/);
+  assert.match(src("components/ci.tsx"), /<StatusPill tone=\{ok \? "ok" : "warn"\} icon=\{ok \? STATE_ICONS\.seal : undefined\}>/);
+  // Every state has an icon as well as a word (founder, 2026-11-17): ✓ ok, ✕ failed, a clock in progress, a dash
+  // otherwise; skipped with proof carries a seal.
+  const pill = src("components/StateBadge.tsx");
+  assert.match(pill, /const TONE_ICON: Record<Tone, LucideIcon> = \{ ok: Check, danger: X, warn: Clock, neutral: Minus \}/);
+  assert.match(pill, /<Icon className="state-icon"/);
+  assert.match(src("components/ci.tsx"), /<StatusPill tone="neutral" icon=\{STATE_ICONS\.seal\}>\s*Skipped with proof/);
   assert.match(src("pages/ApiKeys.tsx"), /callout callout-success/);
   assert.match(src("pages/SignIn.tsx"), /callout callout-success/);
 });

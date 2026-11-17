@@ -91,6 +91,15 @@ the cent the same way.
 | `engineVersion` | string | `detpy` field of a bundle, e.g. `0.1.0` |
 | `seed` | number \| null | `--det-seed` the run used; null for collection order (`"fixed"`) |
 
+**Why tests ran.** For every test that was not reused the engine writes `{"reused": false, "why": "<kind>: <detail>"}`
+(kinds `new`, `failed-before`, `config`, `runtime`, `clock`, `env`, `data`, `code`; detail e.g. `src/x.py::func`,
+`(module level)`, `(pytest hooks)`, `(content)`). The run summary carries them summed:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `skipMisses` | `{ [kind]: number }` | tests that ran, by reason (`skip_misses`, jsonb) |
+| `missDetails` | `{ kind, detail, tests }[]` | the details that made the most tests run, top 5 (`miss_details`, jsonb) |
+
 ## Per-test outcome
 
 One row per test of a run. Large suites have tens of thousands; the dashboard reads them a page at a time.
@@ -184,6 +193,24 @@ minimiser or bundle yet (branch `claude/node-l0`), so the command is the seed on
 `detjs vitest run --det --det-seed=S` (or `detjs jest --det --det-seed=S`), and the dashboard says that the order is
 not replayed. The engine's own `detpy replay <bundle>` works as well and is shown next to it.
 
+## Exploration
+
+One night of exploration of a project (`detpy explore`, on fenvix machines; included in every plan). Taken from the
+engine's `explore.json`: `{seeds, seconds, runs, collected, failing_tests, always_failing, flaky_failing, bundles,
+not_reproduced_budget, families_by_divergence, families_by_polluter, seeds_log, run_log}`. Table `ci_explorations`
+(`supabase/migrations/0012_ci_explorations.sql`).
+
+| Field | Type | From |
+| --- | --- | --- |
+| `id`, `projectId` | string | dashboard |
+| `startedAt`, `finishedAt`, `commitSha`, `branch` | | the runner |
+| `seeds`, `runs`, `collected`, `seconds` | number | `seeds`, `runs`, `collected`, `seconds` |
+| `flakyFailing`, `alwaysFailing` | string[] | `flaky_failing`, `always_failing` (always failing = a real failure, not flaky) |
+| `notReproduced` | string[] | `not_reproduced_budget`: flaky tests the time budget did not reach |
+| `newDefectIds` | string[] | defects whose bundle this night produced for the first time |
+| `familiesByPolluter` | `{ key, tests }[]` | `families_by_polluter`, counted |
+| `seedsLog` | `{ seed, seconds, failing }[]` | `seeds_log`, `failing` counted |
+
 ## Usage
 
 Computed from runs, not sent by the runner.
@@ -219,6 +246,8 @@ the control plane writes the tables above with the `fenvix_control_plane` role. 
 tables directly through Supabase (row level security) or uses the mock.
 
 ## Changes
+
+- 2026-11-17: run summary gets `skipMisses` and `missDetails`; new Exploration record (migration 0012).
 
 - 2026-11-17: first version.
 - 2026-11-17 (addendum to P-015): `otherStepMinutes` added to the run summary; `githubEquivalentMinutes` is now the sum

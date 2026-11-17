@@ -2,12 +2,14 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { client, type Defect } from "../data";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { CodeBlock, ReplayStatus, causeLabel, causeSentence, shortTest } from "../components/ci";
-import { StatusPill } from "../components/StateBadge";
+import { STATE_ICONS, StatusPill } from "../components/StateBadge";
 import { Select } from "../components/Select";
 import { Segmented } from "../components/Segmented";
 import { useAsync } from "../lib/useAsync";
 import { formatCount, formatDate, formatRelative } from "../lib/format";
-import { bundleDir, pullCommand, replayCommand } from "../data/ci";
+import { bundleDir, pullCommand, replayCommand, setupSnippet } from "../data/ci";
+import { useProjectTitle } from "../components/Shell";
+import { languageLabel } from "./Projects";
 
 const REASONS: Record<string, string> = {
   "outcome-only": "Same events, different outcome: the cause is state the engine does not observe yet",
@@ -19,12 +21,19 @@ const REASONS: Record<string, string> = {
 };
 
 function StatePill({ d }: { d: Defect }) {
-  return d.state === "open" ? <StatusPill tone="danger">Open</StatusPill> : <StatusPill tone="ok">Fixed</StatusPill>;
+  return d.state === "open" ? (
+    <StatusPill tone="danger" icon={STATE_ICONS.alert}>
+      Open
+    </StatusPill>
+  ) : (
+    <StatusPill tone="ok">Fixed</StatusPill>
+  );
 }
 
-export function DefectsPage() {
+/** Every defect of the organization, or of one project when `fixedProjectId` is given (the project's Defects section). */
+export function DefectsPage({ fixedProjectId }: { fixedProjectId?: string } = {}) {
   const [params, setParams] = useSearchParams();
-  const projectId = params.get("project") ?? "";
+  const projectId = fixedProjectId ?? params.get("project") ?? "";
   const state = (["fixed", "all"].includes(params.get("state") ?? "") ? params.get("state") : "open") as "open" | "fixed" | "all";
   const projects = useAsync(() => client.listProjects(), []);
   const families = useAsync(() => client.listDefectFamilies({ projectId: projectId || undefined, state }), [projectId, state]);
@@ -44,15 +53,17 @@ export function DefectsPage() {
   return (
     <>
       <PageHeader
-        back={<Kicker />}
+        back={<Kicker>{fixedProjectId && projects.status === "ready" ? projects.data.find((p) => p.id === fixedProjectId)?.fullName : undefined}</Kicker>}
         title="Defects"
         description="Flaky tests turned into reproducible defects: the cause named, the smallest order of tests that fails, the seed, and a command that replays the failure 10 times out of 10. Grouped by cause."
       />
       <div className="toolbar">
+        {!fixedProjectId && (
         <div className="field">
           <label htmlFor="d-project">Project</label>
           <Select id="d-project" value={projectId} onChange={(v) => set("project", v || null)} options={[{ value: "", label: "All projects" }, ...(projects.status === "ready" ? projects.data.map((p) => ({ value: p.id, label: p.fullName })) : [])]} />
         </div>
+        )}
         <div className="field field-seg">
           <span className="label" id="d-state-label">
             State
@@ -291,4 +302,13 @@ export function DefectPage() {
       </Card>
     </>
   );
+}
+
+/** The project's Defects section (/projects/:id/defects). */
+export function ProjectDefectsPage() {
+  const { id = "" } = useParams();
+  const project = useAsync(() => client.getProject(id), [id]);
+  const p = project.status === "ready" ? project.data : null;
+  useProjectTitle(p?.fullName, p ? { language: languageLabel(p.language), runner: p.testRunner, snippet: setupSnippet(p) } : undefined);
+  return <DefectsPage fixedProjectId={id} />;
 }

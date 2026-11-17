@@ -1,4 +1,5 @@
 import type {
+  ActivityItem, Exploration, RunFile,
   BillingOverview, Defect, DefectFamily, DefectQuery, ExportResult, GitHubConnection, GitHubRepository, Overview, Page, Plan,
   Project, ProjectRow, ProjectSettings, Run, Settings, SetupChange, SetupPullRequest, SkipReceipt, TestPage, TestQuery, UsageReport,
 } from "./types";
@@ -35,6 +36,15 @@ export interface DataClient {
   getRun(id: string): Promise<{ run: Run; project: Project } | null>;
   listTestResults(runId: string, query?: TestQuery): Promise<TestPage>;
   getSkipReceipt(id: string): Promise<SkipReceipt | null>;
+  /** The run's tests by file: ran, skipped with proof, failed (the suite drawn as squares). */
+  listRunFiles(runId: string): Promise<RunFile[]>;
+
+  /** Nights of exploration of a project, newest first. */
+  listExplorations(projectId: string): Promise<Exploration[]>;
+  /** What happened lately, newest first: for one project, or every project when projectId is left out. */
+  listActivity(projectId?: string, limit?: number): Promise<ActivityItem[]>;
+  /** Runs since `since` (ISO), newest first, for per-project pages that chart every run. */
+  listRunsSince(projectId: string, since: string): Promise<Run[]>;
 
   listDefects(query?: DefectQuery): Promise<Defect[]>;
   listDefectFamilies(query?: DefectQuery): Promise<DefectFamily[]>;

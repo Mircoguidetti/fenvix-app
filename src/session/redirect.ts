@@ -36,6 +36,6 @@ export async function completeAuthRedirect(): Promise<void> {
   const url = new URL(window.location.href);
   url.search = "";
   url.hash = "";
-  if (url.pathname === "/" || url.pathname === "") url.pathname = "/overview";
+  if (url.pathname === "") url.pathname = "/"; // "/" opens the last project (App.tsx, Home)
   window.history.replaceState(null, "", url.toString());
 }

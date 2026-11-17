@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { client, type SkipReceipt, type TestOutcome } from "../data";
+import { client, type RunFile, type SkipReceipt, type TestOutcome } from "../data";
+import { BadgeCheck, Check, X } from "lucide-react";
 import { Card, Message, PageHeader } from "../components/PageHeader";
 import { MinuteSum, OutcomePill, SAVED_NOTE, triggerLabel } from "../components/ci";
 import { RunStatusPill } from "../components/StateBadge";
@@ -126,6 +127,40 @@ export function ReceiptBody({ r, projectId }: { r: SkipReceipt; projectId: strin
   );
 }
 
+/** The run's test suite as squares, one per test file: ran, skipped with proof, failed. The brand colour marks no state. */
+function SuiteSquares({ files }: { files: RunFile[] }) {
+  const ran = files.filter((f) => f.failed === 0 && f.ran > 0).length;
+  const skipped = files.filter((f) => f.ran === 0 && f.failed === 0).length;
+  const failed = files.filter((f) => f.failed > 0).length;
+  const tests = files.reduce((a, f) => a + f.tests, 0);
+  return (
+    <>
+      <div className="suite" role="img" aria-label={`${files.length} test files: ${ran} ran, ${skipped} skipped with proof, ${failed} with a failure.`}>
+        {files.map((f) => (
+          <span key={f.file} className="suite-sq" data-state={f.failed ? "failed" : f.ran ? "ran" : "skipped"} title={`${f.file}: ${f.tests} tests, ${f.failed ? `${f.failed} failed` : f.ran ? "ran" : "skipped with proof"}`} />
+        ))}
+      </div>
+      <ul className="suite-legend">
+        <li>
+          <span className="suite-sq" data-state="ran" aria-hidden="true" />
+          <Check size={13} strokeWidth={2.4} aria-hidden="true" /> {formatCount(ran)} ran
+        </li>
+        <li>
+          <span className="suite-sq" data-state="skipped" aria-hidden="true" />
+          <BadgeCheck size={13} strokeWidth={2.2} aria-hidden="true" /> {formatCount(skipped)} skipped with proof
+        </li>
+        <li>
+          <span className="suite-sq" data-state="failed" aria-hidden="true" />
+          <X size={13} strokeWidth={2.4} aria-hidden="true" /> {formatCount(failed)} with a failure
+        </li>
+        <li className="muted">
+          {formatCount(files.length)} files · {formatCount(tests)} tests
+        </li>
+      </ul>
+    </>
+  );
+}
+
 export function RunPage() {
   const { projectId = "", runId = "" } = useParams();
   const [params, setParams] = useSearchParams();
@@ -137,6 +172,7 @@ export function RunPage() {
   const q = params.get("q") ?? "";
   const tests = useAsync(() => client.listTestResults(runId, { outcome, search: q, page, pageSize: PAGE_SIZE }), [runId, outcome, q, page]);
   const receipt = useAsync(() => (receiptId ? client.getSkipReceipt(receiptId) : Promise.resolve(null)), [receiptId]);
+  const files = useAsync(() => client.listRunFiles(runId), [runId]);
   const project = data.status === "ready" && data.data ? data.data.project : null;
   useProjectTitle(project?.fullName, project ? { language: languageLabel(project.language), runner: project.testRunner, snippet: setupSnippet(project) } : undefined);
 
@@ -251,6 +287,10 @@ export function RunPage() {
           On a GitHub-hosted runner: <MinuteSum m={runMinutes(run)} decimals={1} />
         </p>
         <p className="muted small">{SAVED_NOTE}</p>
+      </Card>
+
+      <Card id="suite" title="Test suite" description="Each square is a test file.">
+        {files.status === "ready" ? files.data.length ? <SuiteSquares files={files.data} /> : <p className="muted">No tests recorded for this run.</p> : <Message>Loading the suite</Message>}
       </Card>
 
       <Card

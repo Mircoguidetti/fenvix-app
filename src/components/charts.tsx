@@ -615,3 +615,56 @@ export function MonthBars({ months, format }: { months: { label: string; value: 
     </div>
   );
 }
+
+/**
+ * Two lines over time: "Before fenvix" (the project's baseline, dashed) and "With fenvix" (each point), as in the
+ * landing's "Time to green, per run". `format` writes a value (seconds, for example).
+ */
+export function BeforeWithChart({ points, before, format }: { points: { at: string; value: number }[]; before: number | null; format: (n: number) => string }) {
+  const [ref, width] = useMeasure<HTMLDivElement>();
+  const [silverDefs, silver] = useSilverFill();
+  const height = 240;
+  const max = niceMax(Math.max(...points.map((p) => p.value), before ?? 0, 1) * 1.1);
+  const left = leftPad(max, format);
+  const inner = { x: left, y: PAD.top, w: Math.max(40, width - left - PAD.right), h: height - PAD.top - PAD.bottom };
+  const x = (i: number) => inner.x + (i / Math.max(points.length - 1, 1)) * inner.w;
+  const y = (v: number) => inner.y + inner.h - (v / max) * inner.h;
+  const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i)} ${y(p.value)}`).join(" ");
+  const hover = useChartHover(points.length, inner, false);
+  const a = hover.active === null ? null : points[hover.active];
+  const sorted = [...points.map((p) => p.value)].sort((p, q) => p - q);
+  const med = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+  return (
+    <div ref={ref}>
+      <Frame
+        width={width}
+        height={height}
+        tip={a && <ChartTip x={hover.at(hover.active!)} width={width} tip={{ title: pointLabel(a.at, "30d"), rows: [{ label: "With fenvix", value: format(a.value), swatch: "var(--chart)" }, ...(before !== null ? [{ label: "Before fenvix", value: format(before), swatch: "var(--ink-2)", dash: true }] : [])] }} />}
+        label={`Time to green per commit: median ${format(med)} with fenvix${before !== null ? `, ${format(before)} before` : ""}.`}
+        summary={
+          <>
+            Median {format(med)} with fenvix{before !== null ? `, ${format(before)} before` : ""}.{" "}
+            <span className="legend">
+              <span className="key key-line" aria-hidden="true" /> With fenvix
+              {before !== null && (
+                <>
+                  <span className="key key-line-dash" aria-hidden="true" /> Before fenvix
+                </>
+              )}
+            </span>
+          </>
+        }
+      >
+        {grid(max, inner, format)}
+        {silverDefs}
+        {points.length > 1 && <path d={`${line} L${x(points.length - 1)} ${y(0)} L${x(0)} ${y(0)} Z`} className="chart-area" style={silver} />}
+        {before !== null && <path d={`M${inner.x} ${y(before)} L${inner.x + inner.w} ${y(before)}`} className="chart-line-dash" fill="none" />}
+        {hover.guide}
+        <path d={line} className="chart-line" fill="none" />
+        {a && <circle cx={x(hover.active!)} cy={y(a.value)} r="4" className="chart-hover-dot" />}
+        {axis(timeTicks(points.map((p) => p.at), "30d", Math.max(2, Math.floor(inner.w / 80))), points.length - 1, inner, height, false)}
+        {hover.overlay}
+      </Frame>
+    </div>
+  );
+}

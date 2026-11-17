@@ -3,6 +3,7 @@ import { client } from "../data";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { AreaSeriesChart, HBars, Sparkline, TimeBarsChart } from "../components/charts";
 import { MinuteSum, SAVED_NOTE, SkipShare, shortTest } from "../components/ci";
+import { ActivityList } from "./ProjectSections";
 import { useAsync } from "../lib/useAsync";
 import { useWorkspaceVersion } from "../lib/workspace";
 import { formatCount, formatMinutes, formatMoney, formatPercent, formatRelative } from "../lib/format";
@@ -26,6 +27,7 @@ export function OverviewPage() {
   const version = useWorkspaceVersion();
   const settings = useAsync(() => client.getSettings(), [version]);
   const data = useAsync(() => client.getOverview(), []);
+  const activity = useAsync(() => client.listActivity(undefined, 8), []);
   const now = client.now();
 
   return (
@@ -177,6 +179,9 @@ export function OverviewPage() {
                 )}
               </Card>
             </div>
+            <Card id="activity" title="Live activity" description="Every project, newest first.">
+              {activity.status === "ready" ? <ActivityList items={activity.data} now={now} /> : <Message>Loading</Message>}
+            </Card>
           </>
         );
       })()}

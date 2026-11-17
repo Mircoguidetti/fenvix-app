@@ -9,8 +9,8 @@ import { getSupabase } from "../lib/supabaseClient";
 import { activeOrgId } from "../lib/org";
 import { blobUrl } from "./files";
 import { PUBLIC_API_NOT_SET_UP } from "./public-keys";
-import { billingFrom, dayStart, familiesOf, median, monthBounds, monthOf, overviewFrom, projectRow, setupChange, usageCsv, usageCsvName, usageFrom } from "./ci";
-import { mapDefect, mapPlan, mapProject, mapRate, mapReceipt, mapRun, mapTestResult, friendlyError, type Row } from "./ci-rows";
+import { activityFrom, billingFrom, dayStart, familiesOf, median, monthBounds, monthOf, overviewFrom, projectRow, setupChange, usageCsv, usageCsvName, usageFrom } from "./ci";
+import { mapExploration, mapDefect, mapPlan, mapProject, mapRate, mapReceipt, mapRun, mapTestResult, friendlyError, type Row } from "./ci-rows";
 
 const DAY = 86_400_000;
 const NO_GITHUB_APP = "Connecting repositories needs the fenvix GitHub App, which is not set up for this deployment yet.";
@@ -144,6 +144,38 @@ export const supabaseClient: DataClient = {
     const run = await rows(db().from("ci_runs").select("tests_passed, tests_failed, tests_skipped").eq("id", runId));
     const counts: Record<TestOutcome, number> = { passed: Number(run[0]?.tests_passed ?? 0), failed: Number(run[0]?.tests_failed ?? 0), skipped_with_proof: Number(run[0]?.tests_skipped ?? 0) };
     return { items: ((data as Row[]) ?? []).map(mapTestResult), total: count ?? 0, page, pageSize, counts } satisfies TestPage;
+  },
+  async listRunFiles(runId) {
+    const rs = await rows(db().from("ci_test_results").select("test_id, outcome").eq("run_id", runId).limit(100000));
+    const files = new Map<string, { file: string; tests: number; ran: number; skipped: number; failed: number }>();
+    for (const r of rs) {
+      const file = String(r.test_id).split(/::| > /)[0];
+      const f = files.get(file) ?? { file, tests: 0, ran: 0, skipped: 0, failed: 0 };
+      f.tests++;
+      if (r.outcome === "failed") f.failed++;
+      else if (r.outcome === "skipped_with_proof") f.skipped++;
+      else f.ran++;
+      files.set(file, f);
+    }
+    return [...files.values()];
+  },
+  async listExplorations(projectId) {
+    return (await rows(db().from("ci_explorations").select("*").eq("project_id", projectId).order("started_at", { ascending: false }).limit(90))).map(mapExploration);
+  },
+  async listActivity(projectId, limit = 8) {
+    const since = new Date(Date.now() - 30 * DAY).toISOString();
+    let rq = db().from("ci_runs").select("*").eq("workspace_id", await ws()).gte("started_at", since).order("started_at", { ascending: false }).limit(60);
+    let eq = db().from("ci_explorations").select("*").eq("workspace_id", await ws()).gte("started_at", since).order("started_at", { ascending: false }).limit(30);
+    if (projectId) {
+      rq = rq.eq("project_id", projectId);
+      eq = eq.eq("project_id", projectId);
+    }
+    const [ps, rs, ds, es] = await Promise.all([projects(), rows(rq), defects(), rows(eq)]);
+    const keep = <T extends { projectId: string }>(xs: T[]) => (projectId ? xs.filter((x) => x.projectId === projectId) : xs);
+    return activityFrom(projectId ? ps.filter((p) => p.id === projectId) : ps, rs.map(mapRun), keep(ds), es.map(mapExploration), limit);
+  },
+  async listRunsSince(projectId, since) {
+    return (await rows(db().from("ci_runs").select("*").eq("project_id", projectId).gte("started_at", since).order("started_at", { ascending: false }).limit(20000))).map(mapRun);
   },
   async getSkipReceipt(id) {
     const r = await rows(db().from("ci_skip_receipts").select("*").eq("id", id));

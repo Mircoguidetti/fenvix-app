@@ -2,7 +2,7 @@
  * Postgres rows (supabase/migrations/0011_ci_runs.sql, snake_case) to the contract's records (camelCase). Pure, so
  * tests/unit/ci.test.ts covers it without a database.
  */
-import type { Defect, GitHubRate, Plan, Project, Run, SkipReceipt, TestResult, TestRunner } from "./types";
+import type { Exploration, Defect, GitHubRate, Plan, Project, Run, SkipReceipt, TestResult, TestRunner } from "./types";
 import { familyKeyOf } from "./ci.ts";
 
 export type Row = Record<string, unknown>;
@@ -47,6 +47,18 @@ export function mapRun(r: Row): Run {
     testTimeMs: { ran: num(r.test_time_ran_ms), skipped: num(r.test_time_skipped_ms) },
     skipShare: num(r.skip_share), minutesSaved: num(r.minutes_saved), otherStepMinutes: num(r.other_step_minutes), githubEquivalentMinutes: num(r.github_equivalent_minutes),
     engineVersion: str(r.engine_version), seed: numOrNull(r.seed),
+    skipMisses: obj(r.skip_misses) as Run["skipMisses"], missDetails: arr(r.miss_details),
+  };
+}
+
+export function mapExploration(r: Row): Exploration {
+  const fam = obj(r.families_by_polluter);
+  return {
+    id: str(r.id), projectId: str(r.project_id), startedAt: str(r.started_at), finishedAt: str(r.finished_at), commitSha: str(r.commit_sha), branch: str(r.branch),
+    seeds: num(r.seeds), runs: num(r.runs), collected: num(r.collected), seconds: num(r.seconds),
+    flakyFailing: arr(r.flaky_failing), alwaysFailing: arr(r.always_failing), notReproduced: arr(r.not_reproduced), newDefectIds: arr(r.new_defect_ids),
+    familiesByPolluter: Object.entries(fam).map(([key, v]) => ({ key, tests: Array.isArray(v) ? v.length : num(v) })),
+    seedsLog: arr<Row>(r.seeds_log).map((x) => ({ seed: num(x.seed), seconds: num(x.seconds), failing: Array.isArray(x.failing) ? x.failing.length : num(x.failing) })),
   };
 }
 

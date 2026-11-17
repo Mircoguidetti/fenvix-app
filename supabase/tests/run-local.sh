@@ -30,9 +30,11 @@ for f in 0002_control_plane 0004_data_explorer 0005_engine_users 0007_database_u
   psql_run -f "supabase/migrations/$f.sql" >/dev/null 2>&1; psql_run -f "supabase/migrations/$f.sql" >/dev/null 2>&1
 done
 psql_run -f supabase/tests/orgs-rls.sql 2>&1 | grep -E "ORGS RLS OK" >/dev/null && echo "     ORGS RLS OK"
-echo "6/7 CI dashboard: 0011 (twice), then its row level security"
+echo "6/7 CI dashboard: 0011 and 0012 (twice each), then their row level security"
 psql_run -f supabase/migrations/0011_ci_runs.sql >/dev/null 2>&1; psql_run -f supabase/migrations/0011_ci_runs.sql >/dev/null 2>&1
 psql_run -f supabase/tests/ci-rls.sql 2>&1 | grep -E "CI RLS OK" >/dev/null && echo "     CI RLS OK"
+psql_run -f supabase/migrations/0012_ci_explorations.sql >/dev/null 2>&1; psql_run -f supabase/migrations/0012_ci_explorations.sql >/dev/null 2>&1
+psql_run -f supabase/tests/ci-explore-rls.sql 2>&1 | grep -E "CI EXPLORE RLS OK" >/dev/null && echo "     CI EXPLORE RLS OK"
 echo "7/7 seed (twice: the second run must change nothing)"
 psql_run -c "insert into auth.users (email, raw_user_meta_data) values ('mircoguidetti1994@gmail.com', '{\"full_name\":\"Mirco Guidetti\"}') on conflict do nothing" >/dev/null
 psql_run -f supabase/seed.sql 2>&1 | grep -E "Seeded" || { echo "seed did not run" >&2; exit 1; }
