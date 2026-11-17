@@ -79,8 +79,15 @@ One test job that ran on `runs-on: fenvix`. Sent by the runner when the job ends
 | `tests` | `{ total, ran, passed, failed, skippedWithProof, flakyDefects }` | `failed` counts every failure; `flakyDefects` is the part of it that is a reproducible flaky defect |
 | `testTimeMs` | `{ ran, skipped }` | `skipped` is the recorded duration of the reused results (`reused_recorded_seconds` of the cache summary) |
 | `skipShare` | number | `testTimeMs.skipped / (ran + skipped)`: the share of test time skipped with proof (the skip study's "time" rule) |
-| `minutesSaved` | number | `testTimeMs.skipped / 60000` |
-| `githubEquivalentMinutes` | number | what the job would have taken on a GitHub-hosted runner without fenvix: the project's `baseline.medianJobMinutes` (an estimate) |
+| `otherStepMinutes` | number | `other_step_minutes` in Postgres. The job's other steps that fenvix still runs: checkout, dependency install, build (the job's wall time on fenvix outside the test command, measured by the runner) |
+| `minutesSaved` | number | `testTimeMs.skipped / 60000`: skipped test minutes **only**. fenvix skips no other step today; if it ever does, those minutes get a field of their own and are added here with a note |
+| `githubEquivalentMinutes` | number | what the same job would take on a GitHub-hosted runner without fenvix: `testTimeMs.ran / 60000 + testTimeMs.skipped / 60000 + otherStepMinutes` (a generated column in Postgres) |
+
+**Minutes add up on screen.** Wherever the dashboard shows minutes it shows the three parts and their total:
+"875 run + 1,959 skipped with proof + 1,296 setup and build = 4,130 min". The parts are rounded with the
+largest-remainder rule (`roundToSum` in `src/data/ci.ts`), so the shown parts always sum to the shown total; a
+month's totals are the sums of the per-project rows, so rows and columns both add up. Costs in dollars are split to
+the cent the same way.
 | `engineVersion` | string | `detpy` field of a bundle, e.g. `0.1.0` |
 | `seed` | number \| null | `--det-seed` the run used; null for collection order (`"fixed"`) |
 
@@ -185,7 +192,7 @@ Computed from runs, not sent by the runner.
 | --- | --- | --- |
 | `month` | `YYYY-MM` | |
 | `runsUsed`, `runsIncluded` | number, number \| null | `runsIncluded` from the plan; null = no limit set |
-| per project: `runs`, `minutesSaved`, `testMinutesRan`, `githubEquivalentMinutes`, `githubEquivalentUsd` | number | |
+| per project: `runs`, `testMinutesRan`, `minutesSaved`, `otherStepMinutes`, `githubEquivalentMinutes`, `githubEquivalentUsd` | number | whole minutes; `testMinutesRan + minutesSaved + otherStepMinutes = githubEquivalentMinutes` in every row and in the totals |
 | `githubRate` | `{ usdPerMinute, runner, source, checkedOn }` | the GitHub-hosted price the comparison uses |
 
 `githubEquivalentUsd = githubEquivalentMinutes × githubRate.usdPerMinute`. The rate is stored in
@@ -214,3 +221,6 @@ tables directly through Supabase (row level security) or uses the mock.
 ## Changes
 
 - 2026-11-17: first version.
+- 2026-11-17 (addendum to P-015): `otherStepMinutes` added to the run summary; `githubEquivalentMinutes` is now the sum
+  of test minutes run, skipped with proof and other steps (it was the project's median job before fenvix);
+  minutes shown on screen add up.

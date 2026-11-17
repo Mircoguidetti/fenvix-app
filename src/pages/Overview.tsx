@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { client } from "../data";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { AreaSeriesChart, HBars, Sparkline, TimeBarsChart } from "../components/charts";
-import { SkipShare, shortTest } from "../components/ci";
+import { MinuteSum, SAVED_NOTE, SkipShare, shortTest } from "../components/ci";
 import { useAsync } from "../lib/useAsync";
 import { useWorkspaceVersion } from "../lib/workspace";
 import { formatCount, formatMinutes, formatMoney, formatPercent, formatRelative } from "../lib/format";
@@ -62,10 +62,10 @@ export function OverviewPage() {
           <>
             <div className="kpis">
               <Kpi label="Runs" value={formatCount(o.runs.thisMonth)} sub={`${month} so far · ${formatCount(o.runs.lastMonthSameDays)} before`} spark={o.runs.perDay.map((p) => p.value)} />
-              <Kpi label="Minutes saved" value={formatMinutes(o.minutesSaved.thisMonth)} sub="test time not run again" spark={o.minutesSaved.perDay.map((p) => p.value)} />
+              <Kpi label="Minutes saved" value={formatMinutes(o.minutesSaved.thisMonth)} sub="skipped tests only" spark={o.minutesSaved.perDay.map((p) => p.value)} />
               <Kpi label="Skipped with proof" value={o.skipShare.median === null ? "–" : formatPercent(o.skipShare.median)} sub="median, test time per run" spark={o.skipShare.perDay.map((p) => p.value)} />
               <Kpi label="Time to green" value={ttgWith === null ? "–" : seconds(ttgWith)} sub={ttgBefore === null ? "median, push to green" : `median · was ${seconds(ttgBefore)}`} />
-              <Kpi label="On GitHub-hosted" value={formatMoney(o.cost.githubEquivalentUsd)} sub="same runs at GitHub's rate" />
+              <Kpi label="On GitHub-hosted" value={formatMoney(o.cost.githubEquivalentUsd)} sub={`${formatMinutes(o.minutes.total)} at GitHub's rate`} />
               <Kpi label="Open defects" value={formatCount(o.openDefects)} sub="flaky, now reproducible" />
             </div>
 
@@ -97,7 +97,7 @@ export function OverviewPage() {
                     <dt>On GitHub-hosted runners</dt>
                     <dd className="compare-value">{formatMoney(o.cost.githubEquivalentUsd)}</dd>
                     <dd className="muted small">
-                      {formatMinutes(o.cost.githubEquivalentMinutes)} at ${o.cost.rate.usdPerMinute} a minute ({o.cost.rate.runner})
+                      at ${o.cost.rate.usdPerMinute} a minute ({o.cost.rate.runner})
                     </dd>
                   </div>
                   <div>
@@ -108,7 +108,13 @@ export function OverviewPage() {
                     </dd>
                   </div>
                 </dl>
-                <p className="muted small">GitHub's rate as stated on its pricing page ({o.cost.rate.checkedOn}). A full job's minutes are each project's median job before fenvix.</p>
+                <p className="minute-line" id="cost-minutes">
+                  <MinuteSum m={o.minutes} />
+                </p>
+                <p className="muted small">
+                  Minutes saved ({formatMinutes(o.minutes.skipped)}): {SAVED_NOTE}
+                </p>
+                <p className="muted small">GitHub's rate as stated on its pricing page ({o.cost.rate.checkedOn}).</p>
               </Card>
             </div>
 

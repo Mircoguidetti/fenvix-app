@@ -4,6 +4,7 @@ import { Download } from "lucide-react";
 import { client } from "../data";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { StackedBars } from "../components/charts";
+import { MinuteSum, SAVED_NOTE } from "../components/ci";
 import { Select } from "../components/Select";
 import { useToast } from "../components/Toast";
 import { useAsync } from "../lib/useAsync";
@@ -85,20 +86,22 @@ export function UsagePage() {
               <Card id="totals" title="Totals" description={`${monthLabel(u.month)}, every project.`}>
                 <dl className="facts">
                   <div>
-                    <dt>Minutes saved</dt>
-                    <dd className="mono">{formatMinutes(u.totals.minutesSaved)}</dd>
-                  </div>
-                  <div>
-                    <dt>Test minutes run</dt>
-                    <dd className="mono">{formatMinutes(u.totals.testMinutesRan)}</dd>
-                  </div>
-                  <div>
                     <dt>Same runs on GitHub-hosted</dt>
                     <dd className="mono">{formatMinutes(u.totals.githubEquivalentMinutes)}</dd>
                   </div>
                   <div>
                     <dt>At GitHub's rate</dt>
                     <dd className="mono">{formatMoney(u.totals.githubEquivalentUsd)}</dd>
+                  </div>
+                </dl>
+                <p className="minute-line" id="usage-minutes">
+                  <MinuteSum m={{ ran: u.totals.testMinutesRan, skipped: u.totals.minutesSaved, other: u.totals.otherStepMinutes, total: u.totals.githubEquivalentMinutes }} />
+                </p>
+                <dl className="facts">
+                  <div>
+                    <dt>Minutes saved</dt>
+                    <dd className="mono">{formatMinutes(u.totals.minutesSaved)}</dd>
+                    <dd className="muted small">{SAVED_NOTE}</dd>
                   </div>
                 </dl>
                 <p className="muted small">
@@ -121,10 +124,13 @@ export function UsagePage() {
                       Runs
                     </th>
                     <th scope="col" className="num">
-                      Minutes saved
+                      Test minutes run
                     </th>
                     <th scope="col" className="num">
-                      Test minutes run
+                      Skipped with proof
+                    </th>
+                    <th scope="col" className="num">
+                      Setup and build
                     </th>
                     <th scope="col" className="num">
                       GitHub-hosted minutes
@@ -142,19 +148,22 @@ export function UsagePage() {
                           {r.fullName}
                         </Link>
                       </td>
-                      <td data-label="Runs" className="num mono">
+                      <td data-label="Runs" data-key="runs" className="num mono">
                         {formatCount(r.runs)}
                       </td>
-                      <td data-label="Minutes saved" className="num mono">
-                        {formatMinutes(r.minutesSaved)}
-                      </td>
-                      <td data-label="Test minutes run" className="num mono">
+                      <td data-label="Test minutes run" data-key="testMinutesRan" className="num mono">
                         {formatMinutes(r.testMinutesRan)}
                       </td>
-                      <td data-label="GitHub-hosted minutes" className="num mono">
+                      <td data-label="Skipped with proof" data-key="minutesSaved" className="num mono">
+                        {formatMinutes(r.minutesSaved)}
+                      </td>
+                      <td data-label="Setup and build" data-key="otherStepMinutes" className="num mono">
+                        {formatMinutes(r.otherStepMinutes)}
+                      </td>
+                      <td data-label="GitHub-hosted minutes" data-key="githubEquivalentMinutes" className="num mono">
                         {formatMinutes(r.githubEquivalentMinutes)}
                       </td>
-                      <td data-label="GitHub-hosted cost" className="num mono">
+                      <td data-label="GitHub-hosted cost" data-key="githubEquivalentUsd" className="num mono">
                         {formatMoney(r.githubEquivalentUsd)}
                       </td>
                     </tr>
@@ -165,21 +174,24 @@ export function UsagePage() {
                     <th scope="row" className="hide-narrow">
                       Total
                     </th>
-                    <td data-label="Runs" className="num mono">
-                      {formatCount(u.totals.runs)}
-                    </td>
-                    <td data-label="Minutes saved" className="num mono">
-                      {formatMinutes(u.totals.minutesSaved)}
-                    </td>
-                    <td data-label="Test minutes run" className="num mono">
-                      {formatMinutes(u.totals.testMinutesRan)}
-                    </td>
-                    <td data-label="GitHub-hosted minutes" className="num mono">
-                      {formatMinutes(u.totals.githubEquivalentMinutes)}
-                    </td>
-                    <td data-label="GitHub-hosted cost" className="num mono">
-                      {formatMoney(u.totals.githubEquivalentUsd)}
-                    </td>
+                      <td data-total data-label="Runs" data-key="runs" className="num mono">
+                        {formatCount(u.totals.runs)}
+                      </td>
+                      <td data-total data-label="Test minutes run" data-key="testMinutesRan" className="num mono">
+                        {formatMinutes(u.totals.testMinutesRan)}
+                      </td>
+                      <td data-total data-label="Skipped with proof" data-key="minutesSaved" className="num mono">
+                        {formatMinutes(u.totals.minutesSaved)}
+                      </td>
+                      <td data-total data-label="Setup and build" data-key="otherStepMinutes" className="num mono">
+                        {formatMinutes(u.totals.otherStepMinutes)}
+                      </td>
+                      <td data-total data-label="GitHub-hosted minutes" data-key="githubEquivalentMinutes" className="num mono">
+                        {formatMinutes(u.totals.githubEquivalentMinutes)}
+                      </td>
+                      <td data-total data-label="GitHub-hosted cost" data-key="githubEquivalentUsd" className="num mono">
+                        {formatMoney(u.totals.githubEquivalentUsd)}
+                      </td>
                   </tr>
                 </tfoot>
               </table>

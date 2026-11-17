@@ -1,7 +1,7 @@
 // The CI dashboard's pure logic (src/data/ci.ts) and the row mapping from the Supabase tables (src/data/ci-rows.ts).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { billingFrom, daysBetween, familiesOf, familyKeyOf, median, medianTimeToGreen, overviewFrom, projectRow, replayCommand, setupChange, setupSnippet, suggestPlan, usageCsv, usageFrom } from "../../src/data/ci.ts";
+import { billingFrom, daysBetween, minuteBreakdown, roundToSum, runMinutes, familiesOf, familyKeyOf, median, medianTimeToGreen, overviewFrom, projectRow, replayCommand, setupChange, setupSnippet, suggestPlan, usageCsv, usageFrom } from "../../src/data/ci.ts";
 import { fileOfTest, friendlyError, mapDefect, mapPlan, mapProject, mapReceipt, mapRun, mapTestResult } from "../../src/data/ci-rows.ts";
 import type { Defect, GitHubRate, Plan, Project, Run } from "../../src/data/types.ts";
 
@@ -23,7 +23,7 @@ function run(p: string, startedAt: string, o: Partial<Run> = {}): Run {
     id: `r${n}`, projectId: p, number: n, engineRunId: null, commitSha: (o.commitSha ?? String(n)).padEnd(40, "0"), commitMessage: "", branch: "main", pullRequest: null, trigger: "push",
     status: "passed", pushedAt: new Date(new Date(startedAt).getTime() - 10_000).toISOString(), startedAt, finishedAt: new Date(new Date(startedAt).getTime() + 30_000).toISOString(), durationMs: 30_000,
     tests: { total: 100, ran: 3, passed: 3, failed: 0, skippedWithProof: 97, flakyDefects: 0 }, testTimeMs: { ran, skipped }, skipShare: skipped / (ran + skipped), minutesSaved: skipped / 60000,
-    githubEquivalentMinutes: 8, engineVersion: "detpy 0.1.0", seed: 3, ...o,
+    otherStepMinutes: 2, githubEquivalentMinutes: ran / 60000 + skipped / 60000 + 2, engineVersion: "detpy 0.1.0", seed: 3, ...o,
   };
 }
 
@@ -40,6 +40,22 @@ const plans: Plan[] = [
   { id: "team", name: "Team", description: "", runsPerMonth: 2000, maxProjects: 5, priceUsdMonth: null, features: [], current: true },
   { id: "enterprise", name: "Enterprise", description: "", runsPerMonth: null, maxProjects: null, priceUsdMonth: null, features: [], current: false },
 ];
+
+test("rounded parts always add up to the rounded total", () => {
+  assert.deepEqual(roundToSum([0.4, 0.4, 0.4]), [1, 0, 0]);
+  assert.deepEqual(roundToSum([1.25, 2.25, 3.5], 1), [1.3, 2.2, 3.5]);
+  for (let i = 0; i < 500; i++) {
+    const parts = [Math.random() * 900, Math.random() * 2000, Math.random() * 1300] as [number, number, number];
+    for (const d of [0, 1]) {
+      const m = minuteBreakdown(parts, d);
+      assert.equal(Math.round((m.ran + m.skipped + m.other) * 10 ** d), Math.round(m.total * 10 ** d));
+      assert.equal(m.total, Math.round(parts.reduce((a, b) => a + b, 0) * 10 ** d) / 10 ** d);
+    }
+  }
+  const r = runMinutes(run("p1", "2026-11-03T10:00:00Z"));
+  assert.equal(r.total, 7);
+  assert.equal(Math.round((r.ran + r.skipped + r.other) * 10), 70);
+});
 
 test("median", () => {
   assert.equal(median([]), null);
@@ -74,9 +90,11 @@ test("the overview: runs, minutes saved, GitHub cost, the same days of last mont
   assert.equal(o.month, "2026-11");
   assert.equal(o.runs.thisMonth, 2);
   assert.equal(o.runs.lastMonthSameDays, 1, "October 20 is after the same point of the month");
-  assert.equal(o.minutesSaved.thisMonth, 9.7);
-  assert.equal(o.cost.githubEquivalentMinutes, 16);
-  assert.equal(o.cost.githubEquivalentUsd, 0.13);
+  // Two runs: 2 × (0.167 run + 4.833 skipped + 2 other) = 0.33 + 9.67 + 4 = 14 min, in whole minutes 0 + 10 + 4 = 14.
+  assert.deepEqual(o.minutes, { ran: 0, skipped: 10, other: 4, total: 14 });
+  assert.equal(o.minutesSaved.thisMonth, 10);
+  assert.equal(o.cost.githubEquivalentMinutes, 14);
+  assert.equal(o.cost.githubEquivalentUsd, 0.11);
   assert.equal(o.timeToGreen.beforeMedianS, 400);
   assert.equal(o.runs.perDay.length, 30);
   assert.equal(o.openDefects, 1);
@@ -92,9 +110,11 @@ test("usage: per project, totals that add up, a CSV with one row per project", (
   assert.equal(u.daily.series.length, 2);
   assert.equal(u.daily.series[0].values.reduce((a, b) => a + b, 0), 2);
   const csv = usageCsv(u).trim().split("\n");
-  assert.equal(csv[0], "project,runs,minutes_saved,test_minutes_ran,github_equivalent_minutes,github_equivalent_usd");
+  assert.equal(csv[0], "project,runs,test_minutes_ran,minutes_saved,other_step_minutes,github_equivalent_minutes,github_equivalent_usd");
   assert.equal(csv.length, 3);
-  assert.equal(csv[1], "acme/p1,2,9.7,0.3,16,0.13");
+  assert.equal(csv[1], "acme/p1,2,0,10,4,14,0.11");
+  for (const r of [...u.rows, u.totals]) assert.equal(r.testMinutesRan + r.minutesSaved + r.otherStepMinutes, r.githubEquivalentMinutes);
+  assert.equal(u.rows.reduce((a, r) => a + r.githubEquivalentUsd, 0).toFixed(2), u.totals.githubEquivalentUsd.toFixed(2));
 });
 
 test("plans: the smallest that holds the projects and the runs; prices stay unset", () => {

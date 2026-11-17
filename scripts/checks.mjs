@@ -34,6 +34,18 @@ async function savedFile(page, trigger) {
   return { name: download.suggestedFilename(), text: await readFile(path, "utf8") };
 }
 
+/** The "a run + b skipped with proof + c setup and build = d min" sentence in `selector`: its numbers add up. */
+async function addsUp(page, selector) {
+  const el = page.locator(`${selector} .minute-sum`);
+  await el.waitFor();
+  const m = await el.evaluate((e) => ({ ran: +e.dataset.ran, skipped: +e.dataset.skipped, other: +e.dataset.other, total: +e.dataset.total, text: e.textContent }));
+  const shown = (m.text.match(/[\d,.]+/g) ?? []).map((t) => Number(t.replace(/,/g, "")));
+  assert(shown.length === 4, `${selector}: the sentence reads ${m.text}`);
+  assert(Math.abs(shown[0] + shown[1] + shown[2] - shown[3]) < 0.001, `${selector}: ${m.text} does not add up`);
+  assert(/run \+ .* skipped with proof \+ .* setup and build = .* min/.test(m.text), `${selector}: ${m.text}`);
+  return m;
+}
+
 /** Polls until `read` returns true. Lists keep the old rows while new ones load, so asserts must wait. */
 async function eventually(read, message) {
   const end = Date.now() + 8000;
@@ -154,6 +166,10 @@ const TESTS = {
     assert(/^\$[\d,.]+$/.test(values[4]), `the GitHub cost reads ${values[4]}`);
     assert((await page.locator(".chart svg").count()) >= 2, "the overview is missing charts");
     await page.locator("#cost").getByText("Price not set").waitFor();
+    const cost = await addsUp(page, "#cost-minutes");
+    assert(values[1] === `${cost.skipped.toLocaleString("en-US")} min`, `minutes saved ${values[1]} is not the skipped part ${cost.skipped}`);
+    assert((await page.locator(".kpi", { hasText: "On GitHub-hosted" }).innerText()).includes(`${cost.total.toLocaleString("en-US")} min`), "the GitHub KPI does not show the same minutes");
+    await page.locator("#cost").getByText("Skipped test time only").waitFor();
     await page.locator("#ttg").getByText("Before fenvix").waitFor();
     const rows = await page.locator("#projects tbody tr").count();
     assert(rows === 4, `the projects table has ${rows} rows`);
@@ -173,6 +189,7 @@ const TESTS = {
     await page.getByRole("link", { name: "northwind/homehub" }).click();
     await page.getByRole("heading", { name: "northwind/homehub" }).waitFor();
     await page.locator("#skip-trend .chart svg").waitFor();
+    await addsUp(page, "#project-minutes");
     assert((await page.locator("#runs tbody tr").count()) === 25, "the runs list is not 25 rows a page");
     await page.locator("#runs").getByRole("button", { name: "Failed", exact: true }).click();
     await eventually(async () => new URL(page.url()).searchParams.get("status") === "failed", "the status filter is not in the address");
@@ -207,6 +224,8 @@ const TESTS = {
     const v = (await page.locator(".kpi-value").allTextContents()).map(num);
     assert(v[0] === v[1] + v[2], `tests ${v[0]} are not ran ${v[1]} plus skipped ${v[2]}`);
     assert(v[3] >= 1, "the run has no failure");
+    const m = await addsUp(page, "#run-minutes");
+    assert((await page.locator(".kpi", { hasText: "Saved" }).locator(".kpi-value").innerText()) === `${m.skipped} min`, "the run's Saved is not the skipped part");
     await page.locator("#tests").getByRole("button", { name: /^Failed/ }).click();
     const failed = page.locator(".test-row").first();
     await failed.getByText("Failed: flaky defect").waitFor();
@@ -290,10 +309,27 @@ const TESTS = {
     const runs = (await page.locator("tbody td[data-label='Runs']").allTextContents()).map(num);
     assert(runs.length === 4 && runs.reduce((a, b) => a + b, 0) === used, `per-project runs ${runs} do not add up to ${used}`);
     assert((await page.locator(".chart svg").count()) >= 1, "the runs-per-day chart is missing");
+    // The minutes add up on screen: in the sentence, in every row, and down every column.
+    await addsUp(page, "#usage-minutes");
+    const table = await page.evaluate(() => {
+      const val = (td) => Number(td.textContent.replace(/[^\d.]/g, ""));
+      const rows = [...document.querySelectorAll("main tbody tr")].map((tr) => Object.fromEntries([...tr.querySelectorAll("td[data-key]")].map((td) => [td.dataset.key, val(td)])));
+      const total = Object.fromEntries([...document.querySelectorAll("main tfoot td[data-key]")].map((td) => [td.dataset.key, val(td)]));
+      return { rows, total };
+    });
+    for (const r of [...table.rows, table.total]) assert(Math.abs(r.testMinutesRan + r.minutesSaved + r.otherStepMinutes - r.githubEquivalentMinutes) < 0.001, `a row does not add up: ${JSON.stringify(r)}`);
+    for (const k of Object.keys(table.total)) {
+      const down = table.rows.reduce((a, r) => a + r[k], 0);
+      assert(Math.abs(down - table.total[k]) < 0.011, `the ${k} column adds up to ${down}, the total says ${table.total[k]}`);
+    }
+    for (const l of lines.slice(1)) {
+      const [, , ran, saved, other, gh] = l.split(",").map(Number);
+      assert(ran + saved + other === gh, `a CSV row does not add up: ${l}`);
+    }
     const file = await savedFile(page, () => page.getByRole("button", { name: "Export CSV" }).click());
     const lines = file.text.trim().split("\n");
     assert(file.name === "fenvix-usage-2026-11.csv", `the file is ${file.name}`);
-    assert(lines[0] === "project,runs,minutes_saved,test_minutes_ran,github_equivalent_minutes,github_equivalent_usd" && lines.length === 5, `the CSV reads ${lines[0]} (${lines.length} lines)`);
+    assert(lines[0] === "project,runs,test_minutes_ran,minutes_saved,other_step_minutes,github_equivalent_minutes,github_equivalent_usd" && lines.length === 5, `the CSV reads ${lines[0]} (${lines.length} lines)`);
     await toast(page, "CSV ready");
     await choose(page, page.locator("#u-month"), "2026-10");
     await eventually(async () => new URL(page.url()).searchParams.get("month") === "2026-10", "the month did not change");

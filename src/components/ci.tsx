@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { CopyButton } from "./CopyButton";
 import { StatusPill } from "./StateBadge";
-import type { Defect, DefectCause, RunTrigger, TestOutcome } from "../data";
+import type { Defect, DefectCause, MinuteBreakdown, RunTrigger, TestOutcome } from "../data";
 import { formatPercent } from "../lib/format";
 
 /** A block of code or a command, with a copy button. */
@@ -70,3 +70,23 @@ export function OutcomePill({ outcome, flaky }: { outcome: TestOutcome; flaky?: 
 
 /** The last part of a test id, for tight places; the full id stays in the title. */
 export const shortTest = (id: string) => id.split(/::| > /).slice(-1)[0];
+
+const minutes = (n: number, decimals: number) => new Intl.NumberFormat("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(n);
+
+/**
+ * "875 run + 1,959 skipped with proof + 1,296 setup and build = 4,130 min": the GitHub-equivalent minutes and the three
+ * parts they are made of. The parts come rounded so that they add up (src/data/ci.ts, roundToSum).
+ */
+export function MinuteSum({ m, decimals = 0 }: { m: MinuteBreakdown; decimals?: number }) {
+  return (
+    <span className="minute-sum" data-ran={m.ran} data-skipped={m.skipped} data-other={m.other} data-total={m.total}>
+      <span className="mono">{minutes(m.ran, decimals)}</span> run + <span className="mono">{minutes(m.skipped, decimals)}</span> skipped with proof +{" "}
+      <span className="mono">{minutes(m.other, decimals)}</span> setup and build = <strong className="mono">{minutes(m.total, decimals)} min</strong>
+    </span>
+  );
+}
+
+/** Under every "minutes saved": what is counted. */
+export const SAVED_NOTE = "Skipped test time only: checkout, install and build still run on fenvix.";
+
+export const runMinutesNote = "Saved: test minutes skipped with proof only; checkout, install and build still run.";

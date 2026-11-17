@@ -4,7 +4,7 @@ import { ExternalLink } from "lucide-react";
 import { client, type ProjectRow, type ProjectSettings, type RunQuery } from "../data";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { AreaSeriesChart } from "../components/charts";
-import { CodeBlock, triggerLabel } from "../components/ci";
+import { CodeBlock, MinuteSum, SAVED_NOTE, runMinutesNote, triggerLabel } from "../components/ci";
 import { RunStatusPill } from "../components/StateBadge";
 import { Pagination } from "../components/Pagination";
 import { Segmented } from "../components/Segmented";
@@ -14,7 +14,7 @@ import { useToast } from "../components/Toast";
 import { useAsync } from "../lib/useAsync";
 import { useOrg } from "../session/OrgProvider";
 import { formatCount, formatDate, formatDuration, formatMinutes, formatPercent, formatRelative, shortSha } from "../lib/format";
-import { setupSnippet } from "../data/ci";
+import { runMinutes, setupSnippet } from "../data/ci";
 import { SetupStatePill, languageLabel } from "./Projects";
 import { SetupDiff } from "./Connect";
 import { seconds } from "./Overview";
@@ -43,6 +43,15 @@ function RunsTab({ project }: { project: ProjectRow }) {
 
   return (
     <>
+      <Card id="minutes" title="Minutes this month" description="The same runs on a GitHub-hosted runner, and what they are made of.">
+        <p className="minute-line" id="project-minutes">
+          <MinuteSum m={project.minutesThisMonth} />
+        </p>
+        <p className="muted small">
+          Saved: {formatCount(project.minutesThisMonth.skipped)} min. {SAVED_NOTE}
+        </p>
+      </Card>
+
       <Card id="skip-trend" title="Skipped with proof over time" description="Median share of test time skipped per run, day by day, over 60 days.">
         {series.status === "ready" ? <AreaSeriesChart points={series.data} range="30d" valueLabel={(n) => formatPercent(n)} /> : <Message>Loading the chart</Message>}
       </Card>
@@ -50,7 +59,7 @@ function RunsTab({ project }: { project: ProjectRow }) {
       <Card
         id="runs"
         title="Runs"
-        description="Every test job that ran on fenvix, newest first."
+        description={`Every test job that ran on fenvix, newest first. ${runMinutesNote}`}
         actions={
           <div className="card-controls">
             <Segmented label="Branch" value={scope} onChange={(v) => set("scope", v === "all" ? null : v)} options={[{ value: "all", label: "All" }, { value: "pr", label: "Pull requests" }, { value: "default", label: project.defaultBranch }]} className="seg-sm" />
@@ -138,7 +147,7 @@ function RunsTab({ project }: { project: ProjectRow }) {
                         )}
                       </td>
                       <td data-label="Saved" className="num mono">
-                        {formatMinutes(r.minutesSaved)}
+                        {formatMinutes(runMinutes(r).skipped)}
                       </td>
                     </tr>
                   ))}

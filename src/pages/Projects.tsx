@@ -23,7 +23,7 @@ export function ProjectsPage() {
       <PageHeader
         back={<Kicker />}
         title="Projects"
-        description="Repositories connected through the fenvix GitHub App. Numbers are for this month."
+        description="Repositories connected through the fenvix GitHub App. Numbers are for this month. Minutes saved count skipped test time only: checkout, install and build still run on fenvix."
         actions={
           <Link to="/projects/connect" className="btn btn-primary">
             Connect a project

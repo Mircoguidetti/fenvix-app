@@ -3,7 +3,7 @@
  * load rows, these turn them into what the screens show. No I/O here, so tests/unit/ci.test.ts covers all of it.
  */
 import type {
-  BillingOverview, DayPoint, Defect, DefectFamily, GitHubRate, Overview, Plan, Project, ProjectRow, Run, SetupChange, UsageProjectRow, UsageReport,
+  BillingOverview, DayPoint, Defect, DefectFamily, GitHubRate, MinuteBreakdown, Overview, Plan, Project, ProjectRow, Run, SetupChange, UsageProjectRow, UsageReport,
 } from "./types";
 
 const DAY = 86_400_000;
@@ -32,6 +32,46 @@ export function daysBetween(from: Date, to: Date): string[] {
   for (let t = dayStart(from).getTime(); t <= dayStart(to).getTime(); t += DAY) out.push(new Date(t).toISOString());
   return out;
 }
+
+/**
+ * Rounds numbers to `decimals` so that the rounded values add up to the rounded sum (largest-remainder rule). A screen
+ * that shows parts and their total never shows "1 + 1 = 3".
+ */
+export function roundToSum(values: number[], decimals = 0): number[] {
+  const f = 10 ** decimals;
+  const scaled = values.map((v) => v * f);
+  const floors = scaled.map((v) => Math.floor(v + 1e-9));
+  let left = Math.round(scaled.reduce((a, b) => a + b, 0)) - floors.reduce((a, b) => a + b, 0);
+  const order = scaled.map((v, i) => [v - floors[i], i] as const).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  for (const [, i] of order) {
+    if (left <= 0) break;
+    floors[i]++;
+    left--;
+  }
+  return floors.map((v) => Math.round(v) / f);
+}
+
+/** Exact minutes of a set of runs: tests run, tests skipped with proof, other steps. */
+function exactMinutes(runs: Run[]): [number, number, number] {
+  let ran = 0;
+  let skipped = 0;
+  let other = 0;
+  for (const r of runs) {
+    ran += r.testTimeMs.ran / 60000;
+    skipped += r.testTimeMs.skipped / 60000;
+    other += r.otherStepMinutes;
+  }
+  return [ran, skipped, other];
+}
+
+/** Minutes that add up on screen: ran + skipped + other = total, each rounded to `decimals`. */
+export function minuteBreakdown(parts: [number, number, number], decimals = 0): MinuteBreakdown {
+  const [ran, skipped, other] = roundToSum(parts, decimals);
+  return { ran, skipped, other, total: Math.round((ran + skipped + other) * 10 ** decimals) / 10 ** decimals };
+}
+
+/** One run's minutes, to one decimal. */
+export const runMinutes = (r: Run): MinuteBreakdown => minuteBreakdown([r.testTimeMs.ran / 60000, r.testTimeMs.skipped / 60000, r.otherStepMinutes], 1);
 
 const finished = (r: Run) => r.status === "passed" || r.status === "failed";
 const round = (n: number, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
@@ -62,12 +102,14 @@ export function projectRow(project: Project, runs: Run[], defects: Defect[], now
   const mine = runs.filter((r) => r.projectId === project.id);
   const thisMonth = mine.filter((r) => monthOf(r.startedAt) === month);
   const last = mine.reduce<Run | null>((a, r) => (!a || r.startedAt > a.startedAt ? r : a), null);
+  const minutes = minuteBreakdown(exactMinutes(thisMonth));
   return {
     ...project,
     runsThisMonth: thisMonth.length,
     medianSkipShare: median(thisMonth.filter(finished).map((r) => r.skipShare)),
     openDefects: defects.filter((d) => d.projectId === project.id && d.state === "open").length,
-    minutesSavedThisMonth: round(thisMonth.reduce((a, r) => a + r.minutesSaved, 0), 1),
+    minutesThisMonth: minutes,
+    minutesSavedThisMonth: minutes.skipped,
     lastRunAt: last?.startedAt ?? null,
     lastRunStatus: last?.status ?? null,
   };
@@ -97,19 +139,21 @@ export function overviewFrom(projects: Project[], runs: Run[], defects: Defect[]
   const window = runs.filter((r) => r.startedAt >= days[0]);
   const ttg = medianTimeToGreen(runs, start, now);
   const baselines = projects.map((p) => p.baseline?.medianTimeToGreenS).filter((v): v is number => typeof v === "number");
-  const githubMinutes = round(thisMonth.reduce((a, r) => a + r.githubEquivalentMinutes, 0), 1);
+  // The month's minutes and cost are the Usage page's, so the two pages always show the same numbers.
+  const usage = usageFrom(month, projects, runs, plan, rate);
   const rows = projects.map((p) => projectRow(p, runs, defects, now));
   const open = defects.filter((d) => d.state === "open");
   return {
     month,
     runs: { thisMonth: thisMonth.length, lastMonthSameDays, perDay: perDay(window, days, (rs) => rs.length) },
-    minutesSaved: { thisMonth: round(thisMonth.reduce((a, r) => a + r.minutesSaved, 0), 1), perDay: perDay(window, days, (rs) => round(rs.reduce((a, r) => a + r.minutesSaved, 0), 1)) },
+    minutesSaved: { thisMonth: usage.totals.minutesSaved, perDay: perDay(window, days, (rs) => round(rs.reduce((a, r) => a + r.minutesSaved, 0), 1)) },
     timeToGreen: { beforeMedianS: median(baselines), withMedianS: ttg.medianS, commits: ttg.commits },
     skipShare: {
       median: median(thisMonth.filter(finished).map((r) => r.skipShare)),
       perDay: perDay(window, days, (rs) => median(rs.filter(finished).map((r) => r.skipShare)) ?? 0),
     },
-    cost: { githubEquivalentUsd: githubUsd(githubMinutes, rate), githubEquivalentMinutes: githubMinutes, plan, rate },
+    minutes: { ran: usage.totals.testMinutesRan, skipped: usage.totals.minutesSaved, other: usage.totals.otherStepMinutes, total: usage.totals.githubEquivalentMinutes },
+    cost: { githubEquivalentUsd: usage.totals.githubEquivalentUsd, githubEquivalentMinutes: usage.totals.githubEquivalentMinutes, plan, rate },
     projects: rows,
     openDefects: open.length,
     recentDefects: [...open].sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt)).slice(0, 5),
@@ -119,22 +163,18 @@ export function overviewFrom(projects: Project[], runs: Run[], defects: Defect[]
 export function usageFrom(month: string, projects: Project[], runs: Run[], plan: Plan | null, rate: GitHubRate): UsageReport {
   const { start, end } = monthBounds(month);
   const inMonth = runs.filter((r) => r.startedAt >= start.toISOString() && r.startedAt < end.toISOString());
+  // Whole minutes per project, each row adding up (run + skipped + other = GitHub-equivalent); totals are the sums of
+  // the rows, so every row and every column adds up. Costs are split the same way, to the cent.
   const rows: UsageProjectRow[] = projects
     .map((p) => {
       const rs = inMonth.filter((r) => r.projectId === p.id);
-      const gh = round(rs.reduce((a, r) => a + r.githubEquivalentMinutes, 0), 1);
-      return {
-        projectId: p.id,
-        fullName: p.fullName,
-        runs: rs.length,
-        minutesSaved: round(rs.reduce((a, r) => a + r.minutesSaved, 0), 1),
-        testMinutesRan: round(rs.reduce((a, r) => a + r.testTimeMs.ran, 0) / 60000, 1),
-        githubEquivalentMinutes: gh,
-        githubEquivalentUsd: githubUsd(gh, rate),
-      };
+      const m = minuteBreakdown(exactMinutes(rs));
+      return { projectId: p.id, fullName: p.fullName, runs: rs.length, testMinutesRan: m.ran, minutesSaved: m.skipped, otherStepMinutes: m.other, githubEquivalentMinutes: m.total, githubEquivalentUsd: 0 };
     })
     .sort((a, b) => b.runs - a.runs || a.fullName.localeCompare(b.fullName));
-  const sum = (k: "runs" | "minutesSaved" | "testMinutesRan" | "githubEquivalentMinutes" | "githubEquivalentUsd") => round(rows.reduce((a, r) => a + r[k], 0), k === "runs" ? 0 : 2);
+  const usd = roundToSum(rows.map((r) => r.githubEquivalentMinutes * rate.usdPerMinute), 2);
+  rows.forEach((r, i) => (r.githubEquivalentUsd = usd[i]));
+  const sum = (k: "runs" | "minutesSaved" | "testMinutesRan" | "otherStepMinutes" | "githubEquivalentMinutes" | "githubEquivalentUsd") => round(rows.reduce((a, r) => a + r[k], 0), 2);
   const last = new Date(Math.min(end.getTime() - DAY, Math.max(start.getTime(), ...inMonth.map((r) => new Date(r.startedAt).getTime()))));
   const days = daysBetween(start, last);
   const index = new Map(days.map((d, i) => [d, i]));
@@ -150,7 +190,7 @@ export function usageFrom(month: string, projects: Project[], runs: Run[], plan:
     plan,
     runsUsed: inMonth.length,
     runsIncluded: plan?.runsPerMonth ?? null,
-    totals: { runs: sum("runs"), minutesSaved: sum("minutesSaved"), testMinutesRan: sum("testMinutesRan"), githubEquivalentMinutes: sum("githubEquivalentMinutes"), githubEquivalentUsd: sum("githubEquivalentUsd") },
+    totals: { runs: sum("runs"), testMinutesRan: sum("testMinutesRan"), minutesSaved: sum("minutesSaved"), otherStepMinutes: sum("otherStepMinutes"), githubEquivalentMinutes: sum("githubEquivalentMinutes"), githubEquivalentUsd: sum("githubEquivalentUsd") },
     rows,
     daily: { days, series },
     rate,
@@ -159,10 +199,13 @@ export function usageFrom(month: string, projects: Project[], runs: Run[], plan:
 
 const csvCell = (v: string | number) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
 
-/** One row per project, header first, UTF-8 and \n line ends. */
+/**
+ * One row per project, header first, UTF-8 and \n line ends. In every row test_minutes_ran + minutes_saved +
+ * other_step_minutes = github_equivalent_minutes.
+ */
 export function usageCsv(report: UsageReport): string {
-  const head = "project,runs,minutes_saved,test_minutes_ran,github_equivalent_minutes,github_equivalent_usd";
-  const lines = report.rows.map((r) => [r.fullName, r.runs, r.minutesSaved, r.testMinutesRan, r.githubEquivalentMinutes, r.githubEquivalentUsd.toFixed(2)].map(csvCell).join(","));
+  const head = "project,runs,test_minutes_ran,minutes_saved,other_step_minutes,github_equivalent_minutes,github_equivalent_usd";
+  const lines = report.rows.map((r) => [r.fullName, r.runs, r.testMinutesRan, r.minutesSaved, r.otherStepMinutes, r.githubEquivalentMinutes, r.githubEquivalentUsd.toFixed(2)].map(csvCell).join(","));
   return [head, ...lines].join("\n") + "\n";
 }
 

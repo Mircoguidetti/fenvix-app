@@ -109,13 +109,17 @@ create table if not exists public.ci_runs (
   tests_flaky_defects int not null default 0,
   test_time_ran_ms bigint not null default 0 check (test_time_ran_ms >= 0),
   test_time_skipped_ms bigint not null default 0 check (test_time_skipped_ms >= 0),
-  github_equivalent_minutes numeric(10, 2) not null default 0,
+  -- The job's other steps that still run on fenvix: checkout, dependency install, build.
+  other_step_minutes numeric(10, 2) not null default 0 check (other_step_minutes >= 0),
   engine_version text not null default '',
   seed bigint,
   skip_share numeric generated always as (
     case when test_time_ran_ms + test_time_skipped_ms = 0 then 0
          else round(test_time_skipped_ms::numeric / (test_time_ran_ms + test_time_skipped_ms), 4) end) stored,
+  -- Test minutes skipped with proof only: fenvix skips no other step.
   minutes_saved numeric generated always as (round(test_time_skipped_ms / 60000.0, 2)) stored,
+  -- The same job on a GitHub-hosted runner: tests run + tests skipped with proof + other steps.
+  github_equivalent_minutes numeric generated always as (round((test_time_ran_ms + test_time_skipped_ms) / 60000.0 + other_step_minutes, 2)) stored,
   check (tests_ran + tests_skipped = tests_total),
   check (tests_flaky_defects <= tests_failed),
   unique (project_id, number)

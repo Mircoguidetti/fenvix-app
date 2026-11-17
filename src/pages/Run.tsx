@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { client, type SkipReceipt, type TestOutcome } from "../data";
 import { Card, Message, PageHeader } from "../components/PageHeader";
-import { OutcomePill, triggerLabel } from "../components/ci";
+import { MinuteSum, OutcomePill, SAVED_NOTE, triggerLabel } from "../components/ci";
 import { RunStatusPill } from "../components/StateBadge";
 import { Pagination } from "../components/Pagination";
 import { Segmented } from "../components/Segmented";
@@ -11,7 +11,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useProjectTitle } from "../components/Shell";
 import { useAsync } from "../lib/useAsync";
 import { formatCount, formatDateTime, formatDuration, formatMinutes, formatPercent, shortSha } from "../lib/format";
-import { setupSnippet } from "../data/ci";
+import { runMinutes, setupSnippet } from "../data/ci";
 import { languageLabel } from "./Projects";
 
 const PAGE_SIZE = 50;
@@ -211,12 +211,12 @@ export function RunPage() {
         <div className="kpi">
           <strong className="kpi-value">{formatDuration(run.durationMs)}</strong>
           <span className="kpi-label">Duration</span>
-          <span className="kpi-sub muted small">{formatMinutes(run.githubEquivalentMinutes)} before fenvix</span>
+          <span className="kpi-sub muted small">on fenvix</span>
         </div>
         <div className="kpi">
-          <strong className="kpi-value">{formatMinutes(run.minutesSaved)}</strong>
+          <strong className="kpi-value">{formatMinutes(runMinutes(run).skipped)}</strong>
           <span className="kpi-label">Saved</span>
-          <span className="kpi-sub muted small">test time not run again</span>
+          <span className="kpi-sub muted small">skipped tests only</span>
         </div>
       </div>
 
@@ -247,6 +247,10 @@ export function RunPage() {
             <dd className="mono">{run.engineVersion}</dd>
           </div>
         </dl>
+        <p className="minute-line" id="run-minutes">
+          On a GitHub-hosted runner: <MinuteSum m={runMinutes(run)} decimals={1} />
+        </p>
+        <p className="muted small">{SAVED_NOTE}</p>
       </Card>
 
       <Card

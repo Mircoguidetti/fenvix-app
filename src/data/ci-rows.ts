@@ -45,7 +45,7 @@ export function mapRun(r: Row): Run {
     pushedAt: str(r.pushed_at), startedAt: str(r.started_at), finishedAt: r.finished_at ? str(r.finished_at) : null, durationMs: num(r.duration_ms),
     tests: { total: num(r.tests_total), ran: num(r.tests_ran), passed: num(r.tests_passed), failed: num(r.tests_failed), skippedWithProof: num(r.tests_skipped), flakyDefects: num(r.tests_flaky_defects) },
     testTimeMs: { ran: num(r.test_time_ran_ms), skipped: num(r.test_time_skipped_ms) },
-    skipShare: num(r.skip_share), minutesSaved: num(r.minutes_saved), githubEquivalentMinutes: num(r.github_equivalent_minutes),
+    skipShare: num(r.skip_share), minutesSaved: num(r.minutes_saved), otherStepMinutes: num(r.other_step_minutes), githubEquivalentMinutes: num(r.github_equivalent_minutes),
     engineVersion: str(r.engine_version), seed: numOrNull(r.seed),
   };
 }

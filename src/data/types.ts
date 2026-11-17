@@ -69,9 +69,27 @@ export interface ProjectRow extends Project {
   /** Median share of test time skipped with proof over this month's finished runs, 0 to 1. Null without runs. */
   medianSkipShare: number | null;
   openDefects: number;
+  /** This month, whole minutes that add up: testMinutesRan + minutesSaved + otherStepMinutes = githubEquivalentMinutes. */
+  minutesThisMonth: MinuteBreakdown;
+  /** Same as minutesThisMonth.skipped. */
   minutesSavedThisMonth: number;
   lastRunAt: string | null;
   lastRunStatus: RunStatus | null;
+}
+
+/**
+ * Minutes of CI time, split so the parts add up on screen: ran + skipped + other = total. Each part is rounded with
+ * the largest-remainder rule, so the displayed parts always sum to the displayed total.
+ */
+export interface MinuteBreakdown {
+  /** Test minutes that ran. */
+  ran: number;
+  /** Test minutes skipped with proof: the minutes saved. */
+  skipped: number;
+  /** Other steps that still run: checkout, dependency install, build. */
+  other: number;
+  /** The same job on a GitHub-hosted runner without fenvix. */
+  total: number;
 }
 
 export interface RunTests {
@@ -103,8 +121,14 @@ export interface Run {
   testTimeMs: { ran: number; skipped: number };
   /** Share of test time skipped with proof, 0 to 1. */
   skipShare: number;
+  /** Test minutes skipped with proof (testTimeMs.skipped). fenvix skips nothing else, so this is all it saves. */
   minutesSaved: number;
-  /** What the job would have taken on a GitHub-hosted runner without fenvix (the project's baseline). */
+  /** The job's other steps that still run on fenvix: checkout, dependency install, build. */
+  otherStepMinutes: number;
+  /**
+   * What the job would take on a GitHub-hosted runner without fenvix: test minutes run + test minutes skipped with
+   * proof + other steps.
+   */
   githubEquivalentMinutes: number;
   engineVersion: string;
   seed: number | null;
@@ -243,6 +267,8 @@ export interface Overview {
   timeToGreen: { beforeMedianS: number | null; withMedianS: number | null; commits: number };
   /** Median share of test time skipped with proof per day. */
   skipShare: { median: number | null; perDay: DayPoint[] };
+  /** This month's minutes, the same numbers as the Usage page. */
+  minutes: MinuteBreakdown;
   cost: { githubEquivalentUsd: number; githubEquivalentMinutes: number; plan: Plan | null; rate: GitHubRate };
   projects: ProjectRow[];
   openDefects: number;
@@ -253,8 +279,10 @@ export interface UsageProjectRow {
   projectId: string;
   fullName: string;
   runs: number;
-  minutesSaved: number;
+  /** testMinutesRan + minutesSaved + otherStepMinutes = githubEquivalentMinutes, in whole minutes. */
   testMinutesRan: number;
+  minutesSaved: number;
+  otherStepMinutes: number;
   githubEquivalentMinutes: number;
   githubEquivalentUsd: number;
 }

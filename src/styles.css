@@ -1681,3 +1681,6 @@ table.data.dbs thead th { font-size: 12px; }
 .meter-wrap p { margin: 0; }
 .meter { height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; }
 .meter-fill { display: block; height: 100%; background: var(--chart); border-radius: 5px; }
+.minute-sum { font-size: 13px; line-height: 1.6; }
+.minute-sum .mono { font-size: 12.5px; }
+.minute-line { margin: 0; }

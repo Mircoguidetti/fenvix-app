@@ -81,6 +81,11 @@ interface Spec {
   fullTestMs: number;
   overhead: number;
   setupMs: number;
+  /**
+   * The job's other steps (checkout, dependency install, build) on a GitHub-hosted runner: the measured median job
+   * minus the full test time. fenvix still runs them, so they are never counted as saved.
+   */
+  otherStepMs: number;
   runsPerWeekday: number;
   /** Skip share of one run: a mixture that matches the measured median and mean. */
   skip: (r: () => number) => number;
@@ -112,7 +117,7 @@ const mixture = (high: number, spread: number, lowShare: number, lowMax: number)
 const SPECS: Spec[] = [
   {
     id: "prj_homehub", fullName: "northwind/homehub", language: "python", testRunner: "pytest", testCount: 11889, moduleCount: 776,
-    fullTestMs: 410_000, overhead: 2.13, setupMs: 9_000, runsPerWeekday: 24, skip: mixture(0.975, 0.03, 0.18, 0.55), failRate: 0.05,
+    fullTestMs: 410_000, overhead: 2.13, setupMs: 9_000, otherStepMs: 118_000, runsPerWeekday: 24, skip: mixture(0.975, 0.03, 0.18, 0.55), failRate: 0.05,
     baseline: { medianTimeToGreenS: 417, medianJobMinutes: 8.8, runsSampled: 400, from: "2026-08-01", to: "2026-08-31" }, connectedDaysAgo: 80, firstRunNumber: 3104,
     modulePath: (i, r) => `tests/components/${HA[i % HA.length]}/test_${pick(r, ["init", "config_flow", "sensor", "light", "switch", "binary_sensor", "climate", "diagnostics", "services", "coordinator"])}_${i}.py`,
     testName: (file, j, r) => `${file}::${pick(r, HA_TESTS)}_${j}`,
@@ -120,7 +125,7 @@ const SPECS: Spec[] = [
   },
   {
     id: "prj_docs", fullName: "northwind/docs-site", language: "node", testRunner: "vitest", testCount: 3199, moduleCount: 202,
-    fullTestMs: 29_500, overhead: 1.55, setupMs: 4_000, runsPerWeekday: 13, skip: mixture(0.985, 0.02, 0.2, 0.5), failRate: 0.03,
+    fullTestMs: 29_500, overhead: 1.55, setupMs: 4_000, otherStepMs: 61_000, runsPerWeekday: 13, skip: mixture(0.985, 0.02, 0.2, 0.5), failRate: 0.03,
     baseline: { medianTimeToGreenS: 30, medianJobMinutes: 1.5, runsSampled: 260, from: "2026-08-01", to: "2026-08-31" }, connectedDaysAgo: 70, firstRunNumber: 1408,
     modulePath: (i, r) => `packages/${DOCS[i % DOCS.length]}/src/__tests__/${pick(r, ["utils", "index", "config", "routes", "sidebars", "versions", "markdown", "i18n", "slug", "toc"])}${i}.test.ts`,
     testName: (file, j, r) => `${file} > ${pick(r, ["parse", "load", "render", "resolve", "normalize"])} > ${pick(r, DOCS_TESTS)} ${j}`,
@@ -128,7 +133,7 @@ const SPECS: Spec[] = [
   },
   {
     id: "prj_ledger", fullName: "northwind/ledger", language: "go", testRunner: "go test", testCount: 28526, moduleCount: 90,
-    fullTestMs: 132_000, overhead: 1.0, setupMs: 8_000, runsPerWeekday: 9, skip: (r) => (r() < 0.15 ? r() * 0.15 : 0.25 + r() * 0.31), failRate: 0.04,
+    fullTestMs: 132_000, overhead: 1.0, setupMs: 8_000, otherStepMs: 204_000, runsPerWeekday: 9, skip: (r) => (r() < 0.15 ? r() * 0.15 : 0.25 + r() * 0.31), failRate: 0.04,
     baseline: { medianTimeToGreenS: 135, medianJobMinutes: 5.6, runsSampled: 180, from: "2026-08-01", to: "2026-08-31" }, connectedDaysAgo: 64, firstRunNumber: 922,
     modulePath: (i) => `${GO[i % GO.length]}${i >= GO.length ? `/part${Math.floor(i / GO.length)}` : ""}`,
     testName: (file, j, r) => `${file}.${pick(r, GO_TESTS)}/case_${j}`,
@@ -136,7 +141,7 @@ const SPECS: Spec[] = [
   },
   {
     id: "prj_storefront", fullName: "northwind/storefront", language: "python", testRunner: "pytest", testCount: 1721, moduleCount: 112,
-    fullTestMs: 285_000, overhead: 2.8, setupMs: 14_000, runsPerWeekday: 7, skip: (r) => (r() < 0.86 ? 0 : 0.35 + r() * 0.4), failRate: 0.08,
+    fullTestMs: 285_000, overhead: 2.8, setupMs: 14_000, otherStepMs: 87_000, runsPerWeekday: 7, skip: (r) => (r() < 0.86 ? 0 : 0.35 + r() * 0.4), failRate: 0.08,
     baseline: { medianTimeToGreenS: 289, medianJobMinutes: 6.2, runsSampled: 150, from: "2026-08-01", to: "2026-08-31" }, connectedDaysAgo: 45, firstRunNumber: 5120,
     modulePath: (i, r) => `storefront/${DJ[i % DJ.length]}/tests/test_${pick(r, ["models", "views", "mutations", "queries", "utils", "tasks", "signals"])}_${i}.py`,
     testName: (file, j, r) => `${file}::${pick(r, DJ_TESTS)}_${j}`,
@@ -385,6 +390,7 @@ function buildSample(owner: string, orgName: string, planId: string): Store {
           }
         }
         const skippedMs = Math.max(0, spec.fullTestMs - ranMs);
+        const otherStepMinutes = Math.round((spec.otherStepMs * (0.9 + r() * 0.2)) / 600) / 100;
         const durationMs = Math.round(spec.setupMs + ranMs * spec.overhead * (0.9 + r() * 0.2));
         const queuedMs = 4_000 + r() * 20_000;
         const pushedAt = new Date(t - queuedMs);
@@ -400,7 +406,8 @@ function buildSample(owner: string, orgName: string, planId: string): Store {
           testTimeMs: { ran: ranMs, skipped: skippedMs },
           skipShare: Math.round((skippedMs / (ranMs + skippedMs)) * 10000) / 10000,
           minutesSaved: Math.round((skippedMs / MIN) * 100) / 100,
-          githubEquivalentMinutes: spec.baseline.medianJobMinutes,
+          otherStepMinutes,
+          githubEquivalentMinutes: Math.round(((ranMs + skippedMs) / MIN + otherStepMinutes) * 100) / 100,
           engineVersion: spec.language === "node" ? "detjs 0.1.0" : spec.language === "go" ? "detgo 0.1.0" : "detpy 0.1.0",
           seed: seed % 100,
         };
