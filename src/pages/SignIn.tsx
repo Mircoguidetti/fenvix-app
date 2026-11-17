@@ -5,7 +5,7 @@ import { Logo } from "../components/Logo";
 import { GitHubMark, GoogleMark } from "../components/marks";
 import { session, type AuthProvider } from "../session";
 import { useSession } from "../session/SessionProvider";
-import { LandingSparks } from "../components/LandingSparks";
+import { PairHero } from "../components/PairHero";
 import { applyTheme, storedTheme } from "../lib/theme";
 
 export function SignInPage() {
@@ -68,17 +68,17 @@ export function SignInPage() {
   return (
     <main id="main" className="signin-page" tabIndex={-1}>
       <section className="signin-hero" aria-label="FENVIX">
-        <LandingSparks />
+        <PairHero />
         <div className="signin-hero-logo">
           <Logo />
         </div>
         <div className="signin-hero-copy">
           <p className="signin-hero-title">
-            Your agents' history,
+            Two tests.
             <br />
-            kept forever.
+            One cause.
           </p>
-          <p className="signin-hero-lead">Sign in to see every customer, every step, and any moment in the past.</p>
+          <p className="signin-hero-lead">Sign in to see the test that breaks another, found in a suite of thousands, with the order that replays it.</p>
         </div>
       </section>
 
