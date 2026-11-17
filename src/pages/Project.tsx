@@ -311,13 +311,6 @@ export function ProjectPage() {
         meta={<SetupStatePill state={p.setupState} />}
         description={`${languageLabel(p.language)} · ${p.testRunner} · ${formatCount(p.runsThisMonth)} runs this month · ${p.medianSkipShare === null ? "no runs yet" : `${formatPercent(p.medianSkipShare)} of test time skipped with proof (median)`}`}
       />
-      <nav className="seg settings-tabs project-tabs" aria-label="Project sections">
-        {(["runs", "setup", "settings"] as const).map((t) => (
-          <Link key={t} to={t === "runs" ? `/projects/${p.id}` : `/projects/${p.id}?tab=${t}`} className={tab === t ? "seg-link active" : "seg-link"} aria-current={tab === t ? "page" : undefined}>
-            {t === "runs" ? "Runs" : t === "setup" ? "Setup" : "Settings"}
-          </Link>
-        ))}
-      </nav>
       {tab === "runs" && <RunsTab project={p} />}
       {tab === "setup" && <SetupTab project={p} />}
       {tab === "settings" && <SettingsTab project={p} onSaved={project.reload} />}

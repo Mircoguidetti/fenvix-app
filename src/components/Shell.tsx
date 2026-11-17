@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { Bug, BookOpen, Building2, ChartColumn, ChevronDown, CreditCard, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, X, type LucideIcon } from "lucide-react";
+import { BookOpen, Bug, Building2, ChartColumn, ChevronDown, CreditCard, FileCode2, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { AccountMenu, OrgAvatar, useCurrentOrg } from "./AccountMenu";
 import { useToast } from "./Toast";
@@ -8,13 +8,17 @@ import { useFocusTrap } from "../lib/useFocusTrap";
 import { useOrg } from "../session/OrgProvider";
 import { useTheme } from "../lib/theme";
 import { client, type ProjectRow } from "../data";
+import { setupSnippet } from "../data/ci";
+import { CopyButton } from "./CopyButton";
 import { ROLE_NAMES } from "../data/orgs";
 
 /*
  * The console's frame, laid out like the mockup (fenvix-brain, Fenvix console 3):
  * - a top bar: the logo, where you are as switchers (Org ▾ / Project), "Search or jump to", the theme and the account;
- * - a thin bar of area icons on the left that widens over the page on hover, or stays open when pinned. There is no
- *   second bar (removed 2026-11-17, founder): a project's and the settings' sections are tabs on their pages.
+ * - a thin bar of icons on the left that widens over the page on hover, or stays open when pinned: the open project's
+ *   sections on top (Runs, Defects, Setup, Settings), the organization's areas below;
+ * - a second bar with what is open (a project, the organization or its settings), its pages written out and a box at
+ *   the bottom, like the dashboard drawn in the landing (founder, 2026-11-17).
  * Below 900px the bars become one drawer. Every page, route and action is the one it was.
  */
 
@@ -43,11 +47,20 @@ const SETTINGS_PAGES = [
   { to: "/settings/members", label: "Members", end: false },
   { to: "/api-keys", label: "API keys", end: false },
 ];
-const PROJECT_SECTIONS = [
-  { tab: "runs", label: "Runs" },
-  { tab: "setup", label: "Setup" },
-  { tab: "settings", label: "Settings" },
-] as const;
+/** The project's sections: the icons at the top of the rail and the first links of the second bar (as in the landing). */
+type Section = { key: "runs" | "defects" | "setup" | "settings"; label: string; icon: LucideIcon; to: (id: string) => string };
+const PROJECT_SECTIONS: Section[] = [
+  { key: "runs", label: "Runs", icon: Play, to: (id) => `/projects/${id}` },
+  { key: "defects", label: "Defects", icon: TriangleAlert, to: (id) => `/defects?project=${id}` },
+  { key: "setup", label: "Setup", icon: FileCode2, to: (id) => `/projects/${id}?tab=setup` },
+  { key: "settings", label: "Settings", icon: SlidersHorizontal, to: (id) => `/projects/${id}?tab=settings` },
+];
+/** Organization pages listed under the project's sections, as in the landing. */
+const PROJECT_ORG_PAGES = [
+  { to: "/usage", label: "Usage and plans", end: false },
+  { to: "/api-keys", label: "API keys", end: false },
+  { to: "/settings", label: "Organization settings", end: false },
+];
 
 /** What the frame shows about the open project. Set by its pages; layout only. */
 export type ProjectInfo = { name: string; language?: string; runner?: string; snippet?: string };
@@ -65,6 +78,35 @@ export function useProjectTitle(name: string | undefined, more?: Omit<ProjectInf
 function projectIdOf(path: string): string | null {
   const m = /^\/projects\/([^/]+)/.exec(path);
   return m && m[1] !== "connect" ? m[1] : null;
+}
+
+/** The project the frame is about: a project page, or the defects page filtered to one project. */
+function useProjectContext(): { projectId: string | null; section: Section["key"] | null } {
+  const { pathname } = useLocation();
+  const [params] = useSearchParams();
+  const fromPath = projectIdOf(pathname);
+  if (fromPath) {
+    const tab = params.get("tab");
+    return { projectId: fromPath, section: pathname.includes("/runs/") ? "runs" : tab === "setup" ? "setup" : tab === "settings" ? "settings" : "runs" };
+  }
+  if (pathname === "/defects" && params.get("project")) return { projectId: params.get("project"), section: "defects" };
+  return { projectId: null, section: null };
+}
+
+/** The open project's name and runner: from its page when it set them, otherwise read once from the project list. */
+function useProjectInfo(projectId: string | null): ProjectInfo {
+  const { info } = useContext(ProjectTitle);
+  const [loaded, setLoaded] = useState<ProjectRow | null>(null);
+  useEffect(() => {
+    if (!projectId || info.name) return;
+    let live = true;
+    client.getProject(projectId).then((p) => live && setLoaded(p), () => live && setLoaded(null));
+    return () => {
+      live = false;
+    };
+  }, [projectId, info.name]);
+  if (info.name || !loaded || loaded.id !== projectId) return info;
+  return { name: loaded.fullName, runner: loaded.testRunner, snippet: setupSnippet(loaded) };
 }
 
 /** Shown to a member on every page: they can look, not change. The server refuses changes anyway. */
@@ -100,15 +142,12 @@ function ThemeButton() {
 }
 
 function ProjectSectionLinks({ projectId, onNavigate }: { projectId: string; onNavigate?: () => void }) {
-  const [params] = useSearchParams();
-  const { pathname } = useLocation();
-  const onRun = pathname.includes("/runs/");
-  const tab = onRun ? "runs" : (params.get("tab") ?? "runs");
+  const { section } = useProjectContext();
   return (
     <>
       {/* The frame sits outside the routes, so the project's own path is given in full. */}
       {PROJECT_SECTIONS.map((s) => (
-        <Link key={s.tab} to={s.tab === "runs" ? `/projects/${projectId}` : `/projects/${projectId}?tab=${s.tab}`} onClick={onNavigate} className={tab === s.tab ? "cx-sub-link active" : "cx-sub-link"} aria-current={tab === s.tab && !onRun ? "page" : undefined}>
+        <Link key={s.key} to={s.to(projectId)} onClick={onNavigate} className={section === s.key ? "cx-sub-link active" : "cx-sub-link"} aria-current={section === s.key ? "page" : undefined}>
           {s.label}
         </Link>
       ))}
@@ -128,6 +167,79 @@ function PageLinks({ pages, onNavigate }: { pages: typeof ORG_PAGES; onNavigate?
   );
 }
 
+const isSettings = (path: string) => path.startsWith("/settings") || path.startsWith("/api-keys");
+
+/** The second bar, as in the landing: what is open (a project, the organization or its settings), its pages, a box. */
+function SubNav({ path, orgName, orgSub }: { path: string; orgName: string; orgSub: string }) {
+  const { projectId } = useProjectContext();
+  const info = useProjectInfo(projectId);
+  const settings = isSettings(path);
+  return (
+    <aside className="cx-sub" aria-label="Pages">
+      {projectId ? (
+        <>
+          <div className="cx-sub-head">
+            <span className="cx-sub-kind">Project</span>
+            <span className="cx-sub-title">
+              <span className="break-anywhere mono">{info.name || " "}</span>
+            </span>
+            {info.runner && <span className="cx-sub-meta">GitHub Actions · {info.runner}</span>}
+          </div>
+          <nav aria-label="Project sections" className="cx-sub-nav">
+            <ProjectSectionLinks projectId={projectId} />
+          </nav>
+          <nav aria-label="Organization pages" className="cx-sub-nav cx-sub-nav-more">
+            <PageLinks pages={PROJECT_ORG_PAGES} />
+          </nav>
+        </>
+      ) : (
+        <>
+          <div className="cx-sub-head">
+            <span className="cx-sub-kind">{settings ? "Organization settings" : "Organization"}</span>
+            <span className="cx-sub-title">{orgName || " "}</span>
+            {orgSub && <span className="cx-sub-meta">{orgSub}</span>}
+          </div>
+          <nav aria-label={settings ? "Organization settings" : "Organization pages"} className="cx-sub-nav">
+            <PageLinks pages={settings ? SETTINGS_PAGES : ORG_PAGES} />
+          </nav>
+        </>
+      )}
+      <span className="cx-sub-fill" />
+      <div className="cx-sub-box">
+        {projectId ? (
+          <>
+            <span className="cx-sub-box-title">Run on fenvix</span>
+            <span className="cx-sub-box-text">
+              One line in the test job: <span className="mono">runs-on: fenvix</span>
+            </span>
+            {info.snippet && (
+              <span className="cx-sub-copy">
+                <CopyButton value={info.snippet} what="setup snippet" text="Copy the test job" />
+              </span>
+            )}
+          </>
+        ) : settings ? (
+          <>
+            <span className="cx-sub-box-title">People</span>
+            <span className="cx-sub-box-text">Invite teammates and choose what they can change.</span>
+            <Link to="/settings/members" className="btn btn-primary btn-sm">
+              Manage members
+            </Link>
+          </>
+        ) : (
+          <>
+            <span className="cx-sub-box-title">Projects</span>
+            <span className="cx-sub-box-text">Install the fenvix GitHub App on a repository and move its test job to fenvix.</span>
+            <Link to="/projects/connect" className="btn btn-primary btn-sm">
+              Connect a project
+            </Link>
+          </>
+        )}
+      </div>
+    </aside>
+  );
+}
+
 function readPinned() {
   try {
     return localStorage.getItem(RAIL_KEY) === "1";
@@ -141,6 +253,7 @@ function readPinned() {
  * "Keep this menu open" pins it open beside the page (remembered in this browser only).
  */
 function Rail({ path }: { path: string }) {
+  const { projectId, section } = useProjectContext();
   const [hover, setHover] = useState(false);
   const [pinned, setPinned] = useState(readPinned);
   const wide = pinned || hover;
@@ -157,8 +270,19 @@ function Rail({ path }: { path: string }) {
   return (
     <nav className="cx-rail" aria-label="Areas" data-wide={wide || undefined} data-open={pinned || undefined} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <div className="cx-rail-inner">
+        {projectId && (
+          <>
+            {PROJECT_SECTIONS.map((s) => (
+              <Link key={s.key} to={s.to(projectId)} className="cx-rail-link" aria-current={section === s.key ? "page" : undefined} title={s.label}>
+                <s.icon size={18} strokeWidth={1.75} aria-hidden="true" />
+                <span className="cx-rail-label">{s.label}</span>
+              </Link>
+            ))}
+            <span className="cx-rail-rule" />
+          </>
+        )}
         {AREAS.map((a) => (
-          <Link key={a.key} to={a.to} className="cx-rail-link" aria-current={a.match(path) ? "page" : undefined} title={a.label}>
+          <Link key={a.key} to={a.to} className="cx-rail-link" aria-current={!projectId && a.match(path) ? "page" : undefined} title={a.label}>
             <a.icon size={18} strokeWidth={1.75} aria-hidden="true" />
             <span className="cx-rail-label">{a.label}</span>
           </Link>
@@ -179,9 +303,9 @@ function Rail({ path }: { path: string }) {
 }
 
 /** Below 900px: one drawer with every area and its pages. */
-function Drawer({ path, onClose }: { path: string; onClose: () => void }) {
-  const { info } = useContext(ProjectTitle);
-  const projectId = projectIdOf(path);
+function Drawer({ onClose }: { path: string; onClose: () => void }) {
+  const { projectId } = useProjectContext();
+  const info = useProjectInfo(projectId);
   return (
     <>
       <div className="cx-drawer-top">
@@ -438,6 +562,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const drawer = useRef<HTMLElement>(null);
   const current = useCurrentOrg();
   const orgName = current.status === "ready" ? current.name : "";
+  const orgSub = current.status === "ready" ? current.sub : "";
 
   useEffect(() => setOpen(false), [pathname]);
   // Widening the window past the breakpoint leaves no drawer behind.
@@ -475,6 +600,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
         <div className="cx-body">
           <Rail path={pathname} />
+          <SubNav path={pathname} orgName={orgName} orgSub={orgSub} />
           <div className="cx-content">
             <main id="main" tabIndex={-1}>
               <SampleNote />

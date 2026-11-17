@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { client, type Settings } from "../data";
 import { orgs } from "../data/orgs-client";
 import { ROLE_NAMES, orgNameProblem } from "../data/orgs";
@@ -9,23 +9,6 @@ import { useSession } from "../session/SessionProvider";
 import { useOrg } from "../session/OrgProvider";
 import { useToast } from "../components/Toast";
 import { workspaceChanged } from "../lib/workspace";
-
-/** General, Members and API keys: the organization's settings, as tabs (there is no second bar). */
-export function SettingsTabs() {
-  return (
-    <nav className="seg settings-tabs" aria-label="Settings sections">
-      <NavLink to="/settings" end className={({ isActive }) => (isActive ? "seg-link active" : "seg-link")}>
-        General
-      </NavLink>
-      <NavLink to="/settings/members" className={({ isActive }) => (isActive ? "seg-link active" : "seg-link")}>
-        Members
-      </NavLink>
-      <NavLink to="/api-keys" className={({ isActive }) => (isActive ? "seg-link active" : "seg-link")}>
-        API keys
-      </NavLink>
-    </nav>
-  );
-}
 
 /** Rename the organization: owner and admin. The name is plain text, 2 to 64 characters. */
 function OrganizationCard() {
@@ -119,7 +102,6 @@ export function SettingsPage() {
   return (
     <>
       <PageHeader back={<Kicker>Organization</Kicker>} title="Settings" description="Your organization, its members and your account." />
-      {org.status === "ready" && <SettingsTabs />}
 
       <div className="grid-2 even">
         {org.status === "ready" && <OrganizationCard />}

@@ -3,7 +3,6 @@ import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { CopyButton } from "../components/CopyButton";
 import { useToast } from "../components/Toast";
-import { SettingsTabs } from "./Settings";
 import { orgs } from "../data/orgs-client";
 import { ROLE_NAMES, memberActions, type CreatedInvitation, type Invitation, type InviteRole, type Member, type OrgRole } from "../data/orgs";
 import { useOrg } from "../session/OrgProvider";
@@ -55,7 +54,6 @@ export function MembersPage() {
     return (
       <>
         <PageHeader back={<Kicker>Organization</Kicker>} title="Settings" description="Your organization, its members and your account." />
-        <SettingsTabs />
         <Message>Members need the FENVIX API, which this dashboard is not set up for (VITE_API_URL).</Message>
       </>
     );
@@ -144,7 +142,6 @@ export function MembersPage() {
   return (
     <>
       <PageHeader back={<Kicker>Organization</Kicker>} title="Settings" description="Your organization, its members and your account." />
-      <SettingsTabs />
 
       {actionError && (
         <p className="error" role="alert">

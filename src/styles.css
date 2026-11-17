@@ -1704,3 +1704,6 @@ table.data.dbs thead th { font-size: 12px; }
 .minute-sum { font-size: 13px; line-height: 1.6; }
 .minute-sum .mono { font-size: 12.5px; }
 .minute-line { margin: 0; }
+
+/* The second bar's organization links under a project's sections (as in the landing). */
+.cx-sub-nav-more { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
