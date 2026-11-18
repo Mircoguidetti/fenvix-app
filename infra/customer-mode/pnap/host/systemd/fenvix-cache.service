@@ -1,0 +1,22 @@
+[Unit]
+Description=fenvix shared cache (colocated mode): per-job tokens, one organization per customer; reachable only from microVMs
+After=fenvix-agent.service
+
+[Service]
+Type=simple
+User=fenvix-cache
+Group=fenvix-cache
+# The cache's own network namespace (fenvix_host.netplan.cache_up): its port, from microVMs only; no route out.
+NetworkNamespacePath=/run/netns/fxcache
+ExecStart=/usr/bin/python3 -I /opt/fenvix-host/cache/fenvix_cache_auth.py serve --data /var/lib/fenvix-cache --key /etc/fenvix/cache/signing-key.json --host 10.201.0.2 --port 8787 --quiet
+StateDirectory=fenvix-cache
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

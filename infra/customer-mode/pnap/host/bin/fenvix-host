@@ -1,0 +1,9 @@
+#!/usr/bin/python3 -I
+"""Launcher for /opt/fenvix-host (python3 -I ignores the working directory and PYTHONPATH)."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+from fenvix_host.__main__ import main  # noqa: E402
+
+sys.exit(main(sys.argv[1:]))

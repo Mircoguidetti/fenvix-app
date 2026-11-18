@@ -13,7 +13,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 SLOT="${SLOT:-1}"; VCPUS="${VCPUS:-2}"; MEM_MIB="${MEM_MIB:-2048}"
-[[ "$SLOT" =~ ^[0-9]+$ ]] && [ "$SLOT" -ge 1 ] && [ "$SLOT" -le 250 ] || { echo "SLOT must be 1-250" >&2; exit 2; }
+if ! [[ "$SLOT" =~ ^[0-9]+$ ]] || [ "$SLOT" -lt 1 ] || [ "$SLOT" -gt 250 ]; then echo "SLOT must be 1-250" >&2; exit 2; fi
 id="fenvix-sbx-$SLOT"; tap="fctap$SLOT"; uid=$((20000 + SLOT))
 jail="/srv/jailer/firecracker/$id/root"
 mac="$(printf '06:00:AC:10:%02X:02' "$SLOT")"   # the CI rootfs derives 172.16.<SLOT>.2 from it

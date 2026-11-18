@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Inside a job's microVM (guest). Two roles:
+#   - the boot service (fenvix-guest-job.service, root): read the input disk (/dev/vdb, read-only, written by the host:
+#     the just-in-time config, the job's cache token, plain settings), mount the scratch disk (/dev/vdd) for Docker and
+#     the runner's work directory, start Docker, run the just-in-time runner as `fenvix` (exactly one job), write the
+#     result record onto the raw result disk (/dev/vdc), then reboot: with reboot=k Firecracker exits and the host
+#     deletes everything of the job;
+#   - the runner's job-completed hook (user fenvix): keep summary.json and the time in /run/fenvix-result.
+# Result record (parsed on the host in userspace, size-capped): b"FXRES001", 4-byte big-endian length, JSON
+# {"summary", "t_guest_up", "t_job_done"}. The guest names no repository, run or runner: the host knows its own job.
+# The guest holds no credential of ours: the host sends the summary with the job's own credential.
+set -uo pipefail
+res=/run/fenvix-result
+if [ "$(id -u)" != 0 ]; then
+  s="${RUNNER_TEMP:-/nonexistent}/fenvix/summary.json"
+  [ -f "$s" ] && cp "$s" "$res/summary.json"
+  date +%s.%N >"$res/t-job-done"
+  exit 0
+fi
+install -d -m 0770 -o root -g fenvix "$res"
+date +%s.%N >"$res/t-guest-up"
+home=/home/fenvix
+in=/run/fenvix-input
+mkdir -p "$in" /mnt/scratch
+mount -o ro,nodev,nosuid,noexec /dev/vdb "$in"
+mount -o nodev,nosuid /dev/vdd /mnt/scratch
+install -d -m 0700 -o fenvix -g fenvix /mnt/scratch/work
+install -d -m 0710 -o root -g root /mnt/scratch/docker
+install -d -m 0700 -o fenvix -g fenvix "$home/.fenvix"
+install -m 0600 -o fenvix -g fenvix "$in/jitconfig" "$home/.fenvix/jitconfig"
+env_file="$home/fenvix/actions-runner/.env"
+# Appended AS the job user: root never follows a path in the job user's home (R-012 F5).
+# shellcheck disable=SC2016  # "$1" is expanded by the inner sh
+append() { runuser -u fenvix -- sh -c 'cat >>"$1"' _ "$env_file"; }
+# Plain settings only (KEY=value lines the host wrote); the token goes to the hand-off file fenvix-run deletes.
+grep -E '^FENVIX_(MODE|RUNNER_NAME|JOB_ID|CACHE_ACCESS|CACHE_URL|CACHE_ORG|CACHE_ALLOW_HTTP)=[A-Za-z0-9_./:@-]*$' "$in/job.env" \
+  | append
+if [ -f "$in/cache-token" ]; then
+  install -m 0600 -o fenvix -g fenvix "$in/cache-token" "$home/.fenvix/cache-token"
+  printf 'FENVIX_CACHE_TOKEN_FILE=%s\n' "$home/.fenvix/cache-token" | append
+fi
+umount "$in"
+systemctl start docker.service
+runuser -u fenvix -- env HOME=$home FENVIX_HOME=$home/fenvix bash $home/engine-cli/runner/bootstrap.sh run
+python3 -I - "$res" /dev/vdc <<'PY'
+import json, os, sys
+res, dev = sys.argv[1:]
+def num(n):
+    try: return float(open(os.path.join(res, n)).read())
+    except (OSError, ValueError): return None
+try: summary = json.load(open(os.path.join(res, "summary.json")))
+except (OSError, ValueError): summary = None
+body = json.dumps({"summary": summary, "t_guest_up": num("t-guest-up"), "t_job_done": num("t-job-done")}).encode()
+if len(body) > 8 * 1024 * 1024: body = json.dumps({"summary": None}).encode()
+with open(dev, "r+b") as f:
+    f.write(b"FXRES001" + len(body).to_bytes(4, "big") + body); f.flush(); os.fsync(f.fileno())
+PY
+sync
+reboot -f

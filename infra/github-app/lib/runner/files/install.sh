@@ -52,6 +52,7 @@ runuser -u fenvix -- env HOME="$RUNNER_HOME" FENVIX_HOME="$FENVIX_HOME" bash "$E
 
 log "5/5 job hooks: summary.json to the spool when a job ends (the poster sends it); a marker when a job starts"
 # Written as `fenvix`, never by root: a file in the job user's directory may be a symlink by now (R-012 F5).
+# shellcheck disable=SC2016  # the inner sh -c expands these, not this shell
 runuser -u fenvix -- env SPOOL="$SPOOL" ENV_FILE="$FENVIX_HOME/actions-runner/.env" sh -c '
   grep -q "^ACTIONS_RUNNER_HOOK_JOB_COMPLETED=" "$ENV_FILE" 2>/dev/null || printf "ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/opt/fenvix/bin/fenvix-job-completed\nACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/fenvix/bin/fenvix-job-started\nFENVIX_SPOOL=%s\n" "$SPOOL" >>"$ENV_FILE"'
 systemctl daemon-reload

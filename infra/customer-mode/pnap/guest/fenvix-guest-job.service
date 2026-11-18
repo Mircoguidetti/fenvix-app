@@ -1,0 +1,12 @@
+[Unit]
+Description=fenvix: run exactly one job in this microVM, then stop it
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/fenvix-guest-job
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

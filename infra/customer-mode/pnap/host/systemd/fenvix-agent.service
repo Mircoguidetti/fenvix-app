@@ -1,0 +1,24 @@
+[Unit]
+Description=fenvix host agent: leases jobs of this host's region, runs each in its own Firecracker microVM
+Wants=network-online.target
+After=network-online.target nftables.service
+
+[Service]
+Type=simple
+ExecStart=/opt/fenvix-host/bin/fenvix-host agent
+Restart=always
+RestartSec=5
+# Every microVM's cgroup lives under this service's own subtree (fenvix_host.agent.prepare_cgroups).
+Delegate=yes
+KillMode=control-group
+# The agent holds the host credential: nothing else on the host needs to read its state.
+StateDirectory=fenvix
+StateDirectoryMode=0700
+RuntimeDirectory=fenvix
+RuntimeDirectoryMode=0700
+ProtectHome=yes
+NoNewPrivileges=no
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
