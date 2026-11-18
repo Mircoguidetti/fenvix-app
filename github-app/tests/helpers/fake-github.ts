@@ -46,6 +46,12 @@ export class FakeGitHub {
   /** OAuth codes → user token; user token → installations that person can see. */
   readonly oauthCodes = new Map<string, string>();
   readonly userInstallations = new Map<string, number[]>();
+  /**
+   * Review R-016: who a user token belongs to (GET /user), and that person's role in an organization account
+   * (GET /user/memberships/orgs/{org}: "admin" or "member"; absent: not a member, 404 as GitHub answers).
+   */
+  readonly users = new Map<string, { login: string; id: number }>();
+  readonly orgRoles = new Map<string, "admin" | "member">();
   private readonly tokens = new Map<string, number>();
   private server!: Server;
   url = "";
@@ -164,6 +170,22 @@ export class FakeGitHub {
       const template = (ex.installations as Json[])[0]!;
       const list = this.userInstallations.get(t)!.map((id) => this.installationJson(id, template));
       return [200, { total_count: list.length, installations: list }];
+    }
+    if (method === "GET" && p === "/user") {
+      const t = /^Bearer (gho_\w+)$/.exec(auth)?.[1];
+      const u = t ? this.users.get(t) : undefined;
+      if (!u) return [401, { message: "Bad credentials", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      return [200, { ...exampleResponse("GET", "/user", 200), login: u.login, id: u.id, type: "User" }];
+    }
+    if ((m = /^\/user\/memberships\/orgs\/([^/]+)$/.exec(p)) && method === "GET") {
+      const t = /^Bearer (gho_\w+)$/.exec(auth)?.[1];
+      const u = t ? this.users.get(t) : undefined;
+      if (!u) return [401, { message: "Bad credentials", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      const org = decodeURIComponent(m[1]!);
+      const role = this.orgRoles.get(`${org.toLowerCase()}:${u.login.toLowerCase()}`);
+      if (!role) return this.notFound();
+      const ex = exampleResponse("GET", "/user/memberships/orgs/{org}", 200);
+      return [200, { ...ex, state: "active", role, organization: { ...(ex.organization as Json), login: org }, user: { ...(ex.user as Json), login: u.login, id: u.id } }];
     }
     // ---- as the App
     if ((m = /^\/app\/installations\/(\d+)\/access_tokens$/.exec(p)) && method === "POST") {
