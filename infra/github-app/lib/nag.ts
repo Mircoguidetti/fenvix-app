@@ -4,7 +4,7 @@ import { NagSuppressions } from "cdk-nag";
 /** cdk-nag (AwsSolutions) findings that do not apply, each with its reason. Everything else must pass. */
 export function applySuppressions(stack: Stack): void {
   NagSuppressions.addStackSuppressions(stack, [
-    { id: "AwsSolutions-APIG4", reason: "Authorization is in the function, per route: GitHub's HMAC signature on /webhooks/github, each runner machine's own summary credential (HMAC, bound to its runner name, repository and run) on /v1/runner/summaries, a Supabase session (JWKS) on the dashboard routes, a signed state plus GitHub OAuth on /github/setup. API Gateway cannot check an HMAC over the body." },
+    { id: "AwsSolutions-APIG4", reason: "Authorization is in the function, per route: GitHub's HMAC signature on /webhooks/github, each runner machine's own summary credential (HMAC, bound to its runner name, repository and run) on /v1/runner/summaries, a Supabase session (JWKS) on the dashboard routes, a signed state plus GitHub OAuth on /github/setup, a single-use enrolment secret or a phoenixNAP host's own credential (HMAC, bound to the host, its region and its generation) on /v1/hosts/*. API Gateway cannot check an HMAC over the body." },
     { id: "AwsSolutions-L1", reason: "Node.js 22 is the version the service is written and tested for (engines >=22.18, type stripping); it is a supported Lambda runtime. Move to the next LTS together with the service's tests." },
     { id: "AwsSolutions-S1", reason: "The overflow bucket holds only transient work payloads (deleted after use, expired after 5 days), written and read by two functions; CloudTrail covers the account. Access logs would cost more than the data." },
     { id: "AwsSolutions-VPC7", reason: "The VPC holds short-lived runner machines with no inbound rule and outbound 80/443 only (and, per-job, the private cache machine); flow logs would add CloudWatch cost for no decision we take on them at this size." },
@@ -28,7 +28,7 @@ export function applySuppressions(stack: Stack): void {
       id: "AwsSolutions-IAM5",
       reason: "Log streams are created per Lambda container under the function's own log group (`<group arn>:*`), and overflow objects have random keys under work/ in our own bucket. Each is scoped to one resource of this stack.",
       appliesTo: [
-        { regex: "/^Resource::<(Http|Worker|Sweep|Reaper|Demo)Logs[0-9A-F]+\\.Arn>:\\*$/g" },
+        { regex: "/^Resource::<(Http|Worker|Sweep|Reaper|Demo|Hosts|Scaler)Logs[0-9A-F]+\\.Arn>:\\*$/g" },
         "Resource::<Overflow8C2F862D.Arn>/work/*",
       ],
     },

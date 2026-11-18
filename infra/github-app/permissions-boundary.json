@@ -25,6 +25,7 @@
       "Resource": [
         "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/github-app/*",
         "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/cache/*",
+        "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/pnap/*",
         "arn:aws:ssm:eu-west-1::parameter/aws/service/canonical/*"
       ]
     },

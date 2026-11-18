@@ -65,6 +65,30 @@ export interface Settings {
   runnerVolumeGb: number;
   /** Commit of Mircoguidetti/fenvix-engine-cli whose runner/bootstrap.sh the machine runs. */
   engineCliCommit: string;
+  // ---------------------------------------------------------------- customer mode on phoenixNAP (docs/CUSTOMER-MODE-PNAP.md)
+  /**
+   * "off" (default) or "pnap": customer jobs run on phoenixNAP Bare Metal Cloud hosts rented by the hour, one pool per
+   * region, each job in its own Firecracker microVM. Adds the scaler and the hosts functions and the /v1/hosts/* route;
+   * the worker then places each queued job in its customer's region. Demo mode keeps working beside it (an
+   * installation with no region is never placed).
+   */
+  customerMode: "off" | "pnap";
+  /** REGION:MIN:MAX,... of ASH, PHX, CHI, SEA, NLD (one pool per region). */
+  pnapRegions: string;
+  /** Region of an installation that has none set; empty: such jobs are not placed. */
+  pnapDefaultRegion: string;
+  pnapServerType: string;
+  pnapPricingModel: string;
+  pnapVmVcpus: number;
+  pnapVmMemMib: number;
+  pnapIdleMinutes: number;
+  pnapMaxHostsTotal: number;
+  /** "colocated" (a cache in its own namespace on each host; the first test), "dedicated" (one cache server per region) or "off". */
+  pnapCacheMode: string;
+  /** SHA-256 of firecracker-<version>-x86_64.tgz (from the release page); every host checks its download against it. */
+  pnapFirecrackerSha256: string;
+  /** phoenixNAP SSH key ids installed on every server (optional; the account's default keys are installed anyway). */
+  pnapSshKeyIds: string;
 }
 
 type Ctx = (key: string) => unknown;
@@ -80,6 +104,10 @@ const ENV: Record<keyof Settings, string> = {
   runnerIdleMinutes: "FENVIX_RUNNER_IDLE_MINUTES", cacheInstanceType: "FENVIX_CACHE_INSTANCE_TYPE", cachePrivateIp: "FENVIX_CACHE_PRIVATE_IP",
   cacheVolumeGb: "FENVIX_CACHE_VOLUME_GB", cacheAmiId: "FENVIX_CACHE_AMI_ID",
   cacheSigningPublicKey: "FENVIX_CACHE_SIGNING_PUBLIC_KEY",
+  customerMode: "FENVIX_CUSTOMER_MODE", pnapRegions: "FENVIX_PNAP_REGIONS", pnapDefaultRegion: "FENVIX_PNAP_DEFAULT_REGION",
+  pnapServerType: "FENVIX_PNAP_SERVER_TYPE", pnapPricingModel: "FENVIX_PNAP_PRICING_MODEL", pnapVmVcpus: "FENVIX_PNAP_VM_VCPUS",
+  pnapVmMemMib: "FENVIX_PNAP_VM_MEM_MIB", pnapIdleMinutes: "FENVIX_PNAP_IDLE_MINUTES", pnapMaxHostsTotal: "FENVIX_PNAP_MAX_HOSTS_TOTAL",
+  pnapCacheMode: "FENVIX_PNAP_CACHE_MODE", pnapFirecrackerSha256: "FENVIX_PNAP_FIRECRACKER_SHA256", pnapSshKeyIds: "FENVIX_PNAP_SSH_KEY_IDS",
 };
 
 /** CloudWatch Logs accepts only these retention periods (days). */
@@ -122,6 +150,12 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
     cacheAmiId: get("cacheAmiId"), cacheSigningPublicKey: get("cacheSigningPublicKey").replace(/\s+/g, ""),
     demoRepository: get("demoRepository"), demoMaxHours: int("demoMaxHours", 1, 72), runnerInstanceType: need("runnerInstanceType"),
     runnerVolumeGb: int("runnerVolumeGb", 20, 500), engineCliCommit: need("engineCliCommit"),
+    customerMode: (get("customerMode") || "off") as Settings["customerMode"],
+    pnapRegions: get("pnapRegions"), pnapDefaultRegion: get("pnapDefaultRegion"), pnapServerType: get("pnapServerType") || "d3.c1.large",
+    pnapPricingModel: get("pnapPricingModel") || "HOURLY",
+    pnapVmVcpus: Number(get("pnapVmVcpus") || 2), pnapVmMemMib: Number(get("pnapVmMemMib") || 8192),
+    pnapIdleMinutes: Number(get("pnapIdleMinutes") || 20), pnapMaxHostsTotal: Number(get("pnapMaxHostsTotal") || 10),
+    pnapCacheMode: get("pnapCacheMode") || "colocated", pnapFirecrackerSha256: get("pnapFirecrackerSha256"), pnapSshKeyIds: get("pnapSshKeyIds"),
   };
   if (!/^\d{12}$/.test(s.account)) throw new Error('Setting "account" must be a 12-digit AWS account id');
   if (!/^[a-z]{2}-[a-z]+-\d$/.test(s.region)) throw new Error('Setting "region" is not an AWS region');
@@ -152,5 +186,22 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
   }
   if (!/^t3\.(medium|large|xlarge)$|^(c6i|m6i)\.(large|xlarge)$/.test(s.runnerInstanceType)) throw new Error('Setting "runnerInstanceType" must be an x86_64 type like c6i.large');
   if (!/^[0-9a-f]{40}$/.test(s.engineCliCommit)) throw new Error('Setting "engineCliCommit" must be a full 40-character commit SHA');
+  if (s.customerMode !== "off" && s.customerMode !== "pnap") throw new Error('Setting "customerMode" must be off or pnap');
+  if (s.customerMode === "pnap") {
+    if (s.runnerMode === "per-job") throw new Error('customerMode "pnap" runs customer jobs on phoenixNAP: use it with runnerMode "demo", not "per-job"');
+    if (!/^(ASH|PHX|CHI|SEA|NLD):\d{1,2}:\d{1,2}(,(ASH|PHX|CHI|SEA|NLD):\d{1,2}:\d{1,2})*$/.test(s.pnapRegions)) {
+      throw new Error('Setting "pnapRegions" must be REGION:MIN:MAX[,...] with regions ASH, PHX, CHI, SEA, NLD (e.g. ASH:0:3,NLD:0:2)');
+    }
+    if (s.pnapDefaultRegion && !s.pnapRegions.split(",").some((r) => r.startsWith(`${s.pnapDefaultRegion}:`))) throw new Error('Setting "pnapDefaultRegion" must be one of pnapRegions');
+    if (!/^[a-z0-9]+\.[a-z0-9.]+$/.test(s.pnapServerType)) throw new Error('Setting "pnapServerType" is not a phoenixNAP server type');
+    if (!/^(HOURLY|ONE_MONTH_RESERVATION|TWELVE_MONTHS_RESERVATION|TWENTY_FOUR_MONTHS_RESERVATION|THIRTY_SIX_MONTHS_RESERVATION)$/.test(s.pnapPricingModel)) throw new Error('Setting "pnapPricingModel" is not a phoenixNAP pricing model');
+    for (const [k, lo, hi] of [["pnapVmVcpus", 1, 32], ["pnapVmMemMib", 1024, 131072], ["pnapIdleMinutes", 0, 1440], ["pnapMaxHostsTotal", 0, 200]] as const) {
+      if (!Number.isInteger(s[k]) || s[k] < lo || s[k] > hi) throw new Error(`Setting "${k}" must be an integer from ${lo} to ${hi}`);
+    }
+    if (!["colocated", "dedicated", "off"].includes(s.pnapCacheMode)) throw new Error('Setting "pnapCacheMode" must be colocated, dedicated or off');
+    if (!/^[0-9a-f]{64}$/.test(s.pnapFirecrackerSha256)) throw new Error('Setting "pnapFirecrackerSha256" is required in customer mode: the SHA-256 of the Firecracker release archive (docs/CUSTOMER-MODE-PNAP.md)');
+    if (s.pnapSshKeyIds && !/^[A-Za-z0-9]{1,64}(,[A-Za-z0-9]{1,64})*$/.test(s.pnapSshKeyIds)) throw new Error('Setting "pnapSshKeyIds": phoenixNAP SSH key ids, comma separated');
+    if (!s.cacheSigningPublicKey && s.pnapCacheMode !== "off") throw new Error('Setting "cacheSigningPublicKey" is required in customer mode with a cache (scripts/cache-key.sh)');
+  }
   return s;
 }

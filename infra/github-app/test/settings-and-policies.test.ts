@@ -76,7 +76,7 @@ describe("IAM policy files", () => {
     const allows = b.Statement.filter((x) => x.Effect === "Allow");
     for (const st of allows) for (const a of arr(st.Action)) assert.ok(a !== "*" && !/^[a-z0-9-]+:\*$/.test(a) && (!a.startsWith("iam:") || a === "iam:PassRole"), a);
     const ssm = allows.filter((x) => arr(x.Action).includes("ssm:GetParameters"));
-    for (const r of ssm.flatMap((x) => arr(x.Resource))) assert.match(r, /parameter\/(fenvix\/prod\/(github-app|cache)|aws\/service\/canonical)\/\*$/);
+    for (const r of ssm.flatMap((x) => arr(x.Resource))) assert.match(r, /parameter\/(fenvix\/prod\/(github-app|cache|pnap)|aws\/service\/canonical)\/\*$/);
     const app = policy("cfn-exec-policy-app.json").Statement;
     const boundary = "arn:aws:iam::865859654353:policy/fenvix-prod-github-app-boundary";
     assert.equal(json(app.find((x) => x.Sid === "WriteRolesOnlyWithTheBoundary")!.Condition), json({ StringEquals: { "iam:PermissionsBoundary": boundary } }));

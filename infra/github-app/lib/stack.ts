@@ -16,7 +16,8 @@ import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import { fileURLToPath } from "node:url";
 import { Construct } from "constructs";
-import { appPrefix, cachePrefix, readersOf } from "./parameters.ts";
+import { appPrefix, cachePrefix, pnapPrefix, readersOf } from "./parameters.ts";
+import { createPublicKey } from "node:crypto";
 import { CacheMachine } from "./cache.ts";
 import { RunnerNetwork } from "./network.ts";
 import { commonMachineEnv, perJobMachineEnv } from "./runner.ts";
@@ -142,8 +143,11 @@ export class FenvixGitHubAppStack extends Stack {
     } : { RUNNER_MODE: "demo" };
     // The worker signs each machine's credentials (per-job only): the summary key and the cache signing key.
     const workerReads = readersOf(s.env, "worker").filter((p) => perJob || !/\/(runner-token|signing-key)$/.test(p));
+    // Customer mode on phoenixNAP: the worker only places each queued job in its customer's region (no secret needed).
+    const pnap = s.customerMode === "pnap";
+    const placeEnv: Record<string, string> = pnap ? { CUSTOMER_MODE: "pnap", PNAP_REGIONS: s.pnapRegions, ...(s.pnapDefaultRegion ? { PNAP_DEFAULT_REGION: s.pnapDefaultRegion } : {}) } : {};
     const worker = fn("Worker", "worker.ts", {
-      timeout: WORKER_TIMEOUT, memory: 512, reads: workerReads, extraEnv: launchEnv,
+      timeout: WORKER_TIMEOUT, memory: 512, reads: workerReads, extraEnv: { ...launchEnv, ...placeEnv },
       description: "fenvix GitHub App: runs queued webhooks and runner summaries",
     });
     worker.addToRolePolicy(new iam.PolicyStatement({ sid: "ReadAndDeleteOverflow", actions: ["s3:GetObject", "s3:DeleteObject"], resources: [overflow.arnForObjects("work/*")] }));
@@ -223,6 +227,41 @@ export class FenvixGitHubAppStack extends Stack {
       target: { arn: sweep.functionArn, roleArn: schedulerRole.roleArn, retryPolicy: { maximumRetryAttempts: 0 } },
     });
 
+    // ---------------------------------------------------------------- customer mode on phoenixNAP
+    // hosts: the routes the phoenixNAP hosts call (/v1/hosts/enrol, /v1/hosts/lease). It mints each leased job's
+    // just-in-time runner and credentials, so it reads the App key, RUNNER_TOKEN and the cache signing key, plus the
+    // host signing key; never the webhook, OAuth or state secrets. scaler: orders and releases servers through
+    // phoenixNAP's API; it reads the database URL and the phoenixNAP API client only, and holds no GitHub secret.
+    let hosts: lambda.IFunction | null = null;
+    let scaler: lambda.Function | null = null;
+    if (pnap) {
+      const pnapEnv: Record<string, string> = {
+        FENVIX_ENV: s.env, PNAP_REGIONS: s.pnapRegions, ...(s.pnapDefaultRegion ? { PNAP_DEFAULT_REGION: s.pnapDefaultRegion } : {}),
+        PNAP_SERVER_TYPE: s.pnapServerType, PNAP_PRICING_MODEL: s.pnapPricingModel, PNAP_VM_VCPUS: String(s.pnapVmVcpus),
+        PNAP_VM_MEM_MIB: String(s.pnapVmMemMib), PNAP_IDLE_MINUTES: String(s.pnapIdleMinutes), PNAP_MAX_HOSTS_TOTAL: String(s.pnapMaxHostsTotal),
+        PNAP_CACHE_MODE: s.pnapCacheMode, PNAP_FIRECRACKER_SHA256: s.pnapFirecrackerSha256, PNAP_CONTROL_URL: `https://${s.domainName}`,
+        ...(s.pnapSshKeyIds ? { PNAP_SSH_KEY_IDS: s.pnapSshKeyIds } : {}),
+      };
+      const cacheParam = `${cachePrefix(s.env)}/signing-key`;
+      hosts = fn("Hosts", "hosts.ts", {
+        timeout: Duration.seconds(29), memory: 512, reads: readersOf(s.env, "hosts"),
+        extraEnv: { ...pnapEnv, ...(s.pnapCacheMode !== "off" ? { CACHE_SIGNING_KEY_PARAM: cacheParam } : {}) },
+        description: "fenvix customer mode: phoenixNAP hosts enrol (once) and lease jobs of their own region",
+      });
+      // The PUBLIC half of the cache signing key, for the regions' cache servers (dedicated mode): public values.
+      const jwk = s.cacheSigningPublicKey ? createPublicKey({ key: Buffer.from(s.cacheSigningPublicKey, "base64"), format: "der", type: "spki" }).export({ format: "jwk" }) : null;
+      scaler = fn("Scaler", "scaler.ts", {
+        timeout: Duration.seconds(120), memory: 256, reads: readersOf(s.env, "scaler"),
+        extraEnv: {
+          ...pnapEnv, PNAP_CLIENT_ID_PARAM: `${pnapPrefix(s.env)}/client-id`, PNAP_CLIENT_SECRET_PARAM: `${pnapPrefix(s.env)}/client-secret`,
+          ...(jwk ? { PNAP_CACHE_PUBLIC_KEY_N: Buffer.from(jwk.n!, "base64url").toString("hex"), PNAP_CACHE_PUBLIC_KEY_E: String(Buffer.from(jwk.e!, "base64url").readUIntBE(0, Buffer.from(jwk.e!, "base64url").length)) } : {}),
+        },
+        description: "fenvix customer mode: keeps phoenixNAP hosts per region between min and max; releases idle ones",
+      });
+      // One run at a time: two overlapping runs could order twice.
+      (scaler.node.defaultChild as lambda.CfnFunction).reservedConcurrentExecutions = 1;
+    }
+
     // ---------------------------------------------------------------- the reaper: machines past the hard limit
     {
       const hours = perJob ? s.runnerMaxHours : s.demoMaxHours;
@@ -258,6 +297,17 @@ export class FenvixGitHubAppStack extends Stack {
       // Only https://<domain>: the execute-api URL is switched off.
       disableExecuteApiEndpoint: true,
     });
+    if (hosts) {
+      api.addRoutes({ path: "/v1/hosts/{proxy+}", methods: [apigw.HttpMethod.POST], integration: new HttpLambdaIntegration("Hosts", hosts, { payloadFormatVersion: apigw.PayloadFormatVersion.VERSION_2_0 }) });
+    }
+    if (scaler) {
+      schedulerRole.addToPolicy(new iam.PolicyStatement({ actions: ["lambda:InvokeFunction"], resources: [scaler.functionArn] }));
+      new scheduler.CfnSchedule(this, "ScalerSchedule", {
+        name: name("scaler"), description: "Keeps phoenixNAP hosts per region between min and max (docs/CUSTOMER-MODE-PNAP.md)",
+        scheduleExpression: "rate(1 minute)", flexibleTimeWindow: { mode: "OFF" }, state: "ENABLED",
+        target: { arn: scaler.functionArn, roleArn: schedulerRole.roleArn, retryPolicy: { maximumRetryAttempts: 0 } },
+      });
+    }
     const accessLogs = new logs.LogGroup(this, "ApiAccessLogs", { logGroupName: `/aws/apigateway/${name("api")}`, retention: s.logRetentionDays, removalPolicy: RemovalPolicy.DESTROY });
     new apigw.HttpStage(this, "Stage", {
       httpApi: api, stageName: "$default", autoDeploy: true,
@@ -299,6 +349,11 @@ export class FenvixGitHubAppStack extends Stack {
     if (demo) {
       new CfnOutput(this, "DemoFunctionName", { value: name("demo"), description: "scripts/demo-up.sh and demo-down.sh invoke it" });
       new CfnOutput(this, "DemoLogGroup", { value: `/aws/lambda/${name("demo")}` });
+    }
+    if (scaler) {
+      new CfnOutput(this, "ScalerFunctionName", { value: name("scaler"), description: "infra/customer-mode/pnap/first-test.sh invokes it (hold, status, release)" });
+      new CfnOutput(this, "ScalerLogGroup", { value: `/aws/lambda/${name("scaler")}` });
+      new CfnOutput(this, "HostsLogGroup", { value: `/aws/lambda/${name("hosts")}` });
     }
     if (cache) {
       new CfnOutput(this, "CacheInstanceId", { value: cache.instance.instanceId });
