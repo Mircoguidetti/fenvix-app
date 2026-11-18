@@ -1,4 +1,6 @@
--- Row level security of 0012 (explorations). One transaction, rolled back; a clean run ends with "CI EXPLORE RLS OK".
+-- Row level security of 0012 (explorations), as 0014 leaves it: members read through the dashboard API (fenvix_api), the
+-- GitHub App writes (fenvix_github_app), the browser reads nothing. One transaction, rolled back; a clean run ends with
+-- "CI EXPLORE RLS OK".
 begin;
 insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) values
   ('2aaaaaaa-0000-4000-8000-000000000001', 'ex.owner@fenvix.invalid', '{}', now()),
@@ -6,7 +8,7 @@ insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) value
 create temporary table ex_ids on commit drop as select
   (select workspace_id from public.workspace_members where user_id = '2aaaaaaa-0000-4000-8000-000000000001') as w,
   (select workspace_id from public.workspace_members where user_id = '2ddddddd-0000-4000-8000-000000000004') as xw;
-grant select on ex_ids to authenticated, fenvix_control_plane;
+grant select on ex_ids to authenticated, fenvix_api, fenvix_github_app;
 do $$
 declare r ex_ids%rowtype; p uuid; xp uuid;
 begin
@@ -27,20 +29,30 @@ end $$;
 reset role;
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"2aaaaaaa-0000-4000-8000-000000000001","role":"authenticated"}';
+do $$ declare n int; begin
+  begin select count(*) into n from public.ci_explorations; assert false, 'a signed-in browser can read explorations'; exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+set local role fenvix_api;
 do $$ declare r ex_ids%rowtype; begin
   select * into r from ex_ids;
+  perform set_config('app.user_id', '2aaaaaaa-0000-4000-8000-000000000001', true), set_config('app.workspace_id', r.w::text, true);
   assert (select count(*) from public.ci_explorations) = 1, 'the owner does not see exactly their own exploration';
   assert (select count(*) from public.ci_explorations where workspace_id = r.xw) = 0, 'READ LEAK: another organization''s exploration';
   assert (select skip_misses ->> 'code' from public.ci_runs limit 1) = '3', 'the run''s skip misses are not readable';
   begin insert into public.ci_explorations (project_id, started_at, finished_at, commit_sha, seeds, runs) select id, now(), now(), repeat('d', 40), 1, 1 from public.ci_projects limit 1;
-    assert false, 'a signed-in user can write explorations'; exception when insufficient_privilege then null; end;
+    assert false, 'the API can write explorations'; exception when insufficient_privilege then null; end;
+  perform set_config('app.workspace_id', r.xw::text, true);
+  assert (select count(*) from public.ci_explorations) = 0, 'READ LEAK: naming another organization shows its exploration';
 end $$;
 reset role;
-set local role fenvix_control_plane;
+set local role fenvix_github_app;
 do $$ declare r ex_ids%rowtype; begin
   select * into r from ex_ids;
   perform set_config('app.workspace_id', r.w::text, true);
-  assert (select count(*) from public.ci_explorations) = 1, 'the control plane does not see its organization''s exploration only';
+  assert (select count(*) from public.ci_explorations) = 1, 'the App does not see its organization''s exploration only';
+  insert into public.ci_explorations (project_id, started_at, finished_at, commit_sha, seeds, runs) select id, now(), now(), repeat('e', 40), 3, 3 from public.ci_projects;
+  assert (select count(*) from public.ci_explorations) = 2, 'the App cannot write an exploration of its organization';
 end $$;
 reset role;
 select 'CI EXPLORE RLS OK' as result;

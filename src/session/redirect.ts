@@ -16,7 +16,7 @@ export const lastRedirectError = () => redirectError;
  * mounts on a clean URL with the session already stored. Nothing downstream ever sees the code.
  */
 export async function completeAuthRedirect(): Promise<void> {
-  if (backend !== "supabase" || typeof window === "undefined") return;
+  if (backend !== "api" || typeof window === "undefined") return;
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
   const failure = params.get("error_description") ?? params.get("error");

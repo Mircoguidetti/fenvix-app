@@ -38,6 +38,8 @@ export interface FenvixGitHubAppProps extends StackProps { settings: Settings }
  *
  *   GitHub ─HTTPS─▶ github.<domain> (API Gateway HTTP API, ACM certificate) ─▶ http Lambda
  *                     checks the signature / runner token, sends the work to SQS, answers 202
+ *   dashboard ─HTTPS─▶ github.<domain>/v1/* (except /v1/runner/*) ─▶ api Lambda (the dashboard API,
+ *                     openapi/fenvix-api.yaml): Supabase session, membership and role, Postgres as fenvix_api
  *   SQS work queue (dead-letter queue after 5 tries; large payloads via the overflow bucket) ─▶ worker Lambda
  *   EventBridge Scheduler, every few minutes ─▶ sweep Lambda (runs whose summary never came)
  *   runner machines (demo: one per demo, scripts/demo-up.sh; per-job: one per queued job), from the runner image
@@ -95,14 +97,15 @@ export class FenvixGitHubAppStack extends Stack {
       DASHBOARD_URL: s.dashboardUrl, SUPABASE_URL: s.supabaseUrl, FENVIX_RUNS_ON: s.runsOnLabel,
       SUMMARY_WAIT_SECONDS: String(s.summaryWaitSeconds), SWEEP_SECONDS: "0", DB_POOL_MAX: "2", OVERFLOW_BUCKET: overflow.bucketName,
     };
-    const fn = (id: string, entry: string, o: { timeout: Duration; memory: number; extraEnv?: Record<string, string>; reads: string[]; description: string }) => {
-      const logGroup = new logs.LogGroup(this, `${id}Logs`, { logGroupName: `/aws/lambda/${name(id.toLowerCase())}`, retention: s.logRetentionDays, removalPolicy: RemovalPolicy.DESTROY });
+    const fn = (id: string, entry: string, o: { timeout: Duration; memory: number; extraEnv?: Record<string, string>; reads: string[]; description: string; baseEnv?: Record<string, string>; short?: string }) => {
+      const short = o.short ?? id.toLowerCase();
+      const logGroup = new logs.LogGroup(this, `${id}Logs`, { logGroupName: `/aws/lambda/${name(short)}`, retention: s.logRetentionDays, removalPolicy: RemovalPolicy.DESTROY });
       // Own role, no managed policy: write to its own log group, read its own parameters.
       const role = new iam.Role(this, `${id}Role`, { assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"), description: `fenvix GitHub App: ${id} function` });
       role.addToPolicy(new iam.PolicyStatement({ sid: "OwnLogGroup", actions: ["logs:CreateLogStream", "logs:PutLogEvents"], resources: [logGroup.logGroupArn, `${logGroup.logGroupArn}:*`] }));
       if (o.reads.length) role.addToPolicy(new iam.PolicyStatement({ sid: "OwnSecrets", actions: ["ssm:GetParameters"], resources: o.reads.map(paramArn) }));
       const f = new NodejsFunction(this, id, {
-        functionName: name(id.toLowerCase()),
+        functionName: name(short),
         description: o.description,
         entry: `${SERVICE_DIR}src/lambda/${entry}`,
         handler: "handler",
@@ -114,7 +117,7 @@ export class FenvixGitHubAppStack extends Stack {
         timeout: o.timeout,
         role,
         logGroup,
-        environment: { ...env, ...(o.extraEnv ?? {}) },
+        environment: { ...(o.baseEnv ?? env), ...(o.extraEnv ?? {}) },
         bundling: {
           format: OutputFormat.ESM,
           target: "node22",
@@ -135,8 +138,28 @@ export class FenvixGitHubAppStack extends Stack {
     queue.grantSendMessages(http);
     http.addToRolePolicy(new iam.PolicyStatement({ sid: "PutOverflow", actions: ["s3:PutObject"], resources: [overflow.arnForObjects("work/*")] }));
 
+    // The dashboard API: its own settings only (no App id, no OAuth client, no machine settings), its two parameters
+    // (the fenvix_api database URL and the state signing key), and the work queue (the setup pull request is queued).
+    const dashboardApi = fn("DashboardApi", "api.ts", {
+      timeout: Duration.seconds(29), memory: 512, reads: readersOf(s.env, "api"), short: "api",
+      baseEnv: {
+        NODE_ENV: "production", NODE_OPTIONS: "--enable-source-maps", LOG_LEVEL: "info", SSM_PREFIX: appPrefix(s.env),
+        SUPABASE_URL: s.supabaseUrl, DASHBOARD_URL: s.dashboardUrl, GITHUB_APP_SLUG: s.githubAppSlug, DB_POOL_MAX: "1",
+        WORK_QUEUE_URL: queue.queueUrl, ...(s.apiCorsOrigins ? { API_CORS_ORIGINS: s.apiCorsOrigins } : {}),
+      },
+      description: "fenvix dashboard API (openapi/fenvix-api.yaml): /v1/* except /v1/runner/*",
+    });
+    queue.grantSendMessages(dashboardApi);
+
+    // Where an organization's jobs run, by its region (us | eu): this stack's fleet under its fenvix region, and the other
+    // region's fleet when the settings name one (github-app/src/runners/launcher.ts reads it).
+    const placement: Record<string, { awsRegion: string; launchTemplateId: string }> = {
+      [s.fenvixRegion]: { awsRegion: this.region, launchTemplateId: fleet.launchTemplate.ref },
+      ...(s.secondFenvixRegion ? { [s.secondFenvixRegion]: { awsRegion: s.secondAwsRegion, launchTemplateId: s.secondLaunchTemplateId } } : {}),
+    };
     const launchEnv: Record<string, string> = perJob ? {
       RUNNER_MODE: "per-job", RUNNER_LAUNCH_TEMPLATE_ID: fleet.launchTemplate.ref, RUNNER_MAX_RUNNING: String(s.runnerMaxRunning), FENVIX_ENV: s.env,
+      RUNNER_PLACEMENT: this.toJsonString(placement),
       CACHE_SIGNING_KEY_PARAM: `${cachePrefix(s.env)}/signing-key`,
       ...Object.fromEntries(Object.entries(perJobMachineEnv(s)).map(([k, v]) => [`FENVIX_MACHINE_${k}`, v])),
     } : { RUNNER_MODE: "demo" };
@@ -250,14 +273,20 @@ export class FenvixGitHubAppStack extends Stack {
       validation: acm.CertificateValidation.fromDns(),
     });
     const domain = new apigw.DomainName(this, "Domain", { domainName: s.domainName, certificate, securityPolicy: apigw.SecurityPolicy.TLS_1_2 });
+    const httpIntegration = new HttpLambdaIntegration("Http", http, { payloadFormatVersion: apigw.PayloadFormatVersion.VERSION_2_0 });
     const api = new apigw.HttpApi(this, "Api", {
       apiName: name("api"),
-      description: "fenvix GitHub App",
-      defaultIntegration: new HttpLambdaIntegration("Http", http, { payloadFormatVersion: apigw.PayloadFormatVersion.VERSION_2_0 }),
+      description: "fenvix GitHub App and dashboard API",
+      // Webhooks, /github/setup, /healthz and anything else: the App's HTTP function.
+      defaultIntegration: httpIntegration,
       createDefaultStage: false,
       // Only https://<domain>: the execute-api URL is switched off.
       disableExecuteApiEndpoint: true,
     });
+    // The dashboard API takes /v1/* (every method, OPTIONS too: it answers CORS preflights itself); the runner routes
+    // under /v1/runner/* stay on the App's HTTP function (the more specific route wins).
+    api.addRoutes({ path: "/v1/{proxy+}", methods: [apigw.HttpMethod.ANY], integration: new HttpLambdaIntegration("DashboardApi", dashboardApi, { payloadFormatVersion: apigw.PayloadFormatVersion.VERSION_2_0 }) });
+    api.addRoutes({ path: "/v1/runner/{proxy+}", methods: [apigw.HttpMethod.ANY], integration: httpIntegration });
     const accessLogs = new logs.LogGroup(this, "ApiAccessLogs", { logGroupName: `/aws/apigateway/${name("api")}`, retention: s.logRetentionDays, removalPolicy: RemovalPolicy.DESTROY });
     new apigw.HttpStage(this, "Stage", {
       httpApi: api, stageName: "$default", autoDeploy: true,
@@ -290,6 +319,8 @@ export class FenvixGitHubAppStack extends Stack {
     new CfnOutput(this, "WorkQueueUrl", { value: queue.queueUrl });
     new CfnOutput(this, "DeadLetterQueueUrl", { value: dlq.queueUrl });
     new CfnOutput(this, "HttpLogGroup", { value: `/aws/lambda/${name("http")}` });
+    new CfnOutput(this, "DashboardApiUrl", { value: `https://${s.domainName}/v1`, description: "The dashboard's VITE_API_URL" });
+    new CfnOutput(this, "ApiLogGroup", { value: `/aws/lambda/${name("api")}` });
     new CfnOutput(this, "WorkerLogGroup", { value: `/aws/lambda/${name("worker")}` });
     new CfnOutput(this, "SweepLogGroup", { value: `/aws/lambda/${name("sweep")}` });
     new CfnOutput(this, "RunnerMode", { value: s.runnerMode });

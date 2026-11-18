@@ -1,4 +1,5 @@
--- Row level security of the GitHub App tables (0013_github_app.sql). Run AFTER 0001, 0002, 0008, 0011, 0012 and 0013.
+-- Row level security of the GitHub App tables (0013_github_app.sql, as 0014 leaves them). Run AFTER 0001 to 0014.
+-- Members read through the dashboard API (fenvix_api); the browser reads nothing.
 -- One transaction, rolled back; a failed assertion stops the script naming the check; a clean run ends with "GH RLS OK".
 --
 --   owner O and member M share workspace W; outsider X owns workspace XW. Installation 1 is W's (linked), installation 2
@@ -17,7 +18,7 @@ select
   (select workspace_id from public.workspace_members where user_id = '2aaaaaaa-0000-4000-8000-000000000001') as w,
   (select workspace_id from public.workspace_members where user_id = '2ddddddd-0000-4000-8000-000000000004') as xw,
   null::uuid as p, null::uuid as xp;
-grant select on gh_ids to authenticated, anon, fenvix_github_app;
+grant select on gh_ids to authenticated, anon, fenvix_api, fenvix_github_app;
 
 do $$
 declare r gh_ids%rowtype; v_p uuid; v_xp uuid; run uuid; xrun uuid;
@@ -42,6 +43,8 @@ begin
   exception when unique_violation then null; end;
   perform public.gh_link_installation(2, r.xw, '2ddddddd-0000-4000-8000-000000000004');
   assert (select github_account from public.ci_subscriptions where workspace_id = r.w) = 'northwind', 'the subscription did not record the GitHub account';
+  -- Linking starts the 30-day shadow trial, once.
+  assert (select trial_ends_at - trial_started_at from public.ci_subscriptions where workspace_id = r.w) = interval '30 days', 'linking did not start the trial';
 
   -- A repository takes its installation's organization, whatever the writer says.
   insert into public.gh_repositories (repository_id, installation_id, workspace_id, full_name) values
@@ -90,13 +93,29 @@ begin
 end $$;
 reset role;
 
--- ---------------------------------------------------------------- the member: reads W's installation, repositories, usage; nothing else
+-- ---------------------------------------------------------------- signed in, in the browser: nothing
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"2bbbbbbb-0000-4000-8000-000000000002","role":"authenticated"}';
+do $$
+declare n int; t text;
+begin
+  foreach t in array array['gh_installations', 'gh_repositories', 'ci_usage_events']
+  loop
+    begin
+      execute format('select count(*) from public.%I', t) into n;
+      assert false, format('a signed-in browser can read %s', t);
+    exception when insufficient_privilege then null; end;
+  end loop;
+end $$;
+reset role;
+
+-- ---------------------------------------------------------------- the member, through the API: W's installation, repositories, usage; nothing else
+set local role fenvix_api;
 do $$
 declare r gh_ids%rowtype; n int; t text;
 begin
   select * into r from gh_ids;
+  perform set_config('app.user_id', '2bbbbbbb-0000-4000-8000-000000000002', true), set_config('app.workspace_id', r.w::text, true);
   assert (select count(*) from public.gh_installations) = 1, 'the member does not see exactly their installation';
   assert (select account_login from public.gh_installations) = 'northwind', 'the member sees another installation';
   assert (select count(*) from public.gh_repositories) = 1, 'the member does not see exactly their repository';
@@ -120,20 +139,24 @@ begin
   exception when insufficient_privilege then null; end;
   begin
     perform public.gh_link_installation(3, r.w, '2bbbbbbb-0000-4000-8000-000000000002');
-    assert false, 'a signed-in user called the link function directly';
+    assert false, 'the API called the link function';
   exception when insufficient_privilege then null; end;
   begin
     perform public.gh_is_admin(r.w, '2bbbbbbb-0000-4000-8000-000000000002');
-    assert false, 'a signed-in user called gh_is_admin';
+    assert false, 'the API called gh_is_admin';
   exception when insufficient_privilege then null; end;
 end $$;
 reset role;
 
--- The owner sees the same, the outsider only theirs.
-set local role authenticated;
-set local request.jwt.claims = '{"sub":"2ddddddd-0000-4000-8000-000000000004","role":"authenticated"}';
+-- The outsider sees only theirs, and nothing of W when naming it.
+set local role fenvix_api;
 do $$
+declare r gh_ids%rowtype;
 begin
+  select * into r from gh_ids;
+  perform set_config('app.user_id', '2ddddddd-0000-4000-8000-000000000004', true), set_config('app.workspace_id', r.w::text, true);
+  assert (select count(*) from public.gh_installations) = 0 and (select count(*) from public.ci_usage_events) = 0, 'READ LEAK: the outsider sees W''s GitHub rows';
+  perform set_config('app.workspace_id', r.xw::text, true);
   assert (select count(*) from public.gh_installations) = 1 and (select account_login from public.gh_installations) = 'outsider', 'the outsider sees another installation';
   assert (select count(*) from public.ci_usage_events) = 1, 'the outsider does not see exactly their usage event';
 end $$;

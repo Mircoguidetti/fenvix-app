@@ -24,6 +24,21 @@ export interface Settings {
   logRetentionDays: number;
   /** Optional: an email for the dead-letter queue alarm. */
   alarmEmail: string;
+  /**
+   * The dashboard API: more origins the browser may call it from (comma separated, e.g. a preview of the dashboard),
+   * besides dashboardUrl's own. Optional.
+   */
+  apiCorsOrigins: string;
+  // ---------------------------------------------------------------- where organizations' jobs run (us | eu)
+  /** The fenvix region (an organization's setting, us or eu) this stack's runner machines serve. Default us. */
+  fenvixRegion: "us" | "eu";
+  /**
+   * Optional: the other fenvix region, served by another deploy of the runner fleet (another AWS region): its fenvix
+   * region, AWS region and launch template id. All three, or none.
+   */
+  secondFenvixRegion: string;
+  secondAwsRegion: string;
+  secondLaunchTemplateId: string;
   // ---------------------------------------------------------------- runner machines
   /**
    * "demo" (default): no runner machine between demos; scripts/demo-up.sh starts one fresh machine from the runner
@@ -73,7 +88,9 @@ const ENV: Record<keyof Settings, string> = {
   account: "FENVIX_ACCOUNT", region: "FENVIX_REGION", env: "FENVIX_ENV", domainName: "FENVIX_GITHUB_APP_DOMAIN",
   githubAppId: "GITHUB_APP_ID", githubAppSlug: "GITHUB_APP_SLUG", githubClientId: "GITHUB_CLIENT_ID", dashboardUrl: "DASHBOARD_URL",
   supabaseUrl: "SUPABASE_URL", runsOnLabel: "FENVIX_RUNS_ON", summaryWaitSeconds: "SUMMARY_WAIT_SECONDS", sweepMinutes: "FENVIX_SWEEP_MINUTES",
-  logRetentionDays: "FENVIX_LOG_RETENTION_DAYS", alarmEmail: "FENVIX_ALARM_EMAIL",
+  logRetentionDays: "FENVIX_LOG_RETENTION_DAYS", alarmEmail: "FENVIX_ALARM_EMAIL", apiCorsOrigins: "FENVIX_API_CORS_ORIGINS",
+  fenvixRegion: "FENVIX_RUNNER_REGION", secondFenvixRegion: "FENVIX_SECOND_RUNNER_REGION", secondAwsRegion: "FENVIX_SECOND_AWS_REGION",
+  secondLaunchTemplateId: "FENVIX_SECOND_LAUNCH_TEMPLATE_ID",
   runnerInstanceType: "FENVIX_RUNNER_INSTANCE_TYPE", runnerVolumeGb: "FENVIX_RUNNER_VOLUME_GB", engineCliCommit: "FENVIX_ENGINE_CLI_COMMIT",
   demoRepository: "FENVIX_DEMO_REPOSITORY", demoMaxHours: "FENVIX_DEMO_MAX_HOURS",
   runnerMode: "FENVIX_RUNNER_MODE", runnerMaxRunning: "FENVIX_RUNNER_MAX_RUNNING", runnerMaxHours: "FENVIX_RUNNER_MAX_HOURS",
@@ -116,6 +133,8 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
     dashboardUrl: https("dashboardUrl"), supabaseUrl: https("supabaseUrl"), runsOnLabel: need("runsOnLabel"),
     summaryWaitSeconds: int("summaryWaitSeconds", 60, 86_400), sweepMinutes: int("sweepMinutes", 1, 60),
     logRetentionDays: int("logRetentionDays", 1, 365), alarmEmail: get("alarmEmail"),
+    apiCorsOrigins: get("apiCorsOrigins"), fenvixRegion: (get("fenvixRegion") || "us") as Settings["fenvixRegion"],
+    secondFenvixRegion: get("secondFenvixRegion"), secondAwsRegion: get("secondAwsRegion"), secondLaunchTemplateId: get("secondLaunchTemplateId"),
     runnerMode: need("runnerMode") as Settings["runnerMode"], runnerMaxRunning: int("runnerMaxRunning", 1, 100),
     runnerMaxHours: int("runnerMaxHours", 1, 120), runnerIdleMinutes: int("runnerIdleMinutes", 5, 120),
     cacheInstanceType: need("cacheInstanceType"), cachePrivateIp: need("cachePrivateIp"), cacheVolumeGb: int("cacheVolumeGb", 8, 500),
@@ -133,6 +152,19 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
   if (!RETENTIONS.includes(s.logRetentionDays)) throw new Error(`Setting "logRetentionDays" must be one of ${RETENTIONS.join(", ")}`);
   if (s.alarmEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.alarmEmail)) throw new Error('Setting "alarmEmail" is not an email address');
   if (s.runnerMode !== "demo" && s.runnerMode !== "per-job") throw new Error('Setting "runnerMode" must be demo or per-job');
+  for (const o of s.apiCorsOrigins.split(",").map((x) => x.trim()).filter(Boolean)) {
+    let u: URL | null = null;
+    try { u = new URL(o); } catch { u = null; }
+    if (!u || u.protocol !== "https:" || u.origin !== o.replace(/\/+$/, "")) throw new Error('Setting "apiCorsOrigins" must be https:// origins (scheme://host, no path), comma separated');
+  }
+  if (s.fenvixRegion !== "us" && s.fenvixRegion !== "eu") throw new Error('Setting "fenvixRegion" must be us or eu');
+  const second = [s.secondFenvixRegion, s.secondAwsRegion, s.secondLaunchTemplateId];
+  if (second.some(Boolean)) {
+    if (!second.every(Boolean)) throw new Error('Settings "secondFenvixRegion", "secondAwsRegion" and "secondLaunchTemplateId": all three, or none');
+    if (!["us", "eu"].includes(s.secondFenvixRegion) || s.secondFenvixRegion === s.fenvixRegion) throw new Error('Setting "secondFenvixRegion" must be the other of us and eu');
+    if (!/^[a-z]{2}-[a-z]+-\d$/.test(s.secondAwsRegion)) throw new Error('Setting "secondAwsRegion" is not an AWS region');
+    if (!/^lt-[0-9a-f]{8,17}$/.test(s.secondLaunchTemplateId)) throw new Error('Setting "secondLaunchTemplateId" must look like lt-0123456789abcdef0');
+  }
   if (s.demoRepository && !/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(s.demoRepository)) throw new Error('Setting "demoRepository" must be owner/name');
   if (!/^t4g\.(nano|micro|small)$/.test(s.cacheInstanceType)) throw new Error('Setting "cacheInstanceType" must be t4g.nano, t4g.micro or t4g.small (arm64)');
   if (!/^10\.42\.0\.([4-9]|[1-5][0-9]|6[0-2])$/.test(s.cachePrivateIp)) throw new Error('Setting "cachePrivateIp" must be an address of the runner subnet 10.42.0.0/26 (10.42.0.4 to 10.42.0.62)');

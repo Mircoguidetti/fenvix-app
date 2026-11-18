@@ -5,7 +5,7 @@ import { activeOrgId, setActiveOrgId, useActiveOrgId } from "../lib/org";
 import { workspaceChanged } from "../lib/workspace";
 
 export interface OrgState {
-  /** "unavailable": this dashboard cannot reach the control plane, so it shows one organization by name only. */
+  /** "unavailable": this dashboard has no API address (VITE_API_URL), so it shows no organization. */
   status: "loading" | "ready" | "unavailable" | "error";
   orgs: Organization[];
   current: Organization | null;
@@ -32,7 +32,7 @@ export function OrgProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async (select?: string) => {
     if (!orgs.available) return;
     try {
-      const items = await orgs.listOrganizations();
+      const items = (await orgs.me()).organizations;
       const want = select ?? activeOrgId();
       const pick = items.find((o) => o.id === want) ?? items[0] ?? null;
       setActiveOrgId(pick?.id ?? null);
@@ -55,7 +55,7 @@ export function OrgProvider({ children }: { children: ReactNode }) {
   const value = useMemo<OrgState>(() => {
     const current = list.items.find((o) => o.id === active) ?? null;
     const role = current?.role ?? null;
-    // Without the control plane the role is not known here; the server and row level security still decide.
+    // Without the API the role is not known here; the server still decides.
     const manage = list.status === "ready" ? canManage(role) : list.status !== "loading";
     return { status: list.status, orgs: list.items, current, role, canManage: manage, error: list.error, refresh, switchTo };
   }, [list, active, refresh, switchTo]);

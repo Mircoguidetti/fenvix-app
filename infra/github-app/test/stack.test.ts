@@ -27,13 +27,13 @@ describe("the stack, demo mode (the default)", async () => {
   });
 
   it("functions: Node 22, x86_64, the plain settings only (no secret in any environment variable)", () => {
-    assert.deepEqual(fns.map(([, f]) => f.Properties.FunctionName).sort(), ["fenvix-prod-github-app-demo", "fenvix-prod-github-app-http", "fenvix-prod-github-app-reaper", "fenvix-prod-github-app-sweep", "fenvix-prod-github-app-worker"]);
+    assert.deepEqual(fns.map(([, f]) => f.Properties.FunctionName).sort(), ["fenvix-prod-github-app-api", "fenvix-prod-github-app-demo", "fenvix-prod-github-app-http", "fenvix-prod-github-app-reaper", "fenvix-prod-github-app-sweep", "fenvix-prod-github-app-worker"]);
     for (const [, f] of fns) {
       assert.equal(f.Properties.Runtime, "nodejs22.x");
       assert.deepEqual(f.Properties.Architectures, ["x86_64"]);
       const vars = (f.Properties.Environment as { Variables: Record<string, unknown> }).Variables;
       assert.equal(vars.SSM_PREFIX, "/fenvix/prod/github-app");
-      assert.equal(vars.SWEEP_SECONDS, "0", "no timer inside a Lambda");
+      if (f.Properties.FunctionName !== "fenvix-prod-github-app-api") assert.equal(vars.SWEEP_SECONDS, "0", "no timer inside a Lambda");
       // Parameter names (…_PARAM) are fine; values never are.
       for (const k of Object.keys(vars)) if (!k.endsWith("_PARAM")) assert.doesNotMatch(k, /SECRET|PRIVATE_KEY|TOKEN|DATABASE_URL|SIGNING/, k);
       for (const [k, v] of Object.entries(vars)) if (k.endsWith("_PARAM")) assert.match(String(v), /^\/fenvix\/prod\//, k);
@@ -46,7 +46,7 @@ describe("the stack, demo mode (the default)", async () => {
   it("least privilege: each function reads only its own parameters, by exact name; no managed policy, no '*' action", () => {
     // Demo mode: the worker starts no machine, so it does not get the summary signing key.
     const want = (who: string) => appParameters("prod").filter((p) => p.readers.includes(who as never) && !(who === "worker" && p.name.endsWith("/runner-token"))).map((p) => `parameter${p.name}`).sort();
-    for (const who of ["http", "worker", "sweep"] as const) {
+    for (const who of ["http", "worker", "sweep", "api"] as const) {
       const roleId = fnRole(who);
       assert.equal(roles[roleId]!.Properties.ManagedPolicyArns, undefined, `${who}: no managed policy`);
       const st = statementsOf(roleId);
@@ -93,7 +93,7 @@ describe("the stack, demo mode (the default)", async () => {
 
   it("logs: every log group kept 14 days", () => {
     const lgs = resources(t, "AWS::Logs::LogGroup");
-    assert.equal(lgs.length, 6, "http, worker, sweep, reaper, demo, API access logs");
+    assert.equal(lgs.length, 7, "http, api, worker, sweep, reaper, demo, API Gateway access logs");
     for (const [, lg] of lgs) assert.equal(lg.Properties.RetentionInDays, s.logRetentionDays);
   });
 
@@ -137,6 +137,32 @@ describe("the stack, demo mode (the default)", async () => {
     const jobRole = Object.keys(roles).find((id) => id.startsWith("FleetJobRole"))!;
     assert.deepEqual(statementsOf(jobRole), [], "no permission: a machine's credentials are its own, in its user data");
     assert.equal(roles[jobRole]!.Properties.ManagedPolicyArns, undefined);
+  });
+
+  it("the dashboard API function: its own settings, its two parameters, may only send to the work queue", () => {
+    const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-api")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
+    assert.deepEqual(Object.keys(vars).sort(), ["DASHBOARD_URL", "DB_POOL_MAX", "GITHUB_APP_SLUG", "LOG_LEVEL", "NODE_ENV", "NODE_OPTIONS", "SSM_PREFIX", "SUPABASE_URL", "WORK_QUEUE_URL"]);
+    assert.equal(vars.DASHBOARD_URL, "https://app.fenvix.dev");
+    assert.equal(vars.DB_POOL_MAX, "1");
+    const st = statementsOf(fnRole("api"));
+    const reads = st.filter((x) => arr(x.Action).some((a) => a.startsWith("ssm:"))).flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]).sort();
+    assert.deepEqual(reads, ["parameter/fenvix/prod/github-app/api-database-url", "parameter/fenvix/prod/github-app/state-signing-key"], "no App key, webhook or client secret, no runner token");
+    const actions = st.flatMap((x) => arr(x.Action)).sort();
+    assert.deepEqual([...new Set(actions)], ["logs:CreateLogStream", "logs:PutLogEvents", "sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:SendMessage", "ssm:GetParameters"]);
+    // The App's functions never read the API's database URL.
+    for (const who of ["http", "worker", "sweep", "demo", "reaper"]) assert.doesNotMatch(json(statementsOf(fnRole(who))), /api-database-url/, who);
+  });
+
+  it("routes: /v1/* to the dashboard API (CORS answered there), /v1/runner/* and everything else to the App's HTTP function", () => {
+    const routes = Object.fromEntries(resources(t, "AWS::ApiGatewayV2::Route").map(([, r]) => [r.Properties.RouteKey as string, json(r.Properties.Target)]));
+    assert.deepEqual(Object.keys(routes).sort(), ["$default", "ANY /v1/runner/{proxy+}", "ANY /v1/{proxy+}"]);
+    const integrations = Object.fromEntries(resources(t, "AWS::ApiGatewayV2::Integration").map(([id, r]) => [id, json(r.Properties.IntegrationUri)]));
+    const fnOf = (target: string) => integrations[target.match(/"Ref":"([^"]+)"/)![1]!]!;
+    assert.match(fnOf(routes["ANY /v1/{proxy+}"]!), /DashboardApi/);
+    assert.match(fnOf(routes["ANY /v1/runner/{proxy+}"]!), /"Http[0-9A-F]+"/);
+    assert.match(fnOf(routes.$default!), /"Http[0-9A-F]+"/);
+    assert.equal(resources(t, "AWS::ApiGatewayV2::Api")[0]![1].Properties.CorsConfiguration, undefined, "no API Gateway CORS: preflights reach the API, which allows the dashboard's origin only");
+    t.hasOutput("DashboardApiUrl", { Value: "https://github.fenvix.dev/v1" });
   });
 
   it("every role carries the permissions boundary the execution policy requires (R-012 F4)", () => {

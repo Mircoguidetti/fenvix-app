@@ -2,7 +2,7 @@
 // (fresh data, signed out) and signs in through the real sign-in page unless it is testing sign-in.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: npm run checks
 import { readFile } from "node:fs/promises";
-import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText, choose, flakyRun } from "./lib.mjs";
+import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText, choose, flakyRun, runningRun, shadowRun, useOrgOf } from "./lib.mjs";
 
 const { fail, pass, state } = makeReporter();
 const browser = await launch();
@@ -61,7 +61,11 @@ async function eventually(read, message) {
 }
 
 
-const ROUTES = ["overview", "projects", "projects/prj_homehub", "projects/prj_homehub?tab=setup", "projects/prj_homehub?tab=settings", "projects/connect", "defects", "defects/dfx_9a10", "usage", "billing", "api-keys", "settings", "settings/members"];
+const ROUTES = [
+  "overview", "projects", "projects/prj_homehub", "projects/prj_homehub/settings", "projects/prj_homehub/skip-with-proof", "projects/prj_homehub/nightly", "projects/prj_homehub/time-to-green",
+  "projects/prj_homehub/defects", "projects/connect", "projects/connect?github=connected&installation=1&account=acme", "projects/connect?github=requested", "projects/connect?github=error&reason=expired",
+  "defects", "defects/dfx_9a10", "usage", "billing", "api-keys", "settings", "settings/members",
+];
 
 const TESTS = {
   async "phone top bar keeps its height on long pages, with room around the menu button"(page, vp) {
@@ -124,7 +128,8 @@ const TESTS = {
     await page.getByRole("heading", { name: "Connect your first project" }).waitFor();
     await page.getByRole("link", { name: "Connect a project" }).first().click();
     await page.getByRole("heading", { name: "Connect a project", exact: true }).waitFor();
-    await page.getByRole("button", { name: "Install on GitHub" }).waitFor();
+    await page.getByRole("button", { name: "Install the GitHub App" }).waitFor();
+    await page.getByText("No installation yet: install the app first.").waitFor();
   },
 
   async "nothing reads as a demo; sample data says so once"(page) {
@@ -145,15 +150,19 @@ const TESTS = {
       const bad = text.match(BANNED);
       assert(!bad, `${route} says "${bad?.[0]}" in: ${text.split("\n").find((l) => BANNED.test(l))}`);
       assert((await page.locator(".sample-note").count()) === 1, `${route} does not say it shows sample data`);
+      if (route === "api-keys") await page.locator(".coming-soon").getByRole("heading", { name: "Coming soon" }).waitFor();
       assert((await page.locator(".sample-note .sample-badge").innerText()).toLowerCase() === "sample data", `${route}: the note does not read Sample data`);
     }
     assert(!BANNED.test(await page.title()), `the page title says "${(await page.title()).match(BANNED)?.[0]}"`);
   },
 
   async "overview"(page) {
+    // The home page opens the runs of the project opened last (or the first one).
     await signIn(page, "");
+    await page.getByRole("heading", { name: "northwind/homehub: runs" }).waitFor();
+    assert(new URL(page.url()).pathname === "/projects/prj_homehub" && !page.url().includes("#"), `the home page is at ${page.url()}`);
+    await go(page, "overview");
     await page.getByRole("heading", { name: "Northwind Cloud" }).waitFor();
-    assert(new URL(page.url()).pathname === "/overview" && !page.url().includes("#"), `the home page is at ${page.url()}`);
     await page.reload();
     await page.getByRole("heading", { name: "Northwind Cloud" }).waitFor();
     const kpis = await page.locator(".kpi").allInnerTexts();
@@ -165,7 +174,9 @@ const TESTS = {
     assert(/^\d+%$/.test(values[2]) && num(values[2]) >= 90, `the median share skipped reads ${values[2]} (home-assistant-like runs dominate: about 97%)`);
     assert(/^\$[\d,.]+$/.test(values[4]), `the GitHub cost reads ${values[4]}`);
     assert((await page.locator(".chart svg").count()) >= 2, "the overview is missing charts");
-    await page.locator("#cost").getByText("Price not set").waitFor();
+    await page.locator("#cost").getByText("$479", { exact: true }).waitFor();
+    await page.locator("#cost").getByText(/run units used\. Units included: not set yet\./).waitFor();
+    assert(!(await page.locator("#trial").count()), "a paying organization shows a trial");
     const cost = await addsUp(page, "#cost-minutes");
     assert(values[1] === `${cost.skipped.toLocaleString("en-US")} min`, `minutes saved ${values[1]} is not the skipped part ${cost.skipped}`);
     assert((await page.locator(".kpi", { hasText: "On GitHub-hosted" }).innerText()).includes(`${cost.total.toLocaleString("en-US")} min`), "the GitHub KPI does not show the same minutes");
@@ -186,9 +197,11 @@ const TESTS = {
   async "projects, a project, its runs and settings"(page) {
     await signIn(page, "projects");
     assert((await page.locator("main tbody tr").count()) === 4, "the project list is not 4 rows");
-    await page.getByRole("link", { name: "northwind/homehub" }).click();
-    await page.getByRole("heading", { name: "northwind/homehub" }).waitFor();
-    await page.locator("#skip-trend .chart svg").waitFor();
+    // The newest run of homehub is still running: amber, with its word.
+    await page.locator("main tbody tr", { hasText: "northwind/homehub" }).getByText("Running", { exact: true }).waitFor();
+    await page.locator("main").getByRole("link", { name: "northwind/homehub" }).click();
+    await page.getByRole("heading", { name: "northwind/homehub: runs" }).waitFor();
+    await page.locator(".running-note").getByRole("link", { name: "Watch it live" }).waitFor();
     await addsUp(page, "#project-minutes");
     assert((await page.locator("#runs tbody tr").count()) === 25, "the runs list is not 25 rows a page");
     await page.locator("#runs").getByRole("button", { name: "Failed", exact: true }).click();
@@ -199,14 +212,13 @@ const TESTS = {
     }, "the failed filter shows other runs");
     await page.locator("#runs").getByRole("button", { name: "Pull requests" }).click();
     await eventually(async () => (await page.locator("#runs tbody tr td[data-label='Branch or pull request'] .branch-cell").allTextContents()).every((t) => t.startsWith("#")), "the pull request filter shows branch runs");
-    // Setup: the one-line snippet.
-    await page.locator(".project-tabs").getByRole("link", { name: "Setup" }).click();
+    // Settings: the one-line snippet, the change the setup pull request makes (from the API), and the switches.
+    await go(page, "projects/prj_homehub/settings");
     await page.getByRole("heading", { name: "The test job on fenvix" }).waitFor();
     assert((await page.locator(".codebox pre").innerText()).includes("runs-on: fenvix"), "the setup snippet does not say runs-on: fenvix");
-    assert((await page.locator(".diff").innerText()).includes("+ runs-on: fenvix"), "the diff is missing");
-    // Settings: an owner saves them.
-    await page.locator(".project-tabs").getByRole("link", { name: "Settings" }).click();
+    await page.locator(".diff", { hasText: "+ runs-on: fenvix" }).waitFor();
     const sw = page.getByRole("switch", { name: /Nightly exploration/ });
+    await page.getByText(/A paid add-on; not counted in your run units/).waitFor();
     const before = await sw.getAttribute("aria-checked");
     await sw.click();
     await page.getByLabel("Test command").fill("pytest tests -p no:cacheprovider");
@@ -214,6 +226,102 @@ const TESTS = {
     await toast(page, "Project settings saved");
     const saved = await page.evaluate(async () => (await window.__fenvixMock.getProject("prj_homehub")).settings);
     assert(String(saved.nightlyExploration) !== before && saved.testCommand === "pytest tests -p no:cacheprovider", `the settings were not saved: ${JSON.stringify(saved)}`);
+  },
+
+  async "skip with proof: audit reruns, the rule-of-three bound, keys no longer trusted"(page) {
+    await signIn(page, "projects/prj_homehub/skip-with-proof");
+    const audit = page.locator("#audit");
+    await audit.getByText("Skipped tests rerun").waitFor();
+    const v = (await audit.locator(".kpi-value").allTextContents()).map(num);
+    assert(v[0] >= 1000, `only ${v[0]} skipped tests were rerun`);
+    assert(v[1] === 0, `wrong skips read ${v[1]}`);
+    assert(v[2] === 2, `${v[2]} untrusted keys, not 2`);
+    await audit.getByText("Expected 0").waitFor();
+    const bound = await audit.locator(".audit-bound").innerText();
+    const n = num(bound.match(/1 in ([\d,]+)/)?.[1]);
+    assert(n === Math.floor(v[0] / 3), `the bound reads "${bound}" for ${v[0]} reruns`);
+    assert(/95% confidence/.test(bound), `the bound does not say its confidence: ${bound}`);
+    assert((await audit.locator(".audit-list").first().locator("li").count()) === 2, "the untrusted keys are not listed");
+    assert(/^[0-9a-f]{32}$/.test(await audit.locator(".audit-list .hash").first().innerText()), "an untrusted key is not a 32-hex cache key");
+    // Nightly exploration: Northwind has the add-on, so no note about it.
+    await go(page, "projects/prj_homehub/nightly");
+    await page.getByRole("heading", { name: "Nightly exploration" }).waitFor();
+    await page.locator("#nights").waitFor();
+    assert(!(await page.locator(".addon-note").count()), "an organization with the add-on is told it is paid");
+    await go(page, "projects/prj_homehub/time-to-green");
+    await page.locator("#ttg-chart .chart svg").waitFor();
+  },
+
+  async "the shadow trial: days left, the 35% gate met and not met, shadow runs, the add-on note"(page) {
+    await signIn(page, "overview");
+    await useOrgOf(page, "org_harbor", "overview");
+    const trial = page.locator("#trial");
+    await trial.getByRole("heading", { name: "Shadow trial: 12 days left" }).waitFor();
+    const share = num(await trial.locator(".kpi-value").first().innerText());
+    assert(share >= 35, `the trial would have skipped ${share}%`);
+    await trial.locator(".state-ok", { hasText: "35% gate met" }).waitFor();
+    await trial.getByText("Run units", { exact: true }).waitFor();
+    await trial.getByText("not billed during the trial").waitFor();
+    // The same trial in Billing.
+    await go(page, "billing");
+    await page.locator("#trial").getByText("35% gate met").waitFor();
+    await page.locator("#current").getByText("In trial").waitFor();
+    // A shadow run says that nothing was skipped.
+    const run = await shadowRun(page);
+    await go(page, `projects/${run.projectId}/runs/${run.runId}`);
+    await page.getByText(`Shadow run: nothing was skipped; ${run.would.toLocaleString("en-US")} tests would have been.`).waitFor();
+    await page.locator(".kpi", { hasText: "Would have skipped" }).waitFor();
+    // Nightly exploration is a paid add-on this organization does not have.
+    await go(page, "projects/prj_homehub/nightly");
+    await page.locator(".addon-note").getByText("Nightly exploration is a paid add-on").waitFor();
+    // Below the gate (the mock's switch): the same screen says so, in amber, with words.
+    await page.evaluate(() => sessionStorage.setItem("fenvix-mock-trial", "below"));
+    await page.goto(BASE + "overview");
+    await page.locator("#trial .state-warn", { hasText: "Below the 35% gate" }).waitFor();
+    const low = num(await page.locator("#trial .kpi-value").first().innerText());
+    assert(low < 35, `below the gate reads ${low}%`);
+    await page.locator("#trial").getByText(/under the 35% the trial asks for/).waitFor();
+  },
+
+  async "the live run: progress while running, polling stops once it has finished, and while the page is hidden"(page) {
+    await signIn(page, "overview");
+    const run = await runningRun(page);
+    assert(run, "the mock has no running run");
+    await go(page, `projects/${run.projectId}/runs/${run.runId}`);
+    await page.getByRole("heading", { name: `Run #${run.number}` }).waitFor();
+    await page.locator(".page-header .state-warn", { hasText: "Running" }).waitFor();
+    const live = page.locator("#live");
+    await live.getByText("Running tests").waitFor();
+    for (const label of ["Passed", "Failed", "Skipped with proof", "Elapsed"]) await live.locator("dt", { hasText: label }).waitFor();
+    await live.getByText("Now running:").waitFor();
+    const bar = live.getByRole("progressbar", { name: "Tests done" });
+    const first = Number(await bar.getAttribute("aria-valuenow"));
+    assert(first > 0 && first < Number(await bar.getAttribute("aria-valuemax")), `the progress reads ${first}`);
+    await page.getByText("Per-test results arrive when the run finishes.").waitFor();
+    // Hidden: no question until the page is shown again.
+    const calls = () => page.evaluate(() => window.__fenvixMock.liveCalls());
+    await eventually(async () => (await calls()) >= 1, "the live view never asked");
+    await page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.waitForTimeout(400);
+    const hidden = await calls();
+    await page.waitForTimeout(1500);
+    assert((await calls()) === hidden, "the live view asked while the page was hidden");
+    await page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await eventually(async () => !(await bar.count()) || Number(await bar.getAttribute("aria-valuenow")) > first, "the progress did not move");
+    // Finished: passed, the tests and minutes appear, and nobody asks any more.
+    await page.locator(".page-header .state-ok", { hasText: "Passed" }).waitFor({ timeout: 20000 });
+    assert(!(await page.locator("#live").count()), "the live block stayed after the run finished");
+    await addsUp(page, "#run-minutes");
+    await page.locator(".test-row").first().waitFor();
+    const done = await calls();
+    await page.waitForTimeout(1500);
+    assert((await calls()) === done, `the live view kept asking after the run finished (${done} then ${await calls()})`);
   },
 
   async "a run: every test's outcome, a flaky failure and a skip receipt"(page) {
@@ -264,7 +372,8 @@ const TESTS = {
     const order = await page.locator(".order-list li .mono").allTextContents();
     assert(order.length === 2 && order[0].endsWith("test_voucher_cache_warm") && order[1].endsWith("test_checkout_complete_with_voucher"), `the minimal order reads ${order}`);
     const replay = await page.locator("#replay pre").innerText();
-    assert(replay.includes("pytest --det --det-seed=1 --det-order=.fenvix/defects/dfx_9a10/order.txt"), `the replay command reads ${replay}`);
+    // The runner sent its own command with this bundle: it is the one shown, with <bundle> where the pull writes it.
+    assert(replay.includes("pytest --det --det-seed=1 --det-order=.fenvix/defects/dfx_9a10/order.txt -n 0"), `the replay command reads ${replay}`);
     assert(/^[0-9a-f]{32}$/.test(await page.locator("#facts .hash").innerText()), "the fingerprint is not 32 hex characters");
     // A Node defect: the seed only, and the page says the order is not replayed.
     await go(page, "defects/dfx_3b05");
@@ -278,38 +387,69 @@ const TESTS = {
     await page.getByRole("heading", { name: "No open defects" }).waitFor();
   },
 
-  async "connect a project: install the app, then open the pull request"(page) {
+  async "connect a project: installations, every onboarding state, the setup pull request, GitHub's return"(page) {
     await signIn(page, "projects/connect");
-    await page.getByRole("button", { name: "Add repositories on GitHub" }).click();
-    const dialog = page.getByRole("dialog");
-    await dialog.getByText("northwind/billing-worker").waitFor();
-    assert(await dialog.getByRole("button", { name: "Install" }).isDisabled(), "Install works with nothing chosen");
-    await dialog.getByRole("checkbox", { name: /northwind\/billing-worker/ }).check();
-    await dialog.getByRole("button", { name: "Install" }).click();
-    await eventually(async () => new URL(page.url()).searchParams.get("setup_action") === "install", "GitHub's return address was not used");
-    await toast(page, "Connected northwind/billing-worker");
-    const row = page.locator(".setup-row", { hasText: "northwind/billing-worker" });
-    await row.getByText("Waiting for setup").waitFor();
+    const inst = (account) => page.locator(".install", { has: page.getByRole("heading", { name: account, exact: true }) });
+    await inst("northwind").locator(".state-ok", { hasText: "Active" }).waitFor();
+    await inst("northwind-labs").locator(".state-warn", { hasText: "Suspended" }).waitFor();
+    await inst("elena-marsh").getByText("Uninstalled", { exact: true }).waitFor();
+    await inst("elena-marsh").getByText(/Uninstalled from GitHub/).waitFor();
+    assert(!(await inst("elena-marsh").locator(".repo-row").count()), "the repositories of an uninstalled installation are listed");
+    // All nine onboarding states, each with its words and the App's detail.
+    for (const [repo, label] of [["billing-worker", "Not set up yet"], ["mobile-app", "Pull request open"], ["homehub", "On fenvix"], ["analytics", "Pull request closed"], ["infra-scripts", "No workflow file"], ["design-system", "No test job found"], ["search-service", "Already on fenvix"], ["checkout-legacy", "Test runner not supported"], ["notifications", "Could not open the pull request"]]) {
+      const row = page.locator(".repo-row", { hasText: `northwind/${repo}` });
+      await row.locator(".state", { hasText: label }).waitFor();
+      assert((await row.locator(".repo-detail").innerText()).length > 20, `northwind/${repo} has no detail`);
+    }
+    // Detected, not written in: the language and runner of each repository come from the App.
+    await page.locator(".repo-row", { hasText: "northwind/checkout-legacy" }).getByText("Language and test runner not detected").waitFor();
+    await page.locator(".repo-row", { hasText: "northwind/mobile-app" }).getByText("Private · TypeScript / Node · jest").waitFor();
+    assert((await page.locator(".repo-row", { hasText: "northwind/mobile-app" }).getByRole("link", { name: /Setup pull request #812/ }).getAttribute("href")) === "https://github.com/northwind/mobile-app/pull/812", "the pull request link is wrong");
+    // A suspended installation: no pull request can be opened.
+    assert(await page.getByRole("button", { name: "Open setup pull request on northwind-labs/experiments" }).isDisabled(), "a pull request can be opened on a suspended installation");
+    // Open one: queued, then the list is asked again until the App has opened it.
+    const row = page.locator(".repo-row", { hasText: "northwind/billing-worker" });
     assert((await row.locator(".diff").innerText()).includes("- runs-on: ubuntu-latest"), "the diff does not show the old runner");
-    await row.getByRole("button", { name: "Open the pull request" }).click();
+    await row.getByRole("button", { name: "Open setup pull request on northwind/billing-worker" }).click();
+    await row.getByText("Queued: the fenvix GitHub App is opening it.").waitFor();
+    await row.locator(".state-warn", { hasText: "Pull request open" }).waitFor({ timeout: 15000 });
+    assert((await row.getByRole("link", { name: /^Setup pull request #\d+/ }).getAttribute("href")).startsWith("https://github.com/northwind/billing-worker/pull/"), "the new pull request link is wrong");
     await toast(page, /Opened pull request #\d+ on northwind\/billing-worker/);
-    const link = row.getByRole("link", { name: /^Pull request #\d+/ });
-    assert((await link.getAttribute("href")).startsWith("https://github.com/northwind/billing-worker/pull/"), "the pull request link is wrong");
-    await go(page, "projects");
-    await page.locator("tbody tr", { hasText: "northwind/billing-worker" }).getByText("Pull request open").waitFor();
-    assert((await page.locator("main tbody tr").count()) === 5, "the new project is not listed");
+    // Another GitHub account: the install link, and GitHub sending the browser back (the mock stands in for GitHub).
+    await page.getByRole("button", { name: "Add another GitHub account" }).click();
+    await page.locator(".callout-success").getByText("The fenvix GitHub App is installed on northwind-sandbox.").waitFor();
+    const url = new URL(page.url());
+    assert(url.searchParams.get("github") === "connected" && url.searchParams.get("installation") && url.searchParams.get("account") === "northwind-sandbox", `GitHub's return address was ${page.url()}`);
+    await inst("northwind-sandbox").locator(".state-ok", { hasText: "Active" }).waitFor();
+    assert((await page.locator(".install").count()) === 4, "four installations are not all shown");
+    await page.locator(".callout-success").getByRole("button", { name: "Dismiss" }).click();
+    await eventually(async () => !new URL(page.url()).searchParams.get("github"), "the banner stays in the address");
+    // Every way back from GitHub reads as a sentence.
+    const reasons = { expired: "install link expired", incomplete: "did not finish the installation", oauth: "could not confirm who you are", not_yours: "made for someone else", not_admin: "Only an owner or admin", other_organization: "already linked to another fenvix organization", github: "GitHub did not answer", error: "Something went wrong while the installation" };
+    for (const [reason, text] of Object.entries(reasons)) {
+      await go(page, `projects/connect?github=error&reason=${reason}`);
+      await page.getByRole("alert").getByText(text).waitFor();
+    }
+    await go(page, "projects/connect?github=error&reason=unheard-of");
+    await page.getByRole("alert").getByText("Something went wrong while the installation").waitFor();
+    await go(page, "projects/connect?github=requested");
+    await page.locator(".callout-warning").getByText("Waiting for an owner of the GitHub organization.").waitFor();
   },
 
-  async "usage: runs against the plan, per project, CSV export"(page) {
+  async "usage: run units, per project, the rows add up, CSV export"(page) {
     await signIn(page, "usage");
-    await page.locator(".meter").waitFor();
-    const used = Number(await page.locator(".meter").getAttribute("aria-valuenow"));
-    const included = Number(await page.locator(".meter").getAttribute("aria-valuemax"));
-    assert(included === 2000 && used > 0, `the meter reads ${used} of ${included}`);
+    const card = page.locator("#units-used");
+    await card.getByText("Units included in your plan: not set yet.").waitFor();
+    await card.getByText(/1 run unit = 10 baseline minutes/).waitFor();
+    const billed = num(await card.locator(".big-number").innerText());
+    const runsUsed = num((await card.locator(".card-desc").innerText()).match(/([\d,]+) billable/)[1]);
     const runs = (await page.locator("tbody td[data-label='Runs']").allTextContents()).map(num);
-    assert(runs.length === 4 && runs.reduce((a, b) => a + b, 0) === used, `per-project runs ${runs} do not add up to ${used}`);
+    assert(runs.length === 5 && runs.reduce((a, b) => a + b, 0) === runsUsed, `per-row runs ${runs} do not add up to ${runsUsed}`);
+    await page.locator("tbody tr", { hasText: "Repositories not set up as projects" }).waitFor();
+    const unitsTotal = num(await page.locator("tfoot td[data-key='units']").innerText());
+    assert(billed >= unitsTotal && billed - unitsTotal < 1.1, `${billed} units billed for ${unitsTotal} used`);
     assert((await page.locator(".chart svg").count()) >= 1, "the runs-per-day chart is missing");
-    // The minutes add up on screen: in the sentence, in every row, and down every column.
+    // The minutes add up on screen: in the sentence, in every row, and down every column (units included).
     await addsUp(page, "#usage-minutes");
     const table = await page.evaluate(() => {
       const val = (td) => Number(td.textContent.replace(/[^\d.]/g, ""));
@@ -322,64 +462,44 @@ const TESTS = {
       const down = table.rows.reduce((a, r) => a + r[k], 0);
       assert(Math.abs(down - table.total[k]) < 0.011, `the ${k} column adds up to ${down}, the total says ${table.total[k]}`);
     }
-    for (const l of lines.slice(1)) {
-      const [, , ran, saved, other, gh] = l.split(",").map(Number);
-      assert(ran + saved + other === gh, `a CSV row does not add up: ${l}`);
-    }
     const file = await savedFile(page, () => page.getByRole("button", { name: "Export CSV" }).click());
     const lines = file.text.trim().split("\n");
     assert(file.name === "fenvix-usage-2026-11.csv", `the file is ${file.name}`);
-    assert(lines[0] === "project,runs,test_minutes_ran,minutes_saved,other_step_minutes,github_equivalent_minutes,github_equivalent_usd" && lines.length === 5, `the CSV reads ${lines[0]} (${lines.length} lines)`);
+    assert(lines[0] === "project,runs,units,test_minutes_ran,minutes_saved,other_step_minutes,github_equivalent_minutes,github_equivalent_usd" && lines.length === 6, `the CSV reads ${lines[0]} (${lines.length} lines)`);
+    for (const l of lines.slice(1)) {
+      const [, , , ran, saved, other, gh] = l.split(",").map(Number);
+      assert(ran + saved + other === gh, `a CSV row does not add up: ${l}`);
+    }
     await toast(page, "CSV ready");
     await choose(page, page.locator("#u-month"), "2026-10");
     await eventually(async () => new URL(page.url()).searchParams.get("month") === "2026-10", "the month did not change");
   },
 
-  async "billing: plans by runs, sized by project, no prices set"(page) {
+  async "billing: plans by run units with their prices, units not set yet, the Nightly exploration add-on"(page) {
     await signIn(page, "billing");
-    const plans = await page.locator(".plan-head h3").allTextContents();
-    assert(plans.join("|") === "Starter|Team|Scale|Enterprise", `plans read ${plans.join("|")}`);
-    const prices = await page.locator(".plan-price strong").allTextContents();
-    assert(prices.every((p) => p === "Price not set"), `a plan has a price: ${prices.join("|")}`);
+    const plans = await page.locator("#plans .plan-head h3").allTextContents();
+    assert(plans.join("|") === "Starter|Team|Scale|Monorepo", `plans read ${plans.join("|")}`);
+    const prices = await page.locator("#plans .plan-price strong").allTextContents();
+    assert(prices.join("|") === "$129|$479|$1,350|$4,200", `prices read ${prices.join("|")}`);
+    assert((await page.locator("#plans .plan .small").allTextContents()).filter((t) => t.startsWith("Run units included: not set yet")).length === 4, "a plan's units are not said to be unset");
     assert(/current plan/i.test(await page.locator(".plan-current .tag").innerText()), "no plan is marked as the current one");
     assert((await page.locator(".plan-current h3").innerText()) === "Team", "the current plan is not Team");
-    await page.locator("#sizing").getByText("Your plan fits").waitFor();
+    await page.locator("#current").getByText("Units included in your plan: not set yet.").waitFor();
+    await page.locator("#sizing").getByText(/not set yet, so no plan is suggested/).waitFor();
+    const addon = page.locator("#addons .addon", { hasText: "Nightly exploration" });
+    await addon.getByText("Price not set yet").waitFor();
+    await addon.getByText("Added", { exact: true }).waitFor();
+    assert(!(await page.locator("#trial").count()), "a paying organization shows a trial");
     await page.getByText("No payment method yet").waitFor();
   },
 
-  async "api keys"(page) {
+  async "api keys: coming soon, no list and no form"(page) {
     await signIn(page, "api-keys");
-    // The list: prefix, role, expiry and the three statuses.
-    for (const [name, status] of [["Release pipeline", "Active"], ["Quarterly report", "Expired"], ["Old laptop", "Revoked"]]) {
-      await page.getByRole("row", { name: new RegExp(name) }).getByText(status, { exact: true }).waitFor();
-    }
-    await page.getByRole("row", { name: /Coding agent/ }).getByText("fvx_Qm3xT8aL…").waitFor();
-    await page.getByRole("row", { name: /Coding agent/ }).getByText("Read only").waitFor();
-    assert(!(await page.getByRole("button", { name: "Revoke key Old laptop" }).count()), "a revoked key can be revoked again");
-    await page.getByRole("button", { name: "Create key" }).click();
-    await page.getByRole("alert").getByText("Enter a name for the key").waitFor();
-
-    await page.getByLabel("Key name").fill("Check runner");
-    await page.getByRole("combobox", { name: "Role" }).click();
-    await page.getByRole("option", { name: "Admin" }).click();
-    await page.getByRole("combobox", { name: "Expires" }).click();
-    await page.getByRole("option", { name: "Never" }).click();
-    await page.getByText("The key works until it is revoked.").waitFor();
-    await page.getByRole("button", { name: "Create key" }).click();
-    await page.getByText("Key “Check runner” created.").waitFor();
-    const secret = await page.locator(".secret").innerText();
-    assert(/^fvx_[A-Za-z0-9_-]{43}$/.test(secret), `the new key reads ${secret}`);
-    await page.getByText("It will not be shown again.").waitFor();
-    const example = await page.getByLabel("Try it: list your open defects").inputValue();
-    assert(!example.includes(secret) && example.includes("$FENVIX_KEY"), "the example holds the key");
-    const row = page.getByRole("row", { name: /Check runner/ });
-    await row.getByText("Admin").waitFor();
-    await row.getByText(secret.slice(0, 12) + "…").waitFor();
-    assert(!(await row.innerText()).includes(secret), "the list shows the whole key");
-    await page.getByRole("button", { name: "Revoke key Check runner" }).click();
-    await page.getByRole("dialog").getByText("stops working immediately").waitFor();
-    await page.getByRole("button", { name: "Revoke key", exact: true }).click();
-    await page.getByRole("row", { name: /Check runner/ }).getByText("Revoked").waitFor();
+    await page.getByRole("heading", { name: "API keys", level: 1 }).waitFor();
+    await page.locator(".coming-soon").getByRole("heading", { name: "Coming soon" }).waitFor();
+    assert(!(await page.locator("main table, main form, main input").count()), "the API keys page still has a list or a form");
+    // The navigation keeps the entry.
+    assert(await page.locator('a[href="/api-keys"]').count(), "the API keys entry left the navigation");
   },
 
   async "sidebar: brand and workspace"(page, vp) {
@@ -515,6 +635,16 @@ const TESTS = {
     await page.getByLabel(/Email me about new defects/).uncheck();
     await page.getByRole("button", { name: "Save changes" }).click();
     await page.getByText("Settings saved").waitFor();
+    // The region: an owner chooses where jobs run.
+    const region = page.locator("#region");
+    assert(await region.getByRole("radio", { name: /United States/ }).isChecked(), "the region is not US");
+    assert(await region.getByRole("button", { name: "Save region" }).isDisabled(), "an unchanged region can be saved");
+    await region.getByRole("radio", { name: /European Union/ }).check();
+    await region.getByRole("button", { name: "Save region" }).click();
+    await toast(page, "Region saved: European Union");
+    const saved = await page.evaluate(async () => await window.__fenvixMock.getSettings());
+    assert(saved.region === "eu" && saved.emailNotices === false, `the settings read ${JSON.stringify(saved)}`);
+    await region.getByText("A change applies from the next job on").waitFor();
     await go(page, "overview");
     await settled(page);
     await eventually(async () => (await page.locator(".workspace-name").first().textContent()).includes("Northwind Platform"), "the sidebar still shows the old organization name");
@@ -528,7 +658,8 @@ const only = process.env.ONLY;
 for (const [vpName, viewport] of VIEWPORTS) {
   for (const [name, fn] of Object.entries(TESTS)) {
     if (only && !name.includes(only)) continue;
-    const { ctx, page, errors } = await newPage(browser, { viewport });
+    // The live run view asks every 400 ms here instead of 4 s, so the run finishes within the check.
+    const { ctx, page, errors } = await newPage(browser, { viewport, pollMs: 400 });
     page.setDefaultTimeout(20000);
     const label = `${name} (${vpName})`;
     try {

@@ -3,6 +3,13 @@
 AWS CDK in TypeScript, one stack, `fenvix-<env>-github-app`. **Read `../../docs/DEPLOY-AWS.md`**: the founder's steps,
 the Cloudflare records and the monthly cost.
 
+The same stack serves the **dashboard API** (`openapi/fenvix-api.yaml`, operations tagged `dashboard`;
+`github-app/src/api/`): its own function `api` behind the same API Gateway, `ANY /v1/{proxy+}`, while
+`/v1/runner/{proxy+}`, the webhooks, `/github/setup` and `/healthz` stay on the App's `http` function. The `api`
+function reads only `api-database-url` (the role `fenvix_api`, Supabase pooler in transaction mode) and
+`state-signing-key`, may only send to the work queue, and answers CORS itself (the dashboard's origin, plus
+`apiCorsOrigins`). docs/DEPLOY-AWS.md, "The dashboard API".
+
 Runner modes (`runnerMode` in `cdk.json`):
 
 - **`demo`** (default): `scripts/demo-up.sh` starts one fresh c6i.large from the runner image and registers it on
@@ -31,7 +38,7 @@ bash scripts/cache-key.sh                        # per-job: the cache signing ke
 | Path | What |
 |---|---|
 | `bin/app.ts` | the app: settings, the stack, cdk-nag (AwsSolutions) |
-| `lib/stack.ts` | Lambdas (http, worker, sweep) bundled from `../../github-app/src/lambda/`, SQS + dead-letter queue, S3 overflow, EventBridge Scheduler, API Gateway HTTP API on the custom domain, ACM, logs, alarm |
+| `lib/stack.ts` | Lambdas (http, api, worker, sweep, reaper, demo) bundled from `../../github-app/src/lambda/` (the api bundle also takes the dashboard's `src/data/ci.ts` and `ci-rows.ts`), SQS + dead-letter queue, S3 overflow, EventBridge Scheduler, API Gateway HTTP API on the custom domain (routes: `/v1/*` → api, `/v1/runner/*` and the rest → http), ACM, logs, alarm; the worker's `RUNNER_PLACEMENT` (us / eu fleets, settings `fenvixRegion` and `second*`) |
 | `lib/network.ts` | VPC without NAT, one public subnet; the runners' and the cache's security groups |
 | `lib/runner.ts`, `lib/runner/files/` | the files baked into the runner image (install.sh, registration, metadata block, hooks, summary poster, per-job units: just-in-time runner, idle watchdog, power-off), bundled as one gzip |
 | `lib/runner-fleet.ts` | the Image Builder pipeline (the runner image; its build machine may read no /fenvix parameter), the launch template (terminate on shutdown), the machines' role (no permission) |

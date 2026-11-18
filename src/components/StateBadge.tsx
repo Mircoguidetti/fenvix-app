@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { BadgeCheck, Check, Clock, Minus, TriangleAlert, X, type LucideIcon } from "lucide-react";
-import type { PublicKeyStatus, RunStatus } from "../data";
+import type { InstallationStatus, OnboardingState, RunStatus } from "../data";
 
 /**
  * A state as a pill: an icon and a word, so it reads in black and white and for people who do not tell colours apart
@@ -25,9 +25,31 @@ export function StatusPill({ tone, icon, children }: { tone: Tone; icon?: Lucide
   );
 }
 
-/** Green for a key that works; expired and revoked keys stay grey: they are over, not waiting for anything. */
-export function KeyStatus({ status }: { status: PublicKeyStatus }) {
-  return <StatusPill tone={status === "active" ? "ok" : "neutral"}>{status === "active" ? "Active" : status === "expired" ? "Expired" : "Revoked"}</StatusPill>;
+/**
+ * A GitHub App installation: green when it works, amber when it is suspended on GitHub (it needs someone to act),
+ * grey once uninstalled (it is over, not waiting for anything).
+ */
+export function InstallationStatusPill({ status }: { status: InstallationStatus }) {
+  return <StatusPill tone={status === "active" ? "ok" : status === "suspended" ? "warn" : "neutral"}>{status === "active" ? "Active" : status === "suspended" ? "Suspended" : "Uninstalled"}</StatusPill>;
+}
+
+/** A repository's onboarding state in plain English (the detail from the App says more). */
+export const ONBOARDING_LABELS: Record<OnboardingState, string> = {
+  pending: "Not set up yet",
+  pr_open: "Pull request open",
+  merged: "On fenvix",
+  closed: "Pull request closed",
+  no_workflow: "No workflow file",
+  no_test_job: "No test job found",
+  already_fenvix: "Already on fenvix",
+  unsupported: "Test runner not supported",
+  failed: "Could not open the pull request",
+};
+
+/** Green once the test job runs on fenvix, amber while a pull request waits, red when the App failed, grey otherwise. */
+export function OnboardingPill({ state }: { state: OnboardingState }) {
+  const tone: Tone = state === "merged" || state === "already_fenvix" ? "ok" : state === "pr_open" ? "warn" : state === "failed" ? "danger" : "neutral";
+  return <StatusPill tone={tone}>{ONBOARDING_LABELS[state]}</StatusPill>;
 }
 
 export function InvoiceStatus({ status }: { status: "paid" | "open" }) {

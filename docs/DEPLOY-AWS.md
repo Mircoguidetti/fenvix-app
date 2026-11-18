@@ -22,7 +22,11 @@ Account `865859654353`, region `eu-west-1` (Ireland). Both come from `infra/gith
 ```
 GitHub ──HTTPS──▶ github.fenvix.dev  (API Gateway HTTP API, ACM certificate, DNS on Cloudflare)
                     └▶ Lambda "http": checks the signature or the machine's summary credential, puts the work on SQS,
-                       answers 202
+                       answers 202 (routes /webhooks/github, /github/setup, /healthz and /v1/runner/*)
+dashboard ──HTTPS──▶ github.fenvix.dev/v1/*  (every other /v1 route)
+                    └▶ Lambda "api": the dashboard API (openapi/fenvix-api.yaml): checks the Supabase session, the
+                       membership and the role, reads and writes Postgres as fenvix_api (pooler, transaction mode);
+                       queues "open the setup pull request" on SQS
                  SQS "work" queue  (failed 5 times → "dead-letters" queue + alarm; payloads over 200 KB go via S3)
                     └▶ Lambda "worker": stores the event, opens the onboarding PR, publishes the check run, the PR
                        comment, ci_runs, usage events
@@ -37,7 +41,9 @@ Runner image: EC2 Image Builder (Ubuntu 24.04 + strace, build tools, uv, Python,
 Demo machine (c6i.large, 30 GB gp3, from the image, no inbound port, an IAM role with no permission): registered
    runner, labels self-hosted, fenvix; after each job ──▶ POST https://github.fenvix.dev/v1/runner/summaries with its
    own credential; local engine cache on its own disk
-Supabase (yours): the role fenvix_github_app writes gh_*, ci_projects, ci_runs, ci_usage_events
+Supabase (yours): the role fenvix_github_app writes gh_*, ci_projects, ci_runs, ci_usage_events; the role fenvix_api
+   (the dashboard API) reads its organization's rows and changes settings, members and invitations; the browser
+   reaches no table (row level security checks the API's membership and role again)
 ```
 
 | Piece | Detail |
@@ -46,7 +52,8 @@ Supabase (yours): the role fenvix_github_app writes gh_*, ci_projects, ci_runs, 
 | Machine credentials | Each machine gets its own, in its user data (root only): a summary credential signed for its runner name and repository (per job: also its run), and per job a cache token for its customer's cache organization only. The App takes the runner's identity from the credential, never from the request. Stealing one lets an attacker publish only that one job's summary. |
 | Machines | Two users. `fenvix` runs the runner and the job. `fenvix-post` alone holds the machine's summary credential and sends the summary. Neither user can reach the instance metadata service (it serves the user data). `strace -f` works on a job's own children. Outbound traffic is HTTPS and HTTP only. There is no SSH. A machine can only be started through our launch template, of the configured type, from our own images, tagged with its role; the demo function and the reaper may terminate only machines with that tag. |
 | IAM | Every role of the stack carries the permissions boundary `fenvix-prod-github-app-boundary` (`permissions-boundary.json`), and CloudFormation may create or change a role only with it. |
-| Logs | CloudWatch log groups `/aws/lambda/fenvix-prod-github-app-{http,worker,sweep,reaper,demo}` and `/aws/apigateway/fenvix-prod-github-app-api`, kept **14 days**. |
+| Logs | CloudWatch log groups `/aws/lambda/fenvix-prod-github-app-{http,api,worker,sweep,reaper,demo}` and `/aws/apigateway/fenvix-prod-github-app-api`, kept **14 days**. |
+| Dashboard API | Lambda `api`, its own role: reads only `/fenvix/prod/github-app/api-database-url` and `state-signing-key`, may only send to the work queue. It never holds the App's private key, the webhook secret, the OAuth client secret or a runner token. See "The dashboard API" below. |
 
 ## The steps
 
@@ -137,10 +144,13 @@ step 13, then delete it.
 
 ### B. Supabase (SQL editor of your project)
 
-**Step 7.** Run the migration once. 0011 and 0012 are already applied, since the dashboard reads their tables. Paste
-the whole file `supabase/migrations/0013_github_app.sql` and click Run. It is safe to repeat. It creates the `gh_*`
-tables and `ci_usage_events`, the role `fenvix_github_app` (no password, no BYPASSRLS) and its row-level security
-policies.
+**Step 7.** Run the migrations once, in order. 0011 and 0012 are already applied. Paste the whole file
+`supabase/migrations/0013_github_app.sql` and click Run, then the whole file `supabase/migrations/0014_dashboard_api.sql`
+and click Run. Each is safe to repeat (0013 only before 0014: after 0014, run 0014 alone again). 0013 creates the
+`gh_*` tables and `ci_usage_events`, the role `fenvix_github_app` (no password, no BYPASSRLS) and its row-level
+security policies. 0014 removes the earlier database product, takes every right on our tables away from the browser
+(`anon`, `authenticated`: the dashboard talks to the API only), and creates the dashboard API's role `fenvix_api`
+(login, no password yet, no BYPASSRLS) with its policies.
 
 **Step 8.** Give the role its password (`DB_PASSWORD` from step 1) **without typing it into the SQL editor**, which
 keeps every query in its history. On your laptop, turn it into a SCRAM verifier (computed locally; Postgres stores it
@@ -167,6 +177,26 @@ postgresql://fenvix_github_app.<project-ref>:<DB_PASSWORD>@aws-0-<supabase-regio
 Use the pooler, not the direct host. The direct host `db.<ref>.supabase.co` answers on IPv6 only, and Lambda (outside
 a VPC) has IPv4 only. Session mode behaves like a direct connection. Each warm Lambda keeps at most 2 connections
 (`DB_POOL_MAX=2`).
+
+**Step 8b.** The dashboard API's role, the same way. Choose a second password `API_DB_PASSWORD`
+(`openssl rand -hex 24`), turn it into a verifier on your laptop (`printf '%s' "$v" | node scripts/scram-verifier.mjs`
+as above), and in the SQL editor:
+
+```sql
+alter role fenvix_api with password 'SCRAM-SHA-256$4096:<the rest of the line>';
+```
+
+Its connection string uses the pooler in **transaction mode** (Supabase → **Connect** → **Transaction pooler**,
+port **6543**), with the user `fenvix_api.<project-ref>`:
+
+```
+postgresql://fenvix_api.<project-ref>:<API_DB_PASSWORD>@aws-0-<supabase-region>.pooler.supabase.com:6543/postgres
+```
+
+Transaction mode suits Lambda: a connection is held only for one transaction, so many short API calls share few
+database connections. The API is written for it: one transaction per request, who it acts for set with
+`set_config(..., true)` (it ends with the transaction), no session state and no named prepared statement. Each warm
+API Lambda keeps one connection (`DB_POOL_MAX=1`).
 
 ### C. AWS account (an admin, once)
 
@@ -232,11 +262,11 @@ From here on, everything runs as this identity: `export AWS_PROFILE=fenvix-deplo
 
 ### D. The secrets in SSM (your laptop, as the deployer)
 
-**Step 12.** Create five parameters. Type each value at the prompt, so that it stays out of your shell history:
+**Step 12.** Create six parameters. Type each value at the prompt, so that it stays out of your shell history:
 
 ```
 P=/fenvix/prod/github-app
-for n in webhook-secret client-secret state-signing-key runner-token database-url; do
+for n in webhook-secret client-secret state-signing-key runner-token database-url api-database-url; do
   read -rsp "$n: " v; echo
   aws ssm put-parameter --name "$P/$n" --type SecureString --value "$v" --overwrite >/dev/null && echo "$P/$n stored"
 done
@@ -250,6 +280,7 @@ unset v
 | `/fenvix/prod/github-app/state-signing-key` | `STATE_SIGNING_KEY` (step 1) |
 | `/fenvix/prod/github-app/runner-token` | `RUNNER_TOKEN` (step 1): the key that signs each machine's own summary credential. Read by the http function (to check), the worker (per-job) and the demo function (to sign). No machine reads it. |
 | `/fenvix/prod/github-app/database-url` | the connection string from step 8 |
+| `/fenvix/prod/github-app/api-database-url` | the connection string from step 8b (`fenvix_api`, port 6543). Read by the api function only. |
 
 **Step 13.** Store the private key from its file, then delete the file:
 
@@ -280,6 +311,9 @@ line, `"cacheSigningPublicKey": "<base64>",`: the public half, not secret, and t
 | `supabaseUrl` | `https://<project-ref>.supabase.co` |
 | `demoRepository` | the test repository of step 2, e.g. `Mircoguidetti/fenvix-demo`. **Required in demo mode**: the demo function registers a runner on this repository and refuses any other, so our runner can never be put on a customer's repository (it would receive that repository's jobs, their `GITHUB_TOKEN` and secrets) |
 | `alarmEmail` | optional: an email for the dead-letter alarm (confirm the subscription email AWS sends) |
+| `apiCorsOrigins` | optional: more browser origins the dashboard API accepts besides `dashboardUrl`'s (comma separated `https://` origins, e.g. a preview of the dashboard). Every other origin gets no CORS header, and its preflight a 403 |
+| `fenvixRegion` | `us` (default) or `eu`: the region (an organization's setting) this stack's runner machines serve |
+| `secondFenvixRegion`, `secondAwsRegion`, `secondLaunchTemplateId` | optional, all three or none: the other region's runner fleet (another deploy, in another AWS region). The worker gets both as `RUNNER_PLACEMENT`. The worker's IAM permissions to start machines cover this stack's region only; a fleet in a second AWS region needs that region's statements added before it can be used |
 
 The other settings keep their defaults:
 
@@ -311,7 +345,15 @@ certificate is issued, because ACM renews through it. The deploy continues withi
 **Step 18.** In Cloudflare, add record 2: Type `CNAME`, Name `github`, Target
 `d-xxxxxxxxxx.execute-api.eu-west-1.amazonaws.com` (the `DnsTarget` output), Proxy status **DNS only**.
 
-**Step 19.** Check the host: `curl -s https://github.fenvix.dev/healthz` must answer `{"ok":true}`.
+**Step 19.** Check the host: `curl -s https://github.fenvix.dev/healthz` must answer `{"ok":true}`. Then the
+dashboard API: `curl -s https://github.fenvix.dev/v1/me` must answer **401** `{"error":{"code":"unauthenticated",...}}`,
+and a preflight from the dashboard's origin must answer **204** with `access-control-allow-origin`:
+
+```
+curl -si -X OPTIONS https://github.fenvix.dev/v1/me -H "Origin: <dashboardUrl>" -H "Access-Control-Request-Method: GET" | head -5
+```
+
+Set the dashboard's `VITE_API_URL` to `https://github.fenvix.dev` (the `DashboardApiUrl` output).
 
 **Step 20.** GitHub → the App's settings → **Advanced → Recent Deliveries**. Open the failed `ping` and click
 **Redeliver**. The response must be `200 {"ok":true,"pong":true}`.
@@ -489,6 +531,9 @@ dashboard (after step H2) shows the project, the runs and the usage month.
 | the deploy stops with `... is not authorized to perform: <action>` | the stack's Events in the console | add that action to the matching `cfn-exec-policy-*.json`, update the policy (`aws iam create-policy-version --set-as-default`), deploy again |
 | the deploy waits on `Certificate` for over 30 minutes | `bash scripts/dns-records.sh` | record 1 is missing, mistyped, or proxied (orange cloud) in Cloudflare |
 | a GitHub delivery shows **503** `queue_unavailable` | `aws logs tail /aws/lambda/fenvix-prod-github-app-http` | SQS refused the message; redeliver it from the App's Recent Deliveries |
+| the dashboard says "could not reach the server"; the browser console shows a CORS error | `aws logs tail /aws/lambda/fenvix-prod-github-app-api` | the dashboard's origin is not `dashboardUrl`'s nor in `apiCorsOrigins`: set it, deploy |
+| every dashboard call answers **401** | the API log | the API checks tokens against `supabaseUrl`'s published keys (`/auth/v1/.well-known/jwks.json`) and issuer: `supabaseUrl` must be the dashboard's Supabase project |
+| every dashboard call answers **500** / **503** | the API log (`password authentication failed`, `timeout`) | `/fenvix/prod/github-app/api-database-url`: the `fenvix_api` password (step 8b), the user `fenvix_api.<project-ref>`, port 6543; wait 5 minutes after changing it |
 | a delivery shows **401** | the App's webhook secret vs `/fenvix/prod/github-app/webhook-secret` | make them equal (`aws ssm put-parameter --overwrite`), wait 5 minutes (every function reloads its secrets every 5 minutes; no deploy needed), then redeliver |
 | demo-up says `the App is not installed on ...` | demo log (`aws logs tail /aws/lambda/fenvix-prod-github-app-demo`) | step 22 on that repository |
 | demo-up says `... is not the demo repository` | `demoRepository` in `cdk.json` | the demo function works only on that repository; change the setting and deploy if you mean another repository of your own |
@@ -511,8 +556,9 @@ deploy.
   lifetime (per-job 6 hours, demo 12 hours) plus a day, delete `runner-token-previous`.
 - **webhook-secret**: change it in SSM and on the App's page at the same time; deliveries in the 5 minutes between
   fail with 401 and can be redelivered.
-- **client-secret**, **state-signing-key**, **database-url**, **private-key**: change in SSM (and at GitHub or
-  Supabase), wait 5 minutes.
+- **client-secret**, **state-signing-key**, **database-url**, **api-database-url**, **private-key**: change in SSM
+  (and at GitHub or Supabase), wait 5 minutes. An install link made with the old state key fails within those minutes
+  (the person asks for a new link).
 - **cache signing key**: `bash scripts/cache-key.sh`, put the new line in `cdk.json`, deploy. The cache machine is
   replaced and the cache starts empty.
 
@@ -526,6 +572,26 @@ deploy.
 3. `cd infra/github-app && npx --no-install cdk destroy fenvix-prod-github-app`.
 4. Deregister the runner images (EC2 → AMIs) and delete their snapshots. The SSM parameters, the permissions
    boundary and the Cloudflare records stay; delete them by hand.
+
+## The dashboard API
+
+The dashboard talks only to this API, never to the database. The contract is `openapi/fenvix-api.yaml` (operations
+tagged `dashboard`); the server is `github-app/src/api/`, its Lambda entry `github-app/src/lambda/api.ts`.
+
+| | |
+|---|---|
+| Routes | API Gateway sends `ANY /v1/{proxy+}` to the api function, `ANY /v1/runner/{proxy+}` and everything else (`/webhooks/github`, `/github/setup`, `/healthz`) to the http function. The more specific route wins. |
+| Sign-in | `Authorization: Bearer <Supabase access token>`, checked against the project's published keys (JWKS; ES256, RS256 or EdDSA only; issuer `<supabaseUrl>/auth/v1`, audience `authenticated`). No token or a bad one: 401. |
+| Organization | `X-Fenvix-Workspace: <organization id>` on every organization operation. Not a member: 404, the same as an organization that does not exist. A member calling an owner-or-admin operation (`x-fenvix-role: admin` in the contract): 403. |
+| Database | role `fenvix_api` through the transaction pooler (step 8b). In every transaction the API names the user and the organization (`set_config('app.user_id', …, true)`, `set_config('app.workspace_id', …, true)`); row level security shows a row only to a member of its organization and lets only owners and admins change settings, members, invitations and project settings (a second barrier behind the API's own checks). |
+| CORS | answered by the function (API Gateway has no CORS setting): only `dashboardUrl`'s origin and `apiCorsOrigins`; headers `authorization`, `content-type`, `x-fenvix-workspace`, `if-none-match`; `etag`, `content-disposition` and `retry-after` readable. |
+| Live run view | `GET /v1/runs/{id}` answers an `ETag` (from the run's `updated_at` and `progress_at`, and the project as shown) with `Cache-Control: private, no-cache`; the same `If-None-Match` answers 304 with no body. |
+| Setup pull request | `POST /v1/github/repositories/{id}/setup-pull-request` queues `{ kind: "onboard", repositoryId }` on the work queue; the worker opens the pull request. |
+
+Tests: `cd github-app && npm test` runs the API's unit tests and, with the local Supabase running
+(`bash scripts/local-supabase/up.sh`, Docker), its integration tests (real Supabase Auth tokens; every dashboard
+operation; every 2xx answer validated against the contract). `TEST_DATABASE_URL=... npm run test:rls` (repository
+root) runs the row level security tests (`supabase/tests/`).
 
 ## Per-job mode: why the shared cache is a small machine, not Lambda + S3
 

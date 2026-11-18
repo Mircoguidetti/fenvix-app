@@ -9,8 +9,9 @@ export const VIEWPORTS = [
 ];
 
 /**
- * Nothing in the product may read as a demo, a draft or a stand-in. The one exception is the "Sample data" note the
- * shell shows while the mock backend is on (.sample-note): visibleText leaves it out, and the checks look for it.
+ * Nothing in the product may read as a demo, a draft or a stand-in. The exceptions: the "Sample data" note the shell
+ * shows while the mock backend is on (.sample-note), and the API keys page, which says the keys are coming soon
+ * (.coming-soon, founder 2026-11-18): visibleText leaves both out, and the checks look for them.
  * ("test" is no longer banned: tests are the product's subject.)
  */
 export const BANNED = /sample|demo|placeholder|coming soon|planned|preview|lorem/i;
@@ -55,8 +56,10 @@ export function makeReporter() {
 }
 
 /** New page that records console errors and failed requests into `errors`. */
-export async function newPage(browser, { viewport, acceptDownloads = true } = {}) {
-  const ctx = await browser.newContext({ viewport, colorScheme: "light", reducedMotion: "reduce", acceptDownloads });
+export async function newPage(browser, { viewport, acceptDownloads = true, colorScheme = "light", pollMs } = {}) {
+  const ctx = await browser.newContext({ viewport, colorScheme, reducedMotion: "reduce", acceptDownloads });
+  // The live run view asks every 4 s; a check may make the mock answer faster (src/lib/useLiveRun.ts).
+  if (pollMs) await ctx.addInitScript((ms) => Object.assign(window, { __fenvixPollMs: ms }), pollMs);
   const page = await ctx.newPage();
   const errors = [];
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
@@ -100,19 +103,19 @@ export async function settled(page) {
 export async function visibleText(page) {
   return page.evaluate(() => {
     const clone = document.body.cloneNode(true);
-    clone.querySelectorAll(".sample-note").forEach((n) => n.remove());
+    clone.querySelectorAll(".sample-note, .coming-soon").forEach((n) => n.remove());
     // innerText of a detached node ignores layout, so the clone is attached hidden for a moment.
     clone.style.cssText = "position:absolute;left:-99999px;top:0;width:1200px";
     document.documentElement.appendChild(clone);
     const parts = [clone.innerText];
     clone.remove();
     for (const el of document.querySelectorAll("input, textarea")) {
-      if (el.closest(".sample-note")) continue;
+      if (el.closest(".sample-note, .coming-soon")) continue;
       if (el.type === "checkbox" || el.type === "radio") continue;
       parts.push(el.value, el.placeholder ?? "");
     }
     for (const s of document.querySelectorAll("select")) parts.push(...[...s.options].map((o) => o.textContent));
-    for (const el of document.querySelectorAll("[aria-label], [title]")) if (!el.closest(".sample-note")) parts.push(el.getAttribute("aria-label") ?? "", el.getAttribute("title") ?? "");
+    for (const el of document.querySelectorAll("[aria-label], [title]")) if (!el.closest(".sample-note, .coming-soon")) parts.push(el.getAttribute("aria-label") ?? "", el.getAttribute("title") ?? "");
     return parts.join("\n");
   });
 }
@@ -208,4 +211,30 @@ export async function flakyRun(page) {
     const run = page.items.find((r) => r.tests.flakyDefects > 0 && r.skipShare > 0.9);
     return { projectId: run.projectId, runId: run.id, number: run.number };
   });
+}
+
+/** The run of northwind/homehub that is still running (the mock advances it while the Run page polls). */
+export async function runningRun(page) {
+  return page.evaluate(async () => {
+    const list = await window.__fenvixMock.listRuns("prj_homehub", { pageSize: 5 });
+    const run = list.items.find((r) => r.status === "running");
+    return run ? { projectId: run.projectId, runId: run.id, number: run.number } : null;
+  });
+}
+
+/** A shadow run of Harbor Analytics (in its trial): the page must show that organization first (useOrg). */
+export async function shadowRun(page) {
+  return page.evaluate(async () => {
+    const list = await window.__fenvixMock.listRuns("prj_homehub", { status: "passed", pageSize: 5 });
+    const run = list.items.find((r) => r.mode === "shadow");
+    return run ? { projectId: run.projectId, runId: run.id, number: run.number, would: run.wouldSkipTests } : null;
+  });
+}
+
+/** Makes `org` the organization shown (the switcher's choice is kept in localStorage) and reloads on `route`. */
+export async function useOrgOf(page, org, route) {
+  await page.evaluate((o) => localStorage.setItem("fenvix-org", o), org);
+  await page.goto(BASE + route);
+  await page.locator(".shell").waitFor();
+  await settled(page);
 }

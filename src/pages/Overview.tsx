@@ -4,9 +4,11 @@ import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { AreaSeriesChart, HBars, Sparkline, TimeBarsChart } from "../components/charts";
 import { MinuteSum, SAVED_NOTE, SkipShare, shortTest } from "../components/ci";
 import { ActivityList } from "./ProjectSections";
+import { TRIAL_DESCRIPTION, TrialSummary } from "../components/Trial";
+import { UnitsLine } from "./Usage";
 import { useAsync } from "../lib/useAsync";
 import { useWorkspaceVersion } from "../lib/workspace";
-import { formatCount, formatMinutes, formatMoney, formatPercent, formatRelative } from "../lib/format";
+import { formatCount, formatMinutes, formatMoney, formatPercent, formatPrice, formatRelative } from "../lib/format";
 
 const monthName = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
 export const seconds = (s: number) => (s < 120 ? `${Math.round(s)} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, "0")} s`);
@@ -45,6 +47,20 @@ export function OverviewPage() {
 
       {data.status === "loading" && <Message>Loading overview</Message>}
       {data.status === "error" && <Message role="alert">{data.message}</Message>}
+      {data.status === "ready" && data.data.trial && (
+        <Card
+          id="trial"
+          title={data.data.trial.status === "active" ? `Shadow trial: ${data.data.trial.daysLeft} ${data.data.trial.daysLeft === 1 ? "day" : "days"} left` : "Shadow trial: ended"}
+          description={TRIAL_DESCRIPTION}
+          actions={
+            <Link to="/billing" className="btn btn-sm">
+              Plans
+            </Link>
+          }
+        >
+          <TrialSummary trial={data.data.trial} />
+        </Card>
+      )}
       {data.status === "ready" && data.data.projects.length === 0 && (
         <div className="empty">
           <h2>Connect your first project</h2>
@@ -93,7 +109,7 @@ export function OverviewPage() {
                   Before: the median of each project's GitHub Actions history when it was connected. With fenvix: {formatCount(o.timeToGreen.commits)} commits this month.
                 </p>
               </Card>
-              <Card id="cost" title="Cost compared" description={`${formatCount(o.runs.thisMonth)} runs in ${month}, priced as GitHub-hosted runner minutes and as your plan.`}>
+              <Card id="cost" title="Cost compared" description={`${formatCount(o.runs.thisMonth)} runs in ${month}, priced as GitHub-hosted runner minutes and as your plan, which counts run units (1 unit = 10 baseline minutes).`}>
                 <dl className="compare">
                   <div>
                     <dt>On GitHub-hosted runners</dt>
@@ -104,9 +120,9 @@ export function OverviewPage() {
                   </div>
                   <div>
                     <dt>Your plan{o.cost.plan ? `: ${o.cost.plan.name}` : ""}</dt>
-                    <dd className="compare-value">{price === null ? "Price not set" : formatMoney(price)}</dd>
+                    <dd className="compare-value">{!o.cost.plan ? "No plan yet" : price === null ? "Price not set yet" : formatPrice(price)}</dd>
                     <dd className="muted small">
-                      {o.cost.plan?.runsPerMonth ? `${formatCount(o.runs.thisMonth)} of ${formatCount(o.cost.plan.runsPerMonth)} runs used` : "No run limit"}
+                      <UnitsLine used={o.units.used} included={o.units.included} />
                     </dd>
                   </div>
                 </dl>

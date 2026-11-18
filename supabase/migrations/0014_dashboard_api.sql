@@ -101,6 +101,13 @@ begin
     execute format('revoke all on public.%I from public, anon, authenticated', t);
   end loop;
 end $$;
+-- Supabase's default privileges also give anon and authenticated every right on sequences (identity columns) and on
+-- whatever a later migration creates in public: those go too, now and for what the migrating role creates from here on.
+revoke all on all tables in schema public from anon, authenticated;
+revoke all on all sequences in schema public from anon, authenticated;
+alter default privileges in schema public revoke all on tables from anon, authenticated;
+alter default privileges in schema public revoke all on sequences from anon, authenticated;
+alter default privileges in schema public revoke execute on functions from anon, authenticated;
 -- The membership helpers read auth.uid(), which only a PostgREST caller has; nobody else calls them now.
 revoke execute on function public.my_workspace_ids() from authenticated;
 revoke execute on function public.my_admin_workspace_ids() from authenticated;
@@ -337,6 +344,15 @@ language sql stable security definer set search_path = public, pg_temp as $$
   order by m.created_at, m.user_id
 $$;
 
+-- The signed-in user's own e-mail and display name (GET /v1/me).
+create or replace function public.api_me()
+returns table (user_id uuid, email text, name text)
+language sql stable security definer set search_path = public, pg_temp as $$
+  select u.id, lower(u.email),
+         coalesce(nullif(btrim(u.raw_user_meta_data ->> 'full_name'), ''), nullif(btrim(u.raw_user_meta_data ->> 'name'), ''), split_part(coalesce(u.email, ''), '@', 1))
+  from auth.users u where u.id = public.api_user()
+$$;
+
 -- A new organization of the signed-in user, who becomes its owner. At most `p_max` memberships per user.
 create or replace function public.api_create_organization(p_name text, p_max int)
 returns uuid language plpgsql security definer set search_path = public, pg_temp as $$
@@ -383,7 +399,7 @@ end $$;
 do $$
 declare f text;
 begin
-  foreach f in array array['api_members()', 'api_create_organization(text, int)', 'api_accept_invitation(text, int)']
+  foreach f in array array['api_me()', 'api_members()', 'api_create_organization(text, int)', 'api_accept_invitation(text, int)']
   loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);
     execute format('grant execute on function public.%s to fenvix_api', f);

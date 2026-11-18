@@ -32,6 +32,12 @@ describe("settings", () => {
     await assert.rejects(settings({ logRetentionDays: "10" }), /one of/);
     await assert.rejects(settings({ runnerInstanceType: "t4g.medium" }), /x86_64/);
     await assert.rejects(settings({ domainName: "https://github.fenvix.dev" }), /host name/);
+    await assert.rejects(settings({ apiCorsOrigins: "https://preview.fenvix.dev/path" }), /apiCorsOrigins/);
+    await assert.rejects(settings({ apiCorsOrigins: "http://preview.fenvix.dev" }), /apiCorsOrigins/);
+    await assert.rejects(settings({ fenvixRegion: "asia" }), /us or eu/);
+    await assert.rejects(settings({ secondFenvixRegion: "eu" }), /all three, or none/);
+    await assert.rejects(settings({ secondFenvixRegion: "us", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "lt-0123456789abcdef0" }), /the other of us and eu/);
+    await assert.rejects(settings({ secondFenvixRegion: "eu", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "template" }), /lt-/);
     const s = await settings();
     assert.equal(s.domainName, "github.fenvix.dev");
     assert.equal(s.runnerInstanceType, "c6i.large");
@@ -39,6 +45,8 @@ describe("settings", () => {
     assert.equal(s.demoMaxHours, 12);
     assert.equal(s.runnerVolumeGb, 30);
     assert.equal(s.region, "eu-west-1");
+    assert.equal(s.fenvixRegion, "us", "this stack's machines serve the us region unless set");
+    assert.equal(s.apiCorsOrigins, "");
   });
 });
 

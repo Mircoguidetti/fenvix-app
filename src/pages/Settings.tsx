@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { client, type Settings } from "../data";
+import { client, type Region, type Settings } from "../data";
 import { orgs } from "../data/orgs-client";
 import { ROLE_NAMES, orgNameProblem } from "../data/orgs";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
@@ -68,6 +68,85 @@ function OrganizationCard() {
   );
 }
 
+export const REGIONS: Record<Region, { name: string; where: string }> = {
+  us: { name: "United States", where: "fenvix machines in the United States" },
+  eu: { name: "European Union", where: "fenvix machines in the European Union" },
+};
+
+/**
+ * Where the organization's jobs run: US or EU. Owners and admins choose it; members see it. It applies from the next
+ * job on: a job that already started finishes where it is.
+ */
+function RegionCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Settings) => void }) {
+  const org = useOrg();
+  const toast = useToast();
+  const [region, setRegion] = useState<Region>(settings.region);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => setRegion(settings.region), [settings.region]);
+  const readOnly = !org.canManage;
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    if (readOnly) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await client.saveSettings({ ...settings, workspaceName: (org.current?.name ?? settings.workspaceName).trim(), region });
+      onSaved(next);
+      toast(`Region saved: ${REGIONS[next.region].name}`, "success");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save the region. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card id="region" title="Region" description="Where your test jobs run. It decides which fenvix machines run them, and where their data is processed.">
+      {readOnly ? (
+        <>
+          <dl className="facts facts-fill">
+            <div>
+              <dt>Jobs run in</dt>
+              <dd>{REGIONS[settings.region].name}</dd>
+            </div>
+          </dl>
+          <p className="muted small">Only an owner or admin can change the region.</p>
+        </>
+      ) : (
+        <form onSubmit={save} className="stack" noValidate>
+          <fieldset className="plain-fieldset stack region-choices" aria-describedby="region-help">
+            <legend className="label">Jobs run in</legend>
+            {(Object.keys(REGIONS) as Region[]).map((r) => (
+              <label key={r} className="choice" data-on={region === r || undefined}>
+                <input type="radio" name="region" value={r} checked={region === r} onChange={() => setRegion(r)} />
+                <span>
+                  <span className="choice-title">{REGIONS[r].name}</span>
+                  <span className="muted small">{REGIONS[r].where}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          <p id="region-help" className="help">
+            A change applies from the next job on: a job that already started finishes where it is.
+          </p>
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="row-actions">
+            <button type="submit" className="btn btn-primary" disabled={busy || region === settings.region}>
+              Save region
+            </button>
+          </div>
+        </form>
+      )}
+    </Card>
+  );
+}
+
 export function SettingsPage() {
   const loaded = useAsync(() => client.getSettings(), []);
   const { user, signOut } = useSession();
@@ -83,6 +162,7 @@ export function SettingsPage() {
   useEffect(() => {
     if (loaded.status === "ready") setForm(loaded.data);
   }, [loaded.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  const current = loaded.status === "ready" ? loaded.data : null;
 
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -90,7 +170,8 @@ export function SettingsPage() {
     if (nameHere && !form.workspaceName.trim()) return setError("Enter a workspace name.");
     setError(null);
     try {
-      await client.saveSettings({ ...form, workspaceName: nameHere ? form.workspaceName.trim() : (org.current?.name ?? form.workspaceName).trim() });
+      const next = await client.saveSettings({ ...form, workspaceName: nameHere ? form.workspaceName.trim() : (org.current?.name ?? form.workspaceName).trim(), region: current?.region ?? form.region });
+      loaded.setData(next);
       workspaceChanged();
       setSaved(true);
       toast("Settings saved", "success");
@@ -120,7 +201,7 @@ export function SettingsPage() {
                 )}
                 <label className="check">
                   <input type="checkbox" checked={form.emailNotices} onChange={(e) => { setSaved(false); setForm({ ...form, emailNotices: e.target.checked }); }} />
-                  Email me about new defects, runs nearing the plan's limit and account notices
+                  Email me about new defects, run units nearing what the plan includes, and account notices
                 </label>
               </fieldset>
               {error && <p id="ws-error" className="error" role="alert">{error}</p>}
@@ -133,6 +214,8 @@ export function SettingsPage() {
             </form>
           )}
         </Card>
+
+        {current && <RegionCard settings={current} onSaved={(next) => (loaded.setData(next), setForm((f) => (f ? { ...f, region: next.region } : next)))} />}
 
         <Card id="account" title="Account" description="You are signed in on this device.">
           <dl className="facts facts-fill">

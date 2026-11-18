@@ -117,23 +117,28 @@ const TESTS = {
     assert((await page.locator(".workspace-sub").first().textContent()) === "Member", "the role under the name is not Member");
 
     // Projects: settings read only, no setup pull request, no installing the GitHub App.
-    await go(page, "projects/prj_homehub?tab=settings");
-    await page.getByRole("heading", { name: "harbor-analytics/homehub" }).waitFor();
+    await go(page, "projects/prj_homehub/settings");
+    await page.locator("main .page-kicker", { hasText: "harbor-analytics/homehub" }).waitFor();
     await page.locator("#project-settings").getByText("Only an owner or admin can change these.").waitFor();
     assert(!(await page.getByRole("button", { name: "Save settings" }).count()), "a member can save project settings");
     assert(await page.getByRole("switch", { name: /Nightly exploration/ }).isDisabled(), "a member can switch nightly exploration");
     await go(page, "projects/connect");
     await page.getByText("Only an owner or admin can connect repositories.").waitFor();
-    assert(await page.getByRole("button", { name: "Add repositories on GitHub" }).isDisabled(), "a member can install the GitHub App");
+    assert(await page.getByRole("button", { name: "Add another GitHub account" }).isDisabled(), "a member can install the GitHub App");
+    assert(await page.getByRole("button", { name: "Open setup pull request on harbor-analytics/etl-jobs" }).isDisabled(), "a member can open a setup pull request");
     // Reading is open: runs, defects, usage.
     await go(page, "defects");
     await page.locator("main tbody tr").first().waitFor();
     await go(page, "api-keys");
-    await page.getByText("Only an owner or admin of this organization can see and manage API keys").waitFor();
+    await page.locator(".coming-soon").getByRole("heading", { name: "Coming soon" }).waitFor();
     await go(page, "settings");
     await page.locator("#organization").getByText("Harbor Analytics").waitFor();
     assert(!(await page.getByRole("button", { name: "Rename" }).count()), "a member can rename the organization");
     assert(await page.getByLabel(/Email me about new defects/).isDisabled(), "a member can change settings");
+    // The region: shown, not editable.
+    await page.locator("#region").getByText("Only an owner or admin can change the region.").waitFor();
+    await page.locator("#region dd", { hasText: "European Union" }).waitFor();
+    assert(!(await page.locator("#region").getByRole("radio").count()) && !(await page.getByRole("button", { name: "Save region" }).count()), "a member can change the region");
     await go(page, "settings/members");
     await page.locator("#members").getByText("Jonas Weber").waitFor();
     assert(!(await page.getByRole("button", { name: "Invite" }).count()), "a member can invite");
@@ -146,10 +151,9 @@ const TESTS = {
       const out = [];
       for (const call of [
         () => api.saveProjectSettings("prj_homehub", { skipWithProof: false, commentOnPullRequests: false, nightlyExploration: true, testCommand: "" }),
-        () => api.installGitHubApp(["harbor-analytics/billing-worker"]),
-        () => api.openSetupPullRequest("prj_homehub"),
-        () => api.createPublicApiKey({ name: "member key", role: "read_only", expiresAt: null }),
-        () => api.saveSettings({ workspaceName: "x", emailNotices: false }),
+        () => api.createInstallLink(),
+        () => api.openSetupPullRequest(1),
+        () => api.saveSettings({ workspaceName: "x", emailNotices: false, region: "us" }),
       ]) {
         try {
           await call();
@@ -168,8 +172,8 @@ const TESTS = {
     await page.getByRole("heading", { name: "Northwind Cloud" }).waitFor();
     assert(!(await page.locator(".readonly-note").count()), "the read-only note stayed");
     await go(page, "projects/connect");
-    await page.getByRole("button", { name: "Add repositories on GitHub" }).waitFor();
-    assert(!(await page.getByRole("button", { name: "Add repositories on GitHub" }).isDisabled()), "the owner cannot install the GitHub App");
+    await page.getByRole("button", { name: "Add another GitHub account" }).waitFor();
+    assert(!(await page.getByRole("button", { name: "Add another GitHub account" }).isDisabled()), "the owner cannot install the GitHub App");
   },
 
   async "invite, copy the link, accept as the invited person; the link works once"(page, vp) {
@@ -268,7 +272,7 @@ for (const [vpName, viewport] of VIEWPORTS) {
       pass(label);
       console.log("ok  ", label);
     } catch (e) {
-      fail(`${label}: ${String(e.message).split("\n")[0]}`);
+      fail(`${label}: ${process.env.STACK ? e.stack : String(e.message).split("\n")[0]}`);
       await page.screenshot({ path: `/tmp/fail-orgs-${vpName}-${name.replace(/\W+/g, "-").slice(0, 60)}.png`, fullPage: true }).catch(() => {});
     }
     await ctx.close();

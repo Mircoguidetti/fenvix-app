@@ -28,7 +28,7 @@ command -v aws >/dev/null || die "AWS CLI v2 is needed"
 who="$(aws sts get-caller-identity --query Account --output text)" || die "not signed in to AWS (aws configure sso / aws configure)"
 [ "$who" = "$ACCOUNT" ] || die "signed in to account $who, cdk.json says $ACCOUNT"
 missing=()
-for p in database-url private-key webhook-secret client-secret state-signing-key runner-token; do
+for p in database-url private-key webhook-secret client-secret state-signing-key runner-token api-database-url; do
   name="/fenvix/$ENVNAME/github-app/$p"
   n="$(aws ssm describe-parameters --parameter-filters "Key=Name,Values=$name" --query 'length(Parameters)' --output text)"
   [ "$n" = "1" ] || missing+=("$name")

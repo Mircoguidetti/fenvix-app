@@ -1,17 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Check, ExternalLink, Lock } from "lucide-react";
-import { client, type Project, type SetupPullRequest } from "../data";
+import { Check, CircleCheck, ExternalLink, Lock, TriangleAlert } from "lucide-react";
+import { client, type GitHubRepository, type Installation, type SetupChange } from "../data";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
-import { ConfirmDialog } from "../components/ConfirmDialog";
-import { SetupStatePill, languageLabel } from "./Projects";
+import { InstallationStatusPill, OnboardingPill } from "../components/StateBadge";
 import { useToast } from "../components/Toast";
 import { useAsync } from "../lib/useAsync";
-import { useSession } from "../session/SessionProvider";
 import { useOrg } from "../session/OrgProvider";
-import { setupChange } from "../data/ci";
+import { formatDate } from "../lib/format";
+import { languageLabel } from "./Projects";
 
-function Step({ n, done, title, children }: { n: number; done: boolean; title: string; children?: React.ReactNode }) {
+function Step({ n, done, title, children }: { n: number; done: boolean; title: string; children?: ReactNode }) {
   return (
     <li className="step" data-done={done || undefined}>
       <span className="step-n" aria-hidden="true">
@@ -29,178 +28,289 @@ function Step({ n, done, title, children }: { n: number; done: boolean; title: s
 }
 
 /** The change the setup pull request makes, as a two-line diff. */
-export function SetupDiff({ project }: { project: Pick<Project, "language"> }) {
-  const c = setupChange(project);
+export function SetupDiff({ change }: { change: SetupChange }) {
   return (
-    <figure className="diff" aria-label={`Change in ${c.path}`}>
+    <figure className="diff" aria-label={`Change in ${change.path}`}>
       <figcaption className="mono small">
-        {c.path} · job <strong>{c.job}</strong>
+        {change.path} · job <strong>{change.job}</strong>
       </figcaption>
       <pre className="mono">
-        <span className="diff-del">- {c.before}</span>
+        <span className="diff-del">- {change.before}</span>
         {"\n"}
-        <span className="diff-add">+ {c.after}</span>
+        <span className="diff-add">+ {change.after}</span>
       </pre>
     </figure>
   );
 }
 
-function SetupRow({ project, onOpened }: { project: Project; onOpened: (pr: SetupPullRequest) => void }) {
-  const toast = useToast();
+/** What GitHub's return to /projects/connect?github=error&reason=… means, in words a person can act on. */
+export const INSTALL_ERRORS: Record<string, string> = {
+  expired: "The install link expired: it works for one hour. Start again with Install the GitHub App.",
+  incomplete: "GitHub did not finish the installation. Start again, and choose the repositories on GitHub's page.",
+  oauth: "GitHub could not confirm who you are. Start again, and approve fenvix when GitHub asks.",
+  not_yours: "That install link was made for someone else. Start again from this page, signed in as yourself.",
+  not_admin: "Only an owner or admin of this organization can link a GitHub installation to it.",
+  other_organization: "That GitHub installation is already linked to another fenvix organization. Remove it there first, or install fenvix on another GitHub account.",
+  github: "GitHub did not answer while the installation was being linked. Try again in a few minutes.",
+  error: "Something went wrong while the installation was being linked. Try again.",
+};
+
+/** States from which the App can open (or open again) the setup pull request. */
+const CAN_OPEN = new Set(["pending", "closed", "failed"]);
+const POLLS = 6;
+const POLL_MS = 1500;
+
+function runnerText(r: GitHubRepository): string {
+  if (!r.language && !r.testRunner) return "Language and test runner not detected";
+  return `${r.language ? languageLabel(r.language) : "Language not detected"} · ${r.testRunner ?? "test runner not detected"}`;
+}
+
+function RepoRow({ repo, installation, queued, onOpen }: { repo: GitHubRepository; installation: Installation | undefined; queued: boolean; onOpen: (r: GitHubRepository) => void }) {
   const org = useOrg();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  async function open() {
-    setBusy(true);
-    setError(null);
-    try {
-      const pr = await client.openSetupPullRequest(project.id);
-      onOpened(pr);
-      toast(`Opened pull request #${pr.number} on ${project.fullName}`, "success");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not open the pull request. Try again.");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const active = installation?.status === "active";
+  const canOpen = CAN_OPEN.has(repo.onboardingState);
   return (
-    <li className="setup-row">
+    <li className="setup-row repo-row" data-state={repo.onboardingState}>
       <div className="setup-row-head">
         <span className="name-cell">
-          <Link to={`/projects/${project.id}`} className="row-link mono break-anywhere">
-            {project.fullName}
-          </Link>
+          {repo.projectId ? (
+            <Link to={`/projects/${repo.projectId}`} className="row-link mono break-anywhere">
+              {repo.fullName}
+            </Link>
+          ) : (
+            <span className="mono break-anywhere repo-name">{repo.fullName}</span>
+          )}
           <span className="muted small">
-            {languageLabel(project.language)} · {project.testRunner}
+            {repo.private ? "Private" : "Public"} · {runnerText(repo)}
           </span>
         </span>
-        <SetupStatePill state={project.setupState} />
+        <OnboardingPill state={repo.onboardingState} />
       </div>
-      <SetupDiff project={project} />
-      {project.setupPullRequest ? (
+      <p className="small repo-detail">{repo.onboardingDetail}</p>
+      {canOpen && repo.workflowPath && repo.job && <SetupDiff change={{ path: repo.workflowPath, job: repo.job, before: "runs-on: ubuntu-latest", after: "runs-on: fenvix" }} />}
+      {(repo.setupPullRequest || repo.projectId || (repo.workflowPath && !canOpen)) && (
         <p className="setup-done">
-          <a href={project.setupPullRequest.url} target="_blank" rel="noreferrer" className="row-link">
-            Pull request #{project.setupPullRequest.number}
-            <ExternalLink size={14} aria-hidden="true" />
-          </a>
-          <span className="muted small">Merge it and the next test run goes to fenvix.</span>
+          {repo.setupPullRequest && (
+            <a href={repo.setupPullRequest.url} target="_blank" rel="noreferrer" className="row-link">
+              Setup pull request #{repo.setupPullRequest.number} ({repo.setupPullRequest.state})
+              <ExternalLink size={14} aria-hidden="true" />
+            </a>
+          )}
+          {repo.projectId && (
+            <Link to={`/projects/${repo.projectId}`} className="row-link">
+              Open the project
+            </Link>
+          )}
+          {repo.workflowPath && !canOpen && (
+            <span className="muted small mono">
+              {repo.workflowPath}
+              {repo.job ? ` · job ${repo.job}` : ""}
+            </span>
+          )}
         </p>
-      ) : (
-        <div className="row-actions">
-          <button type="button" className="btn btn-primary" onClick={open} disabled={busy || !org.canManage}>
-            Open the pull request
-          </button>
-          <span className="muted small">fenvix opens it on {project.fullName}; you review and merge it.</span>
-        </div>
       )}
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
+      {canOpen && (
+        <div className="row-actions">
+          <button type="button" className="btn btn-primary" onClick={() => onOpen(repo)} disabled={queued || !active || !org.canManage} aria-label={`Open setup pull request on ${repo.fullName}`}>
+            {repo.onboardingState === "pending" ? "Open setup pull request" : "Open setup pull request again"}
+          </button>
+          <span className="muted small" role="status">
+            {queued ? "Queued: the fenvix GitHub App is opening it." : !active ? "The installation must be active first." : "fenvix opens it; you review and merge it."}
+          </span>
+        </div>
       )}
     </li>
   );
 }
 
+function InstallationBlock({ installation, repos, queued, onOpen, highlight }: { installation: Installation; repos: GitHubRepository[]; queued: Set<number>; onOpen: (r: GitHubRepository) => void; highlight: boolean }) {
+  const mine = repos.filter((r) => r.installationId === installation.installationId && !r.removed);
+  const headingId = `inst-${installation.installationId}`;
+  return (
+    <section className="install" aria-labelledby={headingId} data-highlight={highlight || undefined} data-status={installation.status}>
+      <div className="install-head">
+        <span className="name-cell">
+          <h3 id={headingId} className="mono break-anywhere">
+            {installation.account}
+          </h3>
+          <span className="muted small">
+            {installation.accountType === "User" ? "Personal account" : installation.accountType === "Enterprise" ? "Enterprise" : "GitHub organization"} · {installation.repositorySelection === "all" ? "all repositories" : "selected repositories"} · {installation.repositories}{" "}
+            {installation.repositories === 1 ? "repository" : "repositories"}
+            {installation.linkedAt ? ` · linked ${formatDate(installation.linkedAt)}` : ""}
+          </span>
+        </span>
+        <span className="install-tags">
+          {highlight && <span className="tag">Just linked</span>}
+          <InstallationStatusPill status={installation.status} />
+        </span>
+      </div>
+      {installation.status === "suspended" && (
+        <Message tone="warning">Suspended on GitHub: fenvix cannot open pull requests or run jobs for these repositories until an owner of {installation.account} unsuspends the app on GitHub.</Message>
+      )}
+      {installation.status === "deleted" ? (
+        <p className="muted small">Uninstalled from GitHub: fenvix no longer sees the repositories of {installation.account}. Install the app again to bring them back.</p>
+      ) : mine.length === 0 ? (
+        <p className="muted small">No repository yet. Choose repositories for the app on GitHub.</p>
+      ) : (
+        <ul className="setup-list">
+          {mine.map((r) => (
+            <RepoRow key={r.repositoryId} repo={r} installation={installation} queued={queued.has(r.repositoryId)} onOpen={onOpen} />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 /**
- * Onboarding: signed in with GitHub → install the fenvix GitHub App on chosen repositories (on GitHub; the mock stands
- * in for that page) → GitHub sends the browser back here with ?installation_id=… → the repositories are projects → a
- * pull request moves each test job to runs-on: fenvix.
+ * Onboarding with the fenvix GitHub App: install it on a GitHub account (the API makes the link; GitHub sends the
+ * browser back here with ?github=…), then the setup pull request of each repository moves its test job to
+ * runs-on: fenvix. An organization can link several installations.
  */
 export function ConnectPage() {
-  const { user } = useSession();
   const org = useOrg();
   const toast = useToast();
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const installationId = Number(params.get("installation_id")) || null;
+  const github = params.get("github");
   const connection = useAsync(() => client.getGitHubConnection(), []);
   const repos = useAsync(() => client.listGitHubRepositories(), []);
-  const projects = useAsync(() => client.listProjects(), []);
-  const [picking, setPicking] = useState(false);
-  const [chosen, setChosen] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [added, setAdded] = useState<Project[] | null>(null);
-  const [opened, setOpened] = useState<Record<string, SetupPullRequest>>({});
-  const finishing = useRef<number | null>(null);
+  const [queued, setQueued] = useState<Set<number>>(new Set());
+  const polls = useRef(0);
+  const timer = useRef<number | undefined>(undefined);
 
-  // Back from GitHub: the installation's repositories become projects, once.
+  // After a pull request is queued, ask for the repositories a few times until the App has done it.
   useEffect(() => {
-    if (!installationId || finishing.current === installationId) return;
-    finishing.current = installationId;
-    client
-      .completeInstallation(installationId)
-      .then((ps) => {
-        setAdded(ps);
-        projects.reload();
-        repos.reload();
-        connection.reload();
-        if (ps.length) toast(`Connected ${ps.length === 1 ? ps[0].fullName : `${ps.length} repositories`}`, "success");
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : "Could not finish the installation."));
-  }, [installationId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const available = repos.status === "ready" ? repos.data.filter((r) => !r.connected) : [];
-  const waiting = projects.status === "ready" ? projects.data.filter((p) => p.setupState !== "active") : [];
-  const installed = connection.status === "ready" && connection.data.account !== null;
-  const installUrl = connection.status === "ready" ? connection.data.installUrl : null;
+    if (queued.size === 0) return;
+    if (polls.current >= POLLS) {
+      setQueued(new Set());
+      return;
+    }
+    timer.current = window.setTimeout(async () => {
+      polls.current++;
+      try {
+        const list = await client.listGitHubRepositories();
+        repos.setData(list);
+        const still = new Set([...queued].filter((id) => CAN_OPEN.has(list.find((r) => r.repositoryId === id)?.onboardingState ?? "")));
+        for (const id of queued) {
+          const r = list.find((x) => x.repositoryId === id);
+          if (r && !still.has(id)) toast(r.setupPullRequest ? `Opened pull request #${r.setupPullRequest.number} on ${r.fullName}` : `${r.fullName}: ${r.onboardingDetail}`, "success");
+        }
+        setQueued(still);
+      } catch {
+        setQueued(new Set());
+      }
+    }, POLL_MS);
+    return () => window.clearTimeout(timer.current);
+  }, [queued]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function install() {
-    setBusy(true);
+    setInstalling(true);
     setError(null);
     try {
-      const id = await client.installGitHubApp(chosen);
-      setPicking(false);
-      setChosen([]);
-      // Where GitHub sends the browser after an installation (the GitHub App's setup URL).
-      navigate(`/projects/connect?installation_id=${id}&setup_action=install`, { replace: true });
+      const url = await client.createInstallLink();
+      window.location.assign(url);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not install the app.");
-    } finally {
-      setBusy(false);
+      setError(e instanceof Error ? e.message : "Could not start the installation. Try again.");
+      setInstalling(false);
     }
   }
 
+  async function open(repo: GitHubRepository) {
+    setError(null);
+    try {
+      const now = await client.openSetupPullRequest(repo.repositoryId);
+      repos.setData((repos.status === "ready" ? repos.data : []).map((r) => (r.repositoryId === now.repositoryId ? now : r)));
+      polls.current = 0;
+      setQueued((q) => new Set([...q, repo.repositoryId]));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not open the pull request. Try again.");
+    }
+  }
+
+  const installations = connection.status === "ready" ? connection.data.installations : [];
+  const anyActive = installations.some((i) => i.status === "active");
+  const list = repos.status === "ready" ? repos.data : [];
+  const live = list.filter((r) => !r.removed && installations.find((i) => i.installationId === r.installationId)?.status !== "deleted");
+  const opened = live.some((r) => r.setupPullRequest);
+  const merged = live.some((r) => r.onboardingState === "merged" || r.onboardingState === "already_fenvix");
+  const highlighted = github === "connected" ? Number(params.get("installation")) : null;
+  const reason = params.get("reason") ?? "error";
+  const dismiss = () => navigate("/projects/connect", { replace: true });
+
   return (
     <>
-      <PageHeader back={<Kicker>Projects</Kicker>} title="Connect a project" description="Three steps. Nothing changes in a repository until you merge the pull request fenvix opens." />
+      <PageHeader back={<Kicker>Projects</Kicker>} title="Connect a project" description="Install the fenvix GitHub App, then let it open one pull request per repository. Nothing changes in a repository until you merge that pull request." />
       {!org.canManage && <Message tone="warning">Only an owner or admin can connect repositories.</Message>}
+
+      {github === "connected" && (
+        <div className="callout callout-success" role="status">
+          <p className="callout-row">
+            <CircleCheck size={16} aria-hidden="true" />
+            <span>
+              <strong>The fenvix GitHub App is installed on {params.get("account") ?? "your GitHub account"}.</strong> Its repositories are listed below: open the setup pull request of each one you want on fenvix.
+            </span>
+          </p>
+          <div className="row-actions">
+            <button type="button" className="btn btn-sm" onClick={dismiss}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+      {github === "requested" && (
+        <div className="callout callout-warning" role="status">
+          <p className="callout-row">
+            <TriangleAlert size={16} aria-hidden="true" />
+            <span>
+              <strong>Waiting for an owner of the GitHub organization.</strong> You asked to install the fenvix GitHub App; GitHub sent the request to the organization's owners. Once one approves it on GitHub, the
+              installation and its repositories appear here.
+            </span>
+          </p>
+          <div className="row-actions">
+            <button type="button" className="btn btn-sm" onClick={dismiss}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+      {github === "error" && (
+        <div className="install-error">
+          <Message role="alert">{INSTALL_ERRORS[reason] ?? INSTALL_ERRORS.error}</Message>
+          <button type="button" className="btn btn-sm" onClick={dismiss}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <ol className="steps">
-        <Step n={1} done={!!user} title="Sign in with GitHub">
-          <p className="muted">Signed in as {user?.email}.</p>
-        </Step>
-        <Step n={2} done={installed && (projects.status === "ready" && projects.data.length > 0)} title="Install the fenvix GitHub App">
-          <p className="muted">Choose the repositories fenvix may see. It reads the code and the workflow files, posts results on pull requests, and opens the setup pull request. It never pushes to a branch.</p>
-          {connection.status === "ready" && connection.data.account && <p className="small">Installed on GitHub account <strong className="mono">{connection.data.account}</strong>.</p>}
-          {client.sample ? (
-            <div className="row-actions">
-              <button type="button" className="btn btn-primary" onClick={() => (setPicking(true), setError(null))} disabled={!org.canManage || available.length === 0}>
-                {installed ? "Add repositories on GitHub" : "Install on GitHub"}
-              </button>
-              {available.length === 0 && repos.status === "ready" && <span className="muted small">Every repository the app can see is connected.</span>}
-            </div>
-          ) : installUrl ? (
-            <div className="row-actions">
-              <a href={installUrl} className="btn btn-primary">
-                Install on GitHub
-              </a>
-            </div>
-          ) : (
-            <Message tone="warning">The fenvix GitHub App is not set up for this deployment yet.</Message>
+        <Step n={1} done={anyActive} title="Install the fenvix GitHub App">
+          <p className="muted">On a GitHub account or organization, for the repositories you choose. It reads code and workflow files, posts results on pull requests and opens the setup pull request. It never pushes to a branch.</p>
+          {connection.status === "loading" && <Message>Loading installations</Message>}
+          {connection.status === "error" && <Message role="alert">{connection.message}</Message>}
+          {connection.status === "ready" && installations.length > 0 && (
+            <p className="small">
+              {installations.length === 1 ? "One installation" : `${installations.length} installations`}: {installations.map((i) => i.account).join(", ")}.
+            </p>
           )}
+          <div className="row-actions">
+            <button type="button" className={installations.length ? "btn" : "btn btn-primary"} onClick={install} disabled={installing || !org.canManage || connection.status !== "ready"}>
+              {installations.length ? "Add another GitHub account" : "Install the GitHub App"}
+            </button>
+            <span className="muted small">GitHub asks which repositories fenvix may see, then sends you back here.</span>
+          </div>
         </Step>
-        <Step n={3} done={projects.status === "ready" && projects.data.length > 0 && waiting.length === 0} title="Move the test job to fenvix">
-          <p className="muted">One line changes in the test job. Your workflow, secrets and other jobs stay as they are.</p>
-          {added && added.length > 0 && <p className="small">Just connected: {added.map((p) => p.fullName).join(", ")}.</p>}
-          {projects.status === "ready" && waiting.length > 0 && (
-            <ul className="setup-list">
-              {waiting.map((p) => (
-                <SetupRow key={p.id} project={opened[p.id] ? { ...p, setupPullRequest: opened[p.id], setupState: "pr_open" } : p} onOpened={(pr) => setOpened((o) => ({ ...o, [p.id]: pr }))} />
-              ))}
-            </ul>
-          )}
-          {projects.status === "ready" && projects.data.length > 0 && waiting.length === 0 && <p className="small">Every connected project already runs on fenvix.</p>}
+        <Step n={2} done={opened} title="Open the setup pull request">
+          <p className="muted">One line changes in the test job: runs-on: fenvix. Your workflow, secrets and other jobs stay as they are.</p>
+          {repos.status === "loading" && <Message>Loading repositories</Message>}
+          {repos.status === "error" && <Message role="alert">{repos.message}</Message>}
+          {connection.status === "ready" && repos.status === "ready" && installations.length === 0 && <p className="muted small">No installation yet: install the app first.</p>}
+          {connection.status === "ready" && repos.status === "ready" && installations.map((i) => <InstallationBlock key={i.installationId} installation={i} repos={list} queued={queued} onOpen={open} highlight={i.installationId === highlighted} />)}
+        </Step>
+        <Step n={3} done={merged} title="Merge it on GitHub">
+          <p className="muted">After the merge, the next test run goes to fenvix and the repository becomes a project, with its runs, defects and minutes saved.</p>
         </Step>
       </ol>
       {error && <Message role="alert">{error}</Message>}
@@ -214,26 +324,10 @@ export function ConnectPage() {
             <Lock size={14} aria-hidden="true" /> Writes check results and one comment per pull request, and opens the setup pull request.
           </li>
           <li>
-            <Lock size={14} aria-hidden="true" /> Test jobs run on fenvix machines, with the secrets your workflow already passes to them.
+            <Lock size={14} aria-hidden="true" /> Test jobs run on fenvix machines in your organization's region, with the secrets your workflow already passes to them.
           </li>
         </ul>
       </Card>
-
-      <ConfirmDialog open={picking} title={`GitHub: install fenvix${connection.status === "ready" && connection.data.account ? ` on ${connection.data.account}` : ""}`} confirmLabel="Install" busy={busy} confirmDisabled={chosen.length === 0} onConfirm={install} onCancel={() => (setPicking(false), setChosen([]))}>
-        <p className="muted small">This stands in for GitHub's own page while the fenvix GitHub App is being set up.</p>
-        <fieldset className="plain-fieldset stack">
-          <legend className="label">Only select repositories</legend>
-          {available.map((r) => (
-            <label key={r.fullName} className="check">
-              <input type="checkbox" checked={chosen.includes(r.fullName)} onChange={(e) => setChosen((c) => (e.target.checked ? [...c, r.fullName] : c.filter((x) => x !== r.fullName)))} />
-              <span className="mono">{r.fullName}</span>
-              <span className="muted small">
-                {r.private ? "private" : "public"} · {r.testRunner}
-              </span>
-            </label>
-          ))}
-        </fieldset>
-      </ConfirmDialog>
     </>
   );
 }

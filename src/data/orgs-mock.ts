@@ -3,13 +3,13 @@
 import { activeOrgId, setActiveOrgId } from "../lib/org";
 import { mockCurrentUser } from "../session/mock";
 import { type Invitation, type InviteRole, type Member, type Organization, type OrgRole, type OrgsClient, canManage, orgNameProblem } from "./orgs";
+import { ApiError, READ_ONLY } from "./api-errors";
 
 const KEY = "fenvix-mock-orgs";
 const DAY = 86_400_000;
 const MAX_MEMBERS = 50;
 const INVITES_PER_DAY = 20;
 const INVALID = "This invitation link is not valid. It may have expired or been used. Ask the person who invited you for a new link.";
-export const READ_ONLY = "Your role in this organization is read only. Ask an owner or admin to do this.";
 
 interface MockMember { userId: string; name: string; email: string; role: OrgRole; joinedAt: string }
 interface MockOrg { id: string; name: string; nameConfirmed: boolean; members: MockMember[] }
@@ -99,9 +99,9 @@ export function mockRole(): OrgRole | null {
   }
 }
 
-/** For the other mocks: refuses a change to a member, as the control plane answers 403. */
+/** For the other mocks: refuses a change to a member, as the API answers 403. */
 export function assertMockCanManage(): void {
-  if (!canManage(mockRole())) throw Object.assign(new Error(READ_ONLY), { status: 403 });
+  if (!canManage(mockRole())) throw new ApiError("forbidden", READ_ONLY, 403);
 }
 
 /** For the settings mock: the name of the chosen organization. */
@@ -134,6 +134,12 @@ const toInvitation = (i: MockInvite): Invitation => ({ id: i.id, email: i.email,
 
 export const mockOrgs: OrgsClient = {
   available: true,
+
+  async me() {
+    provision();
+    const u = me();
+    return later({ user: { id: u.id, email: u.email, name: u.name }, organizations: mine().map(view) });
+  },
 
   async listOrganizations() {
     provision();

@@ -21,9 +21,9 @@ describe("the stack, per-job mode", async () => {
   const fnRole = (n: string) => ((fns.find(([, r]) => (r.Properties.FunctionName as string).endsWith(n))![1].Properties.Role as { "Fn::GetAtt": string[] })["Fn::GetAtt"])[0]!;
   const fnEnv = (n: string) => (fns.find(([, r]) => (r.Properties.FunctionName as string).endsWith(n))![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
 
-  it("cdk-nag: nothing left unsuppressed; four functions (http, worker, sweep, reaper); no always-on machine", () => {
+  it("cdk-nag: nothing left unsuppressed; five functions (http, api, worker, sweep, reaper); no always-on machine", () => {
     assert.deepEqual(nagErrors, []);
-    assert.deepEqual(fns.map(([, f]) => (f.Properties.FunctionName as string).replace("fenvix-prod-github-app-", "")).sort(), ["http", "reaper", "sweep", "worker"]);
+    assert.deepEqual(fns.map(([, f]) => (f.Properties.FunctionName as string).replace("fenvix-prod-github-app-", "")).sort(), ["api", "http", "reaper", "sweep", "worker"]);
     assert.equal(resources(t, "AWS::EC2::Instance").length, 1, "only the cache machine");
     assert.ok(!("RunnerInstanceId" in (t.toJSON().Outputs as object)));
   });
@@ -41,6 +41,21 @@ describe("the stack, per-job mode", async () => {
     for (const k of Object.keys(e)) assert.doesNotMatch(k, /^FENVIX_MACHINE_.*TOKEN/, "no machine reads a parameter");
     for (const k of Object.keys(e)) if (!k.endsWith("_PARAM")) assert.doesNotMatch(k, /SECRET|PRIVATE_KEY|DATABASE_URL|SIGNING/, k);
     assert.equal(fnEnv("http").RUNNER_MODE, undefined, "the HTTP function never launches");
+  });
+
+  it("runner placement by the organization's region: this stack's fleet under its fenvix region (us by default)", async () => {
+    const placement = (v: unknown) => {
+      // { "Fn::Join": ["", [...parts]] }: the launch template id is a reference; the rest is the JSON around it.
+      const parts = (v as { "Fn::Join": [string, unknown[]] })["Fn::Join"][1];
+      return JSON.parse(parts.map((x) => (typeof x === "string" ? x : "LT")).join("")) as Record<string, { awsRegion: string; launchTemplateId: string }>;
+    };
+    assert.deepEqual(placement(fnEnv("worker").RUNNER_PLACEMENT), { us: { awsRegion: "eu-west-1", launchTemplateId: "LT" } });
+    assert.match(json(fnEnv("worker").RUNNER_PLACEMENT), /FleetLaunchTemplate/);
+    assert.match(json(fnEnv("worker").RUNNER_LAUNCH_TEMPLATE_ID), /FleetLaunchTemplate/, "kept");
+    const two = await synth({ runnerMode: "per-job", fenvixRegion: "eu", secondFenvixRegion: "us", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "lt-0123456789abcdef0" });
+    const env2 = (resources(two.template, "AWS::Lambda::Function").find(([, r]) => (r.Properties.FunctionName as string).endsWith("worker"))![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
+    assert.deepEqual(placement(env2.RUNNER_PLACEMENT), { eu: { awsRegion: "eu-west-1", launchTemplateId: "LT" }, us: { awsRegion: "us-east-1", launchTemplateId: "lt-0123456789abcdef0" } });
+    assert.deepEqual(two.nagErrors, []);
   });
 
   it("the worker may start only tagged job machines, from our launch template and our own images, and pass only their role", () => {

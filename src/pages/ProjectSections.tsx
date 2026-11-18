@@ -6,10 +6,11 @@
 import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowRight, Check, Moon, TriangleAlert, X } from "lucide-react";
-import { client, type ActivityItem, type ProjectRow } from "../data";
+import { client, type ActivityItem, type AuditSummary, type ProjectRow } from "../data";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { AreaSeriesChart, BeforeWithChart, HBars, TimeBarsChart } from "../components/charts";
 import { MinuteSum, SAVED_NOTE, shortTest } from "../components/ci";
+import { StatusPill } from "../components/StateBadge";
 import { useProjectTitle } from "../components/Shell";
 import { useAsync } from "../lib/useAsync";
 import { formatCount, formatDate, formatDateTime, formatDuration, formatMinutes, formatPercent, formatRelative, shortSha } from "../lib/format";
@@ -71,8 +72,9 @@ export function SkipWithProofPage() {
   const { id, project } = useProjectPage();
   const now = client.now();
   const since = new Date(now.getTime() - 30 * DAY).toISOString();
-  const runs = useAsync(() => client.listRunsSince(id, since), [id]);
+  const runs = useAsync(async () => (await client.listRuns(id, { since })).items, [id]);
   const series = useAsync(() => client.getSkipShareSeries(id, 60), [id]);
+  const audit = useAsync(() => client.getAudit(id, 30), [id]);
   const summary = useMemo(() => (runs.status === "ready" ? missSummary(runs.data) : null), [runs]);
   if (project.status === "loading") return <Message>Loading project</Message>;
   if (project.status === "error") return <Message role="alert">{project.message}</Message>;
@@ -141,6 +143,11 @@ export function SkipWithProofPage() {
           )}
         </Card>
       </div>
+      <Card id="audit" title="Audit reruns" description="To check the proof, fenvix runs some of the tests it skipped anyway. Each must pass, as its receipt said. Last 30 days.">
+        {audit.status === "loading" && <Message>Loading the audit</Message>}
+        {audit.status === "error" && <Message role="alert">{audit.message}</Message>}
+        {audit.status === "ready" && <AuditBlock a={audit.data} projectId={id} />}
+      </Card>
       <Card id="lowest" title="Runs that skipped the least" description="Usually a dependency or configuration change: everything has to run again once, then skipping resumes.">
         {lowest.length === 0 ? (
           <p className="muted">No runs yet.</p>
@@ -193,12 +200,103 @@ export function SkipWithProofPage() {
   );
 }
 
+/** "Fewer than 1 in 7,412 skips is wrong": the rule of three, 3/n, as one skip in N. */
+export function boundSentence(a: Pick<AuditSummary, "ruleOfThreeBound" | "testsRerun" | "wrongSkips">): string {
+  if (a.wrongSkips > 0) return `${formatCount(a.wrongSkips)} skipped ${a.wrongSkips === 1 ? "test" : "tests"} failed when rerun: the engine stopped trusting ${a.wrongSkips === 1 ? "its key" : "their keys"}, and no bound is given.`;
+  if (a.ruleOfThreeBound === null || a.testsRerun === 0) return "No skipped test has been rerun yet, so there is no bound yet.";
+  return `Fewer than 1 in ${formatCount(Math.floor(a.testsRerun / 3))} skips is wrong, with 95% confidence (no wrong skip in ${formatCount(a.testsRerun)} reruns: the rule of three, 3/n).`;
+}
+
+function AuditBlock({ a, projectId }: { a: AuditSummary; projectId: string }) {
+  const recent = a.recent.slice(0, 8);
+  return (
+    <>
+      <div className="kpis kpis-3">
+        <div className="kpi">
+          <strong className="kpi-value">{formatCount(a.testsRerun)}</strong>
+          <span className="kpi-label">Skipped tests rerun</span>
+          <span className="kpi-sub muted small">in {formatCount(a.runs)} {a.runs === 1 ? "run" : "runs"}</span>
+        </div>
+        <div className="kpi">
+          <strong className="kpi-value">{formatCount(a.wrongSkips)}</strong>
+          <span className="kpi-label">Wrong skips</span>
+          <span className="kpi-sub small">
+            {a.wrongSkips === 0 ? <StatusPill tone="ok">{`Expected ${a.expectedWrongSkips}`}</StatusPill> : <StatusPill tone="danger">{`Expected ${a.expectedWrongSkips}`}</StatusPill>}
+          </span>
+        </div>
+        <div className="kpi">
+          <strong className="kpi-value">{formatCount(a.untrustedKeys.length)}</strong>
+          <span className="kpi-label">Keys no longer trusted</span>
+          <span className="kpi-sub muted small">the engine runs those tests again</span>
+        </div>
+      </div>
+      <p className="audit-bound">{boundSentence(a)}</p>
+      <div className="grid-2 even">
+        <section aria-labelledby="untrusted-h">
+          <h3 id="untrusted-h" className="sub-h">
+            Cache keys no longer trusted
+          </h3>
+          {a.untrustedKeys.length === 0 ? (
+            <p className="muted small">None: every key the engine reuses is still trusted.</p>
+          ) : (
+            <ul className="receipt-list audit-list">
+              {a.untrustedKeys.map((k) => (
+                <li key={k.cacheKey}>
+                  <span className="audit-item">
+                    <code className="hash mono" title={k.cacheKey}>
+                      {k.cacheKey}
+                    </code>
+                    <span className="mono small break-anywhere" title={k.testId}>
+                      {shortTest(k.testId)}
+                    </span>
+                    <span className="muted small">{k.detail}</span>
+                  </span>
+                  <Link to={`/projects/${projectId}/runs/${k.runId}`} className="row-link small nowrap">
+                    Run #{k.runNumber}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        <section aria-labelledby="audited-h">
+          <h3 id="audited-h" className="sub-h">
+            Latest audited tests
+          </h3>
+          {recent.length === 0 ? (
+            <p className="muted small">None yet.</p>
+          ) : (
+            <ul className="receipt-list audit-list">
+              {recent.map((x) => (
+                <li key={`${x.runId}|${x.testId}`}>
+                  <span className="audit-item">
+                    <span className="mono small break-anywhere" title={x.testId}>
+                      {shortTest(x.testId)}
+                    </span>
+                    <span className="muted small">{x.outcome === "confirmed" ? "Passed again, as its receipt said" : "Failed: a wrong skip"}</span>
+                  </span>
+                  <Link to={`/projects/${projectId}/runs/${x.runId}`} className="row-link small nowrap">
+                    Run #{x.runNumber}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    </>
+  );
+}
+
 // ---------------------------------------------------------------- Nightly exploration
 
 export function NightlyPage() {
   const { id, project } = useProjectPage();
   const nights = useAsync(() => client.listExplorations(id), [id]);
   const defects = useAsync(() => client.listDefects({ projectId: id, state: "all" }), [id]);
+  const plans = useAsync(() => client.listPlans(), []);
+  const addon = plans.status === "ready" ? plans.data.find((x) => x.kind === "addon" && /nightly/i.test(`${x.id} ${x.name}`)) : undefined;
+  const hasAddon = addon?.current ?? false;
   if (project.status === "loading") return <Message>Loading project</Message>;
   if (project.status === "error") return <Message role="alert">{project.message}</Message>;
   const p = project.data;
@@ -212,19 +310,29 @@ export function NightlyPage() {
       <PageHeader
         back={<Kicker>{p.fullName}</Kicker>}
         title="Nightly exploration"
-        description="At night fenvix runs the suite again in many seeded orders, on fenvix machines, to find order and timing bugs before they reach a pull request. Included in every plan; nightly runs do not count as runs."
+        description="At night fenvix runs the suite again in many seeded orders, on fenvix machines, to find order and timing bugs before they reach a pull request. A paid add-on; nightly runs do not count in your run units."
         actions={
           <Link to={`/projects/${id}/settings`} className="btn">
             {p.settings.nightlyExploration ? "On · settings" : "Turn it on"}
           </Link>
         }
       />
+      {plans.status === "ready" && addon && !hasAddon && (
+        <p className="callout addon-note" role="note">
+          <span>
+            <strong>Nightly exploration is a paid add-on</strong>, and this organization does not have it yet{addon.priceUsdMonth === null ? " (its price is not set yet)" : ""}.{" "}
+            <Link to="/billing" className="row-link">
+              See plans and add-ons
+            </Link>
+          </span>
+        </p>
+      )}
       {nights.status === "loading" && <Message>Loading nights</Message>}
       {nights.status === "error" && <Message role="alert">{nights.message}</Message>}
       {nights.status === "ready" && list.length === 0 && (
         <div className="empty">
           <h2>No nights yet</h2>
-          <p className="muted">{p.settings.nightlyExploration ? "The first exploration runs tonight." : "Nightly exploration is off for this project."}</p>
+          <p className="muted">{!hasAddon && plans.status === "ready" ? "Add Nightly exploration to your plan to start." : p.settings.nightlyExploration ? "The first exploration runs tonight." : "Nightly exploration is off for this project."}</p>
           <Link to={`/projects/${id}/settings`} className="btn btn-primary">
             Project settings
           </Link>
@@ -339,7 +447,7 @@ export function TimeToGreenPage() {
   const { id, project } = useProjectPage();
   const now = client.now();
   const since = new Date(now.getTime() - 30 * DAY).toISOString();
-  const runs = useAsync(() => client.listRunsSince(id, since), [id]);
+  const runs = useAsync(async () => (await client.listRuns(id, { since })).items, [id]);
   if (project.status === "loading") return <Message>Loading project</Message>;
   if (project.status === "error") return <Message role="alert">{project.message}</Message>;
   const p = project.data;

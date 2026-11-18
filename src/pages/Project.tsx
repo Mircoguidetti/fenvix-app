@@ -27,13 +27,26 @@ const PAGE_SIZE = 25;
 function LatestRun({ project, runs, openDefects }: { project: ProjectRow; runs: Run[] | null; openDefects: Defect[] | null }) {
   if (!runs) return <Message>Loading the latest run</Message>;
   const latest = runs.find((r) => r.status === "passed" || r.status === "failed");
-  if (!latest) return <p className="muted">No runs yet. The first one arrives once the test job uses runs-on: fenvix.</p>;
+  const running = runs.find((r) => r.status === "running");
+  const runningNote = running && (
+    <p className="callout running-note" role="status">
+      <span>
+        <strong>Run #{running.number} is running</strong>
+        {running.progress?.testsTotal ? ` · ${formatCount(running.progress.testsDone)} of ${formatCount(running.progress.testsTotal)} tests done` : ""}.{" "}
+        <Link to={`/projects/${project.id}/runs/${running.id}`} className="row-link">
+          Watch it live
+        </Link>
+      </span>
+    </p>
+  );
+  if (!latest) return runningNote || <p className="muted">No runs yet. The first one arrives once the test job uses runs-on: fenvix.</p>;
   const finished = runs.filter((r) => r.status === "passed" || r.status === "failed").slice(0, 40).reverse();
   const ttg = timeToGreenPerCommit(runs);
   const ttgMed = median(ttg.map((x) => x.seconds));
   const newest = openDefects?.[0];
   return (
     <section className="latest" aria-labelledby="latest-h">
+      {runningNote}
       <div className="latest-head">
         <div>
           <p className="page-kicker">{project.fullName} / Runs</p>
@@ -60,9 +73,9 @@ function LatestRun({ project, runs, openDefects }: { project: ProjectRow; runs: 
           <div className="kpi-spark"><Sparkline values={finished.map((r) => r.tests.ran)} /></div>
         </div>
         <div className="kpi">
-          <span className="kpi-label">Skipped with proof</span>
-          <strong className="kpi-value">{formatPercent(latest.skipShare)}</strong>
-          <span className="kpi-sub muted small">each with a receipt</span>
+          <span className="kpi-label">{latest.mode === "shadow" ? "Would have skipped" : "Skipped with proof"}</span>
+          <strong className="kpi-value">{latest.mode === "shadow" ? formatCount(latest.wouldSkipTests) : formatPercent(latest.skipShare)}</strong>
+          <span className="kpi-sub muted small">{latest.mode === "shadow" ? "tests, in a shadow run" : "each with a receipt"}</span>
           <div className="kpi-spark"><Sparkline values={finished.map((r) => r.skipShare)} /></div>
         </div>
         <div className="kpi">
@@ -89,7 +102,7 @@ function RunsTab({ project }: { project: ProjectRow }) {
   const page = Math.max(1, Number(params.get("page")) || 1);
   const runs = useAsync(() => client.listRuns(project.id, { scope, status, page, pageSize: PAGE_SIZE }), [project.id, scope, status, page]);
   const since = new Date(client.now().getTime() - 30 * 86_400_000).toISOString();
-  const recent = useAsync(() => client.listRunsSince(project.id, since), [project.id]);
+  const recent = useAsync(async () => (await client.listRuns(project.id, { since })).items, [project.id]);
   const defects = useAsync(() => client.listDefects({ projectId: project.id }), [project.id]);
   const activity = useAsync(() => client.listActivity(project.id, 8), [project.id]);
   const now = client.now();
@@ -209,7 +222,13 @@ function RunsTab({ project }: { project: ProjectRow }) {
                         {formatCount(r.tests.ran)}
                       </td>
                       <td data-label="Skipped with proof" className="num mono">
-                        {formatCount(r.tests.skippedWithProof)}
+                        {r.mode === "shadow" ? (
+                          <span title="Shadow run: nothing was skipped">
+                            0 <span className="muted small">(would {formatCount(r.wouldSkipTests)})</span>
+                          </span>
+                        ) : (
+                          formatCount(r.tests.skippedWithProof)
+                        )}
                       </td>
                       <td data-label="Failed" className="num mono">
                         {r.tests.failed > 0 ? (
@@ -239,11 +258,12 @@ function RunsTab({ project }: { project: ProjectRow }) {
 
 function SetupTab({ project }: { project: ProjectRow }) {
   const snippet = setupSnippet(project);
+  const change = useAsync(() => client.getSetupChange(project.id), [project.id]);
   return (
     <div className="grid-2">
       <Card id="snippet" title="The test job on fenvix" description="One line: runs-on: fenvix. The steps stay as they are; fenvix wraps the test command with the engine.">
         <CodeBlock code={snippet} what="setup snippet" label="Test job using runs-on: fenvix" />
-        <SetupDiff project={project} />
+        {change.status === "ready" ? <SetupDiff change={change.data} /> : change.status === "error" ? <Message role="alert">{change.message}</Message> : <Message>Loading the change</Message>}
       </Card>
       <Card id="status" title="Status" description="How this project was connected.">
         <dl className="facts">
@@ -331,7 +351,7 @@ function SettingsTab({ project, onSaved }: { project: ProjectRow; onSaved: () =>
         <fieldset disabled={readOnly} className="plain-fieldset stack">
           <Switch id="s-skip" checked={form.skipWithProof} onChange={(v) => setForm({ ...form, skipWithProof: v })} label="Skip tests with proof" help="Reuse a test's result only when the code it ran, the files and environment variables it read, the runtime and the configuration are all proven unchanged." disabled={readOnly} />
           <Switch id="s-comment" checked={form.commentOnPullRequests} onChange={(v) => setForm({ ...form, commentOnPullRequests: v })} label="Comment on pull requests" help="One comment per pull request: tests skipped with proof, failures, and the replay command of any flaky defect." disabled={readOnly} />
-          <Switch id="s-nightly" checked={form.nightlyExploration} onChange={(v) => setForm({ ...form, nightlyExploration: v })} label="Nightly exploration" help="Runs the suite at night in many orders and seeds on fenvix machines to find hidden order and timing bugs. Not counted as runs." disabled={readOnly} />
+          <Switch id="s-nightly" checked={form.nightlyExploration} onChange={(v) => setForm({ ...form, nightlyExploration: v })} label="Nightly exploration" help="Runs the suite at night in many orders and seeds on fenvix machines to find hidden order and timing bugs. A paid add-on; not counted in your run units." disabled={readOnly} />
           <div className="field">
             <label htmlFor="s-cmd">Test command</label>
             <input id="s-cmd" className="mono" value={form.testCommand} maxLength={500} placeholder={project.testRunner === "pytest" ? "pytest" : project.testRunner === "go test" ? "go test ./..." : `npx ${project.testRunner}`} onChange={(e) => setForm({ ...form, testCommand: e.target.value })} aria-describedby="s-cmd-help" />

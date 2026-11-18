@@ -3,8 +3,7 @@ import { useSyncExternalStore } from "react";
 /**
  * The organization the dashboard acts for. Chosen here, in the browser, and sent with every request as
  * X-Fenvix-Workspace; the server checks on every request that the person is a member of it and uses their role there.
- * Nothing here is trusted: a wrong or stale id only gets a "not found" (control plane) or the oldest membership
- * (Supabase).
+ * Nothing here is trusted: a wrong or stale id only gets a "not found" from the API.
  */
 const KEY = "fenvix-org";
 export const ORG_HEADER = "X-Fenvix-Workspace";
@@ -48,7 +47,13 @@ export function useActiveOrgId(): string | null {
   );
 }
 
-/** The header for a request, when an organization is chosen. Only ids that look like ids are ever sent. */
+/** The chosen organization's id when it looks like one of the API's (a UUID): the only value ever sent. */
+export function activeWorkspaceId(): string | null {
+  return active && /^[0-9a-f-]{36}$/i.test(active) ? active : null;
+}
+
+/** The header for a request, when an organization is chosen. */
 export function orgHeaders(): Record<string, string> {
-  return active && /^[0-9a-f-]{36}$/i.test(active) ? { [ORG_HEADER]: active } : {};
+  const id = activeWorkspaceId();
+  return id ? { [ORG_HEADER]: id } : {};
 }

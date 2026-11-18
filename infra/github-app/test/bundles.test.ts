@@ -10,8 +10,8 @@ describe("the bundled functions (esbuild, ESM)", async () => {
   const outdir = (stack.node.root as unknown as { outdir: string }).outdir;
   const assets = readdirSync(outdir).filter((d) => d.startsWith("asset."));
 
-  it("five bundles; each loads in Node and exports `handler` (nothing runs at import: config is read on the first call)", async () => {
-    assert.equal(assets.length, 5, "http, worker, sweep, reaper, demo (demo mode)");
+  it("six bundles; each loads in Node and exports `handler` (nothing runs at import: config is read on the first call)", async () => {
+    assert.equal(assets.length, 6, "http, api, worker, sweep, reaper, demo (demo mode)");
     for (const a of assets) {
       const file = join(outdir, a, "index.mjs");
       assert.ok(readFileSync(file).length < 5 * 1024 * 1024);
@@ -28,11 +28,25 @@ describe("the bundled functions (esbuild, ESM)", async () => {
   });
 
   it("a handler with no settings fails cleanly (and would retry on the next call)", async () => {
-    const http = assets.map((a) => join(outdir, a, "index.mjs")).find((f) => readFileSync(f, "utf8").includes("WORK_QUEUE_URL"))!;
+    const http = assets.map((a) => join(outdir, a, "index.mjs")).find((f) => readFileSync(f, "utf8").includes("GITHUB_WEBHOOK_SECRET") && !readFileSync(f, "utf8").includes("openSetupPullRequest"))!;
     const { handler } = (await import(pathToFileURL(http).href)) as { handler: (e: unknown) => Promise<unknown> };
     const saved = process.env.SSM_PREFIX;
     delete process.env.SSM_PREFIX;
     await assert.rejects(handler({ rawPath: "/healthz", requestContext: { http: { method: "GET" } } }), /SSM_PREFIX is required/);
+    if (saved !== undefined) process.env.SSM_PREFIX = saved;
+  });
+
+  it("the dashboard API's bundle: the contract compiled in, the dashboard's own calculations bundled, the same clean failure without settings", async () => {
+    const file = assets.map((a) => join(outdir, a, "index.mjs")).find((f) => readFileSync(f, "utf8").includes("openSetupPullRequest"))!;
+    assert.ok(file, "a bundle with the contract");
+    const code = readFileSync(file, "utf8");
+    assert.match(code, /Repositories not set up as projects/, "src/data/ci.ts is in the bundle");
+    assert.match(code, /fenvix-usage-/);
+    assert.doesNotMatch(code, /is not a PEM private key|login\/oauth\/access_token|webhooks\/github/, "not the App: no key parsing, no OAuth exchange, no webhook route");
+    const { handler } = (await import(pathToFileURL(file).href)) as { handler: (e: unknown) => Promise<unknown> };
+    const saved = process.env.SSM_PREFIX;
+    delete process.env.SSM_PREFIX;
+    await assert.rejects(handler({ rawPath: "/v1/me", requestContext: { http: { method: "GET" } } }), /SSM_PREFIX is required/);
     if (saved !== undefined) process.env.SSM_PREFIX = saved;
   });
 });

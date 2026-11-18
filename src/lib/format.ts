@@ -59,3 +59,8 @@ export function formatMinutes(min: number): string {
 
 /** Seven characters of a commit SHA, as GitHub shows it. */
 export const shortSha = (sha: string) => sha.slice(0, 7);
+
+/** A price: whole dollars without cents ("$1,350"), cents only when there are some. */
+export function formatPrice(n: number, currency = "USD"): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: Number.isInteger(n) ? 0 : 2 }).format(n);
+}

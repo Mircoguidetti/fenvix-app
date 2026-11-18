@@ -1,44 +1,26 @@
 /**
- * Organizations, their members and invitations. The browser only talks to the control plane (`/v1/organization...`);
- * every rule (who may do what, limits, which organization) is enforced there and in row level security. The screens
- * hide what a role cannot do, but that is a courtesy, not the protection.
+ * Organizations, their members and invitations. The browser only talks to the fenvix API (`/me`, `/organizations`,
+ * `/organization...`, `/invitations/accept`); every rule (who may do what, limits, which organization) is enforced
+ * there and in row level security. The screens hide what a role cannot do, but that is a courtesy, not the protection.
+ * The records are the API's own schemas (src/api/schema.d.ts).
  */
-export type OrgRole = "owner" | "admin" | "member";
-export type InviteRole = "admin" | "member";
+import type { components } from "../api/schema";
 
-export interface Organization {
-  id: string;
-  name: string;
-  role: OrgRole;
-  nameConfirmed: boolean;
-}
-
-export interface Member {
-  userId: string;
-  name: string;
-  email: string;
-  role: OrgRole;
-  joinedAt: string | null;
-  you: boolean;
-}
-
-export interface Invitation {
-  id: string;
-  email: string;
-  role: InviteRole;
-  createdAt: string | null;
-  expiresAt: string | null;
-}
-
-export interface CreatedInvitation {
-  invitation: Invitation;
-  /** Holds the token. Shown once. */
-  link: string;
-}
+type S = components["schemas"];
+export type OrgRole = S["OrgRole"];
+export type InviteRole = S["InviteRole"];
+export type Organization = S["Organization"];
+export type Member = S["Member"];
+export type Invitation = S["Invitation"];
+/** `link` holds the token. Shown once. */
+export type CreatedInvitation = S["CreatedInvitation"];
+export type Me = S["Me"];
 
 export interface OrgsClient {
-  /** False when this dashboard cannot reach the control plane (no VITE_API_URL): no switcher, members or name screen. */
+  /** False when this dashboard has no API address (VITE_API_URL): no switcher, members or name screen. */
   readonly available: boolean;
+  /** The signed-in person and their organizations (GET /me). */
+  me(): Promise<Me>;
   listOrganizations(): Promise<Organization[]>;
   createOrganization(name: string): Promise<Organization>;
   /** Renames the current organization and confirms its name. */
@@ -55,7 +37,7 @@ export interface OrgsClient {
 
 export const ROLE_NAMES: Record<OrgRole, string> = { owner: "Owner", admin: "Admin", member: "Member" };
 
-/** The control plane's rule (control-plane/src/services/orgs.ts), to explain a problem before sending. */
+/** The server's rule for a name, to explain a problem before sending. */
 export function orgNameProblem(raw: string): string | null {
   const name = raw.trim();
   const n = [...name].length;

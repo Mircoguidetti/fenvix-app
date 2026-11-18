@@ -197,7 +197,8 @@ test("notices have no border and no coloured edge: a grey fill, and the colour o
       assert.ok(!/box-shadow/.test(body), `${s} draws an edge with box-shadow`);
     }
   }
-  assert.match(src("pages/ApiKeys.tsx"), /callout callout-success[\s\S]*?<CircleCheck/);
+  assert.match(src("pages/Connect.tsx"), /callout callout-success[\s\S]*?<CircleCheck/);
+  assert.match(src("pages/Connect.tsx"), /callout callout-warning[\s\S]*?<TriangleAlert/);
   assert.match(src("pages/SignIn.tsx"), /callout callout-success[\s\S]*?<CircleCheck/);
 });
 
@@ -206,7 +207,12 @@ test("every coloured state also says it in words or with an icon", () => {
   assert.match(CSS, /\.error::before\s*\{[^}]*content:\s*"Error: "/);
   // Pills: a dot and a word.
   const badge = src("components/StateBadge.tsx");
-  for (const word of ["Passed", "Failed", "Running", "Cancelled", "Active", "Revoked", "Expired"]) assert.ok(badge.includes(`"${word}"`), `no word "${word}" in the state pills`);
+  for (const word of ["Passed", "Failed", "Running", "Cancelled", "Active", "Suspended", "Uninstalled"]) assert.ok(badge.includes(`"${word}"`), `no word "${word}" in the state pills`);
+  // Every onboarding state of a repository has its words; the trial's gate and the audit's wrong skips too.
+  for (const state of ["pending", "pr_open", "merged", "closed", "no_workflow", "no_test_job", "already_fenvix", "unsupported", "failed"]) assert.match(badge, new RegExp(`\\b${state}: "[A-Z][^"]+"`), `no words for the onboarding state ${state}`);
+  assert.match(src("components/Trial.tsx"), /tone="ok">\{`\$\{gatePercent\(trial\)\} gate met`\}/);
+  assert.match(src("components/Trial.tsx"), /tone="warn">\{`Below the \$\{gatePercent\(trial\)\} gate`\}/);
+  assert.match(src("pages/ProjectSections.tsx"), /wrongSkips === 0 \? <StatusPill tone="ok">\{`Expected/);
   // Toasts and messages: an icon with each tone.
   const toast = src("components/Toast.tsx");
   assert.match(toast, /tone === "success" && <CircleCheck/);
@@ -230,7 +236,8 @@ test("the states in the inventory are wired to the right classes in the componen
   const badge = src("components/StateBadge.tsx");
   assert.match(badge, /tone === "danger" \? "state state-danger"/);
   assert.match(badge, /status === "passed" \? "ok" : status === "failed" \? "danger" : status === "running" \? "warn" : "neutral"/);
-  assert.match(badge, /tone=\{status === "active" \? "ok" : "neutral"\}/);
+  assert.match(badge, /tone=\{status === "active" \? "ok" : status === "suspended" \? "warn" : "neutral"\}/);
+  assert.match(badge, /state === "merged" \|\| state === "already_fenvix" \? "ok" : state === "pr_open" \? "warn" : state === "failed" \? "danger" : "neutral"/);
   assert.match(src("pages/Project.tsx"), /<RunStatusPill status=\{r\.status\} \/>/);
   assert.match(src("pages/Project.tsx"), /className="fail-count"/);
   assert.match(src("components/ci.tsx"), /outcome === "failed"\) return <StatusPill tone="danger">/);
@@ -241,12 +248,12 @@ test("the states in the inventory are wired to the right classes in the componen
   assert.match(pill, /const TONE_ICON: Record<Tone, LucideIcon> = \{ ok: Check, danger: X, warn: Clock, neutral: Minus \}/);
   assert.match(pill, /<Icon className="state-icon"/);
   assert.match(src("components/ci.tsx"), /<StatusPill tone="neutral" icon=\{STATE_ICONS\.seal\}>\s*Skipped with proof/);
-  assert.match(src("pages/ApiKeys.tsx"), /callout callout-success/);
+  assert.match(src("pages/Connect.tsx"), /callout callout-success/);
   assert.match(src("pages/SignIn.tsx"), /callout callout-success/);
 });
 
 test("every action that cannot be undone has a dialog with a red confirm button and no border; the buttons that open them are red, except Restore", () => {
-  const files = ["pages/ApiKeys.tsx", "pages/Members.tsx", "components/AccountMenu.tsx", "pages/Connect.tsx", "pages/Run.tsx"];
+  const files = ["pages/Members.tsx", "components/AccountMenu.tsx", "pages/Connect.tsx", "pages/Run.tsx", "pages/Settings.tsx"];
   let dialogs = 0;
   for (const f of files) {
     const text = src(f);
@@ -258,7 +265,7 @@ test("every action that cannot be undone has a dialog with a red confirm button 
       assert.equal(/\bdanger\b/.test(m[1]), destructive, `${f}: dialog "${name}" ${destructive ? "is not" : "should not be"} marked danger`);
     }
   }
-  assert.ok(dialogs >= 4, `only ${dialogs} destructive dialogs found`);
+  assert.ok(dialogs >= 3, `only ${dialogs} destructive dialogs found`);
   // The confirm button is the one primary button of the dialog; inside .dialog-danger it is filled red with white text.
   assert.match(src("components/ConfirmDialog.tsx"), /className=\{`dialog\$\{danger \? " dialog-danger" : ""\}/);
   assert.match(src("components/ConfirmDialog.tsx"), /className="btn btn-primary" disabled=\{busy \|\| confirmDisabled\}/);
@@ -268,7 +275,6 @@ test("every action that cannot be undone has a dialog with a red confirm button 
   assert.match(red, /(^|[;\s])color:\s*var\(--on-text\)/, "the confirm button of a destructive dialog has no white text");
   assert.ok(contrast(T["on-text"], T.danger) >= 4.5, "white on red is below 4.5:1");
   const triggers: [string, RegExp][] = [
-    ["pages/ApiKeys.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setTarget\(k\)\}/],
     ["pages/Members.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setRemoving\(m\)\}/],
     ["pages/Members.tsx", /className="btn btn-sm btn-danger" onClick=\{\(\) => setRevoking\(i\)\}/],
   ];

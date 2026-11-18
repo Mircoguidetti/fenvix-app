@@ -13,17 +13,35 @@ import { formatCount, formatMinutes, formatMoney } from "../lib/format";
 
 const monthLabel = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 
-/** A bar of runs used against the plan's runs. */
-export function RunsMeter({ used, included }: { used: number; included: number | null }) {
-  if (included === null) return <p className="muted small">{formatCount(used)} runs. Your plan has no run limit.</p>;
-  const share = Math.min(1, used / included);
+const units = (n: number) => new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(n);
+/** Units in the table: always one decimal, so the column lines up and adds up to its total. */
+const unitsCell = (n: number) => new Intl.NumberFormat("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n);
+export const UNIT_NOTE = "1 run unit = 10 baseline minutes: the minutes the same job takes on a GitHub-hosted runner (tests run, tests skipped with proof, and the other steps).";
+
+/** "123 of 2,000 run units used", or the units alone when the plan's included units are not set yet. */
+export function UnitsLine({ used, included }: { used: number; included: number | null }) {
+  return included === null ? <>{units(used)} run units used. Units included: not set yet.</> : <>{`${units(used)} of ${units(included)} run units used`}</>;
+}
+
+/** Run units used this month against the units the plan includes; with none set yet, the units and a plain note. */
+export function UnitsMeter({ used, included }: { used: number; included: number | null }) {
+  if (included === null)
+    return (
+      <div className="meter-wrap">
+        <p className="units-used">
+          <strong className="big-number mono">{units(used)}</strong> <span className="muted">run units used</span>
+        </p>
+        <p className="muted small">Units included in your plan: not set yet.</p>
+      </div>
+    );
+  const share = included > 0 ? Math.min(1, used / included) : 1;
   return (
     <div className="meter-wrap">
-      <div className="meter" role="meter" aria-valuemin={0} aria-valuemax={included} aria-valuenow={used} aria-label="Runs used this month">
+      <div className="meter" role="meter" aria-valuemin={0} aria-valuemax={included} aria-valuenow={used} aria-label="Run units used this month">
         <span className="meter-fill" style={{ width: `${share * 100}%` }} />
       </div>
       <p className="small">
-        <strong className="mono">{formatCount(used)}</strong> of {formatCount(included)} runs used ({Math.round((used / included) * 100)}%)
+        <strong className="mono">{units(used)}</strong> of {units(included)} run units used ({included > 0 ? Math.round((used / included) * 100) : 100}%)
       </p>
     </div>
   );
@@ -55,7 +73,7 @@ export function UsagePage() {
       <PageHeader
         back={<Kicker />}
         title="Usage"
-        description="Runs used against your plan, the test minutes fenvix skipped with proof, and what the same runs would cost on GitHub-hosted runners. Per project, for any month."
+        description="Run units used against your plan, the test minutes fenvix skipped with proof, and what the same runs would cost on GitHub-hosted runners. Per project, for any month."
         actions={
           <button type="button" className="btn" onClick={exportCsv} disabled={exporting || !month}>
             <Download size={16} aria-hidden="true" />
@@ -77,8 +95,9 @@ export function UsagePage() {
         return (
           <>
             <div className="grid-2">
-              <Card id="runs-used" title="Runs" description={u.plan ? `${u.plan.name} plan, ${monthLabel(u.month)}.` : monthLabel(u.month)}>
-                <RunsMeter used={u.runsUsed} included={u.runsIncluded} />
+              <Card id="units-used" title="Run units" description={`${u.plan ? `${u.plan.name} plan` : "No plan yet"}, ${monthLabel(u.month)}: ${formatCount(u.runsUsed)} billable ${u.runsUsed === 1 ? "run" : "runs"}.`}>
+                <UnitsMeter used={u.unitsUsed} included={u.unitsIncluded} />
+                <p className="muted small">{UNIT_NOTE} The month is billed as its units rounded up to a whole unit.</p>
                 <Link to="/billing" className="row-link small">
                   Plans and billing
                 </Link>
@@ -124,6 +143,9 @@ export function UsagePage() {
                       Runs
                     </th>
                     <th scope="col" className="num">
+                      Run units
+                    </th>
+                    <th scope="col" className="num">
                       Test minutes run
                     </th>
                     <th scope="col" className="num">
@@ -142,14 +164,21 @@ export function UsagePage() {
                 </thead>
                 <tbody>
                   {u.rows.map((r) => (
-                    <tr key={r.projectId}>
+                    <tr key={r.projectId || "unmatched"}>
                       <td data-label="Project">
-                        <Link to={`/projects/${r.projectId}`} className="row-link mono break-anywhere">
-                          {r.fullName}
-                        </Link>
+                        {r.projectId ? (
+                          <Link to={`/projects/${r.projectId}`} className="row-link mono break-anywhere">
+                            {r.fullName}
+                          </Link>
+                        ) : (
+                          <span className="muted">{r.fullName}</span>
+                        )}
                       </td>
                       <td data-label="Runs" data-key="runs" className="num mono">
                         {formatCount(r.runs)}
+                      </td>
+                      <td data-label="Run units" data-key="units" className="num mono">
+                        {unitsCell(r.units)}
                       </td>
                       <td data-label="Test minutes run" data-key="testMinutesRan" className="num mono">
                         {formatMinutes(r.testMinutesRan)}
@@ -176,6 +205,9 @@ export function UsagePage() {
                     </th>
                       <td data-total data-label="Runs" data-key="runs" className="num mono">
                         {formatCount(u.totals.runs)}
+                      </td>
+                      <td data-total data-label="Run units" data-key="units" className="num mono">
+                        {unitsCell(u.totals.units)}
                       </td>
                       <td data-total data-label="Test minutes run" data-key="testMinutesRan" className="num mono">
                         {formatMinutes(u.totals.testMinutesRan)}

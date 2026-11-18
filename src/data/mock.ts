@@ -11,19 +11,24 @@
  * Run durations add the measured capture overhead (x2.13 home-assistant, x1.55 Vitest, x2.8 saleor; Go none).
  * Defects follow real bundles: 2-test minimal orders with a named polluter, seeds the engine used, 32-hex fingerprints.
  * The screens say "Sample data" whenever this client is in use.
+ *
+ * Three organizations: Northwind Cloud (the signed-in owner's: the Team plan and the Nightly exploration add-on, three
+ * GitHub App installations, repositories in all nine onboarding states, a run that is running and advances while the
+ * Run page polls it), Harbor Analytics (a member there: in its 30-day shadow trial, every run in shadow mode; set
+ * sessionStorage "fenvix-mock-trial" to "below" for a trial under the 35% gate) and any organization made in the tab
+ * (empty: nothing connected yet).
  */
-import { assertMockCanManage, mockOrgName, mockRole } from "./orgs-mock";
+import { assertMockCanManage, mockOrgName } from "./orgs-mock";
 import { activeOrgId } from "../lib/org";
-import type { DataClient, RunQuery } from "./client";
+import { blobUrl } from "../lib/download";
+import { ApiError } from "./api-errors";
+import type { DataClient, RunLive, RunQuery } from "./client";
 import type {
-  ActivityItem, Exploration, MissKind, RunFile,
-  Baseline, Defect, DefectCause, GitHubRate, GitHubRepository, Language, Page, Plan, Project, Run, RunTrigger, Settings,
-  SetupPullRequest, SkipReceipt, TestOutcome, TestPage, TestResult, TestRunner,
+  ActivityItem, AuditRerun, Exploration, Installation, MissKind, RunDetail, RunFile, RunProgress,
+  Baseline, Defect, DefectCause, GitHubRate, GitHubRepository, Language, OnboardingState, Page, Plan, Project, Region, Run, RunTrigger, Settings,
+  SkipReceipt, TestOutcome, TestPage, TestResult, TestRunner,
 } from "./types";
-import { ExplorerError } from "./explorer";
-import { MAX_ACTIVE_KEYS, PAGE_LIMIT, keyStatus, nameProblem, type PublicApiKey } from "./public-keys";
-import { activityFrom, billingFrom, dayStart, familiesOf, familyKeyOf, median, monthOf, overviewFrom, projectRow, setupChange, usageCsv, usageCsvName, usageFrom } from "./ci";
-import { blobUrl } from "./files";
+import { activityFrom, auditFrom, billingFrom, dayStart, familiesOf, familyKeyOf, median, monthOf, overviewFrom, projectRow, setupChange, trialFrom, usageCsv, usageCsvName, usageFrom, type TrialDates, type UsageEvent } from "./ci";
 
 export const NOW = new Date("2026-11-17T12:00:00Z");
 const MIN = 60_000;
@@ -255,30 +260,53 @@ const DEFECT_SEEDS: DefectSeed[] = [
 
 const fileOf = (testId: string) => testId.split(/::| > /)[0];
 
-// ---------------------------------------------------------------- the sample organization
+// ---------------------------------------------------------------- the sample organizations
+
+interface Detail {
+  ran: Set<number>;
+  failures: { testId: string; defectId: string | null }[];
+}
+
+/** The running run: what it will be once finished, how many times the live view asked, and how far it is. */
+interface Live {
+  runId: string;
+  final: Run;
+  finalDetail: Detail;
+  calls: number;
+  stage: number;
+}
 
 interface Store {
   projects: Project[];
   runs: Run[];
   /** Per run: the test files that ran, and the failed tests. */
-  detail: Map<string, { ran: Set<number>; failures: { testId: string; defectId: string | null }[] }>;
+  detail: Map<string, Detail>;
   defects: Defect[];
-  githubAccount: string | null;
-  repos: GitHubRepository[];
-  planId: string;
-  settings: Settings;
-  apiKeys: PublicApiKey[];
-  installations: Map<number, string[]>;
   explorations: Exploration[];
+  events: UsageEvent[];
+  reruns: AuditRerun[];
+  installations: Installation[];
+  repos: GitHubRepository[];
+  /** Repositories whose setup pull request is queued: list calls left until the App has done it. */
+  queued: Map<number, number>;
+  planId: string | null;
+  addons: string[];
+  trial: TrialDates | null;
+  settings: Settings;
+  live: Live | null;
+  /** The account a new installation link would add (mock only). */
+  nextAccount: string;
 }
 
 const RATE: GitHubRate = { usdPerMinute: 0.008, runner: "GitHub-hosted Linux, 2 cores", source: "GitHub Actions pricing page, as quoted in PRODUCT.md (to verify)", checkedOn: "2026-11-16" };
 
+/** Plans by run units (1 unit = 10 baseline minutes). The units each plan includes are not set yet. */
 const PLANS: Omit<Plan, "current">[] = [
-  { id: "starter", name: "Starter", description: "One project with a steady flow of pull requests.", runsPerMonth: 500, maxProjects: 1, priceUsdMonth: null, features: ["Skip with proof", "Flaky tests turned into defects", "Pull request comments"] },
-  { id: "team", name: "Team", description: "A few projects, a team pushing every day.", runsPerMonth: 2000, maxProjects: 5, priceUsdMonth: null, features: ["Everything in Starter", "Nightly exploration", "Members and roles"] },
-  { id: "scale", name: "Scale", description: "Many projects or a large monorepo.", runsPerMonth: 10000, maxProjects: 25, priceUsdMonth: null, features: ["Everything in Team", "Priority machines", "Audit log"] },
-  { id: "enterprise", name: "Enterprise", description: "Your own limits, agreed with us.", runsPerMonth: null, maxProjects: null, priceUsdMonth: null, features: ["Everything in Scale", "Single sign-on", "Agreed response time"] },
+  { id: "starter", name: "Starter", kind: "plan", description: "One project with a steady flow of pull requests.", unitsIncluded: null, maxProjects: 1, priceUsdMonth: 129, features: ["Skip with proof", "Flaky tests turned into defects", "Pull request comments"] },
+  { id: "team", name: "Team", kind: "plan", description: "A few projects, a team pushing every day.", unitsIncluded: null, maxProjects: 5, priceUsdMonth: 479, features: ["Everything in Starter", "Members and roles", "Usage export"] },
+  { id: "scale", name: "Scale", kind: "plan", description: "Many projects and many pushes.", unitsIncluded: null, maxProjects: 25, priceUsdMonth: 1350, features: ["Everything in Team", "Priority machines", "Audit log"] },
+  { id: "monorepo", name: "Monorepo", kind: "plan", description: "A very large repository, or many of them.", unitsIncluded: null, maxProjects: null, priceUsdMonth: 4200, features: ["Everything in Scale", "Single sign-on", "Agreed response time"] },
+  { id: "nightly", name: "Nightly exploration", kind: "addon", description: "Runs the suite at night in many seeded orders, to find order and timing bugs before a pull request does.", unitsIncluded: null, maxProjects: null, priceUsdMonth: null, features: ["Every night, on fenvix machines", "Defects found before they reach a pull request", "Not counted in your run units"] },
 ];
 
 const COMMIT_WORDS = ["Fix", "Add", "Update", "Refactor", "Bump", "Handle", "Speed up", "Remove", "Rename", "Document"];
@@ -344,10 +372,7 @@ function missesFor(spec: Spec, ran: Set<number>, ranTests: number, skipShare: nu
 }
 
 function moduleIndexOf(spec: Spec, testId: string): number {
-  const file = fileOf(testId);
-  const modules = suite(spec);
-  const i = modules.findIndex((m) => m.file === file);
-  return i;
+  return suite(spec).findIndex((m) => m.file === fileOf(testId));
 }
 
 /** Defect tests live in files of their own, added to the suite (they keep the test count within a few tests). */
@@ -370,143 +395,313 @@ function ensureDefectFiles(spec: Spec) {
   }
 }
 
-function buildSample(owner: string, orgName: string, planId: string): Store {
+const engineOf = (spec: Spec) => (spec.language === "node" ? "detjs 0.1.0" : spec.language === "go" ? "detgo 0.1.0" : "detpy 0.1.0");
+const totalTests = (spec: Spec) => suite(spec).reduce((a, m) => a + m.tests.length, 0);
+
+interface RunInput {
+  spec: Spec;
+  number: number;
+  startMs: number;
+  sha: string;
+  trigger: RunTrigger;
+  prNumber: number | null;
+  prOf: number;
+  skipShare: number;
+  defect: DefectSeed | null;
+  failing: boolean;
+  shadow: boolean;
+  region: Region;
+  lastFailed: boolean;
+  r: () => number;
+}
+
+/**
+ * One finished run. In shadow mode (the trial) every test runs; the files the engine would have skipped are counted
+ * as wouldSkipTests and wouldSaveMs instead. Enforce runs rerun a few skipped tests as an audit (all confirmed).
+ */
+function makeRun(x: RunInput): { run: Run; detail: Detail } {
+  const { spec, r } = x;
+  const modules = suite(spec);
+  const total = totalTests(spec);
+  const force = x.defect ? [moduleIndexOf(spec, x.defect.testId)].filter((i) => i >= 0) : [];
+  const seed = hash(`${spec.id}#${x.number}`);
+  const would = ranModules(spec, seed, x.skipShare, force);
+  const ran = x.shadow ? new Set(modules.map((_, i) => i)) : would;
+  let ranTests = 0;
+  let ranMs = 0;
+  for (const i of ran) {
+    ranTests += modules[i].tests.length;
+    ranMs += modules[i].timeMs;
+  }
+  let wouldTests = 0;
+  let wouldMs = 0;
+  for (const i of would) {
+    wouldTests += modules[i].tests.length;
+    wouldMs += modules[i].timeMs;
+  }
+  const failures: Detail["failures"] = [];
+  if (x.defect) failures.push({ testId: x.defect.testId, defectId: x.defect.id });
+  else if (x.failing) {
+    const ranList = [...ran];
+    const k = 1 + Math.floor(r() * 3);
+    for (let f = 0; f < k; f++) {
+      const m = modules[pick(r, ranList)];
+      const id = pick(r, m.tests);
+      if (!failures.some((y) => y.testId === id)) failures.push({ testId: id, defectId: null });
+    }
+  }
+  // A shadow run skips nothing: every file ran (the suite's files add up to a little more than the measured total).
+  const skippedMs = x.shadow ? 0 : Math.max(0, spec.fullTestMs - ranMs);
+  const otherStepMinutes = Math.round((spec.otherStepMs * (0.9 + r() * 0.2)) / 600) / 100;
+  const durationMs = Math.round(spec.setupMs + ranMs * spec.overhead * (0.9 + r() * 0.2));
+  const pushedAt = new Date(x.startMs - (4_000 + r() * 20_000));
+  const skippedTests = total - ranTests;
+  const id = `run_${spec.id.slice(4)}_${x.number}`;
+  const run: Run = {
+    id, projectId: spec.id, number: x.number, engineRunId: `${new Date(x.startMs).toISOString().replace(/[-:]/g, "").slice(0, 15)}-${1000 + (hash(id) % 8999)}`,
+    commitSha: x.sha, commitMessage: `${pick(r, COMMIT_WORDS)} ${pick(r, COMMIT_THINGS[spec.id])}`,
+    branch: x.trigger === "pull_request" ? `${pick(r, ["fix", "feat", "chore", "agent"])}/${hex(`${x.sha}b`, 6)}` : x.trigger === "merge_group" ? `gh-readonly-queue/main/pr-${x.prOf}` : "main",
+    pullRequest: x.prNumber, trigger: x.trigger, status: failures.length ? "failed" : "passed", mode: x.shadow ? "shadow" : "enforce",
+    pushedAt: pushedAt.toISOString(), startedAt: new Date(x.startMs).toISOString(), finishedAt: new Date(x.startMs + durationMs).toISOString(), durationMs,
+    tests: { total, ran: ranTests, passed: ranTests - failures.length, failed: failures.length, skippedWithProof: skippedTests, flakyDefects: failures.filter((f) => f.defectId).length },
+    testTimeMs: { ran: ranMs, skipped: skippedMs },
+    skipShare: Math.round((skippedMs / (ranMs + skippedMs)) * 10000) / 10000,
+    minutesSaved: Math.round((skippedMs / MIN) * 100) / 100,
+    otherStepMinutes,
+    githubEquivalentMinutes: Math.round(((ranMs + skippedMs) / MIN + otherStepMinutes) * 100) / 100,
+    engineVersion: engineOf(spec),
+    seed: seed % 100,
+    ...missesFor(spec, would, wouldTests, x.skipShare, x.lastFailed, rng(seed)),
+    wouldSkipTests: x.shadow ? total - wouldTests : 0,
+    wouldSaveMs: x.shadow ? Math.max(0, spec.fullTestMs - wouldMs) : 0,
+    // A few of the skipped tests run anyway and must pass, as their receipts said (none ever failed).
+    audit: { rerun: x.shadow || skippedTests === 0 ? 0 : Math.max(1, Math.round(skippedTests * 0.004)), wrongSkips: 0 },
+    region: x.region,
+    progress: null,
+  };
+  return { run, detail: { ran, failures } };
+}
+
+interface InstallSeed {
+  installationId: number;
+  account: string;
+  accountType: Installation["accountType"];
+  status: Installation["status"];
+  repositorySelection: Installation["repositorySelection"];
+  linkedDaysAgo: number;
+}
+
+interface RepoSeed {
+  installationId: number;
+  name: string;
+  state: OnboardingState;
+  language: Language | null;
+  testRunner: TestRunner | null;
+  detail: string;
+  workflowPath?: string | null;
+  job?: string | null;
+  pr?: number;
+  isPrivate?: boolean;
+  removed?: boolean;
+}
+
+/** What the App says about a repository in each onboarding state, as onboardingDetail. */
+const DETAILS: Record<OnboardingState, string> = {
+  pending: "Not tried yet. fenvix opens the setup pull request when you ask.",
+  pr_open: "The setup pull request changes the test job to runs-on: fenvix. Merge it and the next test run goes to fenvix.",
+  merged: "The setup pull request was merged: the test job runs on fenvix.",
+  closed: "The setup pull request was closed without being merged. Open it again when you are ready.",
+  no_workflow: "There is no workflow file in .github/workflows, so there is no test job to move.",
+  no_test_job: "The workflows have no job that runs tests (looked for pytest, vitest, jest and go test).",
+  already_fenvix: "The test job already uses runs-on: fenvix.",
+  unsupported: "The tests run with RSpec (Ruby), which fenvix does not support yet.",
+  failed: "GitHub refused to create the branch: the default branch's protection rules require signed commits.",
+};
+
+interface OrgPlan {
+  owner: string;
+  name: string;
+  planId: string | null;
+  addons: string[];
+  region: Region;
+  specs: string[];
+  /** Days of history, and a shadow trial over them when set. */
+  trialDays: number | null;
+  installs: InstallSeed[];
+  repos: RepoSeed[];
+  /** Billable jobs of repositories that are not a project. */
+  strayJobs: number;
+}
+
+const NORTHWIND: OrgPlan = {
+  owner: "northwind", name: "Northwind Cloud", planId: "team", addons: ["nightly"], region: "us", specs: SPECS.map((s) => s.id), trialDays: null, strayJobs: 12,
+  installs: [
+    { installationId: 51_204_331, account: "northwind", accountType: "Organization", status: "active", repositorySelection: "selected", linkedDaysAgo: 80 },
+    { installationId: 51_377_020, account: "northwind-labs", accountType: "Organization", status: "suspended", repositorySelection: "all", linkedDaysAgo: 30 },
+    { installationId: 49_800_112, account: "elena-marsh", accountType: "User", status: "deleted", repositorySelection: "selected", linkedDaysAgo: 120 },
+  ],
+  repos: [
+    { installationId: 51_204_331, name: "northwind/billing-worker", state: "pending", language: "python", testRunner: "pytest", detail: DETAILS.pending, workflowPath: ".github/workflows/test.yml", job: "pytest" },
+    { installationId: 51_204_331, name: "northwind/mobile-app", state: "pr_open", language: "node", testRunner: "jest", detail: DETAILS.pr_open, workflowPath: ".github/workflows/ci.yml", job: "unit", pr: 812 },
+    { installationId: 51_204_331, name: "northwind/analytics", state: "closed", language: "python", testRunner: "pytest", detail: DETAILS.closed, workflowPath: ".github/workflows/ci.yml", job: "test", pr: 77 },
+    { installationId: 51_204_331, name: "northwind/notifications", state: "failed", language: "node", testRunner: "vitest", detail: DETAILS.failed, workflowPath: ".github/workflows/ci.yml", job: "test" },
+    { installationId: 51_204_331, name: "northwind/infra-scripts", state: "no_workflow", language: "python", testRunner: "pytest", detail: DETAILS.no_workflow, isPrivate: false },
+    { installationId: 51_204_331, name: "northwind/design-system", state: "no_test_job", language: "node", testRunner: null, detail: DETAILS.no_test_job, workflowPath: ".github/workflows/release.yml" },
+    { installationId: 51_204_331, name: "northwind/search-service", state: "already_fenvix", language: "go", testRunner: "go test", detail: DETAILS.already_fenvix, workflowPath: ".github/workflows/go.yml", job: "test" },
+    { installationId: 51_204_331, name: "northwind/checkout-legacy", state: "unsupported", language: null, testRunner: null, detail: DETAILS.unsupported, workflowPath: ".github/workflows/rspec.yml", job: "rspec" },
+    { installationId: 51_377_020, name: "northwind-labs/experiments", state: "pending", language: "python", testRunner: "pytest", detail: DETAILS.pending, workflowPath: ".github/workflows/ci.yml", job: "test" },
+    { installationId: 51_377_020, name: "northwind-labs/prototype-ui", state: "pending", language: "node", testRunner: "vitest", detail: DETAILS.pending, workflowPath: ".github/workflows/ci.yml", job: "test" },
+    { installationId: 49_800_112, name: "elena-marsh/dotfiles", state: "no_workflow", language: null, testRunner: null, detail: DETAILS.no_workflow, removed: true, isPrivate: false },
+  ],
+};
+
+const HARBOR: OrgPlan = {
+  owner: "harbor-analytics", name: "Harbor Analytics", planId: null, addons: [], region: "eu", specs: ["prj_homehub", "prj_docs"], trialDays: 18, strayJobs: 0,
+  installs: [{ installationId: 61_002_418, account: "harbor-analytics", accountType: "Organization", status: "active", repositorySelection: "selected", linkedDaysAgo: 18 }],
+  repos: [{ installationId: 61_002_418, name: "harbor-analytics/etl-jobs", state: "pending", language: "python", testRunner: "pytest", detail: DETAILS.pending, workflowPath: ".github/workflows/ci.yml", job: "tests" }],
+};
+
+const PR_NUMBERS: Record<string, number> = { prj_homehub: 18204, prj_docs: 10433, prj_ledger: 4412, prj_storefront: 16031 };
+const repoId = (fullName: string) => 600_000_000 + (hash(fullName) % 99_000_000);
+/** The runner's own replay command, sent with some bundles (the engine's command for the bundle). */
+const RUNNER_COMMANDS: Record<string, string> = {
+  dfx_9a10: "pytest --det --det-seed=1 --det-order=<bundle>/order.txt -n 0",
+  dfx_7c21: "pytest --det --det-seed=3 --det-order=<bundle>/order.txt -n 0",
+};
+
+function trialBelow(): boolean {
+  try {
+    return sessionStorage.getItem("fenvix-mock-trial") === "below";
+  } catch {
+    return false;
+  }
+}
+
+function buildSample(plan: OrgPlan): Store {
+  const owner = plan.owner;
+  const specs = SPECS.filter((s) => plan.specs.includes(s.id));
   const nameOf = (s: Pick<Spec, "fullName">) => `${owner}/${s.fullName.split("/")[1]}`;
+  const history = (s: Spec) => plan.trialDays ?? Math.min(HISTORY_DAYS, s.connectedDaysAgo - 1);
+  const trialStart = plan.trialDays === null ? null : dayStart(new Date(NOW.getTime() - plan.trialDays * DAY));
+  const below = plan.trialDays !== null && trialBelow();
+  // Defects found within the history shown, so a younger organization has its own.
+  const seeds = DEFECT_SEEDS.filter((d) => plan.specs.includes(d.projectId)).map((d) => {
+    const h = history(SPECS.find((s) => s.id === d.projectId)!);
+    const first = Math.min(d.firstDaysAgo, h - 1);
+    return { ...d, firstDaysAgo: first, fixedDaysAgo: d.fixedDaysAgo === undefined ? undefined : Math.min(d.fixedDaysAgo, first - 1) };
+  });
   const runs: Run[] = [];
   const detail: Store["detail"] = new Map();
   const occurrences = new Map<string, Run[]>();
-  const projects: Project[] = SPECS.map((s) => ({
-    id: s.id, fullName: nameOf(s), language: s.language, testRunner: s.testRunner, defaultBranch: "main", installationId: 51_204_331,
-    setupState: "active", setupPullRequest: { number: { prj_homehub: 18204, prj_docs: 10433, prj_ledger: 4412, prj_storefront: 16031 }[s.id]!, url: `https://github.com/${nameOf(s)}/pull/${{ prj_homehub: 18204, prj_docs: 10433, prj_ledger: 4412, prj_storefront: 16031 }[s.id]}`, state: "merged" },
-    connectedAt: ago(s.connectedDaysAgo * DAY), baseline: s.baseline,
-    settings: { skipWithProof: true, commentOnPullRequests: true, nightlyExploration: s.id !== "prj_ledger", testCommand: "" },
-  }));
+  const projects: Project[] = specs.map((s) => {
+    const pr = PR_NUMBERS[s.id];
+    return {
+      id: s.id, fullName: nameOf(s), language: s.language, testRunner: s.testRunner, defaultBranch: "main", installationId: plan.installs[0].installationId, repositoryId: repoId(nameOf(s)),
+      setupState: "active", setupPullRequest: { number: pr, url: `https://github.com/${nameOf(s)}/pull/${pr}`, state: "merged" },
+      connectedAt: trialStart ? trialStart.toISOString() : ago(s.connectedDaysAgo * DAY), baseline: s.baseline,
+      settings: { skipWithProof: true, commentOnPullRequests: true, nightlyExploration: plan.addons.includes("nightly") && s.id !== "prj_ledger", testCommand: "" },
+    };
+  });
 
-  for (const spec of SPECS) {
+  let live: Live | null = null;
+  for (const spec of specs) {
     ensureDefectFiles(spec);
-    const modules = suite(spec);
-    const total = modules.reduce((a, m) => a + m.tests.length, 0);
     const r = rng(hash(`runs:${spec.id}`));
-    const start = Math.min(HISTORY_DAYS, spec.connectedDaysAgo - 1);
     let number = spec.firstRunNumber;
     let pr = { prj_homehub: 129_400, prj_docs: 11_020, prj_ledger: 15_300, prj_storefront: 17_800 }[spec.id]!;
-    const projectDefects = DEFECT_SEEDS.filter((d) => d.projectId === spec.id);
-    for (let d = start; d >= 0; d--) {
+    const projectDefects = seeds.filter((d) => d.projectId === spec.id);
+    let lastSha = "";
+    let lastFailed = false;
+    const next = (t: number, d: number) => {
+      const rerun = lastFailed && r() < 0.55;
+      const sha = rerun ? lastSha : hex(`${spec.id}:${number}`, 40);
+      const trigger: RunTrigger = rerun ? "pull_request" : r() < 0.58 ? "pull_request" : r() < 0.85 ? "push" : r() < 0.6 ? "merge_group" : "workflow_dispatch";
+      const prNumber = trigger === "pull_request" ? (rerun ? pr : ++pr) : null;
+      const share = spec.skip(r);
+      const failing = r() < spec.failRate;
+      const open = projectDefects.filter((x) => x.firstDaysAgo >= d && (x.fixedDaysAgo === undefined || x.fixedDaysAgo < d));
+      const defect = failing && open.length && r() < 0.6 ? pick(r, open) : null;
+      const shadow = trialStart !== null && t >= trialStart.getTime();
+      const made = makeRun({ spec, number, startMs: t, sha, trigger, prNumber, prOf: pr, skipShare: below ? share * 0.3 : share, defect, failing, shadow, region: plan.region, lastFailed, r });
+      lastSha = sha;
+      lastFailed = made.run.status === "failed";
+      number++;
+      return made;
+    };
+    for (let d = history(spec); d >= 0; d--) {
       const dayAt = dayStart(new Date(NOW.getTime() - d * DAY));
       const weekday = dayAt.getUTCDay() % 6 !== 0;
       const n = Math.round(spec.runsPerWeekday * (weekday ? 0.8 + r() * 0.4 : 0.25 + r() * 0.2));
       // Spread across working hours (UTC 07 to 20), sorted, and never in the future.
       const times = Array.from({ length: n }, () => dayAt.getTime() + (7 + r() * 13) * HOUR).filter((t) => t < NOW.getTime() - 20 * MIN).sort((a, b) => a - b);
-      let lastSha = "";
-      let lastFailed = false;
       for (const t of times) {
-        const rerun = lastFailed && r() < 0.55;
-        const sha = rerun ? lastSha : hex(`${spec.id}:${number}`, 40);
-        const trigger: RunTrigger = rerun ? "pull_request" : r() < 0.58 ? "pull_request" : r() < 0.85 ? "push" : r() < 0.6 ? "merge_group" : "workflow_dispatch";
-        const prNumber = trigger === "pull_request" ? (rerun ? pr : ++pr) : null;
-        const skipShare = spec.skip(r);
-        const failing = r() < spec.failRate;
-        const open = projectDefects.filter((x) => x.firstDaysAgo >= d && (x.fixedDaysAgo === undefined || x.fixedDaysAgo < d));
-        const defect = failing && open.length && r() < 0.6 ? pick(r, open) : null;
-        const force = defect ? [moduleIndexOf(spec, defect.testId)] : [];
-        const seed = hash(`${spec.id}#${number}`);
-        const ran = ranModules(spec, seed, skipShare, force.filter((i) => i >= 0));
-        let ranTests = 0;
-        let ranMs = 0;
-        for (const i of ran) {
-          ranTests += modules[i].tests.length;
-          ranMs += modules[i].timeMs;
-        }
-        const failures: { testId: string; defectId: string | null }[] = [];
-        if (defect) failures.push({ testId: defect.testId, defectId: defect.id });
-        else if (failing) {
-          const ranList = [...ran];
-          const k = 1 + Math.floor(r() * 3);
-          for (let f = 0; f < k; f++) {
-            const m = modules[pick(r, ranList)];
-            const id = pick(r, m.tests);
-            if (!failures.some((x) => x.testId === id)) failures.push({ testId: id, defectId: null });
-          }
-        }
-        const skippedMs = Math.max(0, spec.fullTestMs - ranMs);
-        const otherStepMinutes = Math.round((spec.otherStepMs * (0.9 + r() * 0.2)) / 600) / 100;
-        const durationMs = Math.round(spec.setupMs + ranMs * spec.overhead * (0.9 + r() * 0.2));
-        const queuedMs = 4_000 + r() * 20_000;
-        const pushedAt = new Date(t - queuedMs);
-        const status = failures.length ? "failed" : "passed";
-        const id = `run_${spec.id.slice(4)}_${number}`;
-        const run: Run = {
-          id, projectId: spec.id, number, engineRunId: `${new Date(t).toISOString().replace(/[-:]/g, "").slice(0, 15)}-${1000 + (hash(id) % 8999)}`,
-          commitSha: sha, commitMessage: `${pick(r, COMMIT_WORDS)} ${pick(r, COMMIT_THINGS[spec.id])}`,
-          branch: trigger === "pull_request" ? `${pick(r, ["fix", "feat", "chore", "agent"])}/${hex(`${sha}b`, 6)}` : trigger === "merge_group" ? `gh-readonly-queue/main/pr-${pr}` : "main",
-          pullRequest: prNumber, trigger, status, pushedAt: pushedAt.toISOString(), startedAt: new Date(t).toISOString(),
-          finishedAt: new Date(t + durationMs).toISOString(), durationMs,
-          tests: { total, ran: ranTests, passed: ranTests - failures.length, failed: failures.length, skippedWithProof: total - ranTests, flakyDefects: failures.filter((x) => x.defectId).length },
-          testTimeMs: { ran: ranMs, skipped: skippedMs },
-          skipShare: Math.round((skippedMs / (ranMs + skippedMs)) * 10000) / 10000,
-          minutesSaved: Math.round((skippedMs / MIN) * 100) / 100,
-          otherStepMinutes,
-          githubEquivalentMinutes: Math.round(((ranMs + skippedMs) / MIN + otherStepMinutes) * 100) / 100,
-          engineVersion: spec.language === "node" ? "detjs 0.1.0" : spec.language === "go" ? "detgo 0.1.0" : "detpy 0.1.0",
-          seed: seed % 100,
-          ...missesFor(spec, ran, ranTests, skipShare, lastFailed, rng(seed)),
-        };
+        const { run, detail: dt } = next(t, d);
         runs.push(run);
-        detail.set(id, { ran, failures });
-        if (defect) (occurrences.get(defect.id) ?? occurrences.set(defect.id, []).get(defect.id)!).push(run);
-        lastSha = sha;
-        lastFailed = status === "failed";
-        number++;
+        detail.set(run.id, dt);
+        const failure = dt.failures.find((f) => f.defectId);
+        if (failure) (occurrences.get(failure.defectId!) ?? occurrences.set(failure.defectId!, []).get(failure.defectId!)!).push(run);
       }
+    }
+    // The newest run of the first project is still running: the Run page polls it and it advances.
+    if (spec === specs[0] && plan.trialDays === null) {
+      const { run: final, detail: finalDetail } = next(NOW.getTime() - 150_000, 0);
+      final.status = "passed";
+      final.tests.passed = final.tests.ran;
+      final.tests.failed = 0;
+      final.tests.flakyDefects = 0;
+      finalDetail.failures = [];
+      final.finishedAt = new Date(NOW.getTime() + 60_000).toISOString();
+      final.durationMs = 210_000;
+      live = { runId: final.id, final, finalDetail, calls: 0, stage: 0 };
+      runs.push(runningView(live));
     }
   }
 
-  const defects: Defect[] = DEFECT_SEEDS.map((s) => {
+  const defects: Defect[] = seeds.map((s) => {
     const seen = occurrences.get(s.id) ?? [];
     const spec = SPECS.find((p) => p.id === s.projectId)!;
-    const runsN = 10;
     return {
       id: s.id, projectId: s.projectId, projectName: nameOf(spec), testId: s.testId, status: s.status ?? "reproduced", state: s.fixedDaysAgo !== undefined ? "fixed" : "open",
       cause: s.cause, causeTests: s.causeTests, minimalOrder: s.cause === "polluter" ? [...s.causeTests, s.testId] : [s.testId], prefixLength: s.prefixLength,
-      seed: s.seed, fingerprint: hex(`fp:${s.id}`), replays: { runs: runsN, fails: 10, identicalFingerprint: s.status !== "replay_unstable" },
+      seed: s.seed, fingerprint: hex(`fp:${s.id}`), replays: { runs: 10, fails: 10, identicalFingerprint: s.status !== "replay_unstable" },
       outcome: s.outcome, exception: s.exception, divergence: s.divergence, familyKey: familyKeyOf(s.causeTests),
       firstSeenAt: seen[0]?.startedAt ?? ago(s.firstDaysAgo * DAY), lastSeenAt: seen[seen.length - 1]?.startedAt ?? ago(s.firstDaysAgo * DAY),
       firstRunId: seen[0]?.id ?? null, lastRunId: seen[seen.length - 1]?.id ?? null, occurrences: Math.max(1, seen.length),
-      engineVersion: spec.language === "node" ? "detjs 0.1.0" : "detpy 0.1.0", language: spec.language === "node" ? "node" : "python", testRunner: spec.testRunner,
+      engineVersion: engineOf(spec), language: spec.language === "node" ? "node" : "python", testRunner: spec.testRunner,
+      replayCommand: RUNNER_COMMANDS[s.id] ?? null,
     };
   });
 
   // Nights of exploration for the projects that have it on: seeds tried, flaky tests seen, defects found first at night.
   const explorations: Exploration[] = [];
-  for (const spec of SPECS) {
+  for (const spec of specs) {
     const project = projects.find((p) => p.id === spec.id)!;
     if (!project.settings.nightlyExploration) continue;
     const modules = suite(spec);
-    const total = modules.reduce((a, m) => a + m.tests.length, 0);
+    const total = totalTests(spec);
     const r = rng(hash(`nights:${spec.id}`));
-    const seeds = spec.id === "prj_docs" ? 100 : 50;
-    for (let d = Math.min(HISTORY_DAYS, spec.connectedDaysAgo - 1); d >= 1; d--) {
+    const nSeeds = spec.id === "prj_docs" ? 100 : 50;
+    for (let d = history(spec); d >= 1; d--) {
       const day = dayStart(new Date(NOW.getTime() - d * DAY));
-      const open = DEFECT_SEEDS.filter((x) => x.projectId === spec.id && x.firstDaysAgo >= d && (x.fixedDaysAgo === undefined || x.fixedDaysAgo < d));
+      const open = seeds.filter((x) => x.projectId === spec.id && x.firstDaysAgo >= d && (x.fixedDaysAgo === undefined || x.fixedDaysAgo < d));
       const flaky = open.filter(() => r() < 0.7).map((x) => x.testId);
-      const found = DEFECT_SEEDS.filter((x) => x.projectId === spec.id && x.firstDaysAgo === d).map((x) => x.id);
+      const found = seeds.filter((x) => x.projectId === spec.id && x.firstDaysAgo === d).map((x) => x.id);
       const always = r() < 0.06 ? [pick(r, pick(r, modules).tests)] : [];
       const notReproduced = r() < 0.08 ? [pick(r, pick(r, modules).tests)] : [];
       const perSeed = (spec.fullTestMs * spec.overhead) / 1000 / 8;
-      const seconds = Math.round(seeds * perSeed * (0.9 + r() * 0.2));
+      const seconds = Math.round(nSeeds * perSeed * (0.9 + r() * 0.2));
       const startedAt = new Date(day.getTime() + 2 * HOUR);
       const fams = new Map<string, number>();
       for (const t of flaky) {
-        const seed = DEFECT_SEEDS.find((x) => x.testId === t)!;
-        const k = familyKeyOf(seed.causeTests);
+        const k = familyKeyOf(seeds.find((x) => x.testId === t)!.causeTests);
         fams.set(k, (fams.get(k) ?? 0) + 1);
       }
       explorations.push({
         id: `exp_${spec.id.slice(4)}_${d}`, projectId: spec.id, startedAt: startedAt.toISOString(), finishedAt: new Date(startedAt.getTime() + seconds * 1000).toISOString(),
-        commitSha: hex(`${spec.id}:night:${d}`, 40), branch: "main", seeds, runs: seeds, collected: total, seconds,
+        commitSha: hex(`${spec.id}:night:${d}`, 40), branch: "main", seeds: nSeeds, runs: nSeeds, collected: total, seconds,
         flakyFailing: flaky, alwaysFailing: always, notReproduced, newDefectIds: found,
         familiesByPolluter: [...fams.entries()].map(([key, tests]) => ({ key, tests })),
-        seedsLog: Array.from({ length: seeds }, (_, i) => ({ seed: i + 1, seconds: Math.round(perSeed * (0.9 + r() * 0.2)), failing: always.length + flaky.filter(() => r() < 0.12).length })),
+        seedsLog: Array.from({ length: nSeeds }, (_, i) => ({ seed: i + 1, seconds: Math.round(perSeed * (0.9 + r() * 0.2)), failing: always.length + flaky.filter(() => r() < 0.12).length })),
       });
       // A defect found at night is first seen then, before any pull request hit it.
       for (const id of found) {
@@ -517,37 +712,101 @@ function buildSample(owner: string, orgName: string, planId: string): Store {
     }
   }
   explorations.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-
   runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+
+  // Usage events: one billable job per finished run, and a few jobs of repositories that are not projects.
+  const events: UsageEvent[] = runs.filter((x) => x.finishedAt && x.status !== "running").map((x) => ({ projectId: x.projectId, occurredAt: x.finishedAt!, billable: true, baselineMinutes: x.githubEquivalentMinutes }));
+  const er = rng(hash(`stray:${owner}`));
+  for (let i = 0; i < plan.strayJobs; i++) events.push({ projectId: null, occurredAt: ago((1 + er() * 15) * DAY), billable: true, baselineMinutes: Math.round((4 + er() * 3) * 100) / 100 });
+
+  // Audit reruns: a couple of skipped tests of each recent enforce run ran again and passed; a few keys stopped being trusted.
+  const reruns: AuditRerun[] = [];
+  for (const spec of specs) {
+    const modules = suite(spec);
+    const recent = runs.filter((x) => x.projectId === spec.id && x.mode === "enforce" && x.status !== "running" && x.audit.rerun > 0).slice(0, 30);
+    recent.forEach((x, k) => {
+      const ran = detail.get(x.id)!.ran;
+      const skipped = modules.map((_, i) => i).filter((i) => !ran.has(i));
+      if (!skipped.length) return;
+      const rr = rng(hash(`audit:${x.id}`));
+      for (let j = 0; j < 2; j++) {
+        const m = modules[pick(rr, skipped)];
+        const testId = pick(rr, m.tests);
+        const untrusted = (spec.id === "prj_homehub" && (k === 3 || k === 11) && j === 0) || (spec.id === "prj_storefront" && k === 5 && j === 0);
+        reruns.push({
+          runId: x.id, runNumber: x.number, testId, cacheKey: hex(`${x.id}:${testId}:key`), outcome: "confirmed", untrusted, at: x.finishedAt!,
+          detail: untrusted
+            ? spec.id === "prj_storefront"
+              ? "It passed, but its fingerprint differs from the receipt's: the engine no longer reuses this key."
+              : "It passed, but it read /etc/localtime, which the receipt did not list: the engine no longer reuses this key."
+            : "Ran again and passed, as the receipt said.",
+        });
+      }
+    });
+  }
+
+  const linked = (days: number) => ago(days * DAY);
+  const repos: GitHubRepository[] = [
+    ...projects.map((p) => ({
+      repositoryId: p.repositoryId!, installationId: p.installationId, fullName: p.fullName, private: true, removed: false, language: p.language, testRunner: p.testRunner,
+      onboardingState: "merged" as const, onboardingDetail: DETAILS.merged, workflowPath: ".github/workflows/ci.yml", job: "test", setupPullRequest: p.setupPullRequest, projectId: p.id,
+    })),
+    ...plan.repos.map((x) => ({
+      repositoryId: repoId(x.name), installationId: x.installationId, fullName: x.name, private: x.isPrivate ?? true, removed: x.removed ?? false, language: x.language, testRunner: x.testRunner,
+      onboardingState: x.state, onboardingDetail: x.state === "pr_open" ? `Pull request #${x.pr} changes the test job to runs-on: fenvix. Merge it and the next test run goes to fenvix.` : x.detail,
+      workflowPath: x.workflowPath ?? null, job: x.job ?? null,
+      setupPullRequest: x.pr ? { number: x.pr, url: `https://github.com/${x.name}/pull/${x.pr}`, state: x.state === "closed" ? ("closed" as const) : ("open" as const) } : null, projectId: null,
+    })),
+  ];
+  const installations: Installation[] = plan.installs.map((i) => ({
+    installationId: i.installationId, account: i.account, accountType: i.accountType, status: i.status, repositorySelection: i.repositorySelection, linkedAt: linked(i.linkedDaysAgo),
+    repositories: repos.filter((x) => x.installationId === i.installationId && !x.removed).length,
+  }));
+
   return {
-    projects, runs, detail, defects, explorations, githubAccount: owner,
-    repos: [
-      ...projects.map((p) => ({ fullName: p.fullName, private: true, language: p.language, testRunner: p.testRunner, connected: true })),
-      { fullName: `${owner}/billing-worker`, private: true, language: "python", testRunner: "pytest", connected: false },
-      { fullName: `${owner}/mobile-app`, private: true, language: "node", testRunner: "jest", connected: false },
-      { fullName: `${owner}/infra-scripts`, private: false, language: "python", testRunner: "pytest", connected: false },
-    ],
-    planId,
-    settings: { workspaceName: orgName, emailNotices: true },
-    apiKeys: seedKeys(),
-    installations: new Map(),
+    projects, runs, detail, defects, explorations, events, reruns, installations, repos, queued: new Map(), planId: plan.planId, addons: plan.addons,
+    trial: trialStart ? { startedAt: trialStart.toISOString(), endsAt: new Date(trialStart.getTime() + 30 * DAY).toISOString() } : null,
+    settings: { workspaceName: plan.name, emailNotices: true, region: plan.region }, live, nextAccount: `${owner}-sandbox`,
   };
 }
 
 /** Another organization: nothing connected yet, so its dashboard starts with "Connect a project". */
 function emptyStore(name: string): Store {
   return {
-    projects: [], runs: [], detail: new Map(), defects: [], explorations: [], githubAccount: null,
-    repos: [
-      { fullName: `${slug(name)}/api`, private: true, language: "python", testRunner: "pytest", connected: false },
-      { fullName: `${slug(name)}/web`, private: true, language: "node", testRunner: "vitest", connected: false },
-      { fullName: `${slug(name)}/pipelines`, private: true, language: "python", testRunner: "pytest", connected: false },
-    ],
-    planId: "starter", settings: { workspaceName: name, emailNotices: true }, apiKeys: [], installations: new Map(),
+    projects: [], runs: [], detail: new Map(), defects: [], explorations: [], events: [], reruns: [], installations: [], repos: [], queued: new Map(),
+    planId: null, addons: [], trial: null, settings: { workspaceName: name, emailNotices: true, region: "us" }, live: null, nextAccount: slug(name),
   };
 }
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "acme";
+
+// Installations added in this tab (an "Install the GitHub App" round trip): kept in sessionStorage, because the
+// browser leaves the page and comes back, which rebuilds the in-memory sample data.
+const INSTALLS_KEY = "fenvix-mock-installs";
+interface AddedInstall {
+  org: string;
+  installationId: number;
+  account: string;
+}
+function addedInstalls(): AddedInstall[] {
+  try {
+    return JSON.parse(sessionStorage.getItem(INSTALLS_KEY) ?? "[]") as AddedInstall[];
+  } catch {
+    return [];
+  }
+}
+function applyInstall(s: Store, a: AddedInstall) {
+  if (s.installations.some((i) => i.installationId === a.installationId)) return;
+  const repos: GitHubRepository[] = [
+    { name: "api", language: "python" as const, testRunner: "pytest" as const },
+    { name: "web", language: "node" as const, testRunner: "vitest" as const },
+  ].map((x) => ({
+    repositoryId: repoId(`${a.account}/${x.name}`), installationId: a.installationId, fullName: `${a.account}/${x.name}`, private: true, removed: false, language: x.language, testRunner: x.testRunner,
+    onboardingState: "pending", onboardingDetail: DETAILS.pending, workflowPath: ".github/workflows/ci.yml", job: "test", setupPullRequest: null, projectId: null,
+  }));
+  s.repos.push(...repos);
+  s.installations.push({ installationId: a.installationId, account: a.account, accountType: "Organization", status: "active", repositorySelection: "selected", linkedAt: NOW.toISOString(), repositories: repos.length });
+}
 
 const stores = new Map<string, Store>();
 function store(): Store {
@@ -555,11 +814,58 @@ function store(): Store {
   let s = stores.get(org);
   if (!s) {
     // The two organizations the sample account belongs to have runs; an organization made in this tab starts empty.
-    s = org === "org_northwind" ? buildSample("northwind", "Northwind Cloud", "team") : org === "org_harbor" ? buildSample("harbor-analytics", "Harbor Analytics", "scale") : emptyStore(mockOrgName() ?? "Acme");
+    s = org === "org_northwind" ? buildSample(NORTHWIND) : org === "org_harbor" ? buildSample(HARBOR) : emptyStore(mockOrgName() ?? "Acme");
+    for (const a of addedInstalls().filter((x) => x.org === org)) applyInstall(s, a);
     stores.set(org, s);
   }
   return s;
 }
+
+// ---------------------------------------------------------------- the running run
+
+const STAGES = [0.2, 0.5, 0.85, 1];
+
+/** The running run as the API shows it at its stage: counts so far and the runner's latest progress record. */
+function runningView(l: Live): Run {
+  const f = l.final;
+  const share = STAGES[Math.min(l.stage, STAGES.length - 1)];
+  const done = Math.round(f.tests.ran * share);
+  const spec = specOf(f.projectId)!;
+  const ranList = [...l.finalDetail.ran];
+  const m = suite(spec)[ranList[Math.min(ranList.length - 1, Math.floor(share * ranList.length))]];
+  const progress: RunProgress = {
+    phase: l.stage >= 3 ? "reporting" : "testing",
+    testsTotal: f.tests.total, testsDone: f.tests.skippedWithProof + done, passed: done, failed: 0, skippedWithProof: f.tests.skippedWithProof,
+    currentTest: l.stage >= 3 ? null : (m?.tests[Math.floor(m.tests.length / 2)] ?? null),
+    elapsedMs: 150_000 + l.stage * 15_000, updatedAt: new Date(NOW.getTime() + l.stage * 15_000).toISOString(),
+  };
+  return {
+    ...f, status: "running", finishedAt: null, durationMs: progress.elapsedMs,
+    tests: { total: f.tests.total, ran: done, passed: done, failed: 0, skippedWithProof: f.tests.skippedWithProof, flakyDefects: 0 },
+    testTimeMs: { ran: 0, skipped: 0 }, skipShare: 0, minutesSaved: 0, otherStepMinutes: 0, githubEquivalentMinutes: 0, audit: { rerun: 0, wrongSkips: 0 }, progress,
+  };
+}
+
+/** Each second question of the live view moves the run on; after the last stage it has finished and passed. */
+function advance(s: Store) {
+  const l = s.live;
+  if (!l) return;
+  l.calls++;
+  if (l.calls % 2 !== 0) return;
+  l.stage++;
+  const i = s.runs.findIndex((x) => x.id === l.runId);
+  if (i < 0) return;
+  if (l.stage < STAGES.length) {
+    s.runs[i] = runningView(l);
+    return;
+  }
+  s.runs[i] = l.final;
+  s.detail.set(l.runId, l.finalDetail);
+  s.events.push({ projectId: l.final.projectId, occurredAt: l.final.finishedAt!, billable: true, baselineMinutes: l.final.githubEquivalentMinutes });
+  s.live = { ...l, runId: "" };
+}
+
+const etagOf = (r: Run) => `W/"${r.id}-${r.status}-${r.progress?.updatedAt ?? r.finishedAt ?? ""}"`;
 
 // ---------------------------------------------------------------- per-test detail, built when a run is opened
 
@@ -570,7 +876,7 @@ function specOf(projectId: string): Spec | undefined {
 function testsOf(run: Run): TestResult[] {
   const spec = specOf(run.projectId);
   const d = store().detail.get(run.id);
-  if (!spec || !d) return [];
+  if (!spec || !d || run.status === "running") return [];
   const failures = new Map(d.failures.map((f) => [f.testId, f]));
   const defects = store().defects;
   const out: TestResult[] = [];
@@ -647,34 +953,19 @@ function receiptOf(id: string): SkipReceipt | null {
   };
 }
 
-// ---------------------------------------------------------------- keys and settings (as before)
+// ---------------------------------------------------------------- the mock "server"
 
-const later = (ms: number) => new Date(NOW.getTime() + ms).toISOString();
-const seedKey = (k: Omit<PublicApiKey, "status">): PublicApiKey => ({ ...k, status: keyStatus(k, NOW) });
-function seedKeys(): PublicApiKey[] {
-  return [
-    seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b01", name: "Coding agent", role: "read_only", prefix: "fvx_Qm3xT8aL", createdAt: ago(12 * DAY), lastUsedAt: ago(3 * DAY), expiresAt: later(78 * DAY), revokedAt: null }),
-    seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b02", name: "Release pipeline", role: "admin", prefix: "fvx_k2Vd9PqW", createdAt: ago(41 * DAY), lastUsedAt: ago(19 * HOUR), expiresAt: null, revokedAt: null }),
-    seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b03", name: "Defect triage bot", role: "read_only", prefix: "fvx_7HcR0ZyN", createdAt: ago(30 * DAY), lastUsedAt: ago(4 * MIN), expiresAt: null, revokedAt: null }),
-    seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b04", name: "Quarterly report", role: "read_only", prefix: "fvx_bT5uE1sJ", createdAt: ago(130 * DAY), lastUsedAt: ago(40 * DAY), expiresAt: ago(10 * DAY), revokedAt: null }),
-    seedKey({ id: "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b05", name: "Old laptop", role: "admin", prefix: "fvx_Lw8gY4nC", createdAt: ago(200 * DAY), lastUsedAt: ago(120 * DAY), expiresAt: null, revokedAt: ago(100 * DAY) }),
-  ];
-}
-
-const mockError = (code: string, status: number, message: string, field?: string) => new ExplorerError(code, message, status, field);
-
-/** `fvx_` and 32 random bytes in base64url (43 characters), like the API's keys. */
-function newPublicToken(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return `fvx_${btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
-}
+const mockError = (code: string, status: number, message: string, field?: string) => new ApiError(code, message, status, field);
 
 const wait = <T,>(value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(value), 90));
 const copy = <T,>(v: T): T => structuredClone(v);
 
 function plans(): Plan[] {
-  return PLANS.map((p) => ({ ...p, features: [...p.features], current: p.id === store().planId }));
+  const s = store();
+  return PLANS.map((p) => ({ ...p, features: [...p.features], current: p.kind === "plan" ? p.id === s.planId : s.addons.includes(p.id) }));
 }
+const currentPlan = () => plans().find((p) => p.kind === "plan" && p.current) ?? null;
+const trial = () => trialFrom(store().trial, store().runs, store().events, NOW);
 
 function filterRuns(projectId: string, q: RunQuery): Run[] {
   const s = store();
@@ -682,6 +973,7 @@ function filterRuns(projectId: string, q: RunQuery): Run[] {
   return s.runs.filter(
     (r) =>
       r.projectId === projectId &&
+      (!q.since || r.startedAt >= q.since) &&
       (q.scope === "pr" ? r.pullRequest !== null : q.scope === "default" ? r.branch === project?.defaultBranch : true) &&
       (q.status === "passed" || q.status === "failed" ? r.status === q.status : true),
   );
@@ -693,13 +985,18 @@ function defectsFor(q: { projectId?: string; state?: "open" | "fixed" | "all" } 
     .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
 }
 
-export const mockClient: DataClient = {
+/** Every live-view question, for the checks (polling must stop once the run has finished). */
+let liveCount = 0;
+
+/** The mock as the API: the DataClient, and for the checks the number of live-view questions so far. */
+export const mockClient: DataClient & { liveCalls(): number } = {
   now: () => NOW,
   sample: true,
+  liveCalls: () => liveCount,
 
   getOverview() {
     const s = store();
-    return wait(copy(overviewFrom(s.projects, s.runs, s.defects, plans().find((p) => p.current) ?? null, RATE, NOW)));
+    return wait(copy(overviewFrom(s.projects, s.runs, s.defects, currentPlan(), RATE, NOW, s.events, trial())));
   },
 
   listProjects() {
@@ -721,8 +1018,9 @@ export const mockClient: DataClient = {
     return wait(copy(p));
   },
   listRuns(projectId, q = {}) {
-    const { page = 1, pageSize = 25 } = q;
     const rows = filterRuns(projectId, q);
+    if (q.since) return wait<Page<Run>>(copy({ items: rows, total: rows.length, page: 1, pageSize: rows.length }));
+    const { page = 1, pageSize = 25 } = q;
     return wait<Page<Run>>(copy({ items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize }));
   },
   getSkipShareSeries(projectId, days) {
@@ -741,12 +1039,32 @@ export const mockClient: DataClient = {
     }
     return wait(out);
   },
+  getAudit(projectId, days) {
+    const s = store();
+    const from = new Date(NOW.getTime() - days * DAY);
+    return wait(copy(auditFrom(s.runs.filter((r) => r.projectId === projectId), s.reruns.filter((x) => s.runs.find((r) => r.id === x.runId)?.projectId === projectId), from, NOW)));
+  },
+  getSetupChange(projectId) {
+    const p = store().projects.find((x) => x.id === projectId);
+    if (!p) return Promise.reject(mockError("not_found", 404, "That project does not exist."));
+    return wait(setupChange(p));
+  },
 
   getRun(id) {
     const s = store();
     const run = s.runs.find((r) => r.id === id);
     const project = run && s.projects.find((p) => p.id === run.projectId);
-    return wait(run && project ? copy({ run, project }) : null);
+    return wait<RunDetail | null>(run && project ? copy({ run, project }) : null);
+  },
+  getRunLive(id, etag) {
+    liveCount++;
+    const s = store();
+    if (s.live?.runId === id) advance(s);
+    const run = s.runs.find((r) => r.id === id);
+    const project = run && s.projects.find((p) => p.id === run.projectId);
+    if (!run || !project) return Promise.reject(mockError("not_found", 404, "That run does not exist."));
+    const tag = etagOf(run);
+    return wait<RunLive>(etag === tag ? { notModified: true } : { notModified: false, detail: copy({ run, project }), etag: tag });
   },
   listTestResults(runId, q = {}) {
     const run = store().runs.find((r) => r.id === runId);
@@ -766,7 +1084,7 @@ export const mockClient: DataClient = {
     const run = s.runs.find((r) => r.id === runId);
     const spec = run && specOf(run.projectId);
     const d = s.detail.get(runId);
-    if (!run || !spec || !d) return wait<RunFile[]>([]);
+    if (!run || !spec || !d || run.status === "running") return wait<RunFile[]>([]);
     const failed = new Set(d.failures.map((f) => fileOf(f.testId)));
     return wait<RunFile[]>(
       suite(spec).map((m, i) => {
@@ -782,7 +1100,6 @@ export const mockClient: DataClient = {
     const keep = <T extends { projectId: string }>(xs: T[]) => (projectId ? xs.filter((x) => x.projectId === projectId) : xs);
     return wait<ActivityItem[]>(activityFrom(keep(s.projects.map((p) => ({ ...p, projectId: p.id }))), keep(s.runs), keep(s.defects), keep(s.explorations), limit));
   },
-  listRunsSince: (projectId, since) => wait(copy(store().runs.filter((r) => r.projectId === projectId && r.startedAt >= since))),
 
   listDefects: (q) => wait(copy(defectsFor(q))),
   listDefectFamilies: (q) => wait(copy(familiesOf(defectsFor(q)))),
@@ -794,112 +1111,73 @@ export const mockClient: DataClient = {
   },
   getUsage(month) {
     const s = store();
-    return wait(copy(usageFrom(month, s.projects, s.runs, plans().find((p) => p.current) ?? null, RATE)));
+    return wait(copy(usageFrom(month, s.projects, s.runs, currentPlan(), RATE, s.events)));
   },
   async exportUsage(month) {
     const s = store();
-    const report = usageFrom(month, s.projects, s.runs, plans().find((p) => p.current) ?? null, RATE);
+    const report = usageFrom(month, s.projects, s.runs, currentPlan(), RATE, s.events);
     return wait({ filename: usageCsvName(month), mimeType: "text/csv", downloadUrl: blobUrl(usageCsv(report), "text/csv") });
   },
 
   listPlans: () => wait(plans()),
   getBilling() {
     const s = store();
-    return wait(copy(billingFrom(plans(), s.projects, s.runs, NOW)));
+    return wait(copy(billingFrom(plans(), s.projects, s.events, trial(), NOW)));
   },
 
   getGitHubConnection() {
-    return wait({ account: store().githubAccount, installUrl: "https://github.com/apps/fenvix/installations/new" });
-  },
-  listGitHubRepositories: () => wait(copy(store().repos)),
-  async installGitHubApp(repositories) {
-    assertMockCanManage();
-    if (repositories.length === 0) throw mockError("validation_failed", 400, "Choose at least one repository.", "repositories");
     const s = store();
-    const id = 60_000_000 + s.installations.size + 1;
-    s.installations.set(id, repositories);
-    s.githubAccount = s.githubAccount ?? repositories[0].split("/")[0];
-    return wait(id);
+    return wait(copy({ account: s.installations.find((i) => i.status === "active")?.account ?? null, installations: s.installations }));
   },
-  async completeInstallation(installationId) {
-    assertMockCanManage();
+  listGitHubRepositories() {
     const s = store();
-    const names = s.installations.get(installationId);
-    if (!names) throw mockError("not_found", 404, "GitHub did not confirm this installation. Install the app again.");
-    const added: Project[] = [];
-    for (const name of names) {
-      const repo = s.repos.find((r) => r.fullName === name);
-      if (!repo || repo.connected) continue;
-      repo.connected = true;
-      const r = rng(hash(name));
-      const project: Project = {
-        id: `prj_${slug(name.split("/")[1])}_${installationId % 1000}`, fullName: name, language: repo.language, testRunner: repo.testRunner, defaultBranch: "main",
-        installationId, setupState: "app_installed", setupPullRequest: null, connectedAt: NOW.toISOString(),
-        baseline: { medianTimeToGreenS: Math.round(90 + r() * 400), medianJobMinutes: Math.round((2 + r() * 9) * 10) / 10, runsSampled: Math.round(60 + r() * 300), from: "2026-10-18", to: "2026-11-16" },
-        settings: { skipWithProof: true, commentOnPullRequests: true, nightlyExploration: false, testCommand: "" },
-      };
-      s.projects.push(project);
-      added.push(project);
+    // The App works through the queue: a queued setup pull request is open a couple of questions later.
+    for (const [id, left] of [...s.queued]) {
+      if (left > 1) {
+        s.queued.set(id, left - 1);
+        continue;
+      }
+      s.queued.delete(id);
+      const repo = s.repos.find((x) => x.repositoryId === id);
+      if (!repo) continue;
+      const number = 100 + (hash(repo.fullName) % 900);
+      Object.assign(repo, {
+        onboardingState: "pr_open", setupPullRequest: { number, url: `https://github.com/${repo.fullName}/pull/${number}`, state: "open" },
+        onboardingDetail: `Pull request #${number} changes the test job to runs-on: fenvix. Merge it and the next test run goes to fenvix.`,
+      } satisfies Partial<GitHubRepository>);
     }
-    s.installations.delete(installationId);
-    return wait(copy(added));
+    return wait(copy(s.repos));
   },
-  getSetupChange(projectId) {
-    const p = store().projects.find((x) => x.id === projectId);
-    if (!p) return Promise.reject(mockError("not_found", 404, "That project does not exist."));
-    return wait(setupChange(p));
-  },
-  async openSetupPullRequest(projectId) {
+  async createInstallLink() {
     assertMockCanManage();
     const s = store();
-    const p = s.projects.find((x) => x.id === projectId);
-    if (!p) throw mockError("not_found", 404, "That project does not exist.");
-    if (!p.setupPullRequest) {
-      const number = 100 + (hash(p.fullName) % 900);
-      p.setupPullRequest = { number, url: `https://github.com/${p.fullName}/pull/${number}`, state: "open" } satisfies SetupPullRequest;
-      p.setupState = "pr_open";
+    const org = activeOrgId() ?? "org_northwind";
+    const added: AddedInstall = { org, installationId: 70_000_000 + addedInstalls().length + s.installations.length + 1, account: s.nextAccount };
+    try {
+      sessionStorage.setItem(INSTALLS_KEY, JSON.stringify([...addedInstalls(), added]));
+    } catch {
+      /* memory only */
     }
-    return wait(copy(p.setupPullRequest));
+    applyInstall(s, added);
+    // Stands in for GitHub: the App's setup step links the installation and sends the browser back here.
+    return wait(`${window.location.origin}/projects/connect?github=connected&installation=${added.installationId}&account=${encodeURIComponent(added.account)}`);
+  },
+  async openSetupPullRequest(repositoryId) {
+    assertMockCanManage();
+    const s = store();
+    const repo = s.repos.find((x) => x.repositoryId === repositoryId && !x.removed);
+    if (!repo) throw mockError("not_found", 404, "That repository is not given to the fenvix GitHub App.");
+    const inst = s.installations.find((i) => i.installationId === repo.installationId);
+    if (inst && inst.status !== "active") throw mockError("conflict", 409, `The fenvix GitHub App is ${inst.status} on ${inst.account}: unsuspend it on GitHub first.`);
+    if (!["pending", "closed", "failed"].includes(repo.onboardingState)) throw mockError("conflict", 409, "This repository needs no setup pull request.");
+    s.queued.set(repositoryId, 2);
+    return wait(copy(repo));
   },
 
-  async listPublicApiKeys(cursor) {
-    if (mockRole() === "member") assertMockCanManage();
-    const keys = store().apiKeys;
-    const from = cursor ? Number(cursor) : 0;
-    const items = keys.slice(from, from + PAGE_LIMIT).map((k) => ({ ...k, status: keyStatus(k, NOW) }));
-    return wait({ items, nextCursor: from + PAGE_LIMIT < keys.length ? String(from + PAGE_LIMIT) : null });
-  },
-  async createPublicApiKey({ name, role, expiresAt }) {
-    assertMockCanManage();
-    const s = store();
-    if (nameProblem(name)) throw mockError("validation_failed", 400, `Use 1 to 60 characters for the name, on one line.`, "name");
-    if (role !== "admin" && role !== "read_only") throw mockError("validation_failed", 400, "Choose a role: admin or read_only.", "role");
-    if (expiresAt !== null) {
-      const t = new Date(expiresAt).getTime();
-      if (Number.isNaN(t)) throw mockError("validation_failed", 400, "expiresAt must be a date and time, for example 2027-01-31T00:00:00Z.", "expiresAt");
-      if (t <= NOW.getTime() + MIN) throw mockError("validation_failed", 400, "expiresAt must be at least a minute from now.", "expiresAt");
-      if (t > NOW.getTime() + 3 * 365 * DAY) throw mockError("validation_failed", 400, "expiresAt can be at most 1095 days from now.", "expiresAt");
-    }
-    if (s.apiKeys.filter((k) => keyStatus(k, NOW) === "active").length >= MAX_ACTIVE_KEYS) {
-      throw mockError("conflict", 409, `An organization can have up to ${MAX_ACTIVE_KEYS} active API keys. Revoke one first.`);
-    }
-    const token = newPublicToken();
-    const key: PublicApiKey = { id: crypto.randomUUID(), name: name.trim(), role, prefix: token.slice(0, 12), status: "active", createdAt: NOW.toISOString(), lastUsedAt: null, expiresAt, revokedAt: null };
-    s.apiKeys = [key, ...s.apiKeys];
-    return wait({ key: { ...key }, token });
-  },
-  async revokePublicApiKey(id) {
-    assertMockCanManage();
-    const s = store();
-    const found = s.apiKeys.find((k) => k.id === id);
-    if (!found) throw mockError("not_found", 404, "That API key does not exist.");
-    const next: PublicApiKey = { ...found, revokedAt: found.revokedAt ?? NOW.toISOString(), status: "revoked" };
-    s.apiKeys = s.apiKeys.map((k) => (k.id === id ? next : k));
-    return wait({ ...next });
-  },
   getSettings: () => wait({ ...store().settings, workspaceName: mockOrgName() ?? store().settings.workspaceName }),
   async saveSettings(next) {
     assertMockCanManage();
+    if (next.region !== "us" && next.region !== "eu") throw mockError("validation_failed", 400, "Choose a region: us or eu.", "region");
     store().settings = { ...next };
     return wait({ ...store().settings, workspaceName: mockOrgName() ?? next.workspaceName });
   },

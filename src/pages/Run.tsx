@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { client, type RunFile, type SkipReceipt, type TestOutcome } from "../data";
+import { client, type Run, type RunFile, type SkipReceipt, type TestOutcome } from "../data";
 import { BadgeCheck, Check, X } from "lucide-react";
 import { Card, Message, PageHeader } from "../components/PageHeader";
 import { MinuteSum, OutcomePill, SAVED_NOTE, triggerLabel } from "../components/ci";
@@ -11,6 +11,8 @@ import { SearchInput } from "../components/SearchInput";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useProjectTitle } from "../components/Shell";
 import { useAsync } from "../lib/useAsync";
+import { useLiveRun } from "../lib/useLiveRun";
+import { REGIONS } from "./Settings";
 import { formatCount, formatDateTime, formatDuration, formatMinutes, formatPercent, shortSha } from "../lib/format";
 import { runMinutes, setupSnippet } from "../data/ci";
 import { languageLabel } from "./Projects";
@@ -161,6 +163,54 @@ function SuiteSquares({ files }: { files: RunFile[] }) {
   );
 }
 
+const PHASES: Record<NonNullable<Run["progress"]>["phase"], string> = { setup: "Setting up the machine", collecting: "Collecting tests", testing: "Running tests", reporting: "Reporting results" };
+
+/** The runner's latest progress record of a running run, refreshed by the live view. */
+function LiveProgress({ run, polling }: { run: Run; polling: boolean }) {
+  const p = run.progress;
+  if (!p) return <Message>Running: waiting for the first progress report from the machine.</Message>;
+  const total = p.testsTotal;
+  const share = total ? Math.min(1, p.testsDone / total) : 0;
+  return (
+    <div className="live">
+      <div className="live-head">
+        <strong>{PHASES[p.phase]}</strong>
+        <span className="muted small" aria-live="polite">
+          {total === null ? `${formatCount(p.testsDone)} tests done, collecting` : `${formatCount(p.testsDone)} of ${formatCount(total)} tests done (${formatPercent(share)})`}
+        </span>
+      </div>
+      <div className="meter" role="progressbar" aria-label="Tests done" aria-valuemin={0} aria-valuemax={total ?? undefined} aria-valuenow={total === null ? undefined : p.testsDone}>
+        <span className="meter-fill" style={{ width: `${share * 100}%` }} />
+      </div>
+      <dl className="facts facts-4 live-facts">
+        <div>
+          <dt>Passed</dt>
+          <dd className="mono">{formatCount(p.passed)}</dd>
+        </div>
+        <div>
+          <dt>Failed</dt>
+          <dd className={p.failed ? "mono fail-count" : "mono"}>{formatCount(p.failed)}</dd>
+        </div>
+        <div>
+          <dt>Skipped with proof</dt>
+          <dd className="mono">{formatCount(p.skippedWithProof)}</dd>
+        </div>
+        <div>
+          <dt>Elapsed</dt>
+          <dd className="mono">{formatDuration(p.elapsedMs)}</dd>
+        </div>
+      </dl>
+      <p className="small break-anywhere">
+        <span className="muted">Now running: </span>
+        {p.currentTest ? <span className="mono">{p.currentTest}</span> : <span className="muted">no test (between steps)</span>}
+      </p>
+      <p className="muted small">
+        Last report from the machine {formatDateTime(p.updatedAt)}. {polling ? "This page checks for news every few seconds while it is open." : "Updates pause while this page is hidden."}
+      </p>
+    </div>
+  );
+}
+
 export function RunPage() {
   const { projectId = "", runId = "" } = useParams();
   const [params, setParams] = useSearchParams();
@@ -169,10 +219,13 @@ export function RunPage() {
   const receiptId = params.get("receipt");
   const [search, setSearch] = useState(params.get("q") ?? "");
   const data = useAsync(() => client.getRun(runId), [runId]);
+  const live = useLiveRun(runId, data.status === "ready" ? data.data : null);
+  const status = live.detail?.run.status ?? null;
   const q = params.get("q") ?? "";
-  const tests = useAsync(() => client.listTestResults(runId, { outcome, search: q, page, pageSize: PAGE_SIZE }), [runId, outcome, q, page]);
+  // The per-test results and the files arrive once the run has finished: asked again when its status changes.
+  const tests = useAsync(() => client.listTestResults(runId, { outcome, search: q, page, pageSize: PAGE_SIZE }), [runId, outcome, q, page, status]);
   const receipt = useAsync(() => (receiptId ? client.getSkipReceipt(receiptId) : Promise.resolve(null)), [receiptId]);
-  const files = useAsync(() => client.listRunFiles(runId), [runId]);
+  const files = useAsync(() => client.listRunFiles(runId), [runId, status]);
   const project = data.status === "ready" && data.data ? data.data.project : null;
   useProjectTitle(project?.fullName, project ? { language: languageLabel(project.language), runner: project.testRunner, snippet: setupSnippet(project) } : undefined);
 
@@ -194,7 +247,7 @@ export function RunPage() {
 
   if (data.status === "loading") return <Message>Loading run</Message>;
   if (data.status === "error") return <Message role="alert">{data.message}</Message>;
-  if (!data.data || data.data.run.projectId !== projectId)
+  if (!data.data || !live.detail || data.data.run.projectId !== projectId)
     return (
       <div className="empty not-found">
         <h1>Run not found</h1>
@@ -203,7 +256,9 @@ export function RunPage() {
         </Link>
       </div>
     );
-  const { run } = data.data;
+  const { run } = live.detail;
+  const running = run.status === "running";
+  const shadow = run.mode === "shadow";
   const counts = tests.status === "ready" ? tests.data.counts : null;
 
   return (
@@ -223,38 +278,63 @@ export function RunPage() {
         }
       />
 
-      <div className="kpis">
-        <div className="kpi">
-          <strong className="kpi-value">{formatCount(run.tests.total)}</strong>
-          <span className="kpi-label">Tests</span>
-          <span className="kpi-sub muted small">in the suite</span>
+      {shadow && (
+        <p className="callout shadow-note" role="note">
+          <span>
+            <strong>
+              Shadow run: nothing was skipped; {formatCount(run.wouldSkipTests)} {run.wouldSkipTests === 1 ? "test" : "tests"} would have been.
+            </strong>{" "}
+            Every test ran, as during the trial. With skipping on, they would have saved {formatDuration(run.wouldSaveMs)} of test time.
+          </span>
+        </p>
+      )}
+
+      {running ? (
+        <Card id="live" title="Live" description="The run is still going. Its tests, receipts and minutes arrive when it finishes.">
+          <LiveProgress run={run} polling={live.polling} />
+        </Card>
+      ) : (
+        <div className="kpis">
+          <div className="kpi">
+            <strong className="kpi-value">{formatCount(run.tests.total)}</strong>
+            <span className="kpi-label">Tests</span>
+            <span className="kpi-sub muted small">in the suite</span>
+          </div>
+          <div className="kpi">
+            <strong className="kpi-value">{formatCount(run.tests.ran)}</strong>
+            <span className="kpi-label">Ran</span>
+            <span className="kpi-sub muted small">{formatCount(run.tests.passed)} passed</span>
+          </div>
+          {shadow ? (
+            <div className="kpi">
+              <strong className="kpi-value">{formatCount(run.wouldSkipTests)}</strong>
+              <span className="kpi-label">Would have skipped</span>
+              <span className="kpi-sub muted small">shadow run: none skipped</span>
+            </div>
+          ) : (
+            <div className="kpi">
+              <strong className="kpi-value">{formatCount(run.tests.skippedWithProof)}</strong>
+              <span className="kpi-label">Skipped with proof</span>
+              <span className="kpi-sub muted small">{formatPercent(run.skipShare)} of test time</span>
+            </div>
+          )}
+          <div className="kpi">
+            <strong className="kpi-value">{formatCount(run.tests.failed)}</strong>
+            <span className="kpi-label">Failed</span>
+            <span className="kpi-sub muted small">{run.tests.flakyDefects ? `${run.tests.flakyDefects} flaky, reproducible` : run.tests.failed ? "real failures" : "none"}</span>
+          </div>
+          <div className="kpi">
+            <strong className="kpi-value">{formatDuration(run.durationMs)}</strong>
+            <span className="kpi-label">Duration</span>
+            <span className="kpi-sub muted small">on fenvix</span>
+          </div>
+          <div className="kpi">
+            <strong className="kpi-value">{formatMinutes(runMinutes(run).skipped)}</strong>
+            <span className="kpi-label">Saved</span>
+            <span className="kpi-sub muted small">skipped tests only</span>
+          </div>
         </div>
-        <div className="kpi">
-          <strong className="kpi-value">{formatCount(run.tests.ran)}</strong>
-          <span className="kpi-label">Ran</span>
-          <span className="kpi-sub muted small">{formatCount(run.tests.passed)} passed</span>
-        </div>
-        <div className="kpi">
-          <strong className="kpi-value">{formatCount(run.tests.skippedWithProof)}</strong>
-          <span className="kpi-label">Skipped with proof</span>
-          <span className="kpi-sub muted small">{formatPercent(run.skipShare)} of test time</span>
-        </div>
-        <div className="kpi">
-          <strong className="kpi-value">{formatCount(run.tests.failed)}</strong>
-          <span className="kpi-label">Failed</span>
-          <span className="kpi-sub muted small">{run.tests.flakyDefects ? `${run.tests.flakyDefects} flaky, reproducible` : run.tests.failed ? "real failures" : "none"}</span>
-        </div>
-        <div className="kpi">
-          <strong className="kpi-value">{formatDuration(run.durationMs)}</strong>
-          <span className="kpi-label">Duration</span>
-          <span className="kpi-sub muted small">on fenvix</span>
-        </div>
-        <div className="kpi">
-          <strong className="kpi-value">{formatMinutes(runMinutes(run).skipped)}</strong>
-          <span className="kpi-label">Saved</span>
-          <span className="kpi-sub muted small">skipped tests only</span>
-        </div>
-      </div>
+      )}
 
       <Card id="facts" title="Run" description="Where it came from and how it ran.">
         <dl className="facts facts-4">
@@ -282,15 +362,44 @@ export function RunPage() {
             <dt>Engine</dt>
             <dd className="mono">{run.engineVersion}</dd>
           </div>
+          <div>
+            <dt>Mode</dt>
+            <dd>{shadow ? "Shadow (trial): every test runs" : "Skip with proof"}</dd>
+          </div>
+          <div>
+            <dt>Region</dt>
+            <dd>{run.region ? REGIONS[run.region].name : "Not recorded"}</dd>
+          </div>
+          {!running && !shadow && (
+            <div>
+              <dt>Audit reruns</dt>
+              <dd>
+                {run.audit.rerun === 0 ? (
+                  "None in this run"
+                ) : (
+                  <>
+                    {formatCount(run.audit.rerun)} skipped {run.audit.rerun === 1 ? "test" : "tests"} ran again,{" "}
+                    <span className={run.audit.wrongSkips ? "fail-count" : undefined}>
+                      {formatCount(run.audit.wrongSkips)} wrong {run.audit.wrongSkips === 1 ? "skip" : "skips"}
+                    </span>
+                  </>
+                )}
+              </dd>
+            </div>
+          )}
         </dl>
-        <p className="minute-line" id="run-minutes">
-          On a GitHub-hosted runner: <MinuteSum m={runMinutes(run)} decimals={1} />
-        </p>
-        <p className="muted small">{SAVED_NOTE}</p>
+        {!running && (
+          <>
+            <p className="minute-line" id="run-minutes">
+              On a GitHub-hosted runner: <MinuteSum m={runMinutes(run)} decimals={1} />
+            </p>
+            <p className="muted small">{SAVED_NOTE}</p>
+          </>
+        )}
       </Card>
 
       <Card id="suite" title="Test suite" description="Each square is a test file.">
-        {files.status === "ready" ? files.data.length ? <SuiteSquares files={files.data} /> : <p className="muted">No tests recorded for this run.</p> : <Message>Loading the suite</Message>}
+        {running ? <p className="muted">The files of the suite show once the run has finished.</p> : files.status === "ready" ? files.data.length ? <SuiteSquares files={files.data} /> : <p className="muted">No tests recorded for this run.</p> : <Message>Loading the suite</Message>}
       </Card>
 
       <Card
@@ -319,7 +428,9 @@ export function RunPage() {
         {tests.status === "error" && <Message role="alert">{tests.message}</Message>}
         {tests.status === "ready" && (
           <>
-            {tests.data.items.length === 0 ? (
+            {running ? (
+              <p className="muted">Per-test results arrive when the run finishes.</p>
+            ) : tests.data.items.length === 0 ? (
               <p className="muted">No test matches.</p>
             ) : (
               <ul className="test-list">

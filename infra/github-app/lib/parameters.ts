@@ -4,7 +4,8 @@
  * machine reads any of them (R-012 F2): a machine's credentials are minted for it and passed in its user data.
  * github-app/src/lambda/secrets.ts reads the same names.
  */
-export type Reader = "http" | "worker" | "sweep" | "demo" | "reaper-demo";
+/** "api": the dashboard API function (github-app/src/lambda/api.ts). */
+export type Reader = "http" | "worker" | "sweep" | "demo" | "reaper-demo" | "api";
 export interface Param { name: string; required: boolean; readers: Reader[]; value: string }
 
 export const appPrefix = (env: string) => `/fenvix/${env}/github-app`;
@@ -17,9 +18,10 @@ export function appParameters(env: string): Param[] {
     { name: `${p}/private-key`, required: true, readers: ["http", "worker", "sweep", "demo", "reaper-demo"], value: "the App's private key (.pem file content)" },
     { name: `${p}/webhook-secret`, required: true, readers: ["http"], value: "the App's webhook secret (openssl rand -hex 32)" },
     { name: `${p}/client-secret`, required: true, readers: ["http"], value: "the App's OAuth client secret" },
-    { name: `${p}/state-signing-key`, required: true, readers: ["http"], value: "openssl rand -hex 32" },
+    { name: `${p}/state-signing-key`, required: true, readers: ["http", "api"], value: "openssl rand -hex 32 (the API signs the install link's state, the App checks it)" },
     { name: `${p}/runner-token`, required: true, readers: ["http", "worker", "demo"], value: "openssl rand -hex 32: the key that signs each machine's summary credential (never on a machine)" },
     { name: `${p}/runner-token-previous`, required: false, readers: ["http"], value: "only while rotating runner-token (credentials signed with it stay valid)" },
+    { name: `${p}/api-database-url`, required: true, readers: ["api"], value: "Postgres URL of the role fenvix_api (Supabase pooler, TRANSACTION mode, port 6543)" },
   ];
 }
 

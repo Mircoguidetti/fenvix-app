@@ -1744,3 +1744,36 @@ table.data.dbs thead th { font-size: 12px; }
 .suite-legend li { display: inline-flex; align-items: center; gap: 6px; }
 .nowrap { white-space: nowrap; }
 .cx-sub-group { display: block; padding: 0 12px 4px; }
+
+/* ---------------------------------------------------------------- dashboard on the API (2026-11-18) */
+/* Shadow trial: four numbers and the gate, as a state with its words. */
+.trial { display: flex; flex-direction: column; gap: 14px; }
+.trial-gate { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0; }
+/* Live run: the runner's progress, a grey bar like the usage meter. */
+.live { display: flex; flex-direction: column; gap: 12px; }
+.live-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
+.live-facts { margin: 0; }
+.shadow-note, .running-note, .addon-note { margin: 0; }
+/* GitHub App installations and their repositories. */
+.install { display: flex; flex-direction: column; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line-soft); }
+.install:first-of-type { border-top: 0; padding-top: 4px; }
+.install-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.install-head h3 { font-size: 15px; font-weight: 600; margin: 0; }
+.install-tags { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.repo-name { font-weight: 600; }
+.repo-detail { margin: 0; }
+.install-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+/* API keys: not offered yet. */
+.coming-soon svg { color: var(--muted); }
+/* Billing: add-ons, and units when the plan's are not set. */
+.addon-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr; gap: 14px; }
+@media (min-width: 760px) { .addon-list { grid-template-columns: repeat(2, 1fr); } }
+.addon { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+.units-used { margin: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+/* Skip with proof: audit reruns. */
+.audit-bound { margin: 12px 0; font-weight: 500; }
+.sub-h { font-size: 13.5px; font-weight: 600; margin: 0 0 8px; }
+.audit-list li { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+.audit-list li:last-child { border-bottom: 0; }
+.audit-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.audit-item .hash { max-width: 100%; }

@@ -1,6 +1,7 @@
--- Row level security of the CI dashboard tables (0011_ci_runs.sql). Run AFTER 0001, 0002, 0008 and 0011. Like the
--- other tests it works in one transaction and rolls everything back; a failed assertion stops the script with a message
--- naming the check; a clean run ends with "CI RLS OK".
+-- Row level security of the CI dashboard tables (0011_ci_runs.sql, as 0014 leaves them). Run AFTER 0001 to 0014. Like
+-- the other tests it works in one transaction and rolls everything back; a failed assertion stops the script with a
+-- message naming the check; a clean run ends with "CI RLS OK". The browser reads nothing (0014): members read through
+-- the dashboard API (role fenvix_api, naming the user and the organization); the GitHub App (fenvix_github_app) writes.
 --
 --   owner O and member M share workspace W. Outsider X owns workspace XW. Each workspace has one project with one run,
 --   one failed test that is a defect, one test skipped with proof and its receipt.
@@ -16,7 +17,7 @@ create temporary table ci_ids on commit drop as
 select
   (select workspace_id from public.workspace_members where user_id = '1aaaaaaa-0000-4000-8000-000000000001') as w,
   (select workspace_id from public.workspace_members where user_id = '1ddddddd-0000-4000-8000-000000000004') as xw;
-grant select on ci_ids to authenticated, anon, fenvix_control_plane;
+grant select on ci_ids to authenticated, anon, fenvix_api, fenvix_github_app;
 
 do $$
 declare r ci_ids%rowtype; p uuid; xp uuid; run uuid; xrun uuid; d uuid; xd uuid; rc uuid; xrc uuid;
@@ -74,16 +75,33 @@ begin
 end $$;
 reset role;
 
--- ---------------------------------------------------------------- the member: reads W, never XW, writes nothing
+-- ---------------------------------------------------------------- signed in, in the browser: nothing either (0014)
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"1bbbbbbb-0000-4000-8000-000000000002","role":"authenticated"}';
+do $$
+declare n int; t text;
+begin
+  foreach t in array array['ci_plans', 'ci_reference_rates', 'ci_subscriptions', 'ci_projects', 'ci_runs', 'ci_defects', 'ci_skip_receipts', 'ci_test_results']
+  loop
+    begin
+      execute format('select count(*) from public.%I', t) into n;
+      assert false, format('a signed-in browser can read %s', t);
+    exception when insufficient_privilege then null; end;
+  end loop;
+end $$;
+reset role;
+
+-- ---------------------------------------------------------------- the member, through the API: reads W, never XW, writes nothing
+set local role fenvix_api;
 do $$
 declare r ci_ids%rowtype; n int; t text;
 begin
   select * into r from ci_ids;
-  assert (select count(*) from public.ci_plans) = 4, 'a signed-in user cannot read the plans';
-  assert (select count(*) from public.ci_plans where price_usd_month is not null) = 0, 'a plan has a price: prices are not set yet';
-  assert (select count(*) from public.ci_reference_rates) >= 1, 'a signed-in user cannot read the reference rates';
+  perform set_config('app.user_id', '1bbbbbbb-0000-4000-8000-000000000002', true), set_config('app.workspace_id', r.w::text, true);
+  assert (select count(*) from public.ci_plans where kind = 'plan') = 4, 'the plans are not readable';
+  assert (select count(*) from public.ci_plans where kind = 'plan' and price_usd_month is null) = 0, 'a plan has no price (prices set on 2026-11-18)';
+  assert (select count(*) from public.ci_plans where units_included is not null) = 0, 'a plan has included units: they are not set yet';
+  assert (select count(*) from public.ci_reference_rates) >= 1, 'the reference rates are not readable';
   foreach t in array array['ci_subscriptions', 'ci_projects', 'ci_runs', 'ci_defects', 'ci_skip_receipts', 'ci_test_results']
   loop
     execute format('select count(*) from public.%I where workspace_id = $1', t) into n using r.w;
@@ -99,39 +117,45 @@ begin
   begin
     insert into public.ci_runs (project_id, number, commit_sha, branch, trigger, status, pushed_at, started_at)
       select id, 99, repeat('9', 40), 'main', 'push', 'passed', now(), now() from public.ci_projects where workspace_id = r.w;
-    assert false, 'a signed-in user can insert runs';
+    assert false, 'the API can insert runs';
   exception when insufficient_privilege then null; end;
   begin
     update public.ci_defects set state = 'fixed';
-    assert false, 'a signed-in user can change defects';
+    assert false, 'the API can change defects';
   exception when insufficient_privilege then null; end;
   begin
     update public.ci_plans set price_usd_month = 1;
-    assert false, 'a signed-in user can set a price';
+    assert false, 'the API can set a price';
   exception when insufficient_privilege then null; end;
   begin
     delete from public.ci_projects;
-    assert false, 'a signed-in user can delete projects';
+    assert false, 'the API can delete projects';
   exception when insufficient_privilege then null; end;
 end $$;
 reset role;
 
--- ---------------------------------------------------------------- the owner: changes settings of W only, four columns only
-set local role authenticated;
-set local request.jwt.claims = '{"sub":"1aaaaaaa-0000-4000-8000-000000000001","role":"authenticated"}';
+-- ---------------------------------------------------------------- the owner, through the API: settings of W only, four columns only
+set local role fenvix_api;
 do $$
 declare r ci_ids%rowtype; n int;
 begin
   select * into r from ci_ids;
+  perform set_config('app.user_id', '1aaaaaaa-0000-4000-8000-000000000001', true), set_config('app.workspace_id', r.w::text, true);
   update public.ci_projects set nightly_exploration = true, test_command = 'pytest -x tests' where workspace_id = r.w;
   get diagnostics n = row_count;
   assert n = 1, 'the owner cannot change a project''s settings';
   update public.ci_projects set nightly_exploration = true where workspace_id = r.xw;
   get diagnostics n = row_count;
   assert n = 0, 'WRITE LEAK: the owner changed the outsider''s project';
+  -- Naming the outsider's organization does not help.
+  perform set_config('app.workspace_id', r.xw::text, true);
+  update public.ci_projects set nightly_exploration = true where workspace_id = r.xw;
+  get diagnostics n = row_count;
+  assert n = 0, 'WRITE LEAK: naming another organization let the owner change its project';
+  perform set_config('app.workspace_id', r.w::text, true);
   begin
     update public.ci_projects set full_name = 'northwind/renamed' where workspace_id = r.w;
-    assert false, 'the owner can rename a project (only the runner may)';
+    assert false, 'the owner can rename a project (only the App may)';
   exception when insufficient_privilege then null; end;
   begin
     update public.ci_projects set setup_state = 'active' where workspace_id = r.w;
@@ -140,31 +164,31 @@ begin
 end $$;
 reset role;
 
--- ---------------------------------------------------------------- the control plane: one organization per transaction
-set local role fenvix_control_plane;
+-- ---------------------------------------------------------------- the GitHub App: one organization per transaction
+set local role fenvix_github_app;
 do $$
 declare r ci_ids%rowtype; n int; p uuid;
 begin
   select * into r from ci_ids;
   perform set_config('app.workspace_id', '', true);
-  assert (select count(*) from public.ci_runs) = 0, 'the control plane reads runs without naming an organization';
+  assert (select count(*) from public.ci_runs) = 0, 'the App reads runs without naming an organization';
   perform set_config('app.workspace_id', r.w::text, true);
-  assert (select count(*) from public.ci_runs) = 1, 'the control plane cannot read the runs of the organization it acts for';
-  assert (select count(*) from public.ci_projects where workspace_id = r.xw) = 0, 'READ LEAK: the control plane sees another organization';
+  assert (select count(*) from public.ci_runs) = 1, 'the App cannot read the runs of the organization it acts for';
+  assert (select count(*) from public.ci_projects where workspace_id = r.xw) = 0, 'READ LEAK: the App sees another organization';
   select id into p from public.ci_projects limit 1;
   insert into public.ci_runs (project_id, number, commit_sha, branch, trigger, status, pushed_at, started_at, tests_total, tests_ran)
     values (p, 2, repeat('1', 40), 'main', 'push', 'passed', now(), now(), 1, 1);
-  assert (select count(*) from public.ci_runs) = 2, 'the control plane cannot add a run';
+  assert (select count(*) from public.ci_runs) = 2, 'the App cannot add a run';
   begin
     insert into public.ci_projects (workspace_id, full_name, language, test_runner, installation_id) values (r.xw, 'outsider/planted', 'python', 'pytest', 1);
-    assert false, 'WRITE LEAK: the control plane planted a project in another organization';
+    assert false, 'WRITE LEAK: the App planted a project in another organization';
   exception when insufficient_privilege then null; end;
 end $$;
 reset role;
 
 -- A run of another organization's project cannot be planted either: the trigger takes the project's organization, and
--- the control plane acting for W cannot see XW's project at all.
-set local role fenvix_control_plane;
+-- the App acting for W cannot see XW's project at all.
+set local role fenvix_github_app;
 do $$
 declare r ci_ids%rowtype;
 begin
