@@ -1,3 +1,4 @@
+import { parseExploration, parseResults, type RunnerExploration, type RunnerResults } from "./results/runner-records.ts";
 import type { Logger } from "./service.ts";
 import type { GitHubService } from "./service.ts";
 
@@ -9,15 +10,22 @@ import type { GitHubService } from "./service.ts";
  *   - AWS Lambda (src/lambda/): sent to an SQS queue and run by the worker Lambda (src/queue/sqs.ts), so no work
  *     happens after the HTTP response, which Lambda would freeze.
  *
- * Running the same Work twice is safe: deliveries are recorded once (gh_webhook_deliveries), summaries are upserted,
- * and a run is published once (gh_jobs.published_at) with one usage event per GitHub job.
+ * Running the same Work twice is safe: deliveries are recorded once (gh_webhook_deliveries), summaries and results
+ * chunks are upserted and applied idempotently, a run is published once (gh_jobs.published_at) with one usage event
+ * per GitHub job, an exploration is stored once per (project, start, commit), and onboarding finds its open pull request.
  */
 export type Work =
   | { kind: "webhook"; event: string; delivery: string; payload: Record<string, unknown> }
   | {
     kind: "summary"; repositoryId: number; runId: number; runAttempt: number; runnerName: string; receiptsUrl: string | null;
     summary: Record<string, unknown>;
-  };
+  }
+  /** POST /v1/runner/results: one chunk of a job's per-test results (checked against RunnerResults). */
+  | { kind: "results"; repositoryId: number; runId: number; runAttempt: number; runnerName: string; results: RunnerResults }
+  /** POST /v1/runner/explorations: one night of exploration of the repository (checked against RunnerExploration). */
+  | { kind: "exploration"; repositoryId: number; runnerName: string; exploration: RunnerExploration }
+  /** The dashboard asked for the setup pull request of one repository (by GitHub's repository id). */
+  | { kind: "onboard"; repositoryId: number };
 
 export interface WorkQueue {
   /** Resolves once the work is accepted (queued durably, or started in this process). Rejects if it was not. */
@@ -25,7 +33,13 @@ export interface WorkQueue {
 }
 
 export function describeWork(w: Work): string {
-  return w.kind === "webhook" ? `webhook ${w.event} ${w.delivery}` : `summary ${w.repositoryId}/${w.runId}/${w.runAttempt}`;
+  switch (w.kind) {
+    case "webhook": return `webhook ${w.event} ${w.delivery}`;
+    case "summary": return `summary ${w.repositoryId}/${w.runId}/${w.runAttempt}`;
+    case "results": return `results ${w.repositoryId}/${w.runId}/${w.runAttempt} chunk ${w.results.chunk}`;
+    case "exploration": return `exploration ${w.repositoryId} ${w.exploration.startedAt}`;
+    case "onboard": return `onboard ${w.repositoryId}`;
+  }
 }
 
 /** Runs one piece of work. Throws if it failed (the queue then retries it). */
@@ -37,6 +51,18 @@ export async function runWork(service: GitHubService, w: Work): Promise<void> {
   if (w.kind === "summary") {
     const { repositoryId, runId, runAttempt, runnerName, receiptsUrl, summary } = w;
     await service.receiveSummary({ repositoryId, runId, runAttempt, runnerName, receiptsUrl, summary });
+    return;
+  }
+  if (w.kind === "results") {
+    await service.receiveResults({ repositoryId: w.repositoryId, runId: w.runId, runAttempt: w.runAttempt, runnerName: w.runnerName, results: w.results });
+    return;
+  }
+  if (w.kind === "exploration") {
+    await service.receiveExploration({ repositoryId: w.repositoryId, runnerName: w.runnerName, exploration: w.exploration });
+    return;
+  }
+  if (w.kind === "onboard") {
+    await service.onboard(w.repositoryId);
     return;
   }
   throw new Error(`unknown work kind ${(w as { kind?: unknown }).kind}`);
@@ -57,6 +83,16 @@ export function parseWork(v: unknown): Work {
       runnerName: o.runnerName, receiptsUrl: o.receiptsUrl as string | null, summary: o.summary as Record<string, unknown>,
     };
   }
+  if (o?.kind === "results" && posInt(o.repositoryId) && posInt(o.runId) && posInt(o.runAttempt) && typeof o.runnerName === "string" && isObj(o.results)) {
+    return {
+      kind: "results", repositoryId: o.repositoryId as number, runId: o.runId as number, runAttempt: o.runAttempt as number,
+      runnerName: o.runnerName, results: parseResults(o.results),
+    };
+  }
+  if (o?.kind === "exploration" && posInt(o.repositoryId) && typeof o.runnerName === "string" && isObj(o.exploration)) {
+    return { kind: "exploration", repositoryId: o.repositoryId as number, runnerName: o.runnerName, exploration: parseExploration(o.exploration) };
+  }
+  if (o?.kind === "onboard" && posInt(o.repositoryId)) return { kind: "onboard", repositoryId: o.repositoryId as number };
   throw new Error("not a work message");
 }
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type pg from "pg";
 import { signState } from "../../src/auth.ts";
+import { runWork } from "../../src/work.ts";
 import { ACCOUNT, addMember, CI_YAML, DASHBOARD, Harness, INSTALLATION_ID, installationCreated, makeOrg, REPOS, resetDb } from "../helpers/harness.ts";
 
 describe("connecting an installation to an organization", () => {
@@ -23,19 +24,8 @@ describe("connecting an installation to an organization", () => {
   });
   after(async () => { await h.stop(); await admin.end(); });
 
-  const installLink = async (userId: string | null, workspaceId: string) => h.app.fastify.inject({
-    method: "POST", url: "/v1/github/install-link", payload: { workspaceId },
-    headers: userId ? { authorization: `Bearer ${await h.token(userId)}` } : {},
-  });
-
-  it("the install link needs a signed-in owner or admin of that organization", async () => {
-    assert.equal((await installLink(null, org.workspaceId)).statusCode, 401);
-    assert.equal((await installLink(memberId, org.workspaceId)).statusCode, 403);
-    assert.equal((await installLink(other.userId, org.workspaceId)).statusCode, 403);
-    const ok = await installLink(org.userId, org.workspaceId);
-    assert.equal(ok.statusCode, 200);
-    assert.match(ok.json().url, /^https:\/\/github\.com\/apps\/fenvix-test\/installations\/new\?state=[\w.%-]+$/);
-  });
+  // The install link itself comes from the dashboard API (POST /v1/github/install-link, src/api/github.ts), tested in
+  // tests/integration/api-dashboard.test.ts with its owner, admin and member matrix.
 
   const setup = (q: Record<string, string>) => h.app.fastify.inject({ method: "GET", url: `/github/setup?${new URLSearchParams(q)}` });
   const where = (res: { headers: Record<string, unknown> }) => new URL(String(res.headers.location));
@@ -77,6 +67,10 @@ describe("connecting an installation to an organization", () => {
     assert.equal(`${u.origin}${u.pathname}`, `${DASHBOARD}/projects/connect`);
     assert.equal(u.searchParams.get("github"), "connected");
     assert.equal(u.searchParams.get("account"), "acme");
+    assert.deepEqual(Object.fromEntries(u.searchParams), { github: "connected", installation: String(INSTALLATION_ID), account: "acme" });
+    // Linking starts the organization's 30-day shadow trial (gh_link_installation, migration 0014).
+    const trial = (await admin.query("select trial_ends_at - trial_started_at = interval '30 days' as thirty, trial_ends_at > now() as active from ci_subscriptions where workspace_id = $1", [org.workspaceId])).rows[0];
+    assert.deepEqual(trial, { thirty: true, active: true });
     const inst = (await admin.query("select workspace_id, linked_by from gh_installations")).rows[0];
     assert.deepEqual(inst, { workspace_id: org.workspaceId, linked_by: org.userId });
     assert.equal((await admin.query("select workspace_id from gh_repositories")).rows[0].workspace_id, org.workspaceId);
@@ -91,6 +85,7 @@ describe("connecting an installation to an organization", () => {
     h.gh.userInstallations.set("gho_other", [INSTALLATION_ID]);
     const r = await setup({ installation_id: String(INSTALLATION_ID), setup_action: "install", state, code: "code-other" });
     assert.equal(where(r).searchParams.get("reason"), "other_organization");
+    assert.deepEqual(Object.fromEntries(where(r).searchParams), { github: "error", reason: "other_organization" });
     assert.equal((await admin.query("select workspace_id from gh_installations")).rows[0].workspace_id, org.workspaceId);
   });
 
@@ -99,16 +94,9 @@ describe("connecting an installation to an organization", () => {
     assert.equal(where(r).searchParams.get("github"), "requested");
   });
 
-  it("with All repositories, the dashboard opens the onboarding pull request of one repository", async () => {
-    const call = async (userId: string, repo: number) => h.app.fastify.inject({
-      method: "POST", url: `/v1/repositories/${repo}/onboarding`, headers: { authorization: `Bearer ${await h.token(userId)}` },
-    });
-    assert.equal((await call(other.userId, REPOS.shop.id)).statusCode, 404);
-    assert.equal((await call(memberId, REPOS.shop.id)).statusCode, 404);
-    assert.equal((await call(org.userId, 123456)).statusCode, 404);
-    const r = await call(org.userId, REPOS.shop.id);
-    assert.equal(r.statusCode, 200);
-    assert.deepEqual(r.json(), { state: "pr_open", detail: "changed .github/workflows/ci.yml:test", pullRequest: { number: 1, url: "https://github.com/acme/shop/pull/1" } });
+  it("with All repositories, the dashboard asks for the onboarding pull request of one repository (work kind onboard)", async () => {
+    // The dashboard API checks the organization and the role, then queues { kind: "onboard", repositoryId } (src/api/github.ts).
+    await runWork(h.app.service, { kind: "onboard", repositoryId: REPOS.shop.id });
     const p = (await admin.query("select setup_state, setup_pr_number, language, test_runner from ci_projects")).rows[0];
     assert.deepEqual(p, { setup_state: "pr_open", setup_pr_number: 1, language: "python", test_runner: "pytest" });
   });

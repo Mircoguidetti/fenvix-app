@@ -57,7 +57,8 @@ describe("demo mode: one fresh machine per demo (demo-up / demo-down)", () => {
     const ud = Buffer.from(i.input.UserData!, "base64").toString();
     const token = gh.repos.get("acme/demo")!.registrationTokens[0]!;
     assert.ok(ud.includes(`printf '%s' '${token}' >/etc/fenvix/registration-token`));
-    assert.match(ud, /^FENVIX_MODE=demo$/m);
+    assert.match(ud, /^FENVIX_MACHINE=demo$/m);
+    assert.match(ud, /^FENVIX_MODE=enforce$/m);
     assert.match(ud, /^FENVIX_REPO_URL=https:\/\/github\.com\/acme\/demo$/m);
     assert.match(ud, /systemctl start --no-block fenvix-summary-poster\.service fenvix-runner\.service/);
     assert.doesNotMatch(ud, /FENVIX_CACHE_URL/, "a demo keeps its cache on its own disk: nothing crosses demos");

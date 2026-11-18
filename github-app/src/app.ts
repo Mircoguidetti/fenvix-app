@@ -1,9 +1,10 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import { SessionVerifier, signState, verifyState } from "./auth.ts";
+import { SessionVerifier, verifyState } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { Db } from "./db.ts";
 import { GitHubApp, GitHubError } from "./github/client.ts";
 import { verifySignature } from "./github/signature.ts";
+import { parseExploration, parseProgress, parseResults, RecordError, type RunnerJob } from "./results/runner-records.ts";
 import { SummaryError, parseSummary, trimSummary } from "./results/summary.ts";
 import { verifySummaryCredential } from "./runners/credentials.ts";
 import type { RunnerLauncher } from "./runners/launcher.ts";
@@ -47,7 +48,6 @@ declare module "fastify" {
   interface FastifyRequest { rawBody?: Buffer }
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EVENTS = new Set(["installation", "installation_repositories", "push", "pull_request", "workflow_job", "ping"]);
 
 /**
@@ -71,7 +71,6 @@ export async function buildApp(deps: Deps): Promise<App> {
   });
   const { service, db, gh } = buildCore(cfg, fastify.log, deps.launcher ?? null);
   const queue = deps.queue ?? new InProcessQueue(service);
-  const sessions = deps.sessions ?? new SessionVerifier(cfg.supabaseUrl, cfg.supabaseJwksUrl);
 
   // The raw bytes are kept: the webhook signature is computed over them, not over re-serialised JSON.
   fastify.addContentTypeParser("application/json", { parseAs: "buffer" }, (req, body, done) => {
@@ -143,17 +142,63 @@ export async function buildApp(deps: Deps): Promise<App> {
     return handOff(req, reply, { kind: "summary", repositoryId: scope.repositoryId, runId, runAttempt, runnerName: scope.runnerName, receiptsUrl, summary });
   });
 
-  // ---------------------------------------------------------------- connecting an installation to an organization
-  fastify.post("/v1/github/install-link", async (req, reply) => {
-    const userId = await sessions.userId(req.headers.authorization);
-    if (!userId) return fail(reply, 401, "unauthorized", "Sign in first.");
-    const workspaceId = (req.body as { workspaceId?: unknown } | undefined)?.workspaceId;
-    if (typeof workspaceId !== "string" || !UUID.test(workspaceId)) return fail(reply, 400, "bad_request", "workspaceId is required.");
-    if (!(await service.isAdmin(workspaceId, userId))) return fail(reply, 403, "forbidden", "Only an owner or admin of the organization can connect GitHub.");
-    const state = signState(cfg.stateSigningKey, { workspaceId, userId });
-    return { url: `${cfg.webUrl}/apps/${cfg.appSlug}/installations/new?state=${encodeURIComponent(state)}` };
+  // ---------------------------------------------------------------- our runners: progress, results, explorations
+  // openapi/fenvix-api.yaml (tag runner) and docs/data-contract.md "What the runner sends". The same per-machine
+  // credential as the summaries; the body is checked against the request schema (400 with the field); a body naming
+  // another runner, repository or run is refused (403).
+  type Scope = NonNullable<ReturnType<typeof verifySummaryCredential>>;
+  const runnerBody = <T>(req: FastifyRequest, reply: FastifyReply, parse: (b: unknown) => T): { scope: Scope; body: T } | null => {
+    const scope = verifySummaryCredential(cfg.runnerTokens, req.headers.authorization);
+    if (!scope) { void fail(reply, 401, "unauthorized", "This machine's summary credential is required."); return null; }
+    let body: T;
+    try { body = parse(req.body); } catch (e) {
+      if (!(e instanceof RecordError)) throw e;
+      void reply.code(400).send({ error: { code: "bad_request", message: e.message, field: e.field } });
+      return null;
+    }
+    const j = body as Partial<RunnerJob>;
+    if ((j.repositoryId !== undefined && j.repositoryId !== scope.repositoryId) || (j.runnerName !== undefined && j.runnerName !== scope.runnerName)
+      || (scope.runId !== undefined && j.runId !== undefined && j.runId !== scope.runId)) {
+      req.log.warn({ runner: scope.runnerName, repositoryId: scope.repositoryId, url: req.url.split("?")[0] }, "a record for another runner, repository or run was refused");
+      void fail(reply, 403, "forbidden", "This credential is for another runner, repository or run.");
+      return null;
+    }
+    return { scope, body };
+  };
+
+  // Written at once (no queue): the live view polls it. A record older than the stored one is ignored; a job whose
+  // run row does not exist yet stores nothing. Both answer 202 like a stored one (the runner does not retry them).
+  fastify.post("/v1/runner/progress", { bodyLimit: 64 * 1024 }, async (req, reply) => {
+    const r = runnerBody(req, reply, parseProgress);
+    if (!r) return reply;
+    const p = r.body;
+    try {
+      await service.receiveProgress({ repositoryId: r.scope.repositoryId, runId: r.scope.runId ?? p.runId, runAttempt: p.runAttempt, runnerName: r.scope.runnerName, progress: p });
+    } catch (e) {
+      req.log.error({ err: e instanceof Error ? e.message : String(e) }, "progress not stored");
+      return fail(reply, 503, "unavailable", "The progress could not be stored. Try again.");
+    }
+    return reply.code(202).send({ ok: true });
   });
 
+  // One chunk of per-test results (at most 5,000 tests, 2,000 receipts, 6 MB): queued (large ones through the queue's
+  // overflow bucket), stored and applied by the worker.
+  fastify.post("/v1/runner/results", { bodyLimit: 6 * 1024 * 1024 }, async (req, reply) => {
+    const r = runnerBody(req, reply, parseResults);
+    if (!r) return reply;
+    const results = { ...r.body, runId: r.scope.runId ?? r.body.runId, repositoryId: r.scope.repositoryId, runnerName: r.scope.runnerName };
+    return handOff(req, reply, { kind: "results", repositoryId: r.scope.repositoryId, runId: results.runId, runAttempt: results.runAttempt, runnerName: r.scope.runnerName, results });
+  });
+
+  fastify.post("/v1/runner/explorations", { bodyLimit: 6 * 1024 * 1024 }, async (req, reply) => {
+    const r = runnerBody(req, reply, parseExploration);
+    if (!r) return reply;
+    return handOff(req, reply, { kind: "exploration", repositoryId: r.scope.repositoryId, runnerName: r.scope.runnerName, exploration: r.body });
+  });
+
+  // ---------------------------------------------------------------- connecting an installation to an organization
+  // The dashboard asks the dashboard API for the link (POST /v1/github/install-link, src/api/github.ts: a state signed
+  // with the same key).
   // GitHub sends the person here after the installation ("Setup URL", with "Request user authorization (OAuth) during
   // installation" on). Three checks before the link: the signed state, the OAuth code, and that GitHub lists the
   // installation among those the same person can see.
@@ -192,18 +237,8 @@ export async function buildApp(deps: Deps): Promise<App> {
     }
   });
 
-  // The dashboard asks for the onboarding pull request of one repository (e.g. when "All repositories" was chosen).
-  fastify.post("/v1/repositories/:repositoryId/onboarding", async (req: FastifyRequest<{ Params: { repositoryId: string } }>, reply) => {
-    const userId = await sessions.userId(req.headers.authorization);
-    if (!userId) return fail(reply, 401, "unauthorized", "Sign in first.");
-    const repositoryId = Number(req.params.repositoryId);
-    if (!Number.isInteger(repositoryId) || repositoryId <= 0) return fail(reply, 400, "bad_request", "Not a repository id.");
-    const ws = await service.repositoryWorkspace(repositoryId);
-    // Unknown, or not this person's organization: the same answer, so ids cannot be probed.
-    if (!ws || !(await service.isAdmin(ws, userId))) return fail(reply, 404, "not_found", "No such repository in your organizations.");
-    const res = await service.onboard(repositoryId);
-    return { state: res.state, detail: res.detail, pullRequest: res.pr ? { number: res.pr.number, url: res.pr.url } : null };
-  });
+  // The setup pull request of one repository: the dashboard API queues it (POST /v1/github/repositories/{id}/setup-pull-request,
+  // work kind "onboard").
 
   let timer: NodeJS.Timeout | null = null;
   return {

@@ -4,6 +4,8 @@
  * maps (`outcomes`, `reused_outcomes`) and the runtime's distribution list are dropped before the summary is stored,
  * because they grow with the suite and the App never shows them.
  */
+import { type Stack, stackFromSummary } from "./detect.ts";
+
 export interface FlakyTest { nodeid: string; replay: string; minimise: string | null }
 
 export interface RunSummary {
@@ -26,6 +28,13 @@ export interface RunSummary {
   notCached: Record<string, number>;
   engineVersion: string;
   runtimeChanged: string[];
+  /**
+   * The language and test runner the run says it used: `language` / `test_runner` when the runner sends them, else
+   * inferred from the runtime (src/results/detect.ts). Null: unknown.
+   */
+  stack: Stack | null;
+  /** The mode the runner ran in (`mode`): shadow during the trial. Null: not sent. */
+  mode: "shadow" | "enforce" | null;
 }
 
 export class SummaryError extends Error {}
@@ -57,10 +66,18 @@ function counts(o: Record<string, unknown>, k: string): Record<string, number> {
 
 const str = (v: unknown, max: number): string | null => (typeof v === "string" && v.length > 0 && v.length <= max ? v : null);
 
-/** The stored form: the runner's summary without the per-test maps. */
+/**
+ * The stored form: the runner's summary without the per-test maps. What the dropped distribution list told (the
+ * engine's version, the language and test runner) is kept as `engine_version`, `language` and `test_runner`.
+ */
 export function trimSummary(raw: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...raw };
   for (const k of DROP) delete out[k];
+  const stack = stackFromSummary(raw);
+  if (stack) {
+    out.language = stack.language;
+    if (stack.testRunner) out.test_runner = stack.testRunner; else delete out.test_runner;
+  }
   if (out.runtime && typeof out.runtime === "object") {
     const { dist_list: _drop, ...rest } = out.runtime as Record<string, unknown>;
     out.runtime = rest;
@@ -74,7 +91,7 @@ function engineVersionOf(raw: Record<string, unknown>): string {
   const rt = raw.runtime as { dist_list?: unknown } | undefined;
   if (rt && Array.isArray(rt.dist_list)) {
     for (const d of rt.dist_list) {
-      const m = typeof d === "string" ? /^detpy==([^:]+)/.exec(d) : null;
+      const m = typeof d === "string" ? /^det(?:py|js)(?:==|@)([^:]+)/.exec(d) : null;
       if (m) return m[1]!;
     }
   }
@@ -123,5 +140,7 @@ export function parseSummary(raw: unknown): RunSummary {
     notCached: counts(o, "not_cached"),
     engineVersion: engineVersionOf(o),
     runtimeChanged: Array.isArray(rc) ? rc.filter((x): x is string => typeof x === "string").slice(0, 50) : [],
+    stack: stackFromSummary(o),
+    mode: o.mode === "shadow" || o.mode === "enforce" ? o.mode : null,
   };
 }

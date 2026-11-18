@@ -4,8 +4,11 @@ import { onboardRepository, type OnboardingResult } from "./onboarding/onboard.t
 import { CHECK_NAME, COMMENT_MARKER, checkRunOutput, conclusionOf, prComment, type RenderContext } from "./results/render.ts";
 import { parseSummary, type RunSummary } from "./results/summary.ts";
 import type { KeyObject } from "node:crypto";
+import { applyChunks, applyExploration, type JobKey } from "./results/apply.ts";
+import { projectStack, type Stack } from "./results/detect.ts";
+import { parseResults, progressRecord, type RunnerExploration, type RunnerProgress, type RunnerResults } from "./results/runner-records.ts";
 import { signCacheToken, signSummaryCredential } from "./runners/credentials.ts";
-import { RetryLater, type RunnerLauncher } from "./runners/launcher.ts";
+import { type Region, RetryLater, type RunMode, type RunnerLauncher } from "./runners/launcher.ts";
 
 export interface ServiceSettings {
   runsOnLabel: string;
@@ -48,8 +51,17 @@ interface JobRow {
   job_id: number; repository_id: number; installation_id: number; run_id: number; run_attempt: number; workflow_name: string; job_name: string;
   head_sha: string; head_branch: string | null; labels: string[]; runner_name: string | null; status: string; conclusion: string | null;
   created_at: Date | null; started_at: Date | null; completed_at: Date | null; check_run_id: number | null; ci_run_id: string | null;
-  published_at: Date | null; publish_attempts: number;
+  published_at: Date | null; publish_attempts: number; region: Region | null;
 }
+/** The workflow run of a job (GET /repos/{o}/{r}/actions/runs/{id}), the parts the App reads. */
+interface WorkflowRunP {
+  event?: string; created_at?: string; head_commit?: { message?: string } | null;
+  pull_requests?: { number: number; head: { ref: string; sha: string }; base: { ref: string } }[];
+}
+/** What the organization's settings say for a job: where its machine runs, and the trial's mode. */
+interface OrgContext { region: Region; mode: RunMode }
+/** The values of a run row the job gives; no completion time: the run is still running. */
+interface RunValues { startedAt: Date; completedAt: Date | null; durationMs: number; otherStepMinutes: number; mode: RunMode; region: Region | null }
 interface RepoRow {
   repository_id: number; installation_id: number; workspace_id: string | null; full_name: string; default_branch: string | null;
   project_id: string | null; onboarding_state: string; setup_pr_number: number | null; setup_pr_url: string | null;
@@ -59,6 +71,8 @@ interface RepoRow {
 const STATUS_RANK: Record<string, number> = { queued: 1, waiting: 1, in_progress: 2, completed: 3 };
 const TRIGGERS = new Set(["push", "pull_request", "merge_group", "schedule", "workflow_dispatch"]);
 const SHA = /^[0-9a-f]{40}$/;
+/** gh_repositories.onboarding_detail of a repository the App has not tried to onboard yet (state pending). */
+const PENDING_DETAIL = "the setup pull request has not been opened yet";
 
 export type HandleResult = "processed" | "duplicate" | "ignored";
 
@@ -145,20 +159,20 @@ export class GitHubService {
   private async upsertRepositories(installationId: number, repos: RepoLite[]): Promise<void> {
     for (const r of repos) {
       await this.db.q(
-        `insert into gh_repositories (repository_id, installation_id, full_name, private) values ($1, $2, $3, $4)
+        `insert into gh_repositories (repository_id, installation_id, full_name, private, onboarding_detail) values ($1, $2, $3, $4, $5)
          on conflict (repository_id) do update set installation_id = excluded.installation_id, full_name = excluded.full_name,
            private = excluded.private, removed_at = null, updated_at = now()`,
-        [r.id, installationId, r.full_name, r.private ?? true]);
+        [r.id, installationId, r.full_name, r.private ?? true, PENDING_DETAIL]);
     }
   }
 
   private async ensureRepository(installationId: number, repo: RepoFull): Promise<void> {
     await this.ensureInstallation(installationId);
     await this.db.q(
-      `insert into gh_repositories (repository_id, installation_id, full_name, private, default_branch) values ($1, $2, $3, $4, $5)
+      `insert into gh_repositories (repository_id, installation_id, full_name, private, default_branch, onboarding_detail) values ($1, $2, $3, $4, $5, $6)
        on conflict (repository_id) do update set full_name = excluded.full_name,
          default_branch = coalesce(excluded.default_branch, gh_repositories.default_branch), updated_at = now()`,
-      [repo.id, installationId, repo.full_name, repo.private ?? true, repo.default_branch ?? null]);
+      [repo.id, installationId, repo.full_name, repo.private ?? true, repo.default_branch ?? null, PENDING_DETAIL]);
   }
 
   private async onInstallation(p: Record<string, unknown>): Promise<void> {
@@ -234,17 +248,25 @@ export class GitHubService {
   }
 
   /**
-   * The dashboard's project for a repository of a linked installation (ci_projects), created when its language is
-   * known (from the workflow, or from the first run). Returns the project id, or null when it cannot be created yet.
+   * The dashboard's project for a repository of a linked installation (ci_projects), created when its language and
+   * test runner are known (src/results/detect.ts: the workflow analysis, else the run's summary, else not yet).
+   * Returns the project id, or null when it cannot be created yet. A repository keeps its project when it is renamed
+   * or moves to another installation of the same organization (found by gh_repositories.project_id).
    */
-  private async syncProject(c: Client, repo: RepoRow, fromRun: { language: string; testRunner: string } | null): Promise<string | null> {
-    const language = repo.detected_language ?? fromRun?.language ?? null;
-    // The run's test runner only for its own language: a Node repository is never labelled pytest.
-    const runner = repo.detected_test_runner ?? (fromRun && fromRun.language === language ? fromRun.testRunner : null)
-      ?? (language === "python" ? "pytest" : language === "go" ? "go test" : null);
-    if (!language || !runner) return null;
+  private async syncProject(c: Client, repo: RepoRow, fromRun: Stack | null): Promise<string | null> {
     const prState = repo.onboarding_state === "merged" ? "merged" : repo.onboarding_state === "closed" ? "closed" : repo.setup_pr_number ? "open" : null;
     const setup = repo.onboarding_state === "pr_open" ? "pr_open" : "app_installed";
+    if (repo.project_id) {
+      const moved = await c.query<{ id: string }>(
+        `update ci_projects set full_name = $2, installation_id = $3, default_branch = coalesce($4, default_branch),
+           setup_state = case when setup_state = 'active' then 'active' else $5 end,
+           setup_pr_number = coalesce($6, setup_pr_number), setup_pr_url = coalesce($7, setup_pr_url), setup_pr_state = coalesce($8, setup_pr_state)
+         where id = $1 and workspace_id = public.cp_workspace() returning id`,
+        [repo.project_id, repo.full_name, repo.installation_id, repo.default_branch, setup, repo.setup_pr_number, repo.setup_pr_url, prState]);
+      if (moved.rows[0]) return moved.rows[0].id;
+    }
+    const stack = projectStack({ language: repo.detected_language, testRunner: repo.detected_test_runner }, fromRun);
+    if (!stack) return null;
     const rows = await c.query<{ id: string }>(
       `insert into ci_projects (workspace_id, full_name, language, test_runner, default_branch, installation_id, setup_state, setup_pr_number, setup_pr_url, setup_pr_state)
        values (public.cp_workspace(), $1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -255,7 +277,7 @@ export class GitHubService {
          setup_pr_url = coalesce(excluded.setup_pr_url, ci_projects.setup_pr_url),
          setup_pr_state = coalesce(excluded.setup_pr_state, ci_projects.setup_pr_state)
        returning id`,
-      [repo.full_name, language, runner, repo.default_branch ?? "main", repo.installation_id, setup, repo.setup_pr_number, repo.setup_pr_url, prState]);
+      [repo.full_name, stack.language, stack.testRunner, repo.default_branch ?? "main", repo.installation_id, setup, repo.setup_pr_number, repo.setup_pr_url, prState]);
     const id = rows.rows[0]!.id;
     if (repo.project_id !== id) await c.query("update gh_repositories set project_id = $2 where repository_id = $1", [repo.repository_id, id]);
     return id;
@@ -294,10 +316,13 @@ export class GitHubService {
     // The onboarding pull request: its state is the project's setup state.
     if (pr.head.ref === this.s.onboardingBranch && pr.head.repo?.id === repo.id) {
       const onboarding = state === "open" ? "pr_open" : state;
+      const detail = state === "open" ? `the setup pull request #${pr.number} is open`
+        : state === "merged" ? `the setup pull request #${pr.number} was merged: the test job runs on ${this.s.runsOnLabel}`
+        : `the setup pull request #${pr.number} was closed without merging`;
       await this.db.q(
-        `update gh_repositories set onboarding_state = $2, setup_pr_number = $3, setup_pr_url = $4, updated_at = now()
+        `update gh_repositories set onboarding_state = $2, setup_pr_number = $3, setup_pr_url = $4, onboarding_detail = $5, updated_at = now()
          where repository_id = $1 and (setup_pr_number is null or setup_pr_number = $3)`,
-        [repo.id, onboarding, pr.number, pr.html_url]);
+        [repo.id, onboarding, pr.number, pr.html_url, detail]);
       const row = await this.repo(repo.id);
       if (row?.workspace_id && row.project_id) {
         await this.db.tx(row.workspace_id, (c) => c.query(
@@ -331,9 +356,73 @@ export class GitHubService {
       [job.id, repo.id, installationId, job.run_id, job.run_attempt ?? 1, job.workflow_name ?? "", job.name, job.head_sha, job.head_branch ?? null,
         job.labels, job.runner_name || null, status, job.conclusion ?? null, job.created_at ?? null, job.started_at ?? null, job.completed_at ?? null]);
     if (status === "queued" && p.action === "queued" && this.launcher) await this.launchRunner(job.id, installationId, repo);
-    if (status === "in_progress") await this.startCheckRun(job.id, job.html_url ?? null);
+    if (status === "in_progress") {
+      await this.startRun(job.id);
+      await this.startCheckRun(job.id, job.html_url ?? null);
+    }
     if (status === "completed") await this.tryPublish(job.id);
     return true;
+  }
+
+  /**
+   * The organization of the transaction (`app.workspace_id`): its region (workspaces.region) and its mode, shadow
+   * while its 30-day trial runs (ci_subscriptions.trial_ends_at in the future), else enforce.
+   */
+  private async orgContext(c: Client): Promise<OrgContext> {
+    const r = (await c.query<{ region: string | null; trial: boolean | null }>(
+      `select (select region from public.workspaces where id = public.cp_workspace()) as region,
+              (select trial_ends_at > now() from public.ci_subscriptions where workspace_id = public.cp_workspace()) as trial`)).rows[0];
+    return { region: r?.region === "eu" ? "eu" : "us", mode: r?.trial ? "shadow" : "enforce" };
+  }
+
+  private async workflowRun(gh: GitHubHttp, base: string, runId: number): Promise<WorkflowRunP | null> {
+    return gh.request<WorkflowRunP>("GET", `${base}/actions/runs/${runId}`, { allow: [404] }).then((r) => (r.status === 404 ? null : r.data)).catch(() => null);
+  }
+
+  /** The job's pull request: from pull_request events, else from the workflow run (then recorded). */
+  private async pullRequestOf(job: JobRow, run: WorkflowRunP | null): Promise<{ number: number; fenvix_comment_id: number | null } | null> {
+    const known = (await this.db.q<{ number: number; fenvix_comment_id: number | null }>(
+      "select number, fenvix_comment_id from gh_pull_requests where repository_id = $1 and head_sha = $2 and state = 'open' order by updated_at desc limit 1",
+      [job.repository_id, job.head_sha]))[0];
+    if (known) return known;
+    if (!run?.pull_requests?.length) return null;
+    const r0 = run.pull_requests[0]!;
+    await this.db.q(
+      `insert into gh_pull_requests (repository_id, number, head_sha, head_ref, base_ref, state) values ($1, $2, $3, $4, $5, 'open')
+       on conflict (repository_id, number) do update set head_sha = excluded.head_sha, updated_at = now()`,
+      [job.repository_id, r0.number, job.head_sha, r0.head.ref, r0.base.ref]);
+    return (await this.db.q<{ number: number; fenvix_comment_id: number | null }>("select number, fenvix_comment_id from gh_pull_requests where repository_id = $1 and number = $2", [job.repository_id, r0.number]))[0]!;
+  }
+
+  /**
+   * A fenvix job started on a machine: its run row, status running, for the dashboard's live view (the runner's
+   * progress goes into it). Only for a linked installation whose repository has a project (or can get one now); the
+   * row is finished at publish (the same row, never a second one). gh_jobs.ci_run_id, under a row lock, makes it once.
+   */
+  private async startRun(jobId: number): Promise<void> {
+    const [job] = await this.db.q<JobRow>("select * from gh_jobs where job_id = $1", [jobId]);
+    if (!job || job.ci_run_id || job.published_at || !job.runner_name) return;
+    const [inst] = await this.db.q<{ workspace_id: string | null }>("select workspace_id from gh_installations where installation_id = $1", [job.installation_id]);
+    const ws = inst?.workspace_id;
+    const repo = await this.repo(job.repository_id);
+    if (!ws || !repo) return;
+    const run = await this.workflowRun(this.gh.installation(job.installation_id), repoPath(repo.full_name), job.run_id);
+    const pr = await this.pullRequestOf(job, run);
+    const created = await this.db.tx(ws, async (c) => {
+      const lock = (await c.query<{ ci_run_id: string | null; published_at: Date | null; region: Region | null }>(
+        "select ci_run_id, published_at, region from gh_jobs where job_id = $1 for update", [jobId])).rows[0];
+      if (!lock || lock.ci_run_id || lock.published_at) return null;
+      const projectId = await this.syncProject(c, repo, null);
+      if (!projectId) return null;
+      await c.query("select 1 from ci_projects where id = $1 for update", [projectId]);
+      const org = await this.orgContext(c);
+      const id = await this.insertRun(c, projectId, job, null, run, pr?.number ?? null, {
+        startedAt: job.started_at ?? new Date(), completedAt: null, durationMs: 0, otherStepMinutes: 0, mode: org.mode, region: lock.region,
+      });
+      await c.query("update gh_jobs set ci_run_id = $2 where job_id = $1", [jobId, id]);
+      return { id, mode: org.mode };
+    });
+    if (created) this.log.info({ job: jobId, repository: repo.full_name, run: created.id, mode: created.mode }, "run started");
   }
 
   /**
@@ -350,6 +439,13 @@ export class GitHubService {
       this.log.warn({ job: jobId, installation: installationId }, "no runner machine: the installation is not linked to an organization");
       return;
     }
+    // The machine runs in the organization's region, or not at all: an EU organization's job never runs in the US.
+    const org = await this.db.tx(inst.workspace_id, (c) => this.orgContext(c));
+    await this.db.q("update gh_jobs set region = $2 where job_id = $1", [jobId, org.region]);
+    if (this.launcher!.canPlace && !this.launcher!.canPlace(org.region)) {
+      this.log.error({ job: jobId, installation: installationId, region: org.region }, "no runner machine: no placement for the organization's region (the job stays queued; GitHub times it out)");
+      return;
+    }
     const gh = this.gh.installation(installationId);
     const base = repoPath(repo.full_name);
     // Cache writes only for trusted refs: a push, schedule or manual run on the default branch of this repository.
@@ -361,7 +457,7 @@ export class GitHubService {
     if (!this.s.summaryKey) throw new Error("no summary signing key (RUNNER_TOKEN): no machine is started without its own credential");
     // The fleet at its limit: no just-in-time runner is registered for a job that gets no machine (R-012 F12). The
     // queue tries again later.
-    if (this.launcher!.hasCapacity && !(await this.launcher!.hasCapacity())) throw new RetryLater(`the fleet is full; job ${jobId} waits`);
+    if (this.launcher!.hasCapacity && !(await this.launcher!.hasCapacity(org.region))) throw new RetryLater(`the fleet is full; job ${jobId} waits`);
     // A retry after a partial failure finds the first name taken (409): a fresh one; EC2 still starts one machine.
     type Jit = { encoded_jit_config: string; runner?: { id?: number } };
     let runnerName = `fenvix-j${jobId}`;
@@ -391,7 +487,7 @@ export class GitHubService {
     try {
       res = await this.launcher!.launch({
         jobId, runId: row.run_id, repositoryId: repo.id, repositoryFullName: repo.full_name, installationId, runnerName,
-        jitConfig: jit.data.encoded_jit_config, cacheAccess, summaryToken, ...(cacheToken ? { cacheToken } : {}),
+        jitConfig: jit.data.encoded_jit_config, cacheAccess, summaryToken, ...(cacheToken ? { cacheToken } : {}), region: org.region, mode: org.mode,
       });
     } catch (e) {
       await unregister(e instanceof RetryLater ? "the fleet is full" : "the machine did not start");
@@ -400,7 +496,7 @@ export class GitHubService {
     // A redelivery after a partial failure: EC2 returned the first machine (same client token), which has the first
     // just-in-time configuration; this one would never be used.
     if (res.already) await unregister("the job's machine already exists");
-    this.log.info({ job: jobId, repository: repo.full_name, runner: runnerName, instance: res.instanceId, already: res.already, cache: cacheAccess }, "runner machine requested");
+    this.log.info({ job: jobId, repository: repo.full_name, runner: runnerName, instance: res.instanceId, already: res.already, cache: cacheAccess, region: org.region, mode: org.mode }, "runner machine requested");
   }
 
   /** A check run "in progress" on the commit while the job runs on fenvix. */
@@ -438,6 +534,102 @@ export class GitHubService {
       "select job_id from gh_jobs where repository_id = $1 and run_id = $2 and run_attempt = $3 and runner_name = $4 and status = 'completed' and published_at is null",
       [o.repositoryId, o.runId, o.runAttempt, o.runnerName]);
     for (const j of jobs) await this.tryPublish(j.job_id);
+  }
+
+  /**
+   * POST /v1/runner/progress, written at once (no queue): the run's latest progress record, when its `seq` is newer
+   * than the stored one and the run is still running. "no_run": the job or its run row is not known yet (the
+   * workflow_job event that starts it has not arrived, or the repository has no project): nothing is stored.
+   */
+  async receiveProgress(o: { repositoryId: number; runId: number; runAttempt: number; runnerName: string; progress: RunnerProgress }): Promise<"stored" | "stale" | "no_run"> {
+    const [j] = await this.db.q<{ ci_run_id: string; workspace_id: string | null }>(
+      `select j.ci_run_id, i.workspace_id from gh_jobs j join gh_installations i on i.installation_id = j.installation_id
+       where j.repository_id = $1 and j.run_id = $2 and j.run_attempt = $3 and j.runner_name = $4 and j.ci_run_id is not null
+       order by j.job_id desc limit 1`,
+      [o.repositoryId, o.runId, o.runAttempt, o.runnerName]);
+    if (!j?.workspace_id) return "no_run";
+    const updated = await this.db.tx(j.workspace_id, (c) => c.query(
+      `update ci_runs set progress = $2::jsonb, progress_at = now()
+       where id = $1 and status = 'running' and coalesce((progress->>'seq')::bigint, -1) < $3`,
+      [j.ci_run_id, JSON.stringify(progressRecord(o.progress)), o.progress.seq]));
+    return updated.rowCount ? "stored" : "stale";
+  }
+
+  /**
+   * POST /v1/runner/results (queued): the chunk is stored (gh_run_results; sent again: replaced) and applied to the
+   * run once the run is published. Chunks that come before are applied at publish.
+   */
+  async receiveResults(o: { repositoryId: number; runId: number; runAttempt: number; runnerName: string; results: RunnerResults }): Promise<void> {
+    await this.db.q(
+      `insert into gh_run_results (repository_id, run_id, run_attempt, runner_name, chunk, payload) values ($1, $2, $3, $4, $5, $6)
+       on conflict (repository_id, run_id, run_attempt, runner_name, chunk) do update set payload = excluded.payload, received_at = now(),
+         applied_at = null, apply_error = null`,
+      [o.repositoryId, o.runId, o.runAttempt, o.runnerName, o.results.chunk, JSON.stringify(o.results)]);
+    const jobs = await this.db.q<{ job_id: number; ci_run_id: string; workspace_id: string }>(
+      `select j.job_id, j.ci_run_id, i.workspace_id from gh_jobs j join gh_installations i on i.installation_id = j.installation_id
+       where j.repository_id = $1 and j.run_id = $2 and j.run_attempt = $3 and j.runner_name = $4
+         and j.published_at is not null and j.ci_run_id is not null and i.workspace_id is not null`,
+      [o.repositoryId, o.runId, o.runAttempt, o.runnerName]);
+    for (const j of jobs) await this.applyResults(j.workspace_id, j.ci_run_id, o);
+  }
+
+  /** Applies the job's chunks not applied yet to its run (src/results/apply.ts). Marks each applied, or why not. */
+  private async applyResults(ws: string, ciRunId: string, key: JobKey): Promise<void> {
+    const rows = await this.db.q<{ id: number; chunk: number; payload: unknown }>(
+      `select id, chunk, payload from gh_run_results
+       where repository_id = $1 and run_id = $2 and run_attempt = $3 and runner_name = $4 and applied_at is null order by chunk, id`,
+      [key.repositoryId, key.runId, key.runAttempt, key.runnerName]);
+    if (!rows.length) return;
+    const chunks: { id: number; chunk: number; payload: RunnerResults }[] = [];
+    for (const r of rows) {
+      try { chunks.push({ id: r.id, chunk: r.chunk, payload: parseResults(r.payload) }); } catch (e) {
+        await this.db.q("update gh_run_results set apply_error = $2 where id = $1", [r.id, (e instanceof Error ? e.message : String(e)).slice(0, 1000)]);
+      }
+    }
+    if (!chunks.length) return;
+    try {
+      const out = await this.db.tx(ws, async (c) => {
+        // One application at a time per run (chunks arriving together).
+        const run = (await c.query<{ id: string; project_id: string; seen_at: Date; language: string }>(
+          `select r.id, r.project_id, coalesce(r.finished_at, r.started_at) as seen_at, p.language
+           from ci_runs r join ci_projects p on p.id = r.project_id where r.id = $1 for update of r`, [ciRunId])).rows[0];
+        if (!run) return null;
+        const res = await applyChunks(c, { id: run.id, projectId: run.project_id, language: run.language, seenAt: run.seen_at }, key, chunks);
+        if (res.applied.length) await c.query("update gh_run_results set applied_at = now(), apply_error = null where id = any($1::bigint[])", [res.applied]);
+        for (const p of res.pending) await c.query("update gh_run_results set apply_error = $2 where id = $1", [p.id, p.error]);
+        return res;
+      });
+      if (out) this.log.info({ run: ciRunId, applied: out.applied.length, pending: out.pending.length }, "runner results applied");
+    } catch (e) {
+      const msg = (e instanceof Error ? e.message : String(e)).slice(0, 1000);
+      await this.db.q("update gh_run_results set apply_error = $2 where id = any($1::bigint[])", [chunks.map((c) => c.id), msg]);
+      throw e;
+    }
+  }
+
+  /**
+   * POST /v1/runner/explorations (queued): one night of exploration of the credential's repository, written to its
+   * project (ci_explorations), with the defects it produced (ci_defects; new_defect_ids: those it found first). A
+   * repository without a project (not linked, or its language not known) keeps nothing: logged.
+   */
+  async receiveExploration(o: { repositoryId: number; runnerName: string; exploration: RunnerExploration }): Promise<"stored" | "no_project"> {
+    const repo = await this.repo(o.repositoryId);
+    if (!repo?.workspace_id) {
+      this.log.warn({ repositoryId: o.repositoryId, runner: o.runnerName }, "exploration dropped: the repository is not in a linked installation");
+      return "no_project";
+    }
+    const res = await this.db.tx(repo.workspace_id, async (c) => {
+      const projectId = await this.syncProject(c, repo, null);
+      if (!projectId) return null;
+      const lang = (await c.query<{ language: string }>("select language from ci_projects where id = $1 for update", [projectId])).rows[0]!.language;
+      return applyExploration(c, projectId, lang, o.exploration);
+    });
+    if (!res) {
+      this.log.warn({ repository: repo.full_name, runner: o.runnerName }, "exploration dropped: the repository has no project yet");
+      return "no_project";
+    }
+    this.log.info({ repository: repo.full_name, exploration: res.id, newDefects: res.newDefectIds.length }, "exploration stored");
+    return "stored";
   }
 
   /** Completed jobs whose summary never came (or whose publication failed) are published after the wait. */
@@ -491,21 +683,9 @@ export class GitHubService {
     const gh = this.gh.installation(job.installation_id);
     const base = repoPath(repo.full_name);
 
-    const run = await gh.request<{ event?: string; created_at?: string; head_commit?: { message?: string } | null; pull_requests?: { number: number; head: { ref: string; sha: string }; base: { ref: string } }[] }>(
-      "GET", `${base}/actions/runs/${job.run_id}`, { allow: [404] }).then((r) => (r.status === 404 ? null : r.data)).catch(() => null);
-
+    const run = await this.workflowRun(gh, base, job.run_id);
     // The pull request: from pull_request events, else from the workflow run.
-    let pr = (await this.db.q<{ number: number; fenvix_comment_id: number | null }>(
-      "select number, fenvix_comment_id from gh_pull_requests where repository_id = $1 and head_sha = $2 and state = 'open' order by updated_at desc limit 1",
-      [job.repository_id, job.head_sha]))[0] ?? null;
-    if (!pr && run?.pull_requests?.length) {
-      const r0 = run.pull_requests[0]!;
-      await this.db.q(
-        `insert into gh_pull_requests (repository_id, number, head_sha, head_ref, base_ref, state) values ($1, $2, $3, $4, $5, 'open')
-         on conflict (repository_id, number) do update set head_sha = excluded.head_sha, updated_at = now()`,
-        [job.repository_id, r0.number, job.head_sha, r0.head.ref, r0.base.ref]);
-      pr = (await this.db.q<{ number: number; fenvix_comment_id: number | null }>("select number, fenvix_comment_id from gh_pull_requests where repository_id = $1 and number = $2", [job.repository_id, r0.number]))[0]!;
-    }
+    const pr = await this.pullRequestOf(job, run);
 
     // Billing: one event per job that ran on our machines.
     const startedOnFenvix = !!job.runner_name && !!job.started_at;
@@ -527,21 +707,39 @@ export class GitHubService {
     const [inst] = await this.db.q<{ workspace_id: string | null }>("select workspace_id from gh_installations where installation_id = $1", [job.installation_id]);
     const ws = inst?.workspace_id ?? null;
     let projectId: string | null = null;
-    let ciRunId: string | null = job.ci_run_id;
+    let ciRunId: string | null = null;
     let commentsOn = true;
     await this.db.tx(ws, async (c) => {
       let planId: string | null = null;
       if (ws) {
         planId = (await c.query<{ plan_id: string }>("select plan_id from ci_subscriptions where workspace_id = $1", [ws])).rows[0]?.plan_id ?? null;
-        projectId = await this.syncProject(c, repo, summary ? { language: "python", testRunner: "pytest" } : null);
+        // The run row started at in_progress (startRun), if any: this job's row, locked so that it is finished once.
+        const lock = (await c.query<{ ci_run_id: string | null; region: Region | null }>("select ci_run_id, region from gh_jobs where job_id = $1 for update", [job.job_id])).rows[0];
+        const started = lock?.ci_run_id
+          ? (await c.query<{ id: string; project_id: string }>("select id, project_id from ci_runs where id = $1", [lock.ci_run_id])).rows[0] ?? null
+          : null;
+        projectId = started?.project_id ?? await this.syncProject(c, repo, summary?.stack ?? null);
         if (projectId) {
           const proj = (await c.query<{ comment_on_pull_requests: boolean }>("select comment_on_pull_requests from ci_projects where id = $1 for update", [projectId])).rows[0]!;
           commentsOn = proj.comment_on_pull_requests;
-          // A job that never ran on our machine (not billable) gets no run row: the dashboard counts every row of
-          // ci_runs as a used run (src/data/ci.ts usageFrom on main), so rows and billable usage events agree.
-          if (!ciRunId && billable) ciRunId = await this.insertRun(c, projectId, job, summary, run, pr?.number ?? null, startedAt, completedAt, durationMs, otherStepMinutes);
+          const values: RunValues = { startedAt, completedAt, durationMs, otherStepMinutes, mode: "enforce", region: lock?.region ?? null };
+          if (started && billable) {
+            await this.finishRun(c, started.id, job, summary, run, pr?.number ?? null, values);
+            ciRunId = started.id;
+          } else if (started) {
+            // A job that started on our machine but is not billable (cancelled before its tests): the row the live view
+            // showed stays, marked cancelled (the App may not delete runs); usage counts billable events only.
+            await c.query("update ci_runs set status = 'cancelled', finished_at = $2, duration_ms = $3 where id = $1", [started.id, completedAt, durationMs]);
+            ciRunId = started.id;
+          } else if (billable) {
+            // No run row yet (the job's start was not seen, or the project appeared only now): one row, finished.
+            // A job that never ran on our machine (not billable) gets no run row: rows and billable usage events agree.
+            const org = await this.orgContext(c);
+            ciRunId = await this.insertRun(c, projectId, job, summary, run, pr?.number ?? null, { ...values, mode: summary?.mode ?? org.mode });
+          }
           if (summary) await c.query("update ci_projects set setup_state = 'active' where id = $1", [projectId]);
         }
+        if (ciRunId) await c.query("update gh_jobs set ci_run_id = $2 where job_id = $1", [job.job_id, ciRunId]);
       }
       await c.query(
         `insert into ci_usage_events (installation_id, repository_id, repository_full_name, project_id, ci_run_id, github_job_id, github_run_id,
@@ -551,7 +749,11 @@ export class GitHubService {
         [job.installation_id, job.repository_id, repo.full_name, projectId, ciRunId, job.job_id, job.run_id, job.run_attempt, billable, reason,
           planId, job.conclusion, minutes.ran, minutes.saved, minutes.other, completedAt]);
     });
-    if (ciRunId) await this.db.q("update gh_jobs set ci_run_id = $2 where job_id = $1", [job.job_id, ciRunId]);
+    // The runner's per-test results, receipts, defects and audit reruns that came before the end (staged).
+    if (ws && ciRunId && job.runner_name) {
+      await this.applyResults(ws, ciRunId, { repositoryId: job.repository_id, runId: job.run_id, runAttempt: job.run_attempt, runnerName: job.runner_name })
+        .catch((e: unknown) => this.log.error({ job: job.job_id, err: e instanceof Error ? e.message : String(e) }, "the runner's results could not be applied"));
+    }
 
     const dashboardRunUrl = projectId && ciRunId ? `${this.s.dashboardUrl}/projects/${projectId}/runs/${ciRunId}` : null;
     const jobUrl = `${this.s.webUrl}/${repo.full_name}/actions/runs/${job.run_id}/job/${job.job_id}`;
@@ -585,27 +787,50 @@ export class GitHubService {
     this.log.info({ repository: repo.full_name, job: job.job_id, conclusion, billable, pr: pr?.number ?? null }, "run published");
   }
 
-  private async insertRun(c: Client, projectId: string, job: JobRow, s: RunSummary | null, run: { event?: string; created_at?: string; head_commit?: { message?: string } | null } | null,
-    pr: number | null, startedAt: Date, completedAt: Date, durationMs: number, otherStepMinutes: number): Promise<string> {
-    const [push] = (await c.query<{ pushed_at: Date }>("select pushed_at from gh_pushes where repository_id = $1 and sha = $2", [job.repository_id, job.head_sha])).rows;
-    const pushedAt = push?.pushed_at ?? (run?.created_at ? new Date(run.created_at) : job.created_at ?? startedAt);
+  /** The trigger, the status and the counts of a run from the job, its workflow run and the runner's summary. */
+  private runFields(job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null) {
     const event = run?.event ?? (pr ? "pull_request" : "push");
     const trigger = TRIGGERS.has(event) ? event : event === "pull_request_target" ? "pull_request" : "workflow_dispatch";
     const fails = s ? s.failed.length + s.flaky.length : 0;
     const status = job.conclusion === "cancelled" ? "cancelled" : s ? (fails || s.exit !== 0 ? "failed" : "passed") : job.conclusion === "success" ? "passed" : "failed";
     const passedRan = s ? Math.max(0, Math.min(s.ran - fails, (s.outcomeCounts.passed ?? s.ran) - s.reusedWithProof)) : 0;
+    return {
+      trigger, status, commitMessage: (run?.head_commit?.message ?? "").split("\n")[0]!.slice(0, 500),
+      tests: [s?.tests ?? 0, s?.ran ?? 0, passedRan, fails, s?.reusedWithProof ?? 0, s?.flaky.length ?? 0] as const,
+      timeRanMs: Math.round((s?.testSecondsRun ?? 0) * 1000), timeSkippedMs: Math.round((s?.testSecondsSaved ?? 0) * 1000),
+    };
+  }
+
+  /** A new ci_runs row: status running at the job's start (startRun), or finished at publish when no row was started. */
+  private async insertRun(c: Client, projectId: string, job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, v: RunValues): Promise<string> {
+    const [push] = (await c.query<{ pushed_at: Date }>("select pushed_at from gh_pushes where repository_id = $1 and sha = $2", [job.repository_id, job.head_sha])).rows;
+    const pushedAt = push?.pushed_at ?? (run?.created_at ? new Date(run.created_at) : job.created_at ?? v.startedAt);
+    const f = this.runFields(job, s, run, pr);
+    const status = v.completedAt ? f.status : "running";
     const r = await c.query<{ id: string }>(
       `insert into ci_runs (workspace_id, project_id, number, commit_sha, commit_message, branch, pull_request, trigger, status, pushed_at, started_at,
          finished_at, duration_ms, tests_total, tests_ran, tests_passed, tests_failed, tests_skipped, tests_flaky_defects, test_time_ran_ms,
-         test_time_skipped_ms, other_step_minutes, engine_version, skip_misses)
+         test_time_skipped_ms, other_step_minutes, engine_version, skip_misses, mode, region)
        values (public.cp_workspace(), $1, (select coalesce(max(number), 0) + 1 from ci_runs where project_id = $1), $2, $3, $4, $5, $6, $7, $8, $9,
-         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, round($20::numeric, 2), $21, $22)
+         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, round($20::numeric, 2), $21, $22, $23, $24)
        returning id`,
-      [projectId, job.head_sha, (run?.head_commit?.message ?? "").split("\n")[0]!.slice(0, 500), job.head_branch ?? "", pr, trigger, status,
-        pushedAt, startedAt, completedAt, durationMs, s?.tests ?? 0, s?.ran ?? 0, passedRan, fails, s?.reusedWithProof ?? 0, s?.flaky.length ?? 0,
-        Math.round((s?.testSecondsRun ?? 0) * 1000), Math.round((s?.testSecondsSaved ?? 0) * 1000), otherStepMinutes, s?.engineVersion ?? "",
-        JSON.stringify(s?.notReusedReasons ?? {})]);
+      [projectId, job.head_sha, f.commitMessage, job.head_branch ?? "", pr, f.trigger, status,
+        pushedAt, v.startedAt, v.completedAt, v.durationMs, ...f.tests, f.timeRanMs, f.timeSkippedMs, v.otherStepMinutes, s?.engineVersion ?? "",
+        JSON.stringify(s?.notReusedReasons ?? {}), v.mode, v.region]);
     return r.rows[0]!.id;
+  }
+
+  /** The row started at in_progress gets the finished values (the same row: a job is one run). */
+  private async finishRun(c: Client, id: string, job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, v: RunValues): Promise<void> {
+    const f = this.runFields(job, s, run, pr);
+    await c.query(
+      `update ci_runs set commit_message = case when $2 <> '' then $2 else commit_message end, pull_request = coalesce($3, pull_request), trigger = $4,
+         status = $5, started_at = $6, finished_at = $7, duration_ms = $8, tests_total = $9, tests_ran = $10, tests_passed = $11, tests_failed = $12,
+         tests_skipped = $13, tests_flaky_defects = $14, test_time_ran_ms = $15, test_time_skipped_ms = $16, other_step_minutes = round($17::numeric, 2),
+         engine_version = $18, skip_misses = $19, mode = coalesce($20, mode)
+       where id = $1`,
+      [id, f.commitMessage, pr, f.trigger, f.status, v.startedAt, v.completedAt, v.durationMs, ...f.tests, f.timeRanMs, f.timeSkippedMs, v.otherStepMinutes,
+        s?.engineVersion ?? "", JSON.stringify(s?.notReusedReasons ?? {}), s?.mode ?? null]);
   }
 
   /** One fenvix comment per pull request: updated in place; found again by its marker if our record of it is lost. */

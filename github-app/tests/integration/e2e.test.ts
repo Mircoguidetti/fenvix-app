@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
 import type pg from "pg";
+import { signState } from "../../src/auth.ts";
 import { checkWebhook } from "../helpers/schemas.ts";
 import { ACCOUNT, CI_YAML, DASHBOARD, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, push, REPOS, resetDb, workflowJob } from "../helpers/harness.ts";
 
@@ -45,9 +46,10 @@ describe("recorded end to end: installation → onboarding pull request → work
   after(async () => { await h.stop(); await admin.end(); });
 
   it("1. the owner asks the dashboard for the install link", async () => {
-    const r = await h.app.fastify.inject({ method: "POST", url: "/v1/github/install-link", payload: { workspaceId: org.workspaceId }, headers: { authorization: `Bearer ${await h.token(org.userId)}` } });
-    assert.equal(r.statusCode, 200);
-    (h as unknown as { state: string }).state = new URL(r.json().url).searchParams.get("state")!;
+    // The dashboard API answers it (POST /v1/github/install-link, src/api/github.ts; tests/integration/api-dashboard.test.ts):
+    // the state it signs with the same key.
+    (h as unknown as { state: string }).state = signState(h.cfg.stateSigningKey, { workspaceId: org.workspaceId, userId: org.userId });
+    assert.ok((h as unknown as { state: string }).state);
   });
 
   it("2. installation.created → the onboarding pull request is opened", async () => {

@@ -40,7 +40,8 @@ export function demoUserData(o: { repository: string; runnerName: string; regist
   if (o.summaryToken !== undefined && !/^fxr1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(o.summaryToken)) throw new Error("unexpected credential format");
   const common = Object.fromEntries(Object.entries(o.machineEnv).filter(([k]) => !/_TOKEN_PARAM$/.test(k)));
   const env: Record<string, string> = {
-    ...common, FENVIX_MODE: "demo", FENVIX_REPO_URL: `https://github.com/${o.repository}`, FENVIX_RUNNER_NAME: o.runnerName,
+    // FENVIX_MACHINE: the kind of machine; FENVIX_MODE: the run mode (a demo runs as a customer after the trial).
+    ...common, FENVIX_MACHINE: "demo", FENVIX_MODE: "enforce", FENVIX_REPO_URL: `https://github.com/${o.repository}`, FENVIX_RUNNER_NAME: o.runnerName,
   };
   const lines = ["#!/bin/bash", "set -euo pipefail", "install -d -m 0755 /etc/fenvix", "cat >/etc/fenvix/runner.env <<'FENVIX_ENV'"];
   for (const [k, v] of Object.entries(env)) {

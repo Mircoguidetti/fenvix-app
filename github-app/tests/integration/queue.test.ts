@@ -183,6 +183,37 @@ describe("Lambda mode: webhook → 202 → SQS → worker", () => {
     assert.deepEqual((await admin.query("select billable, reason from ci_usage_events where github_job_id = 703")).rows[0], { billable: true, reason: "no_summary" });
   });
 
+  it("runner progress is written at once (no queue); a large results chunk goes through the overflow bucket and is applied", async () => {
+    const sha = "8".repeat(40);
+    h.gh.addRun("acme/shop", 9104, { event: "push", headSha: sha, headBranch: "main", message: "live" });
+    await http(githubEvent("workflow_job", workflowJob("in_progress", { id: 704, runId: 9104, sha, branch: "main", runner: "fenvix-j704" })));
+    await drain();
+    const runId = (await admin.query("select ci_run_id from gh_jobs where job_id = 704")).rows[0].ci_run_id;
+    assert.equal((await admin.query("select status from ci_runs where id = $1", [runId])).rows[0].status, "running");
+    const token = runnerCredential("fenvix-j704", REPOS.shop.id, 9104);
+    const post = (path: string, body: object): HttpApiEvent => ({
+      version: "2.0", rawPath: `/v1/runner/${path}`, rawQueryString: "", body: JSON.stringify(body), isBase64Encoded: false,
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, requestContext: { http: { method: "POST", sourceIp: "203.0.113.5" } },
+    });
+    const progress = await http(post("progress", { runId: 9104, seq: 1, phase: "testing", testsTotal: 300, testsDone: 10, passed: 10, failed: 0, skippedWithProof: 0, elapsedMs: 900 }));
+    assert.equal(progress.statusCode, 202);
+    assert.equal(sqs.messages.length, 0, "progress is not queued");
+    assert.equal((await admin.query("select progress->>'testsDone' as done from ci_runs where id = $1", [runId])).rows[0].done, "10");
+
+    const tests = Array.from({ length: 300 }, (_, i) => ({ testId: `tests/test_big.py::test_case_with_a_long_parametrised_name[${"p".repeat(200)}-${i}]`, outcome: "passed", durationMs: i }));
+    assert.equal((await http(post("results", { runId: 9104, chunk: 0, chunks: 1, engineRunId: "20261118T120000-1", tests }))).statusCode, 202);
+    assert.match(sqs.messages[0]!.body, /"s3Key":"work\//);
+    assert.equal(blobs.objects.size, 1);
+    await drain();
+    assert.equal(blobs.objects.size, 0);
+    assert.equal((await admin.query("select count(*)::int as n from gh_run_results where run_id = 9104 and applied_at is null")).rows[0].n, 1, "staged until the run is published");
+    await http(runnerEvent({ runId: 9104, summary: summary("job3-warm-pass") }, runnerCredential("fenvix-j704", REPOS.shop.id)));
+    await http(githubEvent("workflow_job", workflowJob("completed", { id: 704, runId: 9104, sha, branch: "main", runner: "fenvix-j704" })));
+    await drain();
+    assert.equal((await admin.query("select count(*)::int as n from ci_test_results where run_id = $1", [runId])).rows[0].n, 300);
+    assert.equal((await admin.query("select engine_run_id from ci_runs where id = $1", [runId])).rows[0].engine_run_id, "20261118T120000-1");
+  });
+
   it("other routes answer directly through the adapter (health, setup redirect)", async () => {
     const health = await http({ rawPath: "/healthz", rawQueryString: "", requestContext: { http: { method: "GET" } } });
     assert.equal(health.statusCode, 200);

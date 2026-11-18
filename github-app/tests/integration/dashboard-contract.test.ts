@@ -108,4 +108,17 @@ describe("the rows the App writes, read by the dashboard (src/data/ci-rows.ts)",
     // Billed all the same (it ran on our machine); the dashboard shows it once the project exists.
     assert.equal((await admin.query("select billable from ci_usage_events where github_job_id = 802")).rows[0].billable, true);
   });
+
+  it("the run's summary names the Node runner (detjs, vitest): the project is created as node / vitest, with its run", async () => {
+    const sha = "7".repeat(40);
+    h.gh.addRun("acme/web", 9203, { event: "push", headSha: sha, headBranch: "main", message: "node with detjs" });
+    const node = { ...summary("job3-warm-pass"), runtime: { digest: "x", node: "22.11.0", dist_list: ["detjs@0.2.0", "vitest@2.1.4"] }, runner: "vitest 2.1.4" };
+    await h.summary({ repositoryId: REPOS.web.id, runId: 9203, summary: node });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 803, runId: 9203, sha, branch: "main", repo: REPOS.web }));
+    await h.send("workflow_job", workflowJob("completed", { id: 803, runId: 9203, sha, branch: "main", repo: REPOS.web }));
+    const p = mapProject(JSON.parse(JSON.stringify((await admin.query("select * from ci_projects where full_name = 'acme/web'")).rows[0])));
+    assert.deepEqual([p.language, p.testRunner, p.setupState], ["node", "vitest", "active"]);
+    const run = (await admin.query("select engine_version, status from ci_runs where project_id = $1", [p.id])).rows[0];
+    assert.deepEqual(run, { engine_version: "0.2.0", status: "passed" });
+  });
 });

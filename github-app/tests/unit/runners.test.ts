@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DescribeImagesCommand, DescribeInstancesCommand, RunInstancesCommand, TerminateInstancesCommand } from "@aws-sdk/client-ec2";
 import { launcherFrom, machineEnv } from "../../src/lambda/runtime.ts";
-import { Ec2Launcher, jobUserData, reap, RetryLater, type RunnerLaunch } from "../../src/runners/launcher.ts";
+import { Ec2Launcher, jobUserData, NoPlacement, placementsFromEnv, reap, RetryLater, type RunnerLaunch } from "../../src/runners/launcher.ts";
 import { jsonLogger } from "../../src/work.ts";
 
 const launch: RunnerLaunch = {
@@ -37,7 +37,13 @@ describe("per-job runner machines", () => {
   it("user data: the machine's settings and the just-in-time config, root-only, then the job target starts", () => {
     const ud = jobUserData(launch, MACHINE);
     assert.match(ud, /^FENVIX_RUNNER_NAME=fenvix-j601$/m);
-    assert.match(ud, /^FENVIX_MODE=per-job$/m);
+    assert.match(ud, /^FENVIX_MACHINE=per-job$/m);
+    // The run mode and region: enforce in the US unless the launch says otherwise.
+    assert.match(ud, /^FENVIX_MODE=enforce$/m);
+    assert.match(ud, /^FENVIX_REGION=us$/m);
+    const trial = jobUserData({ ...launch, mode: "shadow", region: "eu" }, MACHINE);
+    assert.match(trial, /^FENVIX_MODE=shadow$/m);
+    assert.match(trial, /^FENVIX_REGION=eu$/m);
     assert.match(ud, /^FENVIX_CACHE_ACCESS=read$/m);
     assert.match(ud, /^FENVIX_SUMMARIES_URL=https:\/\/github\.fenvix\.dev\/v1\/runner\/summaries$/m);
     assert.match(ud, /umask 077\nprintf '%s' '[A-Za-z0-9+/=]+' >\/etc\/fenvix\/jitconfig\n/);
@@ -75,7 +81,7 @@ describe("per-job runner machines", () => {
     assert.equal(run.input.ClientToken, "fenvix-job-601");
     assert.equal(run.input.MaxCount, 1);
     const tags = Object.fromEntries(run.input.TagSpecifications![0]!.Tags!.map((t) => [t.Key, t.Value]));
-    assert.deepEqual(tags, { project: "fenvix", env: "prod", "fenvix:role": "runner-job", "fenvix:job": "601", "fenvix:repository": "acme/shop", Name: "fenvix-j601" });
+    assert.deepEqual(tags, { project: "fenvix", env: "prod", "fenvix:role": "runner-job", "fenvix:job": "601", "fenvix:repository": "acme/shop", "fenvix:region": "us", Name: "fenvix-j601" });
     assert.match(Buffer.from(run.input.UserData!, "base64").toString(), /FENVIX_RUNNER_NAME=fenvix-j601/);
     // The image is looked up again only after 5 minutes.
     await l.launch({ ...launch, jobId: 602 });
@@ -114,5 +120,53 @@ describe("per-job runner machines", () => {
     assert.throws(() => launcherFrom({ RUNNER_MODE: "per-job", RUNNER_LAUNCH_TEMPLATE_ID: "lt", RUNNER_MAX_RUNNING: "0" }, log), /RUNNER_MAX_RUNNING/);
     assert.ok(launcherFrom({ RUNNER_MODE: "per-job", RUNNER_LAUNCH_TEMPLATE_ID: "lt" }, log) instanceof Ec2Launcher);
     assert.deepEqual(machineEnv({ FENVIX_MACHINE_FENVIX_CACHE_URL: "http://10.42.0.10:8787/fenvix", OTHER: "x", FENVIX_MACHINE_EMPTY: "" }), { FENVIX_CACHE_URL: "http://10.42.0.10:8787/fenvix" });
+    // RUNNER_PLACEMENT alone is enough.
+    const placed = launcherFrom({ RUNNER_MODE: "per-job", RUNNER_PLACEMENT: JSON.stringify({ eu: { awsRegion: "eu-central-1", launchTemplateId: "lt-0eu" } }) }, log) as Ec2Launcher;
+    assert.deepEqual([placed.canPlace("eu"), placed.canPlace("us")], [true, false]);
+  });
+});
+
+describe("region placement (RUNNER_PLACEMENT)", () => {
+  const PLACEMENT = JSON.stringify({ us: { awsRegion: "us-east-1", launchTemplateId: "lt-0us" }, eu: { awsRegion: "eu-central-1", launchTemplateId: "lt-0eu", machineEnv: { FENVIX_CACHE_URL: "http://10.52.0.10:8787" } } });
+
+  it("one EC2 client per AWS region; RUNNER_LAUNCH_TEMPLATE_ID is the us placement when RUNNER_PLACEMENT has none", () => {
+    const made: (string | undefined)[] = [];
+    const ec2For = (r: string | undefined) => { made.push(r); return fakeEc2(); };
+    const p = placementsFromEnv({ RUNNER_PLACEMENT: PLACEMENT }, ec2For);
+    assert.deepEqual(Object.keys(p).sort(), ["eu", "us"]);
+    assert.deepEqual([p.us!.launchTemplateId, p.eu!.launchTemplateId, p.eu!.awsRegion], ["lt-0us", "lt-0eu", "eu-central-1"]);
+    assert.deepEqual(made, ["us-east-1", "eu-central-1"]);
+    const fallback = placementsFromEnv({ RUNNER_LAUNCH_TEMPLATE_ID: "lt-old", RUNNER_PLACEMENT: JSON.stringify({ eu: { awsRegion: "eu-west-1", launchTemplateId: "lt-0eu" } }) }, () => fakeEc2());
+    assert.deepEqual([fallback.us!.launchTemplateId, fallback.eu!.launchTemplateId], ["lt-old", "lt-0eu"]);
+    assert.deepEqual(Object.keys(placementsFromEnv({ RUNNER_LAUNCH_TEMPLATE_ID: "lt-old" }, () => fakeEc2())), ["us"]);
+    assert.deepEqual(placementsFromEnv({}, () => fakeEc2()), {});
+    for (const bad of ["nope", "[]", JSON.stringify({ asia: { awsRegion: "ap-south-1", launchTemplateId: "lt-1" } }), JSON.stringify({ eu: { awsRegion: "Frankfurt", launchTemplateId: "lt-1" } }),
+      JSON.stringify({ eu: { awsRegion: "eu-central-1", launchTemplateId: "ami-1" } }), JSON.stringify({ eu: { awsRegion: "eu-central-1", launchTemplateId: "lt-1", machineEnv: { A: 1 } } })]) {
+      assert.throws(() => placementsFromEnv({ RUNNER_PLACEMENT: bad }, () => fakeEc2()), /RUNNER_PLACEMENT/, bad);
+    }
+  });
+
+  it("an EU job starts in the EU region with its launch template and settings; a region without placement gets no machine", async () => {
+    const us = fakeEc2();
+    const eu = fakeEc2();
+    const l = new Ec2Launcher({ placements: { us: { ec2: us, launchTemplateId: "lt-0us" }, eu: { ec2: eu, launchTemplateId: "lt-0eu", awsRegion: "eu-central-1", machineEnv: { FENVIX_CACHE_URL: "http://10.52.0.10:8787" } } }, maxRunning: 2, machineEnv: { ...MACHINE, FENVIX_CACHE_URL: "http://10.42.0.10:8787" } });
+    await l.launch({ ...launch, region: "eu", mode: "shadow" });
+    assert.equal(us.calls.length, 0, "nothing in the US for an EU job");
+    const run = eu.calls.find((c) => c instanceof RunInstancesCommand) as RunInstancesCommand;
+    assert.deepEqual(run.input.LaunchTemplate, { LaunchTemplateId: "lt-0eu", Version: "$Latest" });
+    const ud = Buffer.from(run.input.UserData!, "base64").toString();
+    assert.match(ud, /^FENVIX_MODE=shadow$/m);
+    assert.match(ud, /^FENVIX_REGION=eu$/m);
+    assert.match(ud, /^FENVIX_CACHE_URL=http:\/\/10\.52\.0\.10:8787\/gh-4242$/m);
+    const tags = Object.fromEntries(run.input.TagSpecifications![0]!.Tags!.map((t) => [t.Key, t.Value]));
+    assert.equal(tags["fenvix:region"], "eu");
+
+    const usOnly = new Ec2Launcher({ ec2: us, launchTemplateId: "lt-0us", maxRunning: 2, machineEnv: MACHINE });
+    assert.equal(usOnly.canPlace("eu"), false);
+    await assert.rejects(usOnly.launch({ ...launch, region: "eu" }), NoPlacement);
+    assert.equal(us.calls.length, 0);
+    // Capacity is counted per region.
+    const full = new Ec2Launcher({ placements: { us: { ec2: fakeEc2({ running: 2 }), launchTemplateId: "lt-0us" }, eu: { ec2: fakeEc2({ running: 0 }), launchTemplateId: "lt-0eu" } }, maxRunning: 2, machineEnv: MACHINE });
+    assert.deepEqual([await full.hasCapacity("us"), await full.hasCapacity("eu")], [false, true]);
   });
 });

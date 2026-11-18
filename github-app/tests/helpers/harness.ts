@@ -40,8 +40,8 @@ export async function resetDb(): Promise<pg.Client> {
     execFileSync("bash", [fileURLToPath(new URL("../../scripts/prepare-test-db.sh", import.meta.url))], { env: { ...process.env, TEST_DATABASE_URL: ADMIN_URL }, stdio: "inherit" });
     return resetDb();
   }
-  await admin.query(`truncate gh_webhook_deliveries, gh_run_summaries, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_repositories,
-    gh_installations, ci_test_results, ci_skip_receipts, ci_defects, ci_runs, ci_projects, ci_subscriptions cascade`);
+  await admin.query(`truncate gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_repositories,
+    gh_installations, ci_test_results, ci_skip_receipts, ci_audit_reruns, ci_defects, ci_explorations, ci_runs, ci_projects, ci_subscriptions cascade`);
   await admin.query("delete from auth.users where email like '%@gh.fenvix.invalid'");
   await admin.query("delete from public.workspaces w where not exists (select 1 from public.workspace_members m where m.workspace_id = w.id)");
   return admin;

@@ -1,9 +1,12 @@
 # Data contract: runner → dashboard
 
-Written 2026-11-17. This is **our** contract between the fenvix runner (the machines behind `runs-on: fenvix`, which
-run the engine) and the customer dashboard. It is not the engine's internal file format: the runner reads the engine's
-files and sends these records. The dashboard, the Supabase tables (`supabase/migrations/0011_ci_runs.sql`), the mock
-(`src/data/mock.ts`) and the TypeScript types (`src/data/types.ts`) all follow it.
+Written 2026-11-17, runner part rewritten 2026-11-18. This is **our** contract between the fenvix runner (the machines
+behind `runs-on: fenvix`, which run the engine) and the customer dashboard. It is not the engine's internal file
+format: the runner reads the engine's files and sends these records to the fenvix GitHub App (`github-app/`), which
+writes them to Postgres; the dashboard reads them through the fenvix API (`openapi/fenvix-api.yaml`), never from the
+database directly. The tables (`supabase/migrations/0011` to `0014`), the API's schemas, the mock (`src/data/mock.ts`)
+and the TypeScript types (`src/data/types.ts`) all follow it. **What the runner must send, and when, is the section
+"What the runner sends" below.**
 
 > **The engine formats it is taken from are not final.** Field names and shapes below come from what the engine
 > writes today (read on 2026-11-17 from fenvix-engine-cli, read-only):
@@ -38,7 +41,9 @@ roles, invitations and API keys).
 | `id` | string | |
 | `name` | string | 2 to 64 characters |
 | `planId` | string | the plan the organization is on (see Plan) |
-| `githubAccount` | string \| null | the GitHub user or organization the fenvix GitHub App is installed on |
+| `githubAccount` | string \| null | the GitHub account of the first installation linked (an organization may link several installations; each one is listed with its account) |
+| `region` | `"us"` \| `"eu"` | where its data and its machines are (`workspaces.region`); a job never runs outside it |
+| `trial` | `{ startedAt, endsAt }` \| null | the 30-day shadow trial, started when the organization links its first GitHub installation (`ci_subscriptions.trial_started_at`, `trial_ends_at`) |
 
 ## Project
 
@@ -60,8 +65,9 @@ One GitHub repository connected through the fenvix GitHub App.
 
 ## Run summary
 
-One test job that ran on `runs-on: fenvix`. Sent by the runner when the job ends (and once when it starts, with
-`status: "running"`).
+One test job that ran on `runs-on: fenvix`. The App creates the row (status `running`) when GitHub says the job started
+on a fenvix machine (`workflow_job` `in_progress`), keeps the runner's latest progress in it while it runs, and finishes
+the same row when the job completes (from the `workflow_job` event, the runner's summary and its results chunks).
 
 | Field | Type | From |
 | --- | --- | --- |
@@ -81,15 +87,20 @@ One test job that ran on `runs-on: fenvix`. Sent by the runner when the job ends
 | `skipShare` | number | `testTimeMs.skipped / (ran + skipped)`: the share of test time skipped with proof (the skip study's "time" rule) |
 | `otherStepMinutes` | number | `other_step_minutes` in Postgres. The job's other steps that fenvix still runs: checkout, dependency install, build (the job's wall time on fenvix outside the test command, measured by the runner) |
 | `minutesSaved` | number | `testTimeMs.skipped / 60000`: skipped test minutes **only**. fenvix skips no other step today; if it ever does, those minutes get a field of their own and are added here with a note |
-| `githubEquivalentMinutes` | number | what the same job would take on a GitHub-hosted runner without fenvix: `testTimeMs.ran / 60000 + testTimeMs.skipped / 60000 + otherStepMinutes` (a generated column in Postgres) |
+| `githubEquivalentMinutes` | number | what the same job would take on a GitHub-hosted runner without fenvix: `testTimeMs.ran / 60000 + testTimeMs.skipped / 60000 + otherStepMinutes` (a generated column in Postgres); the run's **baseline minutes** (see Run units) |
+| `engineVersion` | string | the engine's version, e.g. `0.1.0` (`detpy==X` or `detjs@X` of the runtime) |
+| `seed` | number \| null | `--det-seed` the run used; null for collection order (`"fixed"`) |
+| `mode` | `"shadow"` \| `"enforce"` | `shadow` during the organization's trial: every test ran and the engine recorded what it would have skipped; `enforce`: unchanged tests were skipped with proof |
+| `wouldSkipTests`, `wouldSaveMs` | number | shadow mode: the tests the engine would have skipped and their duration (from the per-test outcomes with `wouldSkip`) |
+| `audit` | `{ rerun, wrongSkips }` | audit reruns: skipped tests the engine ran anyway (5%), and how many of them failed (a wrong skip; expected 0) |
+| `region` | `"us"` \| `"eu"` \| null | where the machine ran (the organization's region when the App placed it; null when the App did not place it, e.g. an always-on runner) |
+| `progress` | Run progress \| null | while `status` is `running`: the runner's latest progress record |
 
 **Minutes add up on screen.** Wherever the dashboard shows minutes it shows the three parts and their total:
 "875 run + 1,959 skipped with proof + 1,296 setup and build = 4,130 min". The parts are rounded with the
 largest-remainder rule (`roundToSum` in `src/data/ci.ts`), so the shown parts always sum to the shown total; a
 month's totals are the sums of the per-project rows, so rows and columns both add up. Costs in dollars are split to
 the cent the same way.
-| `engineVersion` | string | `detpy` field of a bundle, e.g. `0.1.0` |
-| `seed` | number \| null | `--det-seed` the run used; null for collection order (`"fixed"`) |
 
 **Why tests ran.** For every test that was not reused the engine writes `{"reused": false, "why": "<kind>: <detail>"}`
 (kinds `new`, `failed-before`, `config`, `runtime`, `clock`, `env`, `data`, `code`; detail e.g. `src/x.py::func`,
@@ -99,6 +110,22 @@ the cent the same way.
 | --- | --- | --- |
 | `skipMisses` | `{ [kind]: number }` | tests that ran, by reason (`skip_misses`, jsonb) |
 | `missDetails` | `{ kind, detail, tests }[]` | the details that made the most tests run, top 5 (`miss_details`, jsonb) |
+
+## Run progress
+
+The runner's latest progress record of a running run (`ci_runs.progress`, jsonb, with `progress_at`; shown only while
+the run is `running`).
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `phase` | `"setup"` \| `"collecting"` \| `"testing"` \| `"reporting"` | |
+| `testsTotal` | number \| null | null until collection ends |
+| `testsDone`, `passed`, `failed`, `skippedWithProof` | number | so far |
+| `currentTest` | string \| null | the test running now |
+| `elapsedMs` | number | since the job started |
+| `updatedAt` | time | when the App stored it (`progress_at`) |
+
+Stored as sent (camelCase keys) plus `seq`; a record whose `seq` is not higher than the stored one is ignored.
 
 ## Per-test outcome
 
@@ -143,10 +170,10 @@ The dashboard record adds the lists behind those counts, taken from the test's e
 | `config` | `{ digest, runner, engine, inifile, options }` | the configuration identity (`runner` e.g. `pytest 8.3.3`, `engine` e.g. `detpy 0.1.0`) (`config` digests the pytest and Level 0 settings) |
 | `changedFilesProven` | number | `n_changed_files_proven`: files changed since the reused run that were proven irrelevant |
 
-Gap today: `receipts.jsonl` carries only the counts; the lists exist in `proof-cache.json`. The runner must send
-them, or the engine must add them to the receipt. A test that is not reused has `{"reused": false, "why": "<kind>:
-<detail>"}` (kinds `new`, `failed-before`, `config`, `runtime`, `clock`, `env`, `data`, `code`); the dashboard does not
-show non-reuse reasons yet.
+`receipts.jsonl` carries only the counts; the lists are in `proof-cache.json`, so the runner joins the two and sends
+each receipt with its lists (`RunnerReceipt`, below). A test that is not reused has `{"reused": false, "why":
+"<kind>: <detail>"}` (kinds `new`, `failed-before`, `config`, `runtime`, `clock`, `env`, `data`, `code`): the run's
+`skipMisses` and `missDetails` sum them.
 
 ## Defect bundle
 
@@ -184,18 +211,32 @@ A flaky test turned into a reproducible defect. Taken from `bundle.json` (24 key
 | `firstRunId`, `lastRunId` | string | dashboard |
 | `occurrences` | number | runs where this failure was seen |
 | `engineVersion` | string | `detpy` |
-| `language` | `"python"` \| `"node"` | |
-| `replayCommand` | string | built by the dashboard, see below |
+| `language` | `"python"` \| `"node"` | the bundle's, else the project's |
+| `replayCommand` | string \| null | the engine's own command, as the runner sent it with the bundle (`command` of `bundle.json`); null: the dashboard builds it, see below |
 
-**Replay command.** Python: `pytest --det --det-seed=S --det-order=<bundle>/order.txt` (no `--det-seed` when the seed
+**Replay command.** The runner sends the engine's command; when it did not, the dashboard builds one. Python: `pytest --det --det-seed=S --det-order=<bundle>/order.txt` (no `--det-seed` when the seed
 is null), after `fenvix defects pull <id>` writes the bundle to `<bundle>`. Node: the engine has no `--det-order`,
 minimiser or bundle yet (branch `claude/node-l0`), so the command is the seed only:
 `detjs vitest run --det --det-seed=S` (or `detjs jest --det --det-seed=S`), and the dashboard says that the order is
 not replayed. The engine's own `detpy replay <bundle>` works as well and is shown next to it.
 
+## Audit rerun
+
+One skipped test the engine ran anyway to check its skip (5% of the tests skipped with proof, chosen by the engine).
+Table `ci_audit_reruns` (migration 0014), one row per run and test.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `runId`, `runNumber`, `testId` | | |
+| `cacheKey` | 32 hex | the receipt's key that was checked |
+| `outcome` | `"confirmed"` \| `"wrong_skip"` | `confirmed`: it passed, as the receipt said; `wrong_skip`: it failed although it would have been skipped |
+| `untrusted` | boolean | the engine stopped trusting that cache key (after a wrong skip, or when its inputs could not be re-proven) |
+| `detail` | string | why, in a sentence |
+| `at` | time | |
+
 ## Exploration
 
-One night of exploration of a project (`detpy explore`, on fenvix machines; included in every plan). Taken from the
+One night of exploration of a project (`detpy explore`, on fenvix machines; the nightly exploration add-on). Taken from the
 engine's `explore.json`: `{seeds, seconds, runs, collected, failing_tests, always_failing, flaky_failing, bundles,
 not_reproduced_budget, families_by_divergence, families_by_polluter, seeds_log, run_log}`. Table `ci_explorations`
 (`supabase/migrations/0012_ci_explorations.sql`).
@@ -213,12 +254,13 @@ not_reproduced_budget, families_by_divergence, families_by_polluter, seeds_log, 
 
 ## Usage
 
-Computed from runs, not sent by the runner.
+Computed from runs and usage events, not sent by the runner.
 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `month` | `YYYY-MM` | |
-| `runsUsed`, `runsIncluded` | number, number \| null | `runsIncluded` from the plan; null = no limit set |
+| `runsUsed` | number | billable usage events of the month |
+| `unitsUsed`, `unitsIncluded` | number, number \| null | run units (see Run units); `unitsIncluded` from the plan, null = not set yet |
 | per project: `runs`, `testMinutesRan`, `minutesSaved`, `otherStepMinutes`, `githubEquivalentMinutes`, `githubEquivalentUsd` | number | whole minutes; `testMinutesRan + minutesSaved + otherStepMinutes = githubEquivalentMinutes` in every row and in the totals |
 | `githubRate` | `{ usdPerMinute, runner, source, checkedOn }` | the GitHub-hosted price the comparison uses |
 
@@ -228,14 +270,15 @@ Actions pricing page as quoted in fenvix-brain-cli `PRODUCT.md`, **to verify** b
 
 ## Plan
 
-Monthly plans by number of runs, sized by project.
+Monthly plans by run units (and the nightly exploration add-on).
 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `id`, `name`, `description` | string | |
-| `runsPerMonth` | number \| null | null = no limit |
+| `kind` | `"plan"` \| `"addon"` | |
+| `unitsIncluded` | number \| null | run units included each month; null = not set yet |
 | `maxProjects` | number \| null | null = no limit |
-| `priceUsdMonth` | number \| null | **null today: prices are not set** (the founder sets them after the pricing study) |
+| `priceUsdMonth` | number \| null | set by the founder on 2026-11-18 (migration 0014); null for the add-on until set |
 | `features` | string[] | |
 
 ## GitHub App records (migration 0013)
@@ -251,8 +294,18 @@ admin links it. Members read their organization's installations.
 `fullName`, `defaultBranch`, `removedAt`, `projectId` (the Project once created), `onboardingState`
 (`pending` | `pr_open` | `merged` | `closed` | `no_workflow` | `no_test_job` | `already_fenvix` | `unsupported` |
 `failed`), `onboardingDetail` (why), `onboardingWorkflowPath`, `onboardingJob`, `setupPrNumber`, `setupPrUrl`,
-`detectedLanguage`, `detectedTestRunner`. A Project is created for a linked repository once its language is known
-(from the workflow or the first run); its `setupState` and `setupPullRequest` follow the onboarding pull request.
+`detectedLanguage`, `detectedTestRunner`. Every state is stored with a detail a person can read. A Project is created
+for a linked repository once its language **and** test runner are known: from the workflow analysis, else from the
+run's summary (its `language` / `test_runner`, else the runtime: `detpy` is Python and pytest, `detjs` is Node with
+vitest or jest named by the summary), else not yet (a Node repository is never labelled pytest). Its `setupState` and
+`setupPullRequest` follow the onboarding pull request. A repository renamed or moved to another installation of the
+same organization keeps its project.
+
+**Job** (`gh_jobs`): one GitHub job that asked for `runs-on: fenvix`; `region` is where its machine was placed,
+`ciRunId` its run row.
+
+**Results staging** (`gh_run_results`, migration 0014): the runner's results chunks as received, one row per job and
+chunk (sent again: replaced), with `appliedAt` once applied to the run and `applyError` when not (yet).
 
 **Usage event** (`ci_usage_events`, per-run billing): one per GitHub job that asked for `runs-on: fenvix`.
 
@@ -275,38 +328,193 @@ admin links it. Members read their organization's installations.
 | `occurredAt` | time | when the job completed |
 | `month` | date | first day of the month of `occurredAt` (UTC), generated |
 
-The Usage record's `runsUsed` becomes the count of billable usage events of the month.
+The Usage record's `runsUsed` is the count of billable usage events of the month, `unitsUsed` their run units.
 
-**From the runner's `summary.json` to the Run summary** (the App writes `ci_runs` when a fenvix job completes;
-`runner/fenvix-run` on fenvix-engine-cli branch `claude/runner-prototype-ee21he` writes the summary):
+## What the runner sends
+
+The runner is the fenvix machine's side (another repository): the GitHub Actions runner plus `runner/fenvix-run`, which
+wraps the job's test command in the engine (`detpy` for Python/pytest, `detjs` for Node vitest/jest). It sends four
+kinds of records to the App (`https://github.fenvix.dev/v1`, operations tagged `runner` in `openapi/fenvix-api.yaml`;
+the request schemas there are the contract and the App checks every body against them).
+
+**Credential.** Every call carries the machine's own credential, `Authorization: Bearer fxr1....`, minted by the App for
+that machine (file `/etc/fenvix/summary-token`, root only): it names the runner, the repository and, on a per-job
+machine, the run. A body that names another runner, repository or run is refused (`403`); no credential or a bad one
+is `401`; a body that does not match the schema is `400` with `error.field` naming the field. Accepted records are
+answered `202 {"ok": true}`. On `5xx` or a network error the runner retries with backoff (the records are idempotent);
+it never retries a `4xx`.
+
+Every record of a job names it the same way: `runId` (`GITHUB_RUN_ID`), `runAttempt` (`GITHUB_RUN_ATTEMPT`, default 1),
+and optionally `repositoryId` and `runnerName`, which must match the credential. Repository + run + attempt + runner
+name is one job (a runner runs one job at a time).
+
+### What the machine receives
+
+A per-job machine's user data writes `/etc/fenvix/runner.env` (root only) with the plain settings and these per-job
+values the runner reads:
+
+| Variable | Value |
+| --- | --- |
+| `FENVIX_MODE` | `shadow` while the organization's 30-day trial runs, else `enforce` (see Trial). The runner runs the engine in that mode and reports it back (`mode`) |
+| `FENVIX_REGION` | `us` or `eu`: the organization's region; the machine runs there (the App never starts an EU organization's job anywhere else; with no machine available in the region the job stays queued and GitHub times it out) |
+| `FENVIX_MACHINE` | `per-job` (a demo machine: `demo`, with `FENVIX_MODE=enforce`) |
+| `FENVIX_RUNNER_NAME`, `FENVIX_JOB_ID` | the just-in-time runner's name and the GitHub job id |
+| `FENVIX_CACHE_ACCESS`, `FENVIX_CACHE_URL`, `FENVIX_CACHE_ORG` | the shared cache: `write` only on trusted refs; the installation's own cache organization |
+
+and the credentials `/etc/fenvix/summary-token` (the App credential above), `/etc/fenvix/cache-token` (shared cache),
+`/etc/fenvix/jitconfig` (GitHub's just-in-time runner configuration). Until 2026-11-18 `FENVIX_MODE` held the kind of
+machine (`per-job`, `demo`); that is `FENVIX_MACHINE` now.
+
+### 1. Progress, while the job runs: `POST /v1/runner/progress`
+
+Sent at the start of each phase (`setup`, `collecting`, `testing`, `reporting`), at most every 3 seconds while tests
+run, and once more when the test step ends. Written at once (no queue), so the dashboard's live view sees it on its
+next poll.
+
+```json
+{"runId": 31000, "runAttempt": 1, "seq": 17, "phase": "testing", "testsTotal": 1840, "testsDone": 912,
+ "passed": 900, "failed": 1, "skippedWithProof": 11, "currentTest": "tests/test_tax.py::test_vat[3]",
+ "elapsedMs": 48200, "mode": "shadow"}
+```
+
+`seq` increases with every record of the job (start at 0): a record that arrives after a newer one is ignored.
+`testsTotal` is null until collection ends. A record sent before GitHub reported the job as started, for a job whose
+repository has no project yet, or after the run finished is accepted and not stored. Body at most 64 KB.
+
+### 2. Results, before the summary: `POST /v1/runner/results`
+
+The job's per-test outcomes, skip receipts, defect bundles and audit reruns, in numbered chunks: at most 5,000 tests,
+2,000 receipts, 500 defects and 5,000 audit reruns per chunk, 6 MB per request. Chunk numbers start at 0; chunk 0
+carries `chunks`, the total. Send them when the test step ends, **before the summary**; a chunk sent again replaces
+the stored one. The App stores each chunk and applies them to the run when the job is published (after the summary
+and GitHub's `completed`); a chunk that arrives later is applied when it arrives. Applying is idempotent.
+
+```json
+{"runId": 31000, "chunk": 0, "chunks": 2, "engineRunId": "20261118T094005-4412", "seed": 3, "mode": "enforce",
+ "tests": [
+   {"testId": "tests/test_tax.py::test_vat[3]", "outcome": "failed", "durationMs": 12,
+    "failure": {"kind": "real", "phase": "call", "exceptionType": "AssertionError", "message": "assert 30 == 31", "location": "tests/test_tax.py:40"}},
+   {"testId": "tests/test_money.py::test_default_currency_is_eur", "outcome": "failed", "durationMs": 3,
+    "failure": {"kind": "flaky_defect", "defectFingerprint": "<32 hex>"}},
+   {"testId": "tests/test_cart.py::test_total", "outcome": "skipped_with_proof", "durationMs": 8, "cacheKey": "<32 hex>"}],
+ "receipts": [{"testId": "tests/test_cart.py::test_total", "cacheKey": "<32 hex>", "reusedEngineRunId": "20261117T101502-4412",
+   "fingerprint": "<32 hex>", "reusedDurationMs": 8, "code": [...], "modules": [...], "filesRead": [...], "envRead": [...],
+   "runtime": {...}, "config": {...}, "changedFilesProven": 2}],
+ "defects": [{"testId": "...", "status": "reproduced", "kind": "order", "polluters": ["..."], "setters": [], "order": ["...", "..."],
+   "prefixLength": 31, "seed": 3, "fingerprint": "<32 hex>", "replay": {"runs": 10, "fails": 10, "identicalFingerprint": true},
+   "outcome": "failed", "exception": {"type": "...", "phase": "call", "message": "...", "location": "..."}, "divergence": null,
+   "engineVersion": "0.1.0", "language": "python", "replayCommand": "pytest --det --det-seed=3 --det-order=<bundle>/order.txt -n 0"}],
+ "audit": [{"testId": "tests/test_cart.py::test_tax", "cacheKey": "<32 hex>", "outcome": "wrong_skip", "untrusted": true, "detail": "failed on rerun"}],
+ "missDetails": [{"kind": "code", "detail": "shop/tax.py::vat", "tests": 10}]}
+```
+
+| Field | What the runner puts there | Becomes |
+| --- | --- | --- |
+| `engineRunId` | the engine's run id (`proof-cache.json` → `Entry.run` of this run) | the run's `engineRunId`; later receipts that reuse this run point at it |
+| `seed` | `--det-seed`, null for collection order | the run's `seed` |
+| `mode` | the mode the engine ran in (`FENVIX_MODE`) | the run's `mode` |
+| `missDetails` | the top 5 reasons tests were not reused (summed `why` of `receipts.jsonl`) | the run's `missDetails` |
+| `tests[]` | one per test of the run (`passed`, `failed`, `skipped_with_proof`; a test the framework skipped is not sent); `durationMs` (for a skipped test: the recorded one); `failure` for a failed test: `kind` `flaky_defect` when the engine reproduced it as a defect (with the bundle's `defectFingerprint`), else `real`; `cacheKey` of a skipped test | Per-test outcome (`ci_test_results`); `failure.defectId` is found by the defect's test and fingerprint, `receiptId` by the receipt's test |
+| `tests[].wouldSkip` | **shadow mode**: true when the engine would have skipped the test with proof (it ran anyway) | the run's `wouldSkipTests` (count) and `wouldSaveMs` (their `durationMs`) |
+| `receipts[]` | one per test skipped with proof: the `receipts.jsonl` line joined with the test's `proof-cache.json` entry (the lists: `code` = `Entry.units`, `modules` = content/skeleton/hooks, `filesRead` = `Entry.data`, `envRead` = `Entry.env`, `runtime`, `config`) | Skip receipt (`ci_skip_receipts`); `reusedRunId` = the project's run whose `engineRunId` is `reusedEngineRunId`. A skipped test and its receipt go in the same chunk (a skipped test whose receipt has not arrived waits for it) |
+| `defects[]` | each defect bundle the engine wrote this run (`bundle.json` + `order.txt`) with the engine's replay command (`command`, `replayCommand`) | Defect (`ci_defects`), by project, test and fingerprint: new, or seen again (`occurrences` + 1 once per run, `lastSeenAt`, `lastRunId`, reopened if it was fixed). `cause` from `kind`: `order` → polluter, `brittle` → state_setter, `fails-alone` → fails_alone; `causeTests` = `polluters` / `setters` / none; `familyKey` = them joined by `" + "`, or `"<none>"` |
+| `audit[]` | the audit reruns (5% of the tests skipped with proof, run anyway): `confirmed` or `wrong_skip`, `untrusted` when the engine stopped trusting the key | Audit rerun (`ci_audit_reruns`); the run's `audit.rerun` and `audit.wrongSkips` |
+
+### 3. The run summary, when the test step ends: `POST /v1/runner/summaries`
+
+`runner/fenvix-run`'s `summary.json` (unchanged), after the results chunks:
+
+```json
+{"runId": 31000, "runAttempt": 1, "receiptsUrl": "<https link to the receipts, optional>", "summary": {...summary.json...}}
+```
+
+Two optional additions to `summary.json`: `language` (`python` | `node` | `go`) and `test_runner` (`pytest` | `vitest` |
+`jest` | `go test`), so the App knows a repository's stack when its workflow did not tell (without them it reads the
+runtime: a `detpy==` distribution is Python and pytest; `detjs` is Node, with vitest or jest from the summary's
+`runner` or `config.runner` when present); and `mode` (`shadow` | `enforce`). The App publishes the run once both the
+summary and GitHub's `completed` are in (or `SUMMARY_WAIT_SECONDS` after `completed` without a summary, or at once
+when the job was cancelled before it started). The per-test maps (`outcomes`, `reused_outcomes`) and the runtime's
+distribution list are dropped before the summary is stored.
+
+From the summary (and the job) to the Run summary:
 
 | Run summary | From |
 | --- | --- |
 | `commitSha`, `branch`, `startedAt`, `finishedAt`, `durationMs` | the `workflow_job` event (`head_sha`, `head_branch`, `started_at`, `completed_at`) |
 | `commitMessage`, `trigger`, `pullRequest` | the workflow run (`GET /repos/{o}/{r}/actions/runs/{id}`: `head_commit.message` first line, `event`, `pull_requests`), or the App's `pull_request` events. `pull_request_target` → `pull_request`; any other event outside the five → `workflow_dispatch` |
 | `pushedAt` | the `push` event of that commit (`repository.pushed_at`), else the workflow run's `created_at` |
-| `status` | `cancelled` if the job was; else `failed` when the summary has failures, flaky tests or a non-zero `exit`; else `passed` |
+| `status` | `running` from the job's start; then `cancelled` if the job was; else `failed` when the summary has failures, flaky tests or a non-zero `exit`; else `passed` |
 | `tests.total`, `tests.ran`, `tests.skippedWithProof` | `tests`, `ran`, `reused_with_proof` |
 | `tests.failed`, `tests.flakyDefects` | `len(failed) + len(flaky)`, `len(flaky)` (the runner's `failed` holds only real failures; `flaky` = failed in the suite, passed alone) |
 | `tests.passed` | `outcome_counts.passed − reused_with_proof` (tests that ran and passed) |
 | `testTimeMs.ran`, `testTimeMs.skipped` | `test_seconds_run`, `test_seconds_saved` × 1000 |
-| `otherStepMinutes` | (job wall time − `wall_seconds` of pytest) / 60 |
-| `engineVersion` | the `detpy==X` entry of `runtime.dist_list` |
+| `otherStepMinutes` | (job wall time − `wall_seconds` of the test command) / 60 |
+| `engineVersion` | the `detpy==X` (or `detjs@X`) entry of `runtime.dist_list` |
 | `skipMisses` | `not_reused_reasons` |
-| `engineRunId`, `seed`, `missDetails` | not in the runner's summary yet: null / empty |
+| `mode` | the results' or the summary's `mode`, else the organization's at the job's start |
+| `region` | where the App placed the machine |
+| `engineRunId`, `seed`, `missDetails`, `wouldSkipTests`, `wouldSaveMs`, `audit` | the results chunks |
 
-Per-test outcomes, skip receipts and defect bundles are not sent by the runner yet; the check run links the receipts
-the runner uploads (`receiptsUrl`), else the dashboard run.
+### 4. Nightly exploration: `POST /v1/runner/explorations`
 
-## How records reach the dashboard (not built yet)
+After a night of `detpy explore` (the nightly exploration add-on) on a machine whose credential names the repository:
+the summary of `explore.json` and the defect bundles it produced (each with its replay command), at most 500 defects,
+6 MB:
 
-The runner will post each run, its test outcomes, receipts and new bundles to the control plane
-(`POST /v1/runs`, `PUT /v1/runs/{id}/results`, `POST /v1/defects`), authenticated by the GitHub App installation, and
-the control plane writes the tables above with the `fenvix_control_plane` role. Until then the dashboard reads the
-tables directly through Supabase (row level security) or uses the mock.
+```json
+{"startedAt": "2026-11-19T02:00:00Z", "finishedAt": "2026-11-19T02:40:00Z", "commitSha": "<40 hex>", "branch": "main",
+ "seeds": 20, "runs": 20, "collected": 1840, "seconds": 2400, "flakyFailing": ["..."], "alwaysFailing": ["..."],
+ "notReproduced": [], "familiesByPolluter": {"<polluter>": ["<test>", "..."]},
+ "seedsLog": [{"seed": 1, "seconds": 120, "failing": ["..."]}], "defects": [ {...RunnerDefect...} ]}
+```
+
+The App writes one Exploration for the repository's project (sent again: the same one, updated) and upserts its
+defects; `newDefectIds` are the defects this exploration found first. An exploration is not a run: it does not count
+as a defect occurrence. A repository without a project keeps nothing (logged).
+
+### Trial, mode and the 35% gate
+
+Linking an organization's first GitHub installation starts its **30-day shadow trial** (`gh_link_installation`,
+migration 0014; linking more installations does not restart it). While it runs, the App starts machines with
+`FENVIX_MODE=shadow` and the run rows get `mode: "shadow"`: every test runs, and the engine records, per test, whether
+it would have skipped it with proof (`wouldSkip`). The trial's would-have-saved share is the shadow runs' `wouldSaveMs`
+over their test time (run + skipped), time-weighted over the trial's finished runs; the **gate is met at 35%**
+(`TRIAL_GATE` in `src/data/ci.ts`). After the trial, jobs run in `enforce` mode: unchanged tests are skipped with proof,
+and 5% of the skipped ones are rerun as an audit.
+
+### Run units
+
+Billing is by **run units**: 1 unit = 10 **baseline minutes**, the job's minutes without fenvix = tests run + tests
+skipped with proof + other steps (`test_minutes_ran + minutes_saved + other_step_minutes` of the usage event, i.e. the
+run's `githubEquivalentMinutes`). Units are counted on **billable usage events only** (`ci_usage_events.units`,
+generated; a month's units are the exact sum rounded up to a whole unit). A job cancelled before it started on our
+machine is not billable and has no run row; a job that started on our machine and was cancelled before its tests (no
+summary) is not billable either, and its run row (created at the start for the live view) is kept, marked `cancelled`.
+
+### Region
+
+An organization's region (`us` | `eu`) decides where its jobs' machines run (`RUNNER_PLACEMENT` of the App's worker:
+one AWS region and launch template per region). The App records the region on the job (`gh_jobs.region`) and the run
+(`ci_runs.region`), and passes it to the machine (`FENVIX_REGION`). A region with no placement gets no machine.
+
+## How records reach the dashboard
+
+The runner sends the records above to the App; the App writes Postgres as the restricted role `fenvix_github_app`,
+in transactions that name the organization (row level security keeps the others out): `ci_runs`, `ci_test_results`,
+`ci_skip_receipts`, `ci_defects`, `ci_audit_reruns`, `ci_explorations`, `ci_usage_events` and its own `gh_*` tables.
+The dashboard reads them only through the fenvix API (`openapi/fenvix-api.yaml`, role `fenvix_api`), never from the
+database directly.
 
 ## Changes
 
+- 2026-11-18: "What the runner sends" (replaces the planned direct posting): live progress (`POST /v1/runner/progress`),
+  per-test results in chunks with receipts, defect bundles with the engine's replay command, audit reruns and shadow
+  mode's `wouldSkip` (`POST /v1/runner/results`), explorations (`POST /v1/runner/explorations`), summary additions
+  (`language`, `test_runner`, `mode`), the machine's `FENVIX_MODE` (now the run mode; the machine kind is
+  `FENVIX_MACHINE`) and `FENVIX_REGION`. New Run fields `mode`, `wouldSkipTests`, `wouldSaveMs`, `audit`, `region`,
+  `progress`; new records Run progress and Audit rerun; the defect's `replayCommand` comes from the runner; the
+  organization's region and 30-day trial with the 35% gate; plans and usage by run units (migration 0014). Records
+  reach the dashboard through the API only.
 - 2026-11-18: GitHub App records (installation, repository, usage event) and the mapping from the runner's
   `summary.json` to the Run summary (migration 0013, `docs/GITHUB-APP.md`).
 - 2026-11-17: run summary gets `skipMisses` and `missDetails`; new Exploration record (migration 0012).

@@ -13,15 +13,25 @@ The GitHub side of fenvix, as a service (`github-app/`). What it does:
 3. **Onboarding pull request.** When a repository is added, the App reads its workflows, finds the job that runs the
    tests, changes **only that job's `runs-on:`** to `fenvix` (comments, quoting and every other line kept byte for
    byte), and opens a pull request from the branch `fenvix/runs-on` with the diff in the body. With "All repositories"
-   the App does not open pull requests across a whole account by itself: the dashboard opens them per repository
-   (`POST /v1/repositories/{id}/onboarding`).
+   the App does not open pull requests across a whole account by itself: the dashboard asks for them per repository
+   through the dashboard API (`POST /v1/github/repositories/{repositoryId}/setup-pull-request`), which queues the work
+   `{ "kind": "onboard", "repositoryId": <GitHub's id> }` for the worker. Every repository's state (`pending`,
+   `pr_open`, `merged`, `closed`, `no_workflow`, `no_test_job`, `already_fenvix`, `unsupported`, `failed`) is stored
+   with a detail. The language and test runner are detected (workflow, else the run's summary), never assumed.
 4. **Run result on GitHub.** A job that asks for `runs-on: fenvix` gets a check run named `fenvix` on its commit (in
    progress while it runs), completed with: tests run, tests skipped with proof (with the link to the receipts),
    minutes saved, failures, and flaky tests explained with their replay command. On a pull request, one short comment,
    updated in place on every run. The input is the run summary our runner writes (`runner/fenvix-run`,
    `summary.json`), sent by the machine to `POST /v1/runner/summaries`.
-5. **Runs and usage events** in Postgres: a `ci_runs` row per job (the dashboard's run, `docs/data-contract.md`) and
-   one `ci_usage_events` row per job that used a fenvix machine, for per-run billing.
+5. **Runs and usage events** in Postgres: a `ci_runs` row per job (the dashboard's run, `docs/data-contract.md`),
+   created `running` when the job starts on a fenvix machine and finished at publish, and one `ci_usage_events` row
+   per job that used a fenvix machine, for billing by run units.
+6. **What the runner sends besides the summary** (`docs/data-contract.md`, "What the runner sends"): live progress
+   (`POST /v1/runner/progress`, written at once), per-test results, receipts, defect bundles and audit reruns in chunks
+   (`POST /v1/runner/results`), nightly explorations (`POST /v1/runner/explorations`).
+7. **Trial and region.** Linking an organization's first installation starts its 30-day shadow trial: machines get
+   `FENVIX_MODE=shadow` and runs are `mode: shadow` until it ends. A job's machine starts in the organization's region
+   (`us` or `eu`, `RUNNER_PLACEMENT`), or not at all.
 
 The App never deploys anything and has no GitHub Actions workflow of its own. Nothing here is live until the founder
 creates the App and runs the service.
@@ -172,6 +182,7 @@ the HTTP side checks it (`src/runners/credentials.ts`; review R-012 F1).
 | `ONBOARDING_BRANCH` | `fenvix/runs-on` | no | branch of the onboarding pull request |
 | `ONBOARD_ALL_REPOSITORIES` | `false` | no | `true`: open onboarding pull requests by themselves also when the installation covers "All repositories" |
 | `SUMMARY_WAIT_SECONDS` | `600` | no | a completed job whose runner summary never came is published without it after this long |
+| `RUNNER_PLACEMENT` | none | no | per-job worker: where each region's machines start, JSON `{"us": {"awsRegion": "us-east-1", "launchTemplateId": "lt-..."}, "eu": {"awsRegion": "eu-central-1", "launchTemplateId": "lt-...", "machineEnv": {...optional overrides}}}`. Without a `us` entry, `RUNNER_LAUNCH_TEMPLATE_ID` is the US placement (in the function's own AWS region). A region with no placement gets no machine |
 | `SWEEP_SECONDS` | `60` | no | how often that check runs; `0` off |
 | `PORT`, `HOST`, `LOG_LEVEL`, `NODE_ENV`, `DB_POOL_MAX`, `GITHUB_TIMEOUT_MS` | `8790`, `0.0.0.0`, `info`, `development`, `10`, `15000` | no | |
 
@@ -193,10 +204,24 @@ GitHub → APP_HOST/github/setup?installation_id&setup_action&code&state
    2. code → user token (POST github.com/login/oauth/access_token with the client id and secret)
    3. GET /user/installations with that token must list installation_id
    4. gh_link_installation(installation, organization, person): owner or admin; not another organization's
-   → 303 to DASHBOARD_URL/projects/connect?github=connected|error&reason=...
+   5. the organization's 30-day shadow trial starts (first link only)
+   → 303 to DASHBOARD_URL/projects/connect?github=connected&installation=<id>&account=<login> (or github=error&reason=...)
 ```
 
+An organization may link several installations (e.g. two GitHub organizations). Each repository's project records
+the installation it came through; runs, usage events and the plan are the organization's; the trial starts at the first
+link only; `ci_subscriptions.github_account` keeps the first installation's account (the dashboard lists every
+installation). A repository moved (or renamed) between installations of the same organization keeps its project and
+its runs.
+
 ### What a runner machine sends
+
+The full contract (what, when, every field) is `docs/data-contract.md`, "What the runner sends", and the operations
+tagged `runner` of `openapi/fenvix-api.yaml`. In short: progress while the job runs (`/v1/runner/progress`, at most
+every 3 seconds, written at once; an older `seq` is ignored), the results chunks when the test step ends
+(`/v1/runner/results`, stored in `gh_run_results` and applied to the run at publish, or on arrival after it), then the
+summary. All four routes take the same per-machine credential and check the body against the OpenAPI request schema
+(`400` with `error.field`).
 
 When the test step ends, the fenvix machine posts the runner's `summary.json` (as `runner/fenvix-run` writes it):
 
@@ -226,6 +251,12 @@ twice is never billed twice):
 | summary received, job cancelled | yes | `cancelled_after_start` |
 | no summary, the job ran on our machine | yes | `no_summary` (a machine was used; e.g. dependency install failed) |
 | cancelled or skipped before it started on our machine | no | `cancelled_before_tests` |
+| started on our machine, cancelled before a summary | no | `cancelled_before_tests` |
+
+Run rows follow the same rule: a job that never started on our machine gets no `ci_runs` row. A job that started gets
+its row at once (status `running`, for the live view); if it then ends without being billable, the row is kept and
+marked `cancelled` (the App's role may not delete runs) and its usage event is not billable. Usage and units are
+counted from billable usage events only (1 run unit = 10 baseline minutes).
 
 The row carries the plan at that time, test minutes run, minutes saved and other-step minutes. An installation not yet
 linked to an organization still gets its usage events (organization empty); linking fills it in. Prices and plan
@@ -246,10 +277,15 @@ is changed; the pull request lists other test-like jobs. Not changed, with the r
 |---|---|---|
 | `GET /healthz` | anyone | `{"ok": true}` |
 | `POST /webhooks/github` | GitHub (signed) | the webhooks above |
-| `POST /v1/runner/summaries` | our runners (each machine's own summary credential) | a job's run summary |
-| `POST /v1/github/install-link` | dashboard (Supabase session; owner or admin) | the install link with a signed state |
-| `GET /github/setup` | the person, sent back by GitHub | links the installation (above) |
-| `POST /v1/repositories/{id}/onboarding` | dashboard (owner or admin of the repository's organization) | opens (or returns) the onboarding pull request |
+| `POST /v1/runner/summaries` | our runners (each machine's own summary credential) | a job's run summary (queued) |
+| `POST /v1/runner/progress` | our runners (same credential) | the running job's progress, written at once; `202` |
+| `POST /v1/runner/results` | our runners (same credential) | one chunk of per-test results (queued; large bodies through the queue's overflow bucket); `202` |
+| `POST /v1/runner/explorations` | our runners (same credential) | one night of exploration of the credential's repository (queued); `202` |
+| `GET /github/setup` | the person, sent back by GitHub | links the installation (above), then `303` to `DASHBOARD_URL/projects/connect?github=connected&installation=<id>&account=<login>` (or `github=error&reason=expired\|incomplete\|oauth\|not_yours\|not_admin\|other_organization\|github\|error`, or `github=requested`) |
+
+The install link (`POST /v1/github/install-link`) and the setup pull request of one repository
+(`POST /v1/github/repositories/{repositoryId}/setup-pull-request`) are operations of the dashboard API
+(`openapi/fenvix-api.yaml`, `github-app/src/api/`); the latter queues the work kind `onboard` above.
 
 ---
 
