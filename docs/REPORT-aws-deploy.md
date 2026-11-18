@@ -2,12 +2,19 @@ DONE
 
 # Report: the GitHub App on AWS Lambda, the runners on EC2 (branch `claude/github-app`)
 
-**Updated after two requests from the founder (through the coordinator):**
+**Updated for the founder's final hosting plan** (sent through the coordinator; it replaces the two earlier requests):
 
-1. **One EC2 machine per job is now the default** (section 3b): just-in-time runners, a prebuilt image, self-terminating
-   machines, a reaper, and the shared cache on a private t4g.nano.
-2. **The always-on machine stays, as an option** (`runnerMode: always-on`), with one command to stop it and one to start
-   it. It comes back by itself, and queued jobs are neither failed nor billed while it is stopped (section 3c).
+1. **Demo mode is the default, and is built** (section 3c).
+   - `scripts/demo-up.sh` starts one fresh t3.medium from the prebuilt runner image and registers it through the App;
+     `scripts/demo-down.sh` deregisters it and terminates it.
+   - Each demo gets a new machine and disk, so no data is shared between demos.
+   - Lambda, the App and the dashboard stay up.
+2. **Per-job mode is kept as an option** (section 3b): one EC2 machine per queued job, with the shared cache.
+3. **Customer mode is a design and a spike, not built** (section 3d): one c7i.xlarge per host, each job in its own
+   Firecracker microVM through the Nitro Sandboxes backend (Firecracker v1.18.0), destroyed after the job; a `.metal`
+   KVM host as the fallback; Docker inside the job checked.
+4. **No Docker-per-job path.**
+5. **The always-on machine (and its stop/start scripts) is removed**; demo mode replaces it.
 
 All five parts are built, committed and tested in the container. Nothing is deployed, because no AWS account was
 available. "Not verified" below lists what only a real deploy can show. The founder's steps are in
@@ -161,7 +168,7 @@ available. "Not verified" below lists what only a real deploy can show. The foun
     `Authorization: Bearer` with the token read from SSM by root at start.
   - On 2xx the file is removed. On 4xx it is moved to `rejected/`. On 5xx or a network error it is retried.
 
-### 3b. One machine per job (default, `runnerMode: per-job`)
+### 3b. One machine per job (option, `runnerMode: per-job`)
 
 - **Trigger:** on `workflow_job.queued` with the fenvix label, the worker (`src/service.ts` `launchRunner`) starts one
   machine. The guards:
@@ -193,8 +200,8 @@ available. "Not verified" below lists what only a real deploy can show. The foun
   minutes (5 times), then it goes to the dead-letter queue and the alarm fires.
 - **Prebuilt image:** EC2 Image Builder (`lib/runner-fleet.ts`).
   - The component runs `install.sh`: tools, strace, users, the metadata block, uv, Python, Rust, the engine wheel
-    through `runner/bootstrap.sh install`, the GitHub runner and the hooks. The always-on files are left out, so the
-    document is 13,765 of 16,000 characters.
+    through `runner/bootstrap.sh install`, the GitHub runner and the hooks. (Since demo mode, the files are one
+    gzipped bundle: the document is 9,329 of 16,000 characters.)
   - The parent image is Ubuntu 24.04, through Canonical's SSM parameter.
   - The resulting AMI is tagged `fenvix:image=runner`.
   - `scripts/build-image.sh` starts the build and waits for it.
@@ -231,23 +238,76 @@ available. "Not verified" below lists what only a real deploy can show. The foun
   - The fixed part is the cache machine ($3.36 + $0.70 disk) and the image snapshot (≈ $0.30).
   - A job costs ≈ $0.0090: t3.medium per second, $0.0456 an hour; IPv4, $0.005 an hour; 30 GB gp3.
 
-### 3c. The always-on option (`runnerMode: always-on`) and stopping it
+### 3c. Demo mode (default, `runnerMode: demo`)
 
-- **Commands:** `scripts/runner-stop.sh` and `scripts/runner-start.sh`. Each reads the `RunnerInstanceId` output,
-  stops or starts the machine and waits. The deploy identity may stop and start only instances tagged
-  `component=github-app`.
-- **After a start, the runner is back with no new token:**
-  - the registration (`.runner`, credentials) is on its disk;
-  - `fenvix-runner` and `fenvix-summary-poster` are enabled;
-  - `fenvix-register` returns at once when `.runner` exists;
-  - the poster fetches its token again at start;
-  - cloud-init runs the user data only on the first boot.
-- **While the machine is stopped, the App works as usual.** Queued jobs are never published, failed or billed: the
-  App acts only on completed jobs, and the sweep only looks at completed ones. A job that GitHub cancels after 24
-  hours in the queue is `cancelled_before_tests`, not billable, with no run row. A new test checks this:
-  `runners.test.ts`, "always-on runner stopped".
-- **Cost while stopped:** the 30 GB disk only, **$2.64 a month** (DECLARED gp3 $0.088 per GB-month). The
-  auto-assigned IPv4 is released while the machine is stopped. Running all month costs ≈ $40.02.
+- **`demo-up.sh [owner/repo]`:**
+  1. reuses the newest runner image, or builds it once with `build-image.sh`;
+  2. invokes the `demo` Lambda (`src/runners/demo.ts`), which:
+     - finds the App's installation on the repository (`GET /repos/{o}/{r}/installation`, as the App);
+     - gets a registration token (`POST .../actions/runners/registration-token`; repository permission
+       **Administration: Read and write**);
+     - starts one machine from the launch template and the image, tagged `fenvix:role=runner-demo`, with the token in
+       root-only user data;
+  3. polls `status` until GitHub shows the runner `fenvix-demo-<time>` online.
+- **On the machine:** `fenvix-register` takes the token from `/etc/fenvix/registration-token`, shreds it, and
+  registers. `fenvix-runner` serves jobs.
+- **Repeated `up`:** a second `up` returns the same machine; an `up` for another repository while one runs is refused.
+- **`demo-down.sh`:** deregisters every `fenvix-demo-*` runner of the repository (`DELETE .../actions/runners/{id}`;
+  other runners untouched; a busy one is reported) and terminates the demo machines, then waits until they are gone.
+- **No data shared between demos:** a new machine and a new disk per demo, and no shared cache. The engine's cache
+  lives on the machine's disk, so the second job of the same demo is warm, and it is deleted with the machine.
+- **Safety:** the reaper terminates a demo machine older than `demoMaxHours` (12). The demo Lambda reads only the
+  App's private key, may start only `runner-demo` machines from our template and our images, and may terminate only
+  those. The deployer may invoke only this one function.
+- **The image now contains the registration path too.** Its files are bundled as **one** gzipped script, which brings
+  the component down from 15,879 to 9,329 of 16,000 characters. The bundle was round-tripped through a real `bash`
+  here.
+- **Cost** (DECLARED prices; ESTIMATED usage: 10 demos of 2 hours a month): **≈ $1.81 a month without free tiers,
+  ≈ $1.38 with them**; each extra demo hour ≈ $0.054.
+
+### 3d. Customer mode: design and spike (`docs/DEPLOY-AWS.md` "Customer mode", `infra/customer-mode/spike/`)
+
+**Read today:**
+
+- Firecracker v1.18.0's changelog and its `docs/nitro-sandboxes/` (README, getting started, how it works, features,
+  comparison with KVM).
+- Its API description (`swagger/firecracker.yaml`, with `PUT /enclave` and `EnclaveConfig`).
+- Its CI guest kernel configs.
+- AWS's Nitro Enclaves and Nitro Sandboxes pages, on instance types and price. T3 and metal instances are excluded; a
+  c7i.xlarge is supported; there is no additional charge.
+
+**Design:**
+
+- The worker sends a just-in-time config per job to a host queue; this is the `RunnerLauncher` interface, already
+  used by per-job mode.
+- A host agent on each c7i.xlarge copies the guest disk (reflink), writes a job disk (jitconfig in, summary out),
+  starts a sandbox (direct mode, CPU overcommit, 2 vCPUs, 2 GiB), and reads and sends the summary with the **host's**
+  runner token, so the guest never holds it. It then deletes everything.
+- Sandboxes are firewalled from the parent, its metadata service and each other.
+- The shared cache uses one organization and token pair per customer.
+- Capacity is about 3 concurrent 2-vCPU, 2 GiB jobs per c7i.xlarge (ESTIMATE; memory is donated whole).
+
+**Spike, checked here:**
+
+- The scripts (`host-setup.sh`, `build-guest.sh`, `run-job.sh`, `guest/fenvix-guest-job`) pass shellcheck.
+- `run-job.sh`'s configuration is **valid against Firecracker 1.18.0's own API description**, and an invalid value is
+  refused (`validate-config.mjs`).
+- **Docker in the microVM:** our own `guest-kernel-docker-check.sh` on Firecracker's CI x86_64 6.18 guest kernel
+  config plus its EFI fragment finds **every required option present** (0 missing); only the optional IP_VS, MACVLAN
+  and IPVLAN are absent. Docker needs no virtualization inside the guest, so the same answer holds for the KVM `.metal`
+  fallback.
+- Running moby's own `check-config.sh` was blocked here, because executing a downloaded script was not allowed; the
+  list in our script is written from Docker's documented requirements.
+- **Nothing ran on a real host:** this container has no `/dev/nitro_enclaves` and no `/dev/kvm`.
+
+**Must be tested on a real c7i.xlarge before the first customer** (the full list is in DEPLOY-AWS.md): start time per
+job (20 runs, by stage, target ≈ 30 s); isolation, from inside a guest and between two concurrent jobs; Docker
+(`hello-world`, `services: postgres`, testcontainers, compose, pull times and a registry mirror); `strace -f` and the
+shared cache from the guest; concurrency and cost per host; hang and reboot handling; and the limits of Nitro
+Sandboxes (no snapshots or pause, no virtio device reset, no memory overcommit).
+
+**Cost per host** (DECLARED, read 2026-11-18): c7i.xlarge $0.19152 an hour, ≈ **$147.86 a month** with disk and
+IPv4. The fallback, the cheapest x86 metal type, is c5n.metal at $4.392 an hour, ≈ **$3,214.21 a month**.
 
 ## 4. The App's rows against `src/data/ci-rows.ts` on main
 
@@ -304,7 +364,8 @@ the contract test (`ci_run_id`, `project_id`, `month`).
 
 ## 5. Docs and cost
 
-- **`docs/DEPLOY-AWS.md`:** 28 numbered steps, one action each, plus section H for the always-on option.
+- **`docs/DEPLOY-AWS.md`:** 29 numbered steps, one action each, plus section H for the per-job option and a section on
+  customer mode.
   - A, secrets and the test repository: random values, the test repository, the GitHub App form (Callback URL
     `https://github.fenvix.dev/github/setup`, Webhook URL `https://github.fenvix.dev/webhooks/github`, now with
     **Administration: Read and write**);
@@ -315,7 +376,8 @@ the contract test (`ci_run_id`, `project_id`, `month`).
   - F, the runner image: `scripts/build-image.sh`;
   - G, the first onboarding PR, linking (required before any machine starts), the first job machine, the first PR
     comment, and reuse across machines through the shared cache;
-  - H, the always-on option: registration token, stop and start;
+  - G is now a demo (demo-up, onboarding PR, a PR comment, demo-down), H is the per-job option, and a section
+    covers customer mode;
   - a "When something fails" table, why the cache is not on Lambda, the time to the first test (ESTIMATE), and the
     monthly cost.
 - **Cost:** every price is DECLARED, read on 2026-11-18. With a job machine ≈ 10 minutes per job:
@@ -325,7 +387,8 @@ the contract test (`ci_run_id`, `project_id`, `month`).
   | Per-job mode, without free tiers | ≈ $4.79 | ≈ $5.70 | ≈ $14.06 |
   | Per-job mode, with free tiers | ≈ $4.36 | ≈ $5.26 | ≈ $13.40 |
 
-  The always-on option costs ≈ $40.02 a month running, ≈ $3.08 stopped.
+  Demo mode (default) costs ≈ $1.81 a month without free tiers (10 demos of 2 hours); customer mode costs ≈ $147.86
+  a month per c7i.xlarge host.
 - **Price sources:** the aws.amazon.com pricing pages load their regional numbers from a data host this container's
   proxy refused, so the regional prices were read from AWS's official Price List API (`pricing.us-east-1.amazonaws.com`,
   with SKU and publication date). The pages themselves were read for free tiers, metering units, per-second billing
@@ -339,9 +402,9 @@ the contract test (`ci_run_id`, `project_id`, `month`).
 
 | Where | Command | Result |
 |---|---|---|
-| `github-app/` | `npm test` (typecheck, unit, integration against Postgres 16 with migrations 0001–0013 applied twice) | **52 unit + 54 integration pass** (before this work: 34 + 37, one of which was failing on the clock). The per-job tests: `tests/unit/runners.test.ts` (user data, launch input, client token, limit, idempotent retry, reaper, settings) and `tests/integration/runners.test.ts` (linked-only, one just-in-time runner and one machine per job, write/read cache by trust, late `queued` ignored, limit → retry with a fresh name, every GitHub call checked against the OpenAPI description, stopped always-on runner) |
-| `infra/github-app/` | `npm test` (typecheck + 7 test files) | **34 pass**, in both modes: template assertions; per-job (worker launch rights and conditions, reaper, launch template, job role, Image Builder component under the limit, cache machine private with inbound from runners only); cdk-nag clean; the four bundles load; the runner scripts (bash -n, **shellcheck**, hook → spool → poster); the **vendored cache service run locally with the stack's `tokens.json`** (write token records, read token gets 403 on write, unknown token 401); settings; the policy files cover every resource type of both modes |
-| `infra/github-app/` | `npx cdk synth --quiet` with sample settings, per-job and always-on | exit 0 in both; cdk-nag 0 non-compliant. CloudFormation's own validation found a real bug (Image Builder's untyped `AmiDistributionConfiguration` keys), now fixed |
+| `github-app/` | `npm test` (typecheck, unit, integration against Postgres 16 with migrations 0001–0013 applied twice) | **52 unit + 61 integration pass**; the demo tests (`tests/integration/demo.test.ts`) cover up, the same machine again, another repository refused, status, down (only demo runners, busy reported), the App not installed, user data refusing injection, and REAP parsing, with every GitHub call checked against the OpenAPI description (before this work: 34 + 37, one of which was failing on the clock). The per-job tests: `tests/unit/runners.test.ts` (user data, launch input, client token, limit, idempotent retry, reaper, settings) and `tests/integration/runners.test.ts` (linked-only, one just-in-time runner and one machine per job, write/read cache by trust, late `queued` ignored, limit → retry with a fresh name, every GitHub call checked against the OpenAPI description, no runner online: queued jobs neither failed nor billed) |
+| `infra/github-app/` | `npm test` (typecheck + 7 test files) | **35 pass**, in demo (default) and per-job mode; they include the demo function's rights, the reaper per mode, the image bundle round trip, and the customer-mode spike (shellcheck, a valid sandbox configuration, the Docker kernel check): template assertions; per-job (worker launch rights and conditions, reaper, launch template, job role, Image Builder component under the limit, cache machine private with inbound from runners only); cdk-nag clean; the four bundles load; the runner scripts (bash -n, **shellcheck**, hook → spool → poster); the **vendored cache service run locally with the stack's `tokens.json`** (write token records, read token gets 403 on write, unknown token 401); settings; the policy files cover every resource type of both modes |
+| `infra/github-app/` | `npx cdk synth --quiet` with sample settings, demo and per-job | exit 0 in both; cdk-nag 0 non-compliant. CloudFormation's own validation found a real bug (Image Builder's untyped `AmiDistributionConfiguration` keys), now fixed |
 | `lib/runner/files/*.service` | `systemd-analyze verify` | no finding |
 | `scripts/deploy.sh` | run with a stub `aws` CLI, answering N | steps 1–4 work (account, parameters, install and tests, AMI pick); stops at `cdk diff`, which needs credentials |
 
@@ -400,7 +463,9 @@ the contract test (`ci_run_id`, `project_id`, `month`).
 - `c0258e7` github-app: the rows checked against the dashboard's reader, and the two fixes.
 - `0fa0659` infra/github-app: the CDK stack, the runner machine, the deploy command, the policies, 24 tests.
 - `0c7d1c0` docs: `DEPLOY-AWS.md`, this report, the READMEs, the execution policy additions.
-- `e2cd1c7` one machine per job (default), the shared cache machine, the always-on option with stop/start; tests for
-  both modes.
-- (this commit) docs for the per-job design: `DEPLOY-AWS.md`, `GITHUB-APP.md` (Administration permission), this
-  report.
+- `e2cd1c7` one machine per job, the shared cache machine, the always-on option with stop/start; tests for both
+  modes.
+- `e58d909` docs for the per-job design.
+- `0d82511` demo mode (default): demo-up/down, the demo Lambda, the reaper per mode, the image bundle; always-on
+  removed.
+- (this commit) the customer-mode design and spike, and DEPLOY-AWS.md and this report for the final plan.

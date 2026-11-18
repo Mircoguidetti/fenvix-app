@@ -1,0 +1,12 @@
+[Unit]
+Description=fenvix: run exactly one job in this sandbox, then power off
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/fenvix-guest-job
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

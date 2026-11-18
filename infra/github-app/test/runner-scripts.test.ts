@@ -101,3 +101,37 @@ describe("runner machine scripts", () => {
     } finally { await a.close(); }
   });
 });
+
+describe("customer-mode spike (infra/customer-mode/spike)", () => {
+  const SPIKE = fileURLToPath(new URL("../../customer-mode/spike/", import.meta.url));
+
+  it("scripts are valid bash (shellcheck when installed); run-job.sh prints a valid sandbox configuration", () => {
+    const sh = ["host-setup.sh", "build-guest.sh", "run-job.sh", "guest-kernel-docker-check.sh", "guest/fenvix-guest-job"];
+    for (const f of sh) execFileSync("bash", ["-n", join(SPIKE, f)]);
+    if (spawnSync("shellcheck", ["--version"]).status === 0) execFileSync("shellcheck", ["-x", ...sh.map((f) => join(SPIKE, f))]);
+    const cfg = JSON.parse(execFileSync("bash", [join(SPIKE, "run-job.sh"), "--print-config"], { env: { PATH: process.env.PATH!, SLOT: "7" }, encoding: "utf8" }));
+    assert.deepEqual(cfg.enclave, { direct_mode: true, cpu_overcommit: true, debug_mode: false });
+    assert.deepEqual(cfg["machine-config"], { vcpu_count: 2, mem_size_mib: 2048 });
+    assert.equal(cfg["network-interfaces"][0].guest_mac, "06:00:AC:10:07:02");
+    assert.equal(cfg["network-interfaces"][0].host_dev_name, "fctap7");
+    assert.deepEqual(cfg.drives.map((d: { drive_id: string; is_root_device: boolean }) => [d.drive_id, d.is_root_device]), [["rootfs", true], ["job", false]]);
+    const bad = spawnSync("bash", [join(SPIKE, "run-job.sh"), "--print-config"], { env: { PATH: process.env.PATH!, SLOT: "0" } });
+    assert.equal(bad.status, 2);
+  });
+
+  it("the Docker kernel check: passes a config with the required options, names a missing one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fenvix-kcfg-"));
+    const opts = ["NAMESPACES", "UTS_NS", "IPC_NS", "PID_NS", "NET_NS", "USER_NS", "CGROUPS", "MEMCG", "CGROUP_PIDS", "CGROUP_CPUACCT", "CGROUP_SCHED",
+      "CPUSETS", "CGROUP_DEVICE", "CGROUP_FREEZER", "CGROUP_BPF", "KEYS", "SECCOMP", "SECCOMP_FILTER", "POSIX_MQUEUE", "OVERLAY_FS", "EXT4_FS", "VETH", "BRIDGE",
+      "BRIDGE_NETFILTER", "NETFILTER", "NETFILTER_ADVANCED", "NF_NAT", "NF_CONNTRACK", "IP_NF_IPTABLES", "IP_NF_FILTER", "IP_NF_NAT", "IP_NF_TARGET_MASQUERADE",
+      "NETFILTER_XT_MATCH_ADDRTYPE", "NETFILTER_XT_MATCH_CONNTRACK", "NETFILTER_XT_TARGET_MASQUERADE"];
+    writeFileSync(join(dir, "good"), opts.map((o) => `CONFIG_${o}=y`).join("\n") + "\n");
+    const good = spawnSync("bash", [join(SPIKE, "guest-kernel-docker-check.sh"), join(dir, "good")], { encoding: "utf8" });
+    assert.equal(good.status, 0, good.stdout);
+    assert.match(good.stdout, /missing required: 0/);
+    writeFileSync(join(dir, "bad"), opts.filter((o) => o !== "OVERLAY_FS").map((o) => `CONFIG_${o}=y`).join("\n") + "\n# CONFIG_OVERLAY_FS is not set\n");
+    const bad = spawnSync("bash", [join(SPIKE, "guest-kernel-docker-check.sh"), join(dir, "bad")], { encoding: "utf8" });
+    assert.equal(bad.status, 1);
+    assert.match(bad.stdout, /MISSING  CONFIG_OVERLAY_FS/);
+  });
+});

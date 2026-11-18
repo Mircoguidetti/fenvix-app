@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Inside a job's sandbox (guest). Two roles:
+#   - as the boot service (fenvix-guest-job.service, root): mount the job disk (/dev/vdb: jitconfig, written by the
+#     host), run the just-in-time runner as `fenvix` (exactly one job), then power off: the sandbox is torn down;
+#   - as the runner's job-completed hook (user fenvix): copy summary.json onto the job disk, where the host reads it
+#     after the sandbox exits. The guest never holds RUNNER_TOKEN: the host sends the summary.
+set -uo pipefail
+job=/run/fenvix-job
+if [ "$(id -u)" != 0 ]; then
+  s="${RUNNER_TEMP:-/nonexistent}/fenvix/summary.json"
+  if [ -f "$s" ]; then
+    cp "$s" "$job/summary.json"
+    printf '%s %s %s\n' "${GITHUB_REPOSITORY_ID:-0}" "${GITHUB_RUN_ID:-0}" "${GITHUB_RUN_ATTEMPT:-1}" >"$job/ids"
+  fi
+  date +%s.%N >"$job/t-job-done"
+  exit 0
+fi
+mkdir -p "$job" && mount /dev/vdb "$job" && chown fenvix:fenvix "$job"
+date +%s.%N >"$job/t-guest-up"
+install -d -m 0700 -o fenvix -g fenvix /home/fenvix/.fenvix
+install -m 0600 -o fenvix -g fenvix "$job/jitconfig" /home/fenvix/.fenvix/jitconfig
+rm -f -- "$job/jitconfig"
+runuser -u fenvix -- env HOME=/home/fenvix FENVIX_HOME=/home/fenvix/fenvix bash /home/fenvix/engine-cli/runner/bootstrap.sh run
+sync
+umount "$job"
+systemctl poweroff
