@@ -158,8 +158,11 @@ describe("run results on GitHub, runs and usage events", () => {
   it("no summary at all: the sweep publishes it after the wait; billed as a run that used a machine", async () => {
     const sha = "2".repeat(40);
     h.gh.addRun("acme/shop", 9005, { event: "push", headSha: sha, headBranch: "main", message: "setup broke" });
-    await h.send("workflow_job", workflowJob("in_progress", { id: 605, runId: 9005, sha, branch: "main" }));
-    await h.send("workflow_job", workflowJob("completed", { id: 605, runId: 9005, sha, branch: "main", conclusion: "failure" }));
+    // Times relative to now: the wait is measured from the job's completion, and a fixed date would be old already.
+    const startedAt = new Date(Date.now() - 3 * 60_000).toISOString();
+    const completedAt = new Date().toISOString();
+    await h.send("workflow_job", workflowJob("in_progress", { id: 605, runId: 9005, sha, branch: "main", startedAt }));
+    await h.send("workflow_job", workflowJob("completed", { id: 605, runId: 9005, sha, branch: "main", conclusion: "failure", startedAt, completedAt }));
     assert.equal(await h.app.service.sweep(), 0, "not yet: the summary may still come");
     await admin.query("update gh_jobs set completed_at = now() - interval '11 minutes' where job_id = 605");
     assert.equal(await h.app.service.sweep(), 1);

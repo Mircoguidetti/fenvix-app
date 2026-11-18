@@ -7,6 +7,7 @@ import { buildApp, type App } from "../../src/app.ts";
 import { SessionVerifier } from "../../src/auth.ts";
 import { type Config, loadConfig } from "../../src/config.ts";
 import { sign } from "../../src/github/signature.ts";
+import type { WorkQueue } from "../../src/work.ts";
 import { FakeGitHub } from "./fake-github.ts";
 import { checkWebhook, recordedWebhook } from "./schemas.ts";
 
@@ -167,7 +168,8 @@ export class Harness {
   private signKey!: CryptoKey;
   private n = 0;
 
-  async start(env: Record<string, string> = {}): Promise<void> {
+  /** `queue`: where the app hands checked work (default: this process, as the node server does). */
+  async start(env: Record<string, string> = {}, opts: { queue?: WorkQueue } = {}): Promise<void> {
     const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
     this.gh = new FakeGitHub(APP_ID, publicKey);
     await this.gh.start();
@@ -181,7 +183,7 @@ export class Harness {
       DASHBOARD_URL: DASHBOARD, SUPABASE_URL: SUPABASE, STATE_SIGNING_KEY: "state-signing-key-for-tests-0123456789", RUNNER_TOKEN, SWEEP_SECONDS: "0",
       SUMMARY_WAIT_SECONDS: "600", LOG_LEVEL: "silent", ...env,
     });
-    this.app = await buildApp({ cfg: this.cfg, sessions: new SessionVerifier(SUPABASE, "", jwks), logger: false });
+    this.app = await buildApp({ cfg: this.cfg, sessions: new SessionVerifier(SUPABASE, "", jwks), logger: false, ...(opts.queue ? { queue: opts.queue } : {}) });
   }
 
   async stop(): Promise<void> {

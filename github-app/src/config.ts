@@ -8,6 +8,12 @@ import { readFileSync } from "node:fs";
  * docs/GITHUB-APP.md lists them and says where each one comes from.
  */
 export interface Config {
+  /**
+   * "all": every setting (the HTTP side: webhooks, runner summaries, setup). "worker": what the queue worker and the
+   * sweep need; the HTTP-only secrets (webhook secret, OAuth client secret, state signing key, runner tokens) are
+   * not read and stay empty, so those functions are never given them (docs/DEPLOY-AWS.md).
+   */
+  surface: "all" | "worker";
   port: number;
   host: string;
   logLevel: string;
@@ -115,7 +121,9 @@ export function parsePrivateKey(pem: string): KeyObject {
 
 const LABEL = /^[A-Za-z0-9._-]{1,100}$/;
 
-export function loadConfig(env: Env = process.env): Config {
+export function loadConfig(env: Env = process.env, opts: { surface?: "all" | "worker" } = {}): Config {
+  const surface = opts.surface ?? "all";
+  const http = surface === "all";
   const nodeEnv = env.NODE_ENV ?? "development";
   const appIdRaw = required(env, "GITHUB_APP_ID");
   const appId = Number(appIdRaw);
@@ -129,11 +137,12 @@ export function loadConfig(env: Env = process.env): Config {
     throw new Error("ONBOARDING_BRANCH is not a valid branch name");
   }
   const supabaseUrl = httpsUrl(env, "SUPABASE_URL", undefined, nodeEnv);
-  const runnerTokens = [secret(env, "RUNNER_TOKEN", { required: true, minLength: 32 })];
-  const previous = secret(env, "RUNNER_TOKEN_PREVIOUS", { required: false, minLength: 32 });
+  const runnerTokens = http ? [secret(env, "RUNNER_TOKEN", { required: true, minLength: 32 })] : [];
+  const previous = http ? secret(env, "RUNNER_TOKEN_PREVIOUS", { required: false, minLength: 32 }) : "";
   if (previous) runnerTokens.push(previous);
 
   return {
+    surface,
     port: int(env, "PORT", 8790, 1),
     host: env.HOST ?? "0.0.0.0",
     logLevel: env.LOG_LEVEL ?? "info",
@@ -143,9 +152,9 @@ export function loadConfig(env: Env = process.env): Config {
     appId,
     appSlug,
     privateKey: parsePrivateKey(secret(env, "GITHUB_APP_PRIVATE_KEY")),
-    webhookSecret: secret(env, "GITHUB_WEBHOOK_SECRET", { required: true, minLength: 20 }),
+    webhookSecret: http ? secret(env, "GITHUB_WEBHOOK_SECRET", { required: true, minLength: 20 }) : "",
     clientId: required(env, "GITHUB_CLIENT_ID"),
-    clientSecret: secret(env, "GITHUB_CLIENT_SECRET"),
+    clientSecret: http ? secret(env, "GITHUB_CLIENT_SECRET") : "",
     apiUrl: httpsUrl(env, "GITHUB_API_URL", "https://api.github.com", nodeEnv),
     webUrl: httpsUrl(env, "GITHUB_WEB_URL", "https://github.com", nodeEnv),
     oauthUrl: httpsUrl(env, "GITHUB_OAUTH_URL", env.GITHUB_WEB_URL || "https://github.com", nodeEnv),
@@ -155,7 +164,7 @@ export function loadConfig(env: Env = process.env): Config {
     dashboardUrl: httpsUrl(env, "DASHBOARD_URL", undefined, nodeEnv),
     supabaseUrl,
     supabaseJwksUrl: httpsUrl(env, "SUPABASE_JWKS_URL", `${supabaseUrl}/auth/v1/.well-known/jwks.json`, nodeEnv),
-    stateSigningKey: secret(env, "STATE_SIGNING_KEY", { required: true, minLength: 32 }),
+    stateSigningKey: http ? secret(env, "STATE_SIGNING_KEY", { required: true, minLength: 32 }) : "",
     runnerTokens,
     summaryWaitSeconds: int(env, "SUMMARY_WAIT_SECONDS", 600, 0),
     sweepSeconds: int(env, "SWEEP_SECONDS", 60, 0),

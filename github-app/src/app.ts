@@ -5,7 +5,8 @@ import { Db } from "./db.ts";
 import { GitHubApp, GitHubError } from "./github/client.ts";
 import { verifySignature } from "./github/signature.ts";
 import { SummaryError, parseSummary, trimSummary } from "./results/summary.ts";
-import { GitHubService } from "./service.ts";
+import { GitHubService, type Logger } from "./service.ts";
+import { describeWork, InProcessQueue, type Work, type WorkQueue } from "./work.ts";
 
 export interface App {
   fastify: FastifyInstance;
@@ -16,7 +17,26 @@ export interface App {
   close(): Promise<void>;
 }
 
-export interface Deps { cfg: Config; sessions?: SessionVerifier; logger?: boolean | object }
+export interface Deps {
+  cfg: Config;
+  sessions?: SessionVerifier;
+  logger?: boolean | object;
+  /** Where checked webhooks and runner summaries go. Default: this process, in the background (node server mode). */
+  queue?: WorkQueue;
+}
+
+export interface Core { service: GitHubService; db: Db; gh: GitHubApp }
+
+/** The database, the GitHub client and the service: what the HTTP side, the worker and the sweep share. */
+export function buildCore(cfg: Config, log: Logger): Core {
+  const db = new Db(cfg.databaseUrl, cfg.dbPoolMax);
+  const gh = new GitHubApp({ apiUrl: cfg.apiUrl, appId: cfg.appId, privateKey: cfg.privateKey, timeoutMs: cfg.githubTimeoutMs });
+  const service = new GitHubService(db, gh, {
+    runsOnLabel: cfg.runsOnLabel, onboardingBranch: cfg.onboardingBranch, onboardAllRepositories: cfg.onboardAllRepositories,
+    dashboardUrl: cfg.dashboardUrl, webUrl: cfg.webUrl, summaryWaitSeconds: cfg.summaryWaitSeconds,
+  }, log);
+  return { service, db, gh };
+}
 
 declare module "fastify" {
   interface FastifyRequest { rawBody?: Buffer }
@@ -27,17 +47,14 @@ const EVENTS = new Set(["installation", "installation_repositories", "push", "pu
 
 export async function buildApp(deps: Deps): Promise<App> {
   const { cfg } = deps;
+  if (cfg.surface !== "all") throw new Error("buildApp needs the HTTP secrets (loadConfig with surface \"all\")");
   const fastify = Fastify({
     logger: deps.logger ?? { level: cfg.logLevel, redact: ["req.headers.authorization", "req.headers[\"x-hub-signature-256\"]"] },
     bodyLimit: 1024 * 1024,
     trustProxy: true,
   });
-  const db = new Db(cfg.databaseUrl, cfg.dbPoolMax);
-  const gh = new GitHubApp({ apiUrl: cfg.apiUrl, appId: cfg.appId, privateKey: cfg.privateKey, timeoutMs: cfg.githubTimeoutMs });
-  const service = new GitHubService(db, gh, {
-    runsOnLabel: cfg.runsOnLabel, onboardingBranch: cfg.onboardingBranch, onboardAllRepositories: cfg.onboardAllRepositories,
-    dashboardUrl: cfg.dashboardUrl, webUrl: cfg.webUrl, summaryWaitSeconds: cfg.summaryWaitSeconds,
-  }, fastify.log);
+  const { service, db, gh } = buildCore(cfg, fastify.log);
+  const queue = deps.queue ?? new InProcessQueue(service);
   const sessions = deps.sessions ?? new SessionVerifier(cfg.supabaseUrl, cfg.supabaseJwksUrl);
 
   // The raw bytes are kept: the webhook signature is computed over them, not over re-serialised JSON.
@@ -52,6 +69,17 @@ export async function buildApp(deps: Deps): Promise<App> {
   });
 
   const fail = (reply: FastifyReply, status: number, code: string, message: string) => reply.code(status).send({ error: { code, message } });
+
+  /** 202 once the work is accepted; 503 if the queue refused it (GitHub shows the delivery as failed; redeliver it). */
+  const handOff = async (req: FastifyRequest, reply: FastifyReply, work: Work) => {
+    try {
+      await queue.enqueue(work);
+    } catch (e) {
+      req.log.error({ err: e instanceof Error ? e.message : String(e), work: describeWork(work) }, "could not queue the work");
+      return fail(reply, 503, "queue_unavailable", "The work could not be queued. Try again.");
+    }
+    return reply.code(202).send({ ok: true });
+  };
 
   fastify.get("/healthz", async () => ({ ok: true }));
 
@@ -68,8 +96,7 @@ export async function buildApp(deps: Deps): Promise<App> {
     if (event === "ping") return reply.code(200).send({ ok: true, pong: true });
     if (!EVENTS.has(event)) return reply.code(202).send({ ok: true, ignored: event });
     const payload = req.body as Record<string, unknown>;
-    service.background(`webhook ${event} ${delivery}`, () => service.handle(event, delivery, payload));
-    return reply.code(202).send({ ok: true });
+    return handOff(req, reply, { kind: "webhook", event, delivery, payload });
   });
 
   // ---------------------------------------------------------------- our runners send the run summary
@@ -90,8 +117,7 @@ export async function buildApp(deps: Deps): Promise<App> {
       return fail(reply, 422, "bad_summary", e instanceof SummaryError ? e.message : "The summary could not be read.");
     }
     const summary = trimSummary(b!.summary as Record<string, unknown>);
-    service.background(`summary ${repositoryId}/${runId}`, () => service.receiveSummary({ repositoryId, runId, runAttempt, runnerName, receiptsUrl, summary }));
-    return reply.code(202).send({ ok: true });
+    return handOff(req, reply, { kind: "summary", repositoryId, runId, runAttempt, runnerName, receiptsUrl, summary });
   });
 
   // ---------------------------------------------------------------- connecting an installation to an organization
