@@ -14,6 +14,8 @@ type Json = Record<string, unknown>;
 export interface Exchange {
   method: string; path: string; query: Record<string, string>; body: unknown; status: number; response: unknown;
   operationId?: string | null; problems?: Problem[];
+  /** When it happened (performance.now()), to put webhooks, runner calls and API calls in one order. */
+  at?: number;
 }
 
 interface Branch { sha: string; files: Map<string, { text: string; sha: string }> }
@@ -115,7 +117,7 @@ export class FakeGitHub {
     } catch (e) {
       [status, response] = [500, { message: `fake: ${e instanceof Error ? e.message : String(e)}` }];
     }
-    this.exchanges.push({ method, path, query, body, status, response });
+    this.exchanges.push({ method, path, query, body, status, response, at: performance.now() });
     res.statusCode = status;
     res.setHeader("content-type", "application/json; charset=utf-8");
     res.end(status === 204 ? "" : JSON.stringify(response));

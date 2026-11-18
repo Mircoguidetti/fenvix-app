@@ -54,7 +54,7 @@ describe("check run and comment", () => {
   it("says tests run, skipped with proof (with receipts), minutes saved, failures", () => {
     const s = parseSummary(fixture("job2-warm-real-failure"));
     const out = checkRunOutput(s, ctx);
-    assert.equal(out.title, "45 of 56 tests skipped with proof · 0.0 min (0.2 s) saved · 1 failed");
+    assert.equal(out.title, "45 of 56 tests skipped with proof · under 0.1 min (0.2 s) saved · 1 failed");
     assert.match(out.summary, /\| Tests run \| 11 \|/);
     assert.match(out.summary, /\| Skipped with proof \| \*\*45\*\* \(\[receipts\]\(https:\/\/app\.fenvix\.test\/projects\/p\/runs\/r\)\) \|/);
     assert.match(out.summary, /\| Minutes saved \|/);
@@ -105,5 +105,6 @@ describe("check run and comment", () => {
   it("formats minutes", () => {
     assert.equal(minutes(13.9), "0.2 min (13.9 s)");
     assert.equal(minutes(744), "12.4 min");
+    assert.equal(minutes(0.2), "under 0.1 min (0.2 s)");
   });
 });

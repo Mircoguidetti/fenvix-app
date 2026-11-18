@@ -31,6 +31,7 @@ const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 export function minutes(seconds: number): string {
   const m = seconds / 60;
   if (m >= 1) return `${m.toFixed(1)} min`;
+  if (m < 0.05) return `under 0.1 min (${seconds.toFixed(1)} s)`;
   return `${m.toFixed(1)} min (${seconds.toFixed(1)} s)`;
 }
 

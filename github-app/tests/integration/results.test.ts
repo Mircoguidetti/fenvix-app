@@ -60,7 +60,7 @@ describe("run results on GitHub, runs and usage events", () => {
     assert.equal(cr.status, "completed");
     assert.equal(cr.conclusion, "failure");
     const out = cr.output as { title: string; summary: string };
-    assert.equal(out.title, "45 of 56 tests skipped with proof · 0.0 min (0.2 s) saved · 1 failed");
+    assert.equal(out.title, "45 of 56 tests skipped with proof · under 0.1 min (0.2 s) saved · 1 failed");
     assert.match(out.summary, /\[receipts\]\(https:\/\/github\.com\/acme\/shop\/actions\/runs\/9001#artifacts\)/);
     assert.match(out.summary, /test_vat\[3\]/);
 
