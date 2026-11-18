@@ -15,7 +15,6 @@
     "check": "node scripts/run.mjs",
     "test:unit": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test tests/unit/*.test.ts",
     "test:rls": "bash supabase/tests/run-local.sh",
-    "test:e2e": "node scripts/supabase-e2e.mjs",
     "api:generate": "openapi-typescript openapi/fenvix-api.yaml -o src/api/schema.d.ts",
     "api:lint": "redocly lint openapi/fenvix-api.yaml",
     "api:check": "node scripts/api-check.mjs"

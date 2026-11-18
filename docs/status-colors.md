@@ -14,7 +14,7 @@ the "status colours and silver" section at the end of that file.
 
 | Token | Value | Meaning |
 | --- | --- | --- |
-| `--success` | `#067a3a` | ready, awake, active, paid, done, confirmed |
+| `--success` | `#067a3a` | passed, active, paid, done, confirmed |
 | `--danger` | `#d6140a` | errors, blocked addresses, failures, actions that cannot be undone |
 | `--warning` | `#9c5900` | starting, in progress, needs attention |
 | `--success-on-dark` | `#3ddc84` | the same on a dark surface (toasts) |
@@ -54,18 +54,18 @@ white, so on the white content it reads as a sheen rather than a stripe.
 
 1. Black, white and grey for everything. A place with no real state stays black, white or grey.
 2. Green, red and amber only for a state. Each of them always comes with a word or an icon too, so the meaning never
-   depends on telling colours apart: "Awake", "Active", "Paid", "Open", "Error: …", "Blocked until …", "Unsaved
-   changes", a warning triangle, a tick in a circle, an alert circle, a "blocked" sign.
+   depends on telling colours apart: "Passed", "Failed", "Active", "Paid", "Open", "Error: …", a warning triangle, a
+   tick in a circle, an alert circle.
 3. No blue and no other hue. Nothing is underlined: links are bold, and the selected menu item and tab are filled
    (dark grey on the dark navigation, black on the content) and bold, with no line under them. Charts are black and grey; none of today's series means success or error,
    so none is green or red.
 4. Silver only on: the border of the highlighted card (the current plan); the light fill under chart lines (area charts and
    sparklines). Never on text, never behind text, no chrome or bevel. The logo does not use silver and is unchanged.
-5. Notices (confirmations, warnings, the waking note, one-time secrets, read-only notes) have no border and no
+5. Notices (confirmations, warnings, one-time secrets, read-only notes) have no border and no
    coloured edge: a light grey fill sets them apart, and only their icon is coloured.
 6. Primary buttons stay black, except the confirm button of a destructive dialog: that one is filled red
    (`--danger`, white text, 5.30:1). Dialogs have no border and no coloured line. The button that opens a destructive dialog
-   is red (red text and border, filled red on hover), except "Restore to a point in time", which stays neutral.
+   is red (red text and border, filled red on hover).
 7. No new dependency: the icons come from `lucide-react`, which was already used.
 
 ## Where it is applied
@@ -88,22 +88,11 @@ white, so on the white content it reads as a sheen rather than a stripe.
 | Copy buttons, after copying | done | green tick | "Copied" | `.copy-done` |
 | Toasts after an action that worked | success | green icon (dark-surface shade) | tick in a circle, the message | `.toast-success` |
 | Toasts after an action that failed | error | red icon and a red edge (dark-surface shade) | alert circle, the message | `.toast-error` |
-| Data tab: waking a sleeping database | in progress | amber icon | "Waking the database…", spinning icon | `.waking` |
-| Network: Data Explorer not trusted by the server | warning | amber icon | warning triangle, the explanation | `.once-warning` |
-| Network: the engine checks a list different from the saved one | warning | amber icon | warning triangle, "different list" | `.callout-warning` |
-| Network: the engine's list could not be checked | warning | amber icon | warning triangle, the explanation | `.message-warning` |
-| Network: the server does not check sign-ins yet | warning | amber icon | warning triangle, the explanation | `.message-warning` |
-| Network: unsaved changes to the list | needs attention | amber border | "Unsaved changes" | `.tag-warning` |
-| Network: save dialog, "FENVIX cannot see your address" | warning | amber icon | warning triangle | `.once-warning` |
-| Database user: "Copy the password now" | warning | amber icon | warning triangle | `.once-warning` |
-| Reset password dialog: "Applications using the old password will stop working." | warning | amber icon | warning triangle | `.once-warning` (the dialog is not destructive; its confirm stays black) |
-| Network: blocked addresses | blocked | red text and icon | "Blocked until …", blocked sign | `.blocked-until` |
 | Form and dialog errors everywhere | error | red text | "Error: " written before the message | `.error` |
 | A field with an error | error | red border | the error below it | `input[aria-invalid="true"]` |
-| Load failures (lists, pages, charts, the engine not answering, 403, network errors) | error | red text and icon | alert circle, the message | `.message-error` (`Message role="alert"`) |
+| Load failures (lists, pages, charts, 403, network errors) | error | red text and icon | alert circle, the message | `.message-error` (`Message role="alert"`) |
 | Revoke key, Remove member, Revoke invitation | destructive | red text and border; red fill on hover | the word on the button | `.btn-danger` |
 | The dialogs of those actions, and Leave organization | destructive | the confirm button filled red with white text, a darker red on hover (the dialog itself has no border or line) | the title and text say what is lost; the button says the action | `.dialog-danger` (`ConfirmDialog danger`) |
-| Selected database tab | — | — | filled black, bold; no line under it | `.seg button[aria-pressed]` |
 | Selected settings tab | — | none (the black fill is enough) | the tab is filled black | — |
 | Selected menu item (sidebar and drawer) | — | — | filled dark grey, bold; no line under it | `.nav-link.active` |
 | Current plan card (Billing) | — | silver border | "Current plan" | `.plan-current` |
@@ -113,17 +102,10 @@ white, so on the white content it reads as a sheen rather than a stripe.
 
 | Place | Why it stays black, white or grey |
 | --- | --- |
-| Asleep databases | Sleeping is normal and costs less; it is not a problem and not in progress. Hollow grey dot and "Asleep". |
 | Revoked API keys | A past action, not a current problem. Hollow grey dot and "Revoked". |
-| "Kept awake" | A setting, not a state. |
-| Counts (databases, awake, asleep, kept awake) and the Overview numbers | Quantities, not states. |
-| The awake/asleep timeline and the "Awake databases" chart | Awake time is a quantity (it drives the bill), not a health signal; rule 3 keeps charts black and grey. |
-| Requests, storage and cost charts | No series means success or error. |
-| Primary buttons, including the confirm button of the Reset password dialog | Rule 5: primary buttons stay black; only the confirm of a destructive dialog is red. |
-| The "Restore to a point in time" and "Reset password" buttons | Neutral by choice: Restore opens a red dialog that says what is lost; Reset password opens a plain dialog with an amber warning. |
-| "Remove" next to an entry of the IP allowlist | It only changes the draft; nothing happens until "Save list", and "Discard changes" undoes it. |
-| Fork, Export, Unblock, Apply again | Recoverable or constructive actions. |
-| Save dialog of the IP allowlist | Saving is not destructive; its warning paragraph is amber. |
+| Counts and the Overview numbers | Quantities, not states. |
+| Charts (runs, minutes, cost) | No series means success or error; rule 3 keeps charts black and grey. |
+| Primary buttons | Rule 6: primary buttons stay black; only the confirm of a destructive dialog is red. |
 | The view-only note ("You have view-only access…", "Only an owner or admin…") | Information about the role, not a state of anything. |
 | Role tags (Owner, Admin, Member), tag chips, "Current plan" tag | Labels, not states. |
 | Plan feature ticks, "What happens next" bullets | Decoration of a list; a green tick would claim success where there is none. |
@@ -138,18 +120,11 @@ white, so on the white content it reads as a sheen rather than a stripe.
   amber; that silver is a cool grey gradient that stays visible but quiet; that no other hue appears in the stylesheet
   or the components; that silver is used only on the allowed selectors and never as a text colour; that each state in
   the table above uses its token and no other; that every coloured state has a word or icon; that every destructive
-  dialog (Restore included) has a red, white-text confirm button and every other dialog has not; that no dialog has
-  a border or a coloured line;
-  that Restore and Reset password open from neutral buttons and that the Reset password dialog has its amber warning
-  with an icon; and that every toast is marked success or error.
+  dialog has a red, white-text confirm button and every other dialog has not; that no dialog has a border or a
+  coloured line; and that every toast is marked success or error.
 - `scripts/status-colors-checks.mjs` (in `npm run check`, desktop 1440 px and phone 390 px): opens the pages in
-  Chromium and reads the colours the browser actually draws for each state, opens the dialogs and reads the colour of their confirm buttons (red with white text in Erase, Restore, Revoke
-  and Delete user; black in Fork and Reset password, where it also checks the amber warning), saves an allowlist to
-  see the green toast, wakes a sleeping database to see the amber notice, scans every visible element for any
-  saturated colour that is not a status colour or that has no word or icon next to it, and checks that nothing leaves
-  the screen or overlaps.
+  Chromium and reads the colours the browser actually draws for each state, opens the dialogs and reads the colour
+  of their confirm buttons, scans every visible element for any saturated colour that is not a status colour or that
+  has no word or icon next to it, and checks that nothing leaves the screen or overlaps.
 - The existing screenshot checks (`scripts/screenshots.mjs`) run axe, including its colour-contrast rule, on every
   screen and dialog they capture.
-
-The mock backend gained one state for these checks: in `src/data/network-mock.ts`, `db_0004`'s server does not trust
-the Data Explorer, so the amber warning can be seen and tested.

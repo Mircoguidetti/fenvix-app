@@ -11,8 +11,8 @@ cause, minimal order, seed, fingerprint, replay command), Usage (per project, CS
 set yet), API keys, Members and Settings.
 
 The records the dashboard shows are defined in `docs/data-contract.md` (runner → dashboard). The tables are
-`supabase/migrations/0011_ci_runs.sql`. The earlier product's database screens were removed from the app; their
-migrations, `control-plane/` and `infra/` are untouched.
+`supabase/migrations/0011_ci_runs.sql`. The earlier serverless database product was removed from the repository; what
+went is listed in `docs/DELETED-old-database-product.md`.
 
 ## Run it
 
@@ -49,9 +49,9 @@ page says which one, instead of showing a blank page.
 
 ## Set up Supabase
 
-1. **Create the schema.** Supabase dashboard → SQL editor → New query. Run, in order, `0001_init.sql`,
-   `0002_control_plane.sql`, `0008_organizations.sql` and `0011_ci_runs.sql` from `supabase/migrations/`. Each can be
-   run again safely. 0011 holds the CI dashboard's tables and plans (with no prices).
+1. **Create the schema.** Supabase dashboard → SQL editor → New query. Run every file in `supabase/migrations/` in
+   order, `0001` to `0014`. 0011 holds the CI dashboard's tables and plans; 0014 removes the earlier product's tables
+   and must run after all the others.
 2. **Auth URLs.** Authentication → URL Configuration. Set *Site URL* to the production address and add
    every address the app is served from to *Redirect URLs*, each with a trailing slash: for example
    `https://app.fenvix.dev/`, `http://localhost:5173/`, and for Vercel previews a wildcard such as
@@ -68,7 +68,7 @@ page says which one, instead of showing a blank page.
    The secrets go into the Supabase dashboard only, never into this repository.
 4. **First sign-in.** Open the site and sign in once as `mircoguidetti1994@gmail.com`. The first sign-in
    creates a personal workspace for that account.
-5. **Data.** The CI tables are written by the fenvix runner through the control plane (not built yet). There is no
+5. **Data.** The CI tables are written by the GitHub App service (`github-app/`). There is no
    Supabase seed for them: to see the dashboard with sample data, build with `VITE_DATA_BACKEND=mock`.
 
 ## Deploy on Vercel
@@ -82,7 +82,7 @@ Project → Settings → Environment Variables, for Production and Preview (and 
 | `VITE_SUPABASE_ANON_KEY` | the anon key |
 
 Do not set `VITE_DATA_BACKEND` (or set it to `supabase`). Redeploy after changing a variable. The app uses
-real URLs (`/overview`, `/databases/…`), so every path must be answered with `index.html`. `vercel.json` does
+real URLs (`/overview`, `/projects/…`), so every path must be answered with `index.html`. `vercel.json` does
 that; on another host add the equivalent rewrite.
 
 ## How sign-in finishes
@@ -103,18 +103,16 @@ After a provider or email sign-in the user lands on `/overview`, not on the page
 | --- | --- | --- |
 | `npm run check` | Behaviour checks on desktop and phone (onboarding, runs, receipts, defects, usage CSV, billing, organizations), status colours, accessibility and layout checks, screenshots, all with the mock backend | Playwright browsers |
 | `npm run test:unit` | Overview, usage, billing and defect logic (`src/data/ci.ts`), row mapping, error messages, CSV, API-key hashing, colours | Node 22 |
-| `npm run test:rls` | Runs the migrations twice each, `supabase/tests/rls.sql`, `functions.sql`, `orgs-rls.sql`, `ci-rls.sql` (the CI tables: members read, nobody reads another organization, only owners and admins change project settings, only the control plane writes runs and defects) and the old seed twice | A scratch Postgres 15+ |
-| `npm run test:e2e` | **Out of date**: it drives the earlier product's database screens, which are gone. It still documents the real supabase-js sign-in path; it must be rewritten for the CI screens | A scratch Postgres 15+ |
+| `npm run test:rls` | Runs the migrations twice each, `supabase/tests/rls.sql`, `functions.sql`, `orgs-rls.sql`, `ci-rls.sql` (the CI tables: members read, nobody reads another organization, only owners and admins change project settings) | A scratch Postgres 15+ |
 
-The last two take `TEST_DATABASE_URL`, the address of an **empty, disposable** Postgres database, for example:
+`npm run test:rls` takes `TEST_DATABASE_URL`, the address of an **empty, disposable** Postgres database, for example:
 
 ```bash
 createdb fenvix_scratch
 TEST_DATABASE_URL=postgresql://postgres@localhost:5432/fenvix_scratch npm run test:rls
-TEST_DATABASE_URL=postgresql://postgres@localhost:5432/fenvix_scratch npm run test:e2e
 ```
 
-They refuse addresses that look like a hosted Supabase project, because they create roles and a stand-in
+It refuses addresses that look like a hosted Supabase project, because it creates roles and a stand-in
 `auth` schema. `supabase/tests/rls.sql` and `functions.sql` are also safe to paste into the Supabase SQL editor:
 each runs in one transaction and rolls back.
 
@@ -127,6 +125,3 @@ and how the real GoTrue and PostgREST behave. That needs a real sign-in.
   `src/data/mock.ts` is the sample data (from fenvix's measured shapes, labelled "Sample data" on every page).
   `src/data/index.ts` picks one. `src/data/ci.ts` turns rows into what the screens show, for both.
 - `src/session/` is the same for sign-in. `src/lib/env.ts` reads the environment.
-- `supabase/migrations/0001_init.sql`: tables, indexes, row level security, the sign-up trigger and every function.
-- `docs/control-plane-api.md` describes the HTTP API the engine team will implement, and how the Supabase
-  backend maps onto it.
