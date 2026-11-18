@@ -111,7 +111,8 @@ Click **Create GitHub App**.
 | the public page `https://github.com/apps/<slug>` | `GITHUB_APP_SLUG` |
 | the webhook secret you generated | `GITHUB_WEBHOOK_SECRET` (**secret**) |
 
-Put the secrets straight into the secret store of the machine that will run the service (e.g. AWS Secrets Manager or
+On AWS (`DEPLOY-AWS.md`), the secrets are SSM SecureString parameters under `/fenvix/prod/github-app/`. Otherwise,
+put the secrets straight into the secret store of the machine that will run the service (e.g. AWS Secrets Manager or
 SSM Parameter Store, injected as environment variables or mounted files). Never in git, never in a chat, never in a
 ticket. Delete the downloaded `.pem` from your laptop once it is stored.
 
@@ -129,7 +130,8 @@ alter role fenvix_github_app with password '<the password>';
 
 Build `GITHUB_APP_DATABASE_URL` from Supabase → Project Settings → Database → Connection string (pooler in
 *transaction* mode, or direct), with the user `fenvix_github_app` (for the pooler: `fenvix_github_app.<project-ref>`)
-and that password. It is a **secret**.
+and that password. It is a **secret**. On AWS Lambda use the **session** pooler (port 5432): Lambda has no IPv6 for
+the direct host; see `DEPLOY-AWS.md`, step 8.
 
 ### 7. Two more secrets
 

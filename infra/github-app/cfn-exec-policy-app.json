@@ -19,7 +19,9 @@
         "lambda:PutFunctionConcurrency",
         "lambda:DeleteFunctionConcurrency",
         "lambda:GetRuntimeManagementConfig",
-        "lambda:PutRuntimeManagementConfig"
+        "lambda:PutRuntimeManagementConfig",
+        "lambda:GetFunctionCodeSigningConfig",
+        "lambda:ListVersionsByFunction"
       ],
       "Resource": "arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-*"
     },

@@ -162,6 +162,17 @@
         "ssm:GetParameters"
       ],
       "Resource": "arn:aws:ssm:eu-west-1::parameter/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+    },
+    {
+      "Sid": "ApiGatewayServiceLinkedRoleForAccessLogs",
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": "arn:aws:iam::865859654353:role/aws-service-role/ops.apigateway.amazonaws.com/*",
+      "Condition": {
+        "StringEquals": {
+          "iam:AWSServiceName": "ops.apigateway.amazonaws.com"
+        }
+      }
     }
   ]
 }
