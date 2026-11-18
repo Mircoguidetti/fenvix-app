@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# fenvix runner machine: install everything a runner needs, start nothing (root; safe to run again). Used twice:
-#   - by EC2 Image Builder, to bake the per-job runner image (lib/runner-image.ts);
-#   - by setup.sh, on the always-on machine's first boot.
-#   1. tools (git, curl, strace, build tools, python3, iptables, AWS CLI);
-#   2. users: `fenvix` runs the GitHub runner and the customers' jobs; `fenvix-post` holds RUNNER_TOKEN and sends
-#      run summaries, so job code can never read the token;
-#   3. instance metadata (and so the machine's AWS role) blocked for both users;
+# fenvix runner machine: install everything a runner needs, start nothing (root; safe to run again). Used by EC2 Image
+# Builder to bake the runner image (lib/runner-fleet.ts). The build machine cannot read any of our SSM parameters.
+#   1. tools (git, curl, strace, build tools, python3, iptables, the GitHub runner's libraries; no AWS CLI);
+#   2. users: `fenvix` runs the GitHub runner and the customers' jobs; `fenvix-post` holds the machine's summary
+#      credential and sends run summaries, so job code can never read it;
+#   3. instance metadata (the user data holds the machine's credentials) blocked for both users;
 #   4. runner/bootstrap.sh install (fenvix-engine-cli at a pinned commit) as `fenvix`;
 #   5. the job hooks (summary.json to the spool when a job ends; a marker when a job starts).
-# The services (always-on: setup.sh; one machine per job: fenvix-job.target) start elsewhere.
+# The services (demo: fenvix-runner + poster; one machine per job: fenvix-job.target) start from the user data.
 # Log: /var/log/fenvix-runner-setup.log
 set -euo pipefail
 exec > >(tee -a /var/log/fenvix-runner-setup.log) 2>&1
@@ -25,8 +24,10 @@ SPOOL=/var/spool/fenvix-summaries
 log "1/5 tools"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq git curl tar strace build-essential python3 iptables ca-certificates >/dev/null
-command -v aws >/dev/null || [ -x /snap/bin/aws ] || snap install aws-cli --classic
+# The GitHub runner's own libraries are installed here, by name, as root. Its installdependencies.sh is never run:
+# by step 4 it is a file the `fenvix` user owns, and code from step 4's downloads could have rewritten it (R-012 F5).
+apt-get install -y -qq git curl tar strace build-essential python3 iptables ca-certificates \
+  libicu74 libkrb5-3 liblttng-ust1t64 libssl3t64 zlib1g >/dev/null
 
 log "2/5 users"
 id fenvix >/dev/null 2>&1 || useradd --create-home --home-dir "$RUNNER_HOME" --shell /bin/bash fenvix
@@ -47,14 +48,12 @@ fi
 runuser -u fenvix -- git -C "$ENGINE_DIR" fetch -q origin "$FENVIX_ENGINE_CLI_COMMIT" || true
 runuser -u fenvix -- git -C "$ENGINE_DIR" -c advice.detachedHead=false checkout -q --detach "$FENVIX_ENGINE_CLI_COMMIT"
 runuser -u fenvix -- env HOME="$RUNNER_HOME" FENVIX_HOME="$FENVIX_HOME" bash "$ENGINE_DIR/runner/bootstrap.sh" install
-# The runner's own libraries (bootstrap.sh tries with sudo, which the fenvix user does not have).
-"$FENVIX_HOME/actions-runner/bin/installdependencies.sh" >/dev/null || log "installdependencies.sh failed (continuing)"
+# Nothing below runs, as root, a file the `fenvix` user owns or could have written.
 
 log "5/5 job hooks: summary.json to the spool when a job ends (the poster sends it); a marker when a job starts"
-env_file="$FENVIX_HOME/actions-runner/.env"
-grep -q '^ACTIONS_RUNNER_HOOK_JOB_COMPLETED=' "$env_file" 2>/dev/null \
-  || printf 'ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/opt/fenvix/bin/fenvix-job-completed\nACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/fenvix/bin/fenvix-job-started\nFENVIX_SPOOL=%s\n' "$SPOOL" >>"$env_file"
-chown fenvix:fenvix "$env_file"
+# Written as `fenvix`, never by root: a file in the job user's directory may be a symlink by now (R-012 F5).
+runuser -u fenvix -- env SPOOL="$SPOOL" ENV_FILE="$FENVIX_HOME/actions-runner/.env" sh -c '
+  grep -q "^ACTIONS_RUNNER_HOOK_JOB_COMPLETED=" "$ENV_FILE" 2>/dev/null || printf "ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/opt/fenvix/bin/fenvix-job-completed\nACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/fenvix/bin/fenvix-job-started\nFENVIX_SPOOL=%s\n" "$SPOOL" >>"$ENV_FILE"'
 systemctl daemon-reload
 log "fenvix runner install done"
 

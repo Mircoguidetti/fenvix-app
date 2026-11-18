@@ -9,25 +9,32 @@ import { GetParametersCommand, type SSMClient } from "@aws-sdk/client-ssm";
  *   <prefix>/webhook-secret          GITHUB_WEBHOOK_SECRET     HTTP only
  *   <prefix>/client-secret           GITHUB_CLIENT_SECRET      HTTP only
  *   <prefix>/state-signing-key       STATE_SIGNING_KEY         HTTP only
- *   <prefix>/runner-token            RUNNER_TOKEN              HTTP only (and the runner machine)
+ *   <prefix>/runner-token            RUNNER_TOKEN              HTTP (verifies), the per-job worker and the demo
+ *                                                              function (sign each machine's credential); never a
+ *                                                              machine
  *   <prefix>/runner-token-previous   RUNNER_TOKEN_PREVIOUS     HTTP only, optional (during a rotation)
+ *
+ * The per-job worker also reads the cache signing key, by its full name (CACHE_SIGNING_KEY_PARAM, /fenvix/<env>/cache/
+ * signing-key). Every function reloads its secrets after SECRETS_TTL_SECONDS (runtime.ts), so a rotation takes
+ * effect without a deploy.
  *
  * <prefix> is SSM_PREFIX, e.g. /fenvix/prod/github-app. infra/github-app/lib/parameters.ts holds the same list.
  */
-export const SECRET_PARAMETERS = {
-  "database-url": { env: "GITHUB_APP_DATABASE_URL", http: false, required: true },
-  "private-key": { env: "GITHUB_APP_PRIVATE_KEY", http: false, required: true },
-  "webhook-secret": { env: "GITHUB_WEBHOOK_SECRET", http: true, required: true },
-  "client-secret": { env: "GITHUB_CLIENT_SECRET", http: true, required: true },
-  "state-signing-key": { env: "STATE_SIGNING_KEY", http: true, required: true },
-  "runner-token": { env: "RUNNER_TOKEN", http: true, required: true },
-  "runner-token-previous": { env: "RUNNER_TOKEN_PREVIOUS", http: true, required: false },
-} as const;
+/** "all": the HTTP function. "launcher": the per-job worker. "worker": the demo-mode worker and the sweep. */
+export type Surface = "all" | "launcher" | "worker";
 
-export type Surface = "all" | "worker";
+export const SECRET_PARAMETERS: Record<string, { env: string; surfaces: Surface[]; required: boolean }> = {
+  "database-url": { env: "GITHUB_APP_DATABASE_URL", surfaces: ["all", "launcher", "worker"], required: true },
+  "private-key": { env: "GITHUB_APP_PRIVATE_KEY", surfaces: ["all", "launcher", "worker"], required: true },
+  "webhook-secret": { env: "GITHUB_WEBHOOK_SECRET", surfaces: ["all"], required: true },
+  "client-secret": { env: "GITHUB_CLIENT_SECRET", surfaces: ["all"], required: true },
+  "state-signing-key": { env: "STATE_SIGNING_KEY", surfaces: ["all"], required: true },
+  "runner-token": { env: "RUNNER_TOKEN", surfaces: ["all", "launcher"], required: true },
+  "runner-token-previous": { env: "RUNNER_TOKEN_PREVIOUS", surfaces: ["all"], required: false },
+};
 
 export function parameterNames(prefix: string, surface: Surface): string[] {
-  return Object.entries(SECRET_PARAMETERS).filter(([, p]) => surface === "all" || !p.http).map(([name]) => `${prefix}/${name}`);
+  return Object.entries(SECRET_PARAMETERS).filter(([, p]) => p.surfaces.includes(surface)).map(([name]) => `${prefix}/${name}`);
 }
 
 /** The secrets of one surface as environment-style entries. Throws, naming the missing parameters (never a value). */
@@ -37,13 +44,22 @@ export async function loadSecrets(client: Pick<SSMClient, "send">, prefix: strin
   const r = await client.send(new GetParametersCommand({ Names: names, WithDecryption: true }));
   const out: Record<string, string> = {};
   for (const p of r.Parameters ?? []) {
-    const key = p.Name?.slice(prefix.length + 1) as keyof typeof SECRET_PARAMETERS | undefined;
-    if (key && key in SECRET_PARAMETERS && typeof p.Value === "string") out[SECRET_PARAMETERS[key].env] = p.Value;
+    const key = p.Name?.slice(prefix.length + 1);
+    if (key && key in SECRET_PARAMETERS && typeof p.Value === "string") out[SECRET_PARAMETERS[key]!.env] = p.Value;
   }
   const missing = names.filter((n) => {
-    const spec = SECRET_PARAMETERS[n.slice(prefix.length + 1) as keyof typeof SECRET_PARAMETERS];
+    const spec = SECRET_PARAMETERS[n.slice(prefix.length + 1)]!;
     return spec.required && !(spec.env in out);
   });
   if (missing.length) throw new Error(`missing SSM parameters: ${missing.join(", ")}`);
   return out;
+}
+
+/** One more parameter by its full name (the cache signing key lives outside the App's prefix). */
+export async function loadParameter(client: Pick<SSMClient, "send">, name: string): Promise<string> {
+  if (!/^\/[A-Za-z0-9_.\-/]+[^/]$/.test(name)) throw new Error(`"${name}" is not a parameter name`);
+  const r = await client.send(new GetParametersCommand({ Names: [name], WithDecryption: true }));
+  const v = r.Parameters?.[0]?.Value;
+  if (typeof v !== "string" || !v) throw new Error(`missing SSM parameters: ${name}`);
+  return v;
 }

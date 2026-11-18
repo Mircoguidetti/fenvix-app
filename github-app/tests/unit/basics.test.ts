@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { createVerify, generateKeyPairSync } from "node:crypto";
 import { describe, it } from "node:test";
-import { runnerTokenOk, signState, verifyState } from "../../src/auth.ts";
+import { signState, verifyState } from "../../src/auth.ts";
+import { cacheOrgOf, signCacheToken, signSummaryCredential, verifySummaryCredential } from "../../src/runners/credentials.ts";
 import { loadConfig } from "../../src/config.ts";
 import { appJwt } from "../../src/github/client.ts";
 import { sign, verifySignature } from "../../src/github/signature.ts";
@@ -62,14 +63,41 @@ describe("install state", () => {
   });
 });
 
-describe("runner token", () => {
-  it("accepts the current and the previous token only", () => {
-    const tokens = ["a".repeat(32), "b".repeat(32)];
-    assert.equal(runnerTokenOk(tokens, `Bearer ${"a".repeat(32)}`), true);
-    assert.equal(runnerTokenOk(tokens, `Bearer ${"b".repeat(32)}`), true);
-    assert.equal(runnerTokenOk(tokens, `Bearer ${"c".repeat(32)}`), false);
-    assert.equal(runnerTokenOk(tokens, undefined), false);
-    assert.equal(runnerTokenOk(tokens, "a".repeat(32)), false);
+describe("per-machine credentials (R-012 F1, F3)", () => {
+  const cur = "a".repeat(32), prev = "b".repeat(32);
+  const exp = Math.floor(Date.now() / 1000) + 3600;
+
+  it("a summary credential names its runner, repository and run; signed with the current or the previous key", () => {
+    const t = signSummaryCredential(cur, { runnerName: "fenvix-j1", repositoryId: 7, runId: 9, exp });
+    assert.deepEqual(verifySummaryCredential([cur, prev], `Bearer ${t}`), { runnerName: "fenvix-j1", repositoryId: 7, runId: 9, exp });
+    const old = signSummaryCredential(prev, { runnerName: "fenvix-demo-1", repositoryId: 7, exp });
+    assert.deepEqual(verifySummaryCredential([cur, prev], `Bearer ${old}`), { runnerName: "fenvix-demo-1", repositoryId: 7, exp });
+    assert.equal(verifySummaryCredential([cur], `Bearer ${old}`), null, "a key no longer configured");
+  });
+
+  it("refuses the bare key, a changed payload, an expired credential, a missing Bearer", () => {
+    assert.equal(verifySummaryCredential([cur], `Bearer ${cur}`), null, "the fleet-wide key itself is not a credential");
+    const t = signSummaryCredential(cur, { runnerName: "fenvix-j1", repositoryId: 7, runId: 9, exp });
+    const [, body, mac] = t.split(".");
+    const forged = Buffer.from(JSON.stringify({ n: "fenvix-j2", r: 8, u: 10, e: exp })).toString("base64url");
+    assert.equal(verifySummaryCredential([cur], `Bearer fxr1.${forged}.${mac}`), null);
+    assert.equal(verifySummaryCredential([cur], `Bearer fxr1.${body}.${mac}x`), null);
+    const late = signSummaryCredential(cur, { runnerName: "fenvix-j1", repositoryId: 7, exp: Math.floor(Date.now() / 1000) - 1 });
+    assert.equal(verifySummaryCredential([cur], `Bearer ${late}`), null);
+    assert.equal(verifySummaryCredential([cur], t), null);
+    assert.equal(verifySummaryCredential([cur], undefined), null);
+    assert.throws(() => signSummaryCredential("", { runnerName: "x", repositoryId: 1, exp }), /signing key/);
+  });
+
+  it("a cache token: one organization per installation, RSA-signed, write only when asked", () => {
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const t = signCacheToken(privateKey, { installationId: 42, write: false, exp, jobId: 5 });
+    const [p, body, sig] = t.split(".");
+    assert.equal(p, "fxs1");
+    assert.deepEqual(JSON.parse(Buffer.from(body!, "base64url").toString()), { org: "gh-42", w: false, exp, job: 5 });
+    assert.ok(createVerify("sha256").update(`fxs1.${body}`).verify(publicKey, Buffer.from(sig!, "base64url")));
+    assert.equal(cacheOrgOf(7), "gh-7");
+    assert.throws(() => signCacheToken(publicKey, { installationId: 1, write: true, exp, jobId: 1 }), /private key/);
   });
 });
 

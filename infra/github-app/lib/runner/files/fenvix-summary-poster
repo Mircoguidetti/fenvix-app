@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Sends the run summaries the job-completed hook spooled to the fenvix GitHub App (POST /v1/runner/summaries).
 
-Runs as `fenvix-post`, the only user that can read RUNNER_TOKEN. The runner name is this machine's (not the job's
-word for it). 2xx: done. 4xx other than 408/429: kept in rejected/ for a look. Anything else: tried again later.
+Runs as `fenvix-post`, the only user that can read this machine's summary credential (minted for this machine only:
+the App takes the runner name, the repository and, per job, the run from the credential). The runner name in the body
+is this machine's (not the job's word for it). 2xx: done. 4xx other than 408/429: kept in rejected/ for a look. Anything else: tried again later.
 
 Environment: FENVIX_SUMMARIES_URL, FENVIX_RUNNER_NAME, FENVIX_TOKEN_FILE, FENVIX_SPOOL, FENVIX_POSTER_ONCE=1 (one pass).
 """
@@ -10,7 +11,7 @@ import json, os, sys, time, urllib.error, urllib.request
 
 URL = os.environ["FENVIX_SUMMARIES_URL"]
 RUNNER = os.environ["FENVIX_RUNNER_NAME"]
-TOKEN_FILE = os.environ.get("FENVIX_TOKEN_FILE", "/run/fenvix-post/runner-token")
+TOKEN_FILE = os.environ.get("FENVIX_TOKEN_FILE", "/run/fenvix-post/summary-token")
 SPOOL = os.environ.get("FENVIX_SPOOL", "/var/spool/fenvix-summaries")
 ONCE = os.environ.get("FENVIX_POSTER_ONCE") == "1"
 MAX_AGE = 2 * 86400  # the App publishes without a summary after SUMMARY_WAIT_SECONDS anyway

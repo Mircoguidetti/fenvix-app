@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { appParameters } from "../lib/parameters.ts";
 import { resources, synth } from "./helpers.ts";
@@ -43,7 +44,8 @@ describe("the stack, demo mode (the default)", async () => {
   });
 
   it("least privilege: each function reads only its own parameters, by exact name; no managed policy, no '*' action", () => {
-    const want = (who: string) => appParameters("prod").filter((p) => p.readers.includes(who as never)).map((p) => `parameter${p.name}`).sort();
+    // Demo mode: the worker starts no machine, so it does not get the summary signing key.
+    const want = (who: string) => appParameters("prod").filter((p) => p.readers.includes(who as never) && !(who === "worker" && p.name.endsWith("/runner-token"))).map((p) => `parameter${p.name}`).sort();
     for (const who of ["http", "worker", "sweep"] as const) {
       const roleId = fnRole(who);
       assert.equal(roles[roleId]!.Properties.ManagedPolicyArns, undefined, `${who}: no managed policy`);
@@ -108,12 +110,14 @@ describe("the stack, demo mode (the default)", async () => {
     t.hasOutput("DemoFunctionName", {});
   });
 
-  it("the demo function: reads only the App key; starts only machines tagged runner-demo, terminates only those", () => {
+  it("the demo function: reads the App key and the summary signing key; starts only runner-demo machines from the template, terminates only those", () => {
     const roleId = fnRole("demo");
     const st = statementsOf(roleId);
     const ssm = st.filter((x) => arr(x.Action).some((a) => a.startsWith("ssm:")));
-    assert.deepEqual(ssm.flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]), ["parameter/fenvix/prod/github-app/private-key"]);
-    assert.deepEqual(st.find((x) => x.Sid === "OnlyTaggedJobMachines")!.Condition, { StringEquals: { "aws:RequestTag/fenvix:role": "runner-demo" } });
+    assert.deepEqual(ssm.flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]).sort(), ["parameter/fenvix/prod/github-app/private-key", "parameter/fenvix/prod/github-app/runner-token"]);
+    const tagged = st.find((x) => x.Sid === "OnlyTaggedJobMachines")!.Condition as Record<string, Record<string, unknown>>;
+    assert.deepEqual(tagged.StringEquals, { "aws:RequestTag/fenvix:role": "runner-demo", "ec2:InstanceType": "c6i.large" });
+    assert.match(json(tagged.ArnEquals), /launch-template\//);
     assert.deepEqual(st.find((x) => x.Sid === "TerminateOnlyTheseMachines")!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-demo" } });
     const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-demo")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
     assert.equal(vars.DEMO_REPOSITORY, "Mircoguidetti/fenvix-demo");
@@ -123,12 +127,32 @@ describe("the stack, demo mode (the default)", async () => {
     assert.ok(!statementsOf(fnRole("worker")).some((x) => arr(x.Action).includes("ec2:RunInstances")));
   });
 
-  it("the reaper takes forgotten demo machines down after 12 hours; the machines' role reads only the runner token", () => {
+  it("the reaper takes forgotten demo machines down after 12 hours and deregisters their runners; the machines' role may do nothing", () => {
     const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-reaper")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
     assert.equal(vars.REAP, "runner-demo:12");
+    assert.equal(vars.DEREGISTER_DEMO_RUNNERS, "1");
     assert.deepEqual(statementsOf(fnRole("reaper")).find((x) => x.Sid === "TerminateOnlyTheseMachines")!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-demo" } });
+    const reaperReads = statementsOf(fnRole("reaper")).filter((x) => json(x.Action).includes("ssm:")).flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]);
+    assert.deepEqual(reaperReads, ["parameter/fenvix/prod/github-app/private-key"]);
     const jobRole = Object.keys(roles).find((id) => id.startsWith("FleetJobRole"))!;
-    const reads = statementsOf(jobRole).flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]);
-    assert.deepEqual(reads, ["parameter/fenvix/prod/github-app/runner-token"]);
+    assert.deepEqual(statementsOf(jobRole), [], "no permission: a machine's credentials are its own, in its user data");
+    assert.equal(roles[jobRole]!.Properties.ManagedPolicyArns, undefined);
+  });
+
+  it("every role carries the permissions boundary the execution policy requires (R-012 F4)", () => {
+    for (const [id, r] of Object.entries(roles)) assert.match(json(r.Properties.PermissionsBoundary), /:policy\/fenvix-prod-github-app-boundary"/, id);
+  });
+
+  it("the image build machine may read none of our parameters, and runs no file the job user owns as root (R-012 F5)", () => {
+    const build = Object.keys(roles).find((id) => id.startsWith("FleetBuildRole"))!;
+    const deny = statementsOf(build).find((x) => x.Effect === "Deny")!;
+    assert.match(json(deny.Resource), /parameter\/fenvix\/\*/);
+    const install = readFileSync(new URL("../lib/runner/files/install.sh", import.meta.url), "utf8");
+    // Every line that touches the job user's files: a variable, a test, a directory made before any job-user code
+    // runs (step 2), or run AS the job user.
+    for (const line of install.split("\n").filter((l) => !l.trim().startsWith("#") && /\$(FENVIX_HOME|RUNNER_HOME|ENGINE_DIR)\//.test(l))) {
+      assert.match(line.trim(), /^[A-Z_]+=|^if \[ ! -d|^install -d -m 0700 -o fenvix|^runuser -u fenvix /, `run as root on a path the job user owns: ${line.trim()}`);
+    }
+    assert.doesNotMatch(install, /^[^#]*installdependencies\.sh/m);
   });
 });

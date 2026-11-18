@@ -40,7 +40,7 @@
     "cacheOrg": "fenvix",
     "cacheTokenSha256Write": "",
     "cacheTokenSha256Read": "",
-    "runnerInstanceType": "t3.medium",
+    "runnerInstanceType": "c6i.large",
     "runnerVolumeGb": "30",
     "engineCliCommit": "a20b93d7f840b23f71c73c03efdaee3d6a233252",
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,

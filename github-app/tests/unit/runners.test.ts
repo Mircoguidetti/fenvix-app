@@ -9,7 +9,7 @@ const launch: RunnerLaunch = {
   jobId: 601, runId: 9001, repositoryId: 70001, repositoryFullName: "acme/shop", installationId: 4242, runnerName: "fenvix-j601",
   jitConfig: Buffer.from('{"runner":"jit"}').toString("base64"), cacheAccess: "read",
 };
-const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://github.fenvix.dev/v1/runner/summaries", FENVIX_RUNNER_TOKEN_PARAM: "/fenvix/prod/github-app/runner-token" };
+const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://github.fenvix.dev/v1/runner/summaries" };
 
 /** An EC2 client in memory: images, running machines, the calls made. */
 function fakeEc2(o: { running?: number; images?: { ImageId: string; CreationDate: string }[]; runError?: string; instances?: { InstanceId: string; LaunchTime: Date }[] } = {}) {
@@ -44,6 +44,23 @@ describe("per-job runner machines", () => {
     assert.match(ud, /systemctl start --no-block fenvix-job\.target\n$/);
     assert.throws(() => jobUserData({ ...launch, jitConfig: "a'; rm -rf / #" }, MACHINE), /base64/);
     assert.throws(() => jobUserData(launch, { X: "a b" }), /env file/);
+  });
+
+  it("user data: the machine's own credentials (root only) and its installation's cache organization; no SSM parameter", () => {
+    const ud = jobUserData({ ...launch, summaryToken: "fxr1.abc.def", cacheToken: "fxs1.ghi.jkl" },
+      { ...MACHINE, FENVIX_CACHE_URL: "http://10.42.0.10:8787", FENVIX_CACHE_WRITE_TOKEN_PARAM: "/fenvix/prod/cache/write-token" });
+    assert.match(ud, /^FENVIX_CACHE_URL=http:\/\/10\.42\.0\.10:8787\/gh-4242$/m);
+    assert.match(ud, /^FENVIX_CACHE_ORG=gh-4242$/m);
+    assert.doesNotMatch(ud, /TOKEN_PARAM/);
+    assert.match(ud, /umask 077\n(.*\n)*printf '%s' 'fxr1\.abc\.def' >\/etc\/fenvix\/summary-token\nprintf '%s' 'fxs1\.ghi\.jkl' >\/etc\/fenvix\/cache-token\n/);
+    assert.throws(() => jobUserData({ ...launch, summaryToken: "x'; reboot #" }, MACHINE), /credential format/);
+    // No shared cache configured: no cache token is written.
+    assert.doesNotMatch(jobUserData({ ...launch, cacheToken: "fxs1.a.b" }, MACHINE), /cache-token/);
+  });
+
+  it("hasCapacity: false at the limit (no just-in-time runner is registered then)", async () => {
+    assert.equal(await new Ec2Launcher({ ec2: fakeEc2({ running: 4 }), launchTemplateId: "lt", maxRunning: 4, machineEnv: MACHINE }).hasCapacity(), false);
+    assert.equal(await new Ec2Launcher({ ec2: fakeEc2({ running: 3 }), launchTemplateId: "lt", maxRunning: 4, machineEnv: MACHINE }).hasCapacity(), true);
   });
 
   it("launch: newest own image, the launch template, one machine per job (client token), tagged", async () => {

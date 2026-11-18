@@ -52,13 +52,3 @@ export function verifyState(key: string, state: string | undefined, now = Date.n
     return null;
   }
 }
-
-/** Constant-time check of a bearer token against the configured runner tokens. */
-export function runnerTokenOk(tokens: string[], authorization: string | undefined): boolean {
-  const m = /^Bearer\s+(\S+)$/i.exec(authorization ?? "");
-  if (!m) return false;
-  const given = createHmac("sha256", "runner").update(m[1]!).digest();
-  let ok = false;
-  for (const t of tokens) if (timingSafeEqual(given, createHmac("sha256", "runner").update(t).digest())) ok = true;
-  return ok;
-}

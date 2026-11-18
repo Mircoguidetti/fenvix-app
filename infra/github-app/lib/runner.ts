@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { appPrefix, cachePrefix } from "./parameters.ts";
 import type { Settings } from "./settings.ts";
 
 export const UBUNTU_2404_AMI_PARAMETER = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id";
@@ -11,7 +10,7 @@ export const RUNNER_FILES: [string, string, string][] = [
   ["install.sh", "/opt/fenvix/install.sh", "0755"],
   ["fenvix-imds-block", "/opt/fenvix/bin/fenvix-imds-block", "0755"],
   ["fenvix-register", "/opt/fenvix/bin/fenvix-register", "0755"],
-  ["fenvix-fetch-runner-token", "/opt/fenvix/bin/fenvix-fetch-runner-token", "0755"],
+  ["fenvix-summary-credential", "/opt/fenvix/bin/fenvix-summary-credential", "0755"],
   ["fenvix-job-completed", "/opt/fenvix/bin/fenvix-job-completed", "0755"],
   ["fenvix-job-started", "/opt/fenvix/bin/fenvix-job-started", "0755"],
   ["fenvix-summary-poster", "/opt/fenvix/bin/fenvix-summary-poster", "0755"],
@@ -73,12 +72,11 @@ export function envLines(path: string, env: Record<string, string>): string[] {
   return [`cat >${path} <<'FENVIX_ENV'`, ...lines, "FENVIX_ENV", `chmod 0644 ${path}`];
 }
 
-/** The settings every runner machine needs, without the per-job ones (no secret). */
+/** The settings every runner machine needs, without the per-job ones (no secret, no SSM parameter name). */
 export function commonMachineEnv(s: Settings): Record<string, string> {
   return {
     AWS_DEFAULT_REGION: s.region,
     FENVIX_ENGINE_CLI_COMMIT: s.engineCliCommit,
-    FENVIX_RUNNER_TOKEN_PARAM: `${appPrefix(s.env)}/runner-token`,
     FENVIX_SUMMARIES_URL: `https://${s.domainName}/v1/runner/summaries`,
   };
 }
@@ -89,9 +87,8 @@ export function perJobMachineEnv(s: Settings): Record<string, string> {
   return {
     ...commonMachineEnv(s),
     FENVIX_IDLE_MINUTES: String(s.runnerIdleMinutes),
-    FENVIX_CACHE_URL: `http://${s.cachePrivateIp}:8787/${s.cacheOrg}`,
-    FENVIX_CACHE_WRITE_TOKEN_PARAM: `${cachePrefix(s.env)}/write-token`,
-    FENVIX_CACHE_READ_TOKEN_PARAM: `${cachePrefix(s.env)}/read-token`,
+    // The worker appends the job's cache organization (gh-<installation id>) and signs a token for it.
+    FENVIX_CACHE_URL: `http://${s.cachePrivateIp}:8787`,
   };
 }
 

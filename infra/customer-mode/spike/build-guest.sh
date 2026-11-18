@@ -24,13 +24,15 @@ trap 'for d in dev sys proc; do umount "$root/$d" 2>/dev/null || true; done' EXI
 chroot "$root" /bin/bash -euo pipefail -c "
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y -qq git curl tar strace build-essential python3 ca-certificates docker.io iptables e2fsprogs >/dev/null
+  # The GitHub runner's libraries by name: its installdependencies.sh is never run as root (by then the fenvix user
+  # owns it, and code from bootstrap's downloads could have rewritten it; R-012 F5).
+  apt-get install -y -qq git curl tar strace build-essential python3 ca-certificates docker.io iptables e2fsprogs \
+    libicu74 libkrb5-3 liblttng-ust1t64 libssl3t64 zlib1g >/dev/null
   id fenvix >/dev/null 2>&1 || useradd --create-home --shell /bin/bash fenvix
   usermod -aG docker fenvix          # the job may start containers (services:, testcontainers), inside its own VM
   runuser -u fenvix -- git clone -q https://github.com/Mircoguidetti/fenvix-engine-cli.git /home/fenvix/engine-cli
   runuser -u fenvix -- git -C /home/fenvix/engine-cli -c advice.detachedHead=false checkout -q --detach $COMMIT
   runuser -u fenvix -- env HOME=/home/fenvix FENVIX_HOME=/home/fenvix/fenvix bash /home/fenvix/engine-cli/runner/bootstrap.sh install
-  /home/fenvix/fenvix/actions-runner/bin/installdependencies.sh >/dev/null || true
   printf 'ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/usr/local/sbin/fenvix-guest-job\n' >>/home/fenvix/fenvix/actions-runner/.env
   systemctl enable fenvix-guest-job.service docker.service
 "

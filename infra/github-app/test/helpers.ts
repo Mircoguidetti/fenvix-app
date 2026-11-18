@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { App, Aspects } from "aws-cdk-lib";
 import { Annotations, Match, Template } from "aws-cdk-lib/assertions";
 import { AwsSolutionsChecks } from "cdk-nag";
@@ -5,10 +6,14 @@ import { applySuppressions } from "../lib/nag.ts";
 import { readSettings, type Settings } from "../lib/settings.ts";
 import { FenvixGitHubAppStack } from "../lib/stack.ts";
 
+/** A cache signing key pair for the tests (scripts/cache-key.sh makes the real one; its private half is in SSM). */
+export const CACHE_KEY = generateKeyPairSync("rsa", { modulusLength: 2048 });
+
 /** cdk.json's context plus the settings the founder fills in (sample values, no secret). */
 export const SAMPLE: Record<string, string> = {
   githubAppId: "123456", githubAppSlug: "fenvix", githubClientId: "Iv1.example", dashboardUrl: "https://app.fenvix.dev",
   supabaseUrl: "https://example.supabase.co", demoRepository: "Mircoguidetti/fenvix-demo",
+  cacheSigningPublicKey: CACHE_KEY.publicKey.export({ type: "spki", format: "der" }).toString("base64"),
 };
 
 export async function cdkContext(): Promise<Record<string, unknown>> {

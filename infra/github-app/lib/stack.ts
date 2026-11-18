@@ -16,12 +16,15 @@ import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import { fileURLToPath } from "node:url";
 import { Construct } from "constructs";
-import { appPrefix, readersOf } from "./parameters.ts";
+import { appPrefix, cachePrefix, readersOf } from "./parameters.ts";
 import { CacheMachine } from "./cache.ts";
 import { RunnerNetwork } from "./network.ts";
 import { commonMachineEnv, perJobMachineEnv } from "./runner.ts";
 import { RunnerFleet } from "./runner-fleet.ts";
 import type { Settings } from "./settings.ts";
+
+/** The managed policy every role of the stack is bounded by (permissions-boundary.json, created by hand). */
+export const boundaryName = (env: string) => `fenvix-${env}-github-app-boundary`;
 
 const SERVICE_DIR = fileURLToPath(new URL("../../../github-app/", import.meta.url));
 
@@ -40,7 +43,8 @@ export interface FenvixGitHubAppProps extends StackProps { settings: Settings }
  *   runner machines (demo: one per demo, scripts/demo-up.sh; per-job: one per queued job), from the runner image
  *     ─▶ POST https://github.<domain>/v1/runner/summaries
  *
- * Secrets: SSM SecureString parameters under /fenvix/<env>/github-app/, created by hand, read by exact name.
+ * Secrets: SSM SecureString parameters under /fenvix/<env>/, created by hand, read by exact name, by functions only.
+ * A runner machine's credentials are minted for that machine and passed in its user data (R-012 F1, F2, F3).
  */
 export class FenvixGitHubAppStack extends Stack {
   private readonly zone: string;
@@ -56,6 +60,9 @@ export class FenvixGitHubAppStack extends Stack {
     Tags.of(this).add("env", s.env);
     Tags.of(this).add("component", "github-app");
     const name = (x: string) => `fenvix-${s.env}-github-app-${x}`;
+    // Every role of this stack carries the permissions boundary the founder creates from permissions-boundary.json
+    // (docs/DEPLOY-AWS.md): CloudFormation's execution role may create or change a role only with it (R-012 F4).
+    iam.PermissionsBoundary.of(this).apply(iam.ManagedPolicy.fromManagedPolicyName(this, "Boundary", boundaryName(s.env)));
     const paramArn = (p: string) => `arn:${this.partition}:ssm:${this.region}:${this.account}:parameter${p}`;
 
     // ---------------------------------------------------------------- queue, dead-letter queue, overflow bucket
@@ -130,29 +137,42 @@ export class FenvixGitHubAppStack extends Stack {
 
     const launchEnv: Record<string, string> = perJob ? {
       RUNNER_MODE: "per-job", RUNNER_LAUNCH_TEMPLATE_ID: fleet.launchTemplate.ref, RUNNER_MAX_RUNNING: String(s.runnerMaxRunning), FENVIX_ENV: s.env,
+      CACHE_SIGNING_KEY_PARAM: `${cachePrefix(s.env)}/signing-key`,
       ...Object.fromEntries(Object.entries(perJobMachineEnv(s)).map(([k, v]) => [`FENVIX_MACHINE_${k}`, v])),
     } : { RUNNER_MODE: "demo" };
+    // The worker signs each machine's credentials (per-job only): the summary key and the cache signing key.
+    const workerReads = readersOf(s.env, "worker").filter((p) => perJob || !/\/(runner-token|signing-key)$/.test(p));
     const worker = fn("Worker", "worker.ts", {
-      timeout: WORKER_TIMEOUT, memory: 512, reads: readersOf(s.env, "worker"), extraEnv: launchEnv,
+      timeout: WORKER_TIMEOUT, memory: 512, reads: workerReads, extraEnv: launchEnv,
       description: "fenvix GitHub App: runs queued webhooks and runner summaries",
     });
     worker.addToRolePolicy(new iam.PolicyStatement({ sid: "ReadAndDeleteOverflow", actions: ["s3:GetObject", "s3:DeleteObject"], resources: [overflow.arnForObjects("work/*")] }));
     worker.addEventSource(new SqsEventSource(queue, { batchSize: 5, reportBatchItemFailures: true, maxConcurrency: 2 }));
 
-    // Start a runner machine: only from our launch template and our own images, only tagged with its role.
+    // Start a runner machine: only from our launch template, of the configured type, from our own images, only tagged
+    // with its role (R-012 F7: the instance, its disk and its network interface must come from the launch template).
     const arn = (r: string) => `arn:${this.partition}:ec2:${this.region}:${this.account}:${r}`;
+    const fromTemplate = { "ec2:LaunchTemplate": arn(`launch-template/${fleet.launchTemplate.ref}`) };
     const mayLaunch = (f: lambda.IFunction, role: string) => {
       f.addToRolePolicy(new iam.PolicyStatement({
         sid: "RunJobMachines", actions: ["ec2:RunInstances"],
-        resources: [arn(`launch-template/${fleet.launchTemplate.ref}`), arn(`subnet/${net.subnet.subnetId}`), arn(`security-group/${net.runnerSg.securityGroupId}`), arn("network-interface/*")],
+        resources: [arn(`launch-template/${fleet.launchTemplate.ref}`), arn(`subnet/${net.subnet.subnetId}`), arn(`security-group/${net.runnerSg.securityGroupId}`)],
+      }));
+      f.addToRolePolicy(new iam.PolicyStatement({
+        sid: "NetworkInterfaceFromTemplate", actions: ["ec2:RunInstances"], resources: [arn("network-interface/*")],
+        conditions: { ArnEquals: fromTemplate },
       }));
       f.addToRolePolicy(new iam.PolicyStatement({
         sid: "RunFromOwnImages", actions: ["ec2:RunInstances"], resources: [`arn:${this.partition}:ec2:${this.region}::image/*`],
         conditions: { StringEquals: { "ec2:Owner": this.account } },
       }));
       f.addToRolePolicy(new iam.PolicyStatement({
-        sid: "OnlyTaggedJobMachines", actions: ["ec2:RunInstances"], resources: [arn("instance/*"), arn("volume/*")],
-        conditions: { StringEquals: { "aws:RequestTag/fenvix:role": role } },
+        sid: "OnlyTaggedJobMachines", actions: ["ec2:RunInstances"], resources: [arn("instance/*")],
+        conditions: { StringEquals: { "aws:RequestTag/fenvix:role": role, "ec2:InstanceType": s.runnerInstanceType }, ArnEquals: fromTemplate },
+      }));
+      f.addToRolePolicy(new iam.PolicyStatement({
+        sid: "OnlyTaggedJobDisks", actions: ["ec2:RunInstances"], resources: [arn("volume/*")],
+        conditions: { StringEquals: { "aws:RequestTag/fenvix:role": role }, ArnEquals: fromTemplate },
       }));
       f.addToRolePolicy(new iam.PolicyStatement({
         sid: "TagAtLaunchOnly", actions: ["ec2:CreateTags"], resources: [arn("instance/*"), arn("volume/*")],
@@ -173,10 +193,11 @@ export class FenvixGitHubAppStack extends Stack {
     // ---------------------------------------------------------------- demo mode: scripts/demo-up.sh and demo-down.sh
     let demo: lambda.IFunction | null = null;
     if (!perJob) {
+      // demo-down terminates, waits for the machine to be gone, then deregisters (retrying while GitHub says busy).
       demo = fn("Demo", "demo.ts", {
-        timeout: Duration.seconds(60), memory: 256, reads: [`${appPrefix(s.env)}/private-key`],
+        timeout: Duration.seconds(180), memory: 256, reads: readersOf(s.env, "demo"),
         extraEnv: {
-          GITHUB_APP_ID: s.githubAppId, RUNNER_LAUNCH_TEMPLATE_ID: fleet.launchTemplate.ref, DEMO_REPOSITORY: s.demoRepository, FENVIX_ENV: s.env,
+          GITHUB_APP_ID: s.githubAppId, RUNNER_LAUNCH_TEMPLATE_ID: fleet.launchTemplate.ref, DEMO_REPOSITORY: s.demoRepository, DEMO_MAX_HOURS: String(s.demoMaxHours), FENVIX_ENV: s.env,
           ...Object.fromEntries(Object.entries(commonMachineEnv(s)).map(([k, v]) => [`FENVIX_MACHINE_${k}`, v])),
         },
         description: "fenvix demo mode: registers a runner and starts one fresh machine (up), deregisters and terminates it (down)",
@@ -205,9 +226,12 @@ export class FenvixGitHubAppStack extends Stack {
     // ---------------------------------------------------------------- the reaper: machines past the hard limit
     {
       const hours = perJob ? s.runnerMaxHours : s.demoMaxHours;
+      // Demo: the reaper also deregisters the runner of every demo machine that is gone (R-012 F6), so it reads the
+      // App's private key. Per-job runners are just-in-time (GitHub removes them after their one job).
       const reaper = fn("Reaper", "reaper.ts", {
-        timeout: Duration.seconds(60), memory: 256, reads: [], extraEnv: { REAP: `${machineRole}:${hours}` },
-        description: `fenvix: terminates ${machineRole} machines older than ${hours} hours`,
+        timeout: Duration.seconds(120), memory: 256, reads: perJob ? [] : readersOf(s.env, "reaper-demo"),
+        extraEnv: { REAP: `${machineRole}:${hours}`, ...(perJob ? {} : { DEREGISTER_DEMO_RUNNERS: "1" }) },
+        description: `fenvix: terminates ${machineRole} machines older than ${hours} hours${perJob ? "" : "; deregisters the runners of demo machines that are gone"}`,
       });
       reaper.addToRolePolicy(new iam.PolicyStatement({ sid: "ListMachines", actions: ["ec2:DescribeInstances"], resources: ["*"] }));
       mayTerminate(reaper, machineRole);
@@ -279,7 +303,7 @@ export class FenvixGitHubAppStack extends Stack {
     if (cache) {
       new CfnOutput(this, "CacheInstanceId", { value: cache.instance.instanceId });
       new CfnOutput(this, "CacheAmiId", { value: (cache.instance.node.defaultChild as unknown as { imageId: string }).imageId, description: "Kept on later deploys by scripts/deploy.sh" });
-      new CfnOutput(this, "CacheUrl", { value: `http://${s.cachePrivateIp}:8787/${s.cacheOrg}`, description: "Inside the VPC only" });
+      new CfnOutput(this, "CacheUrl", { value: `http://${s.cachePrivateIp}:8787`, description: "Inside the VPC only; one organization per installation (gh-<installation id>), per-job tokens" });
     }
   }
 }

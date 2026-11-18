@@ -289,6 +289,9 @@ export class FakeGitHub {
       return [200, { total_count: repo.runners.length, runners: repo.runners.map((r) => ({ ...tpl, id: r.id, name: r.name, status: r.status, busy: r.busy })) }];
     }
     if (method === "DELETE" && (m = /^\/actions\/runners\/(\d+)$/.exec(rest))) {
+      // A just-in-time runner is a registered runner too (offline until its machine connects): deleting removes it.
+      const j = repo.jitRunners.findIndex((r) => r.id === Number(m![1]));
+      if (j >= 0) { repo.jitRunners.splice(j, 1); return [204, null]; }
       const i = repo.runners.findIndex((r) => r.id === Number(m![1]));
       if (i < 0) return this.notFound();
       if (repo.runners[i]!.busy) return [422, { message: "Bad request - Runner \"x\" is still running a job\"", documentation_url: "https://docs.github.com/rest", status: "422" }];

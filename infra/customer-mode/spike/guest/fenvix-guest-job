@@ -1,26 +1,41 @@
 #!/usr/bin/env bash
 # Inside a job's sandbox (guest). Two roles:
-#   - as the boot service (fenvix-guest-job.service, root): mount the job disk (/dev/vdb: jitconfig, written by the
-#     host), run the just-in-time runner as `fenvix` (exactly one job), then power off: the sandbox is torn down;
-#   - as the runner's job-completed hook (user fenvix): copy summary.json onto the job disk, where the host reads it
-#     after the sandbox exits. The guest never holds RUNNER_TOKEN: the host sends the summary.
+#   - as the boot service (fenvix-guest-job.service, root): read the input disk (/dev/vdb, read-only: the just-in-time
+#     config the host wrote), run the just-in-time runner as `fenvix` (exactly one job), write the result record onto
+#     the raw result disk (/dev/vdc), then power off: the sandbox is torn down;
+#   - as the runner's job-completed hook (user fenvix): keep summary.json and the time in /run/fenvix-result.
+# The result record is raw bytes (read-result.py on the host parses it in userspace, size-capped): b"FXRES001", a
+# 4-byte big-endian length, JSON {"summary", "t_guest_up", "t_job_done"}. No filesystem of the guest's making ever
+# reaches the host's kernel, and the guest names no repository, run or runner: the host knows its own job.
+# The guest never holds a credential of ours: the host sends the summary.
 set -uo pipefail
-job=/run/fenvix-job
+res=/run/fenvix-result
 if [ "$(id -u)" != 0 ]; then
   s="${RUNNER_TEMP:-/nonexistent}/fenvix/summary.json"
-  if [ -f "$s" ]; then
-    cp "$s" "$job/summary.json"
-    printf '%s %s %s\n' "${GITHUB_REPOSITORY_ID:-0}" "${GITHUB_RUN_ID:-0}" "${GITHUB_RUN_ATTEMPT:-1}" >"$job/ids"
-  fi
-  date +%s.%N >"$job/t-job-done"
+  [ -f "$s" ] && cp "$s" "$res/summary.json"
+  date +%s.%N >"$res/t-job-done"
   exit 0
 fi
-mkdir -p "$job" && mount /dev/vdb "$job" && chown fenvix:fenvix "$job"
-date +%s.%N >"$job/t-guest-up"
+install -d -m 0770 -o root -g fenvix "$res"
+date +%s.%N >"$res/t-guest-up"
+in=/run/fenvix-input
+mkdir -p "$in" && mount -o ro,nodev,nosuid,noexec /dev/vdb "$in"
 install -d -m 0700 -o fenvix -g fenvix /home/fenvix/.fenvix
-install -m 0600 -o fenvix -g fenvix "$job/jitconfig" /home/fenvix/.fenvix/jitconfig
-rm -f -- "$job/jitconfig"
+install -m 0600 -o fenvix -g fenvix "$in/jitconfig" /home/fenvix/.fenvix/jitconfig
+umount "$in"
 runuser -u fenvix -- env HOME=/home/fenvix FENVIX_HOME=/home/fenvix/fenvix bash /home/fenvix/engine-cli/runner/bootstrap.sh run
+python3 -I - "$res" /dev/vdc <<'PY'
+import json, os, sys
+res, dev = sys.argv[1:]
+def num(n):
+    try: return float(open(os.path.join(res, n)).read())
+    except (OSError, ValueError): return None
+try: summary = json.load(open(os.path.join(res, "summary.json")))
+except (OSError, ValueError): summary = None
+body = json.dumps({"summary": summary, "t_guest_up": num("t-guest-up"), "t_job_done": num("t-job-done")}).encode()
+if len(body) > 8 * 1024 * 1024: body = json.dumps({"summary": None}).encode()
+with open(dev, "r+b") as f:
+    f.write(b"FXRES001" + len(body).to_bytes(4, "big") + body); f.flush(); os.fsync(f.fileno())
+PY
 sync
-umount "$job"
 systemctl poweroff

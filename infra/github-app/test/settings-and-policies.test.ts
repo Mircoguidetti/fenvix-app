@@ -7,6 +7,7 @@ import { cdkContext, PER_JOB, SAMPLE, settings, synth } from "./helpers.ts";
 type Stmt = { Sid: string; Effect: string; Action: string | string[]; Resource: string | string[]; Condition?: unknown };
 const policy = (f: string) => JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url), "utf8")) as { Statement: Stmt[] };
 const arr = <T,>(x: T | T[]) => (Array.isArray(x) ? x : [x]);
+const json = (x: unknown) => JSON.stringify(x);
 
 describe("settings", () => {
   it("cdk.json leaves the App's own values empty: synth stops and names the setting", async () => {
@@ -24,15 +25,16 @@ describe("settings", () => {
     await assert.rejects(settings({ demoRepository: "https://github.com/x/y" }), /owner\/name/);
     await assert.rejects(settings({ runnerMode: "always-on" }), /demo or per-job/);
     await assert.rejects(settings({ cachePrivateIp: "10.42.1.10" }), /cachePrivateIp/);
-    await assert.rejects(settings({ cacheTokenSha256Write: "abc" }), /SHA-256/);
-    await assert.rejects(settings({ cacheTokenSha256Write: "a".repeat(64), cacheTokenSha256Read: "a".repeat(64) }), /must differ/);
+    await assert.rejects(settings({ cacheSigningPublicKey: "abc" }), /RSA public key/);
+    await assert.rejects(settings({ runnerMode: "per-job", cacheSigningPublicKey: "" }), /required in per-job mode/);
+    await assert.rejects(settings({ demoRepository: "" }), /demoRepository" is required in demo mode/);
     await assert.rejects(settings({ engineCliCommit: "main" }), /40-character/);
     await assert.rejects(settings({ logRetentionDays: "10" }), /one of/);
     await assert.rejects(settings({ runnerInstanceType: "t4g.medium" }), /x86_64/);
     await assert.rejects(settings({ domainName: "https://github.fenvix.dev" }), /host name/);
     const s = await settings();
     assert.equal(s.domainName, "github.fenvix.dev");
-    assert.equal(s.runnerInstanceType, "t3.medium");
+    assert.equal(s.runnerInstanceType, "c6i.large");
     assert.equal(s.runnerMode, "demo");
     assert.equal(s.demoMaxHours, 12);
     assert.equal(s.runnerVolumeGb, 30);
@@ -66,6 +68,19 @@ describe("IAM policy files", () => {
     for (const r of arr(assume.Resource)) assert.match(r, /:role\/cdk-hnb659fds-(deploy|file-publishing|lookup)-role-/);
     const put = p.Statement.find((s) => arr(s.Action).includes("ssm:PutParameter"))!;
     for (const r of arr(put.Resource)) assert.match(r, /parameter\/fenvix\/prod\/(github-app|runner|cache)\/\*$/);
+  });
+
+  it("the permissions boundary: every service the stack's roles use, no IAM change, our parameters only (R-012 F4)", () => {
+    const b = policy("permissions-boundary.json");
+    assert.ok(JSON.stringify(b).length <= 6144);
+    const allows = b.Statement.filter((x) => x.Effect === "Allow");
+    for (const st of allows) for (const a of arr(st.Action)) assert.ok(a !== "*" && !/^[a-z0-9-]+:\*$/.test(a) && (!a.startsWith("iam:") || a === "iam:PassRole"), a);
+    const ssm = allows.filter((x) => arr(x.Action).includes("ssm:GetParameters"));
+    for (const r of ssm.flatMap((x) => arr(x.Resource))) assert.match(r, /parameter\/(fenvix\/prod\/(github-app|cache)|aws\/service\/canonical)\/\*$/);
+    const app = policy("cfn-exec-policy-app.json").Statement;
+    const boundary = "arn:aws:iam::865859654353:policy/fenvix-prod-github-app-boundary";
+    assert.equal(json(app.find((x) => x.Sid === "WriteRolesOnlyWithTheBoundary")!.Condition), json({ StringEquals: { "iam:PermissionsBoundary": boundary } }));
+    assert.ok(arr(app.find((x) => x.Sid === "NeverRemoveTheBoundary")!.Action).includes("iam:DeleteRolePermissionsBoundary"));
   });
 
   it("CloudFormation may create every resource type of both modes (execution policies); inbound only from a security group", async () => {

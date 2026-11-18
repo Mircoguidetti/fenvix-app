@@ -122,8 +122,7 @@
       "Sid": "ImageBuilderParentImage",
       "Effect": "Allow",
       "Action": [
-        "imagebuilder:GetImage",
-        "ssm:GetParameter"
+        "imagebuilder:GetImage"
       ],
       "Resource": "*",
       "Condition": {
@@ -131,6 +130,15 @@
           "aws:RequestedRegion": "eu-west-1"
         }
       }
+    },
+    {
+      "Sid": "ImageBuilderParentImageParameter",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
+      "Resource": "arn:aws:ssm:eu-west-1::parameter/aws/service/canonical/*"
     },
     {
       "Sid": "ImageBuilderServiceLinkedRole",

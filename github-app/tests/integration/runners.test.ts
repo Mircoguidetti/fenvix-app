@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type pg from "pg";
 import { RetryLater, type RunnerLaunch, type RunnerLauncher } from "../../src/runners/launcher.ts";
-import { ACCOUNT, CI_YAML, Harness, INSTALLATION_ID, installationCreated, makeOrg, REPOS, resetDb, workflowJob } from "../helpers/harness.ts";
+import { verifySummaryCredential } from "../../src/runners/credentials.ts";
+import { ACCOUNT, CI_YAML, Harness, INSTALLATION_ID, installationCreated, makeOrg, REPOS, resetDb, RUNNER_TOKEN, workflowJob } from "../helpers/harness.ts";
 
 /** Records launches; can be told to refuse the next one. */
 class FakeLauncher implements RunnerLauncher {
@@ -45,7 +46,10 @@ describe("one machine per job: workflow_job.queued starts a runner machine", () 
     await h.send("workflow_job", workflowJob("queued", { id: 901, runId: 9301, sha, branch: "main" }), { delivery: "q-901" });
     assert.equal(launcher.launches.length, 1);
     const l = launcher.launches[0]!;
-    assert.deepEqual({ ...l, jitConfig: "" }, { jobId: 901, runId: 9301, repositoryId: REPOS.shop.id, repositoryFullName: "acme/shop", installationId: INSTALLATION_ID, runnerName: "fenvix-j901", jitConfig: "", cacheAccess: "write" });
+    assert.deepEqual({ ...l, jitConfig: "", summaryToken: "" }, { jobId: 901, runId: 9301, repositoryId: REPOS.shop.id, repositoryFullName: "acme/shop", installationId: INSTALLATION_ID, runnerName: "fenvix-j901", jitConfig: "", cacheAccess: "write", summaryToken: "" });
+    // The machine's own summary credential: this runner, this repository, this run (R-012 F1).
+    const scope = verifySummaryCredential([RUNNER_TOKEN], `Bearer ${l.summaryToken}`)!;
+    assert.deepEqual({ ...scope, exp: 0 }, { runnerName: "fenvix-j901", repositoryId: REPOS.shop.id, runId: 9301, exp: 0 });
     const jit = h.gh.repos.get("acme/shop")!.jitRunners;
     assert.equal(jit.length, 1);
     assert.deepEqual({ name: jit[0]!.name, labels: jit[0]!.labels, group: jit[0]!.runnerGroupId }, { name: "fenvix-j901", labels: ["fenvix"], group: 1 });
@@ -88,10 +92,12 @@ describe("one machine per job: workflow_job.queued starts a runner machine", () 
     const d = (await admin.query("select processed_at, error from gh_webhook_deliveries where delivery_id = 'q-908'")).rows[0];
     assert.equal(d.processed_at, null);
     assert.match(d.error, /limit 4/);
-    // SQS delivers it again: the first runner name is taken on GitHub (409), a fresh one is used.
+    // The just-in-time runner of the refused launch was deleted (R-012 F12), so the retry registers the same name again.
+    assert.ok(!h.gh.repos.get("acme/shop")!.jitRunners.some((r) => r.name.startsWith("fenvix-j908")));
     await h.send("workflow_job", workflowJob("queued", { id: 908, runId: 9307, sha, branch: "main" }), { delivery: "q-908" });
     assert.equal(launcher.launches.length, before + 1);
-    assert.match(launcher.launches.at(-1)!.runnerName, /^fenvix-j908-[a-z0-9]+$/);
+    assert.equal(launcher.launches.at(-1)!.runnerName, "fenvix-j908");
+    assert.deepEqual(h.gh.repos.get("acme/shop")!.jitRunners.filter((r) => r.name.startsWith("fenvix-j908")).map((r) => r.name), ["fenvix-j908"]);
     assert.deepEqual(h.gh.validateAll().map((x) => `${x.method} ${x.path}: ${JSON.stringify(x.problems)}`), []);
   });
 });

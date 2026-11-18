@@ -1,4 +1,5 @@
 import { DescribeImagesCommand, DescribeInstancesCommand, RunInstancesCommand, TerminateInstancesCommand, type EC2Client } from "@aws-sdk/client-ec2";
+import { cacheOrgOf } from "./credentials.ts";
 
 /**
  * "One machine per job": when GitHub queues a job with the fenvix label, the App asks GitHub for a just-in-time runner
@@ -18,10 +19,16 @@ export interface RunnerLaunch {
   jitConfig: string;
   /** "write" only for trusted refs (a push, schedule or manual run on the default branch of the repository itself). */
   cacheAccess: "write" | "read";
+  /** This machine's summary credential: bound to runnerName, repositoryId and runId (credentials.ts). */
+  summaryToken?: string;
+  /** This job's shared-cache token: its installation's cache organization only, write only if cacheAccess is "write". */
+  cacheToken?: string;
 }
 
 export interface RunnerLauncher {
   launch(l: RunnerLaunch): Promise<{ instanceId: string | null; already: boolean }>;
+  /** False while the fleet is at its limit: no just-in-time runner is registered for a job that gets no machine. */
+  hasCapacity?(): Promise<boolean>;
 }
 
 /** Thrown when the fleet is at its limit: the queue retries the job later. */
@@ -35,23 +42,39 @@ export const DEMO_VALUE = "runner-demo";
 export const IMAGE_TAG = "fenvix:image";
 
 const SAFE = /^[A-Za-z0-9_./:@+=-]*$/;
+const TOKEN = /^fx[rs]1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
-/** The machine's per-job settings, written by its user data (root only), then the services start. */
+/**
+ * The machine's per-job settings and credentials, written by its user data (root only; the job user cannot reach the
+ * metadata service), then the services start. The shared cache is this installation's organization (gh-<id>): two
+ * customers' jobs never share a cache credential or namespace (R-012 F3).
+ */
 export function jobUserData(l: RunnerLaunch, machineEnv: Record<string, string>): string {
   if (!/^[A-Za-z0-9+/=]+$/.test(l.jitConfig)) throw new Error("the just-in-time configuration is not base64");
+  for (const t of [l.summaryToken, l.cacheToken]) if (t !== undefined && !TOKEN.test(t)) throw new Error("unexpected credential format");
+  // Older settings named SSM parameters the machine read with its role; a machine reads no parameter now.
+  const common = Object.fromEntries(Object.entries(machineEnv).filter(([k]) => !/_TOKEN_PARAM$/.test(k)));
   const env: Record<string, string> = {
-    ...machineEnv,
+    ...common,
     FENVIX_MODE: "per-job",
     FENVIX_RUNNER_NAME: l.runnerName,
     FENVIX_JOB_ID: String(l.jobId),
     FENVIX_CACHE_ACCESS: l.cacheAccess,
   };
+  if (common.FENVIX_CACHE_URL) {
+    const org = cacheOrgOf(l.installationId);
+    env.FENVIX_CACHE_URL = `${new URL(common.FENVIX_CACHE_URL).origin}/${org}`;
+    env.FENVIX_CACHE_ORG = org;
+  }
   const lines = ["#!/bin/bash", "set -euo pipefail", "umask 022", "install -d -m 0755 /etc/fenvix", "cat >/etc/fenvix/runner.env <<'FENVIX_ENV'"];
   for (const [k, v] of Object.entries(env)) {
     if (!/^[A-Z][A-Z0-9_]*$/.test(k) || !SAFE.test(v)) throw new Error(`machine setting ${k} has characters the env file does not allow`);
     lines.push(`${k}=${v}`);
   }
-  lines.push("FENVIX_ENV", "umask 077", `printf '%s' '${l.jitConfig}' >/etc/fenvix/jitconfig`, "systemctl start --no-block fenvix-job.target");
+  lines.push("FENVIX_ENV", "umask 077", `printf '%s' '${l.jitConfig}' >/etc/fenvix/jitconfig`);
+  if (l.summaryToken) lines.push(`printf '%s' '${l.summaryToken}' >/etc/fenvix/summary-token`);
+  if (l.cacheToken && env.FENVIX_CACHE_URL) lines.push(`printf '%s' '${l.cacheToken}' >/etc/fenvix/cache-token`);
+  lines.push("systemctl start --no-block fenvix-job.target");
   return lines.join("\n") + "\n";
 }
 
@@ -88,6 +111,10 @@ export class Ec2Launcher implements RunnerLauncher {
       Filters: [{ Name: `tag:${ROLE_TAG}`, Values: [ROLE_VALUE] }, { Name: "instance-state-name", Values: ["pending", "running"] }],
     }));
     return (r.Reservations ?? []).reduce((n, x) => n + (x.Instances?.length ?? 0), 0);
+  }
+
+  async hasCapacity(): Promise<boolean> {
+    return (await this.running()) < this.o.maxRunning;
   }
 
   async launch(l: RunnerLaunch): Promise<{ instanceId: string | null; already: boolean }> {

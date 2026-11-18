@@ -5,7 +5,6 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as imagebuilder from "aws-cdk-lib/aws-imagebuilder";
 import { Construct } from "constructs";
 import type { RunnerNetwork } from "./network.ts";
-import { appPrefix, readersOf } from "./parameters.ts";
 import { imageBuildScript, UBUNTU_2404_AMI_PARAMETER } from "./runner.ts";
 import type { Settings } from "./settings.ts";
 
@@ -38,7 +37,9 @@ export const contentVersion = (text: string) => `1.0.${parseInt(createHash("sha2
 /**
  * One machine per job: the prebuilt image (EC2 Image Builder: Ubuntu 24.04 + install.sh, i.e. tools, strace, uv,
  * Python, the engine wheel, the GitHub runner, the hooks and units), the launch template every job machine starts
- * from (shutdown = terminate), and the machines' role (read RUNNER_TOKEN and the cache tokens; nothing else).
+ * from (shutdown = terminate), and the machines' role, which may do nothing: every credential a machine holds is
+ * per machine (per job or per demo), minted by the worker or the demo function and passed in its user data
+ * (docs/REVIEW-R-012.md F1, F2, F3). No role-wide secret is ever readable from a runner machine.
  */
 export class RunnerFleet extends Construct {
   readonly launchTemplate: ec2.CfnLaunchTemplate;
@@ -74,6 +75,13 @@ export class RunnerFleet extends Construct {
         iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonSSMManagedInstanceCore"),
       ],
     });
+    // AmazonSSMManagedInstanceCore allows ssm:GetParameter(s) on "*": the build runs third-party code (pip, cargo,
+    // the GitHub runner), so it must never reach our parameters (R-012 F5). An explicit Deny beats the managed Allow.
+    buildRole.addToPolicy(new iam.PolicyStatement({
+      sid: "NeverOurParameters", effect: iam.Effect.DENY,
+      actions: ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath", "ssm:GetParameterHistory"],
+      resources: [param("/fenvix/*")],
+    }));
     const buildProfile = new iam.CfnInstanceProfile(this, "BuildProfile", { roles: [buildRole.roleName] });
     const infra = new imagebuilder.CfnInfrastructureConfiguration(this, "BuildMachine", {
       name: name("runner-build"),
@@ -103,13 +111,11 @@ export class RunnerFleet extends Construct {
     });
 
     // ---------------------------------------------------------------- the job machines
+    // No permission at all (R-012 F2): the summary credential and the cache token are per job, in the user data.
     this.jobRole = new iam.Role(this, "JobRole", {
       assumedBy: new iam.ServicePrincipal("ec2.amazonaws.com"),
-      description: "fenvix runner machine (demo or per-job): read RUNNER_TOKEN (and, per-job, the shared-cache tokens); root only, the job user cannot reach the metadata service",
+      description: "fenvix runner machine (demo or per-job): no permission; its credentials are per machine, in its user data",
     });
-    // Demo machines have no shared cache: the runner token only.
-    const reads = s.runnerMode === "per-job" ? readersOf(s.env, "runner-job") : [`${appPrefix(s.env)}/runner-token`];
-    this.jobRole.addToPolicy(new iam.PolicyStatement({ sid: "ReadRunnerAndCacheTokens", actions: ["ssm:GetParameter"], resources: reads.map(param) }));
     const jobProfile = new iam.CfnInstanceProfile(this, "JobProfile", { roles: [this.jobRole.roleName] });
 
     this.launchTemplate = new ec2.CfnLaunchTemplate(this, "LaunchTemplate", {
@@ -122,7 +128,9 @@ export class RunnerFleet extends Construct {
         metadataOptions: { httpTokens: "required", httpPutResponseHopLimit: 1, httpEndpoint: "enabled" },
         // The machine powers itself off when its job ends (or never comes): AWS then deletes it and its disk.
         instanceInitiatedShutdownBehavior: "terminate",
-        creditSpecification: { cpuCredits: "standard" },
+        // T3 gets no launch credits: in "standard" mode a fresh machine runs at its 20% baseline (R-012 F8). The
+        // default is c6i.large (not burstable); a T3 type runs "unlimited".
+        ...(s.runnerInstanceType.startsWith("t3.") ? { creditSpecification: { cpuCredits: "unlimited" } } : {}),
       },
     });
     Tags.of(this).add("component", "github-app");

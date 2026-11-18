@@ -8,7 +8,7 @@ import Fastify from "fastify";
 import { buildApp } from "../../src/app.ts";
 import { loadConfig } from "../../src/config.ts";
 import { invoke } from "../../src/lambda/apigw.ts";
-import { once } from "../../src/lambda/runtime.ts";
+import { once, refreshing } from "../../src/lambda/runtime.ts";
 import { loadSecrets, parameterNames } from "../../src/lambda/secrets.ts";
 import { readMessage, s3Port, SqsWorkQueue, sqsPort } from "../../src/queue/sqs.ts";
 import { MemoryBlobs } from "../helpers/memory-aws.ts";
@@ -95,6 +95,12 @@ describe("secrets from SSM", () => {
     assert.deepEqual(Object.keys(w).sort(), ["GITHUB_APP_DATABASE_URL", "GITHUB_APP_PRIVATE_KEY"]);
   });
 
+  it("the per-job worker (launcher) also reads the summary signing key, never the HTTP-only secrets (R-012 F1)", async () => {
+    assert.deepEqual(parameterNames(prefix, "launcher"), [`${prefix}/database-url`, `${prefix}/private-key`, `${prefix}/runner-token`]);
+    const w = await loadSecrets(ssm(all) as never, prefix, "launcher");
+    assert.deepEqual(Object.keys(w).sort(), ["GITHUB_APP_DATABASE_URL", "GITHUB_APP_PRIVATE_KEY", "RUNNER_TOKEN"]);
+  });
+
   it("a missing parameter is named; no value appears in the error", async () => {
     const some = { ...all };
     delete some[`${prefix}/webhook-secret`];
@@ -151,6 +157,23 @@ describe("API Gateway (HTTP API, payload 2.0) to Fastify", () => {
     const b = await invoke(app, ev("GET", "/bin"));
     assert.equal(b.isBase64Encoded, true);
     assert.deepEqual([...Buffer.from(b.body, "base64")], [0, 255, 1]);
+  });
+});
+
+describe("secrets reload (R-012 F15)", () => {
+  it("refreshing(): made again after the TTL, the old one closed; a failed reload keeps the old one", async () => {
+    let t = 0, n = 0, fail = false;
+    const closed: number[] = [];
+    const get = refreshing(async () => { if (fail) throw new Error("ssm down"); const id = ++n; return { id, close: async () => { closed.push(id); } }; }, 1000, () => t);
+    assert.equal((await get()).id, 1);
+    t = 999; assert.equal((await get()).id, 1);
+    t = 1000; assert.equal((await get()).id, 2);
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(closed, [1]);
+    fail = true; t = 2500;
+    assert.equal((await get()).id, 2, "keeps serving with the old secrets");
+    fail = false;
+    assert.equal((await get()).id, 3);
   });
 });
 

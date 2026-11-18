@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
 import type pg from "pg";
-import { ACCOUNT, CI_YAML, DASHBOARD, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, push, REPOS, resetDb, workflowJob, RUNNER_TOKEN } from "../helpers/harness.ts";
+import { ACCOUNT, CI_YAML, DASHBOARD, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, push, REPOS, resetDb, workflowJob, RUNNER_TOKEN, runnerCredential } from "../helpers/harness.ts";
 
 const summary = (name: string) => JSON.parse(readFileSync(new URL(`../fixtures/runner/${name}.summary.json`, import.meta.url), "utf8")) as Record<string, unknown>;
 
@@ -206,11 +206,19 @@ describe("run results on GitHub, runs and usage events", () => {
     assert.equal((await admin.query("select count(*)::int as n from ci_runs where commit_sha = $1", [sha])).rows[0].n, 1);
   });
 
-  it("the runner endpoint needs the runner token and a well-formed body", async () => {
+  it("the runner endpoint needs the machine's own credential and a well-formed body", async () => {
     const bad = await h.app.fastify.inject({ method: "POST", url: "/v1/runner/summaries", headers: { authorization: "Bearer nope" }, payload: {} });
     assert.equal(bad.statusCode, 401);
-    const noRun = await h.app.fastify.inject({ method: "POST", url: "/v1/runner/summaries", headers: { authorization: `Bearer ${RUNNER_TOKEN}` }, payload: { repositoryId: 1, runnerName: "x", summary: {} } });
+    const fleet = await h.app.fastify.inject({ method: "POST", url: "/v1/runner/summaries", headers: { authorization: `Bearer ${RUNNER_TOKEN}` }, payload: { repositoryId: 1, runId: 1, runnerName: "x", summary: {} } });
+    assert.equal(fleet.statusCode, 401, "the fleet-wide key is not a credential");
+    const noRun = await h.app.fastify.inject({ method: "POST", url: "/v1/runner/summaries", headers: { authorization: `Bearer ${runnerCredential("x", 1)}` }, payload: { summary: {} } });
     assert.equal(noRun.statusCode, 400);
+    // The identity is the credential's: another runner, repository or run in the body is refused.
+    const job = runnerCredential("fenvix-j5", REPOS.shop.id, 77);
+    for (const payload of [{ runId: 77, runnerName: "fenvix-j6" }, { runId: 77, repositoryId: REPOS.web.id }, { runId: 78 }]) {
+      const r = await h.app.fastify.inject({ method: "POST", url: "/v1/runner/summaries", headers: { authorization: `Bearer ${job}` }, payload: { ...payload, summary: {} } });
+      assert.equal(r.statusCode, 403, JSON.stringify(payload));
+    }
     const badSummary = await h.summary({ runId: 1, summary: { tests: 2, reused_with_proof: 5 } });
     assert.equal(badSummary.statusCode, 422);
   });

@@ -56,7 +56,7 @@ if [ "$MODE" = "per-job" ]; then
     export FENVIX_CACHE_AMI_ID
     echo "cache machine image: $FENVIX_CACHE_AMI_ID"
   fi
-  [ -n "$(ctx cacheTokenSha256Write)" ] || echo "note: no cache tokens yet (scripts/cache-tokens.sh): jobs run without the shared cache"
+  [ -n "${FENVIX_CACHE_SIGNING_PUBLIC_KEY:-$(ctx cacheSigningPublicKey)}" ] || die "per-job mode needs the cache signing key: bash scripts/cache-key.sh, then put its line in cdk.json"
 fi
 
 say "4/5 the change"

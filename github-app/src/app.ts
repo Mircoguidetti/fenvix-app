@@ -1,10 +1,11 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import { runnerTokenOk, SessionVerifier, signState, verifyState } from "./auth.ts";
+import { SessionVerifier, signState, verifyState } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { Db } from "./db.ts";
 import { GitHubApp, GitHubError } from "./github/client.ts";
 import { verifySignature } from "./github/signature.ts";
 import { SummaryError, parseSummary, trimSummary } from "./results/summary.ts";
+import { verifySummaryCredential } from "./runners/credentials.ts";
 import type { RunnerLauncher } from "./runners/launcher.ts";
 import { GitHubService, type Logger } from "./service.ts";
 import { describeWork, InProcessQueue, type Work, type WorkQueue } from "./work.ts";
@@ -37,6 +38,7 @@ export function buildCore(cfg: Config, log: Logger, launcher: RunnerLauncher | n
   const service = new GitHubService(db, gh, {
     runsOnLabel: cfg.runsOnLabel, onboardingBranch: cfg.onboardingBranch, onboardAllRepositories: cfg.onboardAllRepositories,
     dashboardUrl: cfg.dashboardUrl, webUrl: cfg.webUrl, summaryWaitSeconds: cfg.summaryWaitSeconds,
+    ...(cfg.runnerTokens[0] ? { summaryKey: cfg.runnerTokens[0] } : {}), cacheSigningKey: cfg.cacheSigningKey,
   }, log, launcher);
   return { service, db, gh };
 }
@@ -52,7 +54,11 @@ export async function buildApp(deps: Deps): Promise<App> {
   const { cfg } = deps;
   if (cfg.surface !== "all") throw new Error("buildApp needs the HTTP secrets (loadConfig with surface \"all\")");
   const fastify = Fastify({
-    logger: deps.logger ?? { level: cfg.logLevel, redact: ["req.headers.authorization", "req.headers[\"x-hub-signature-256\"]"] },
+    // The query string is never logged: /github/setup carries the one-time OAuth code and the state (R-012 F18).
+    logger: deps.logger ?? {
+      level: cfg.logLevel, redact: ["req.headers.authorization", "req.headers[\"x-hub-signature-256\"]"],
+      serializers: { req: (r: { method: string; url: string; hostname?: string; ip?: string }) => ({ method: r.method, url: r.url.split("?")[0], hostname: r.hostname, remoteAddress: r.ip }) },
+    },
     bodyLimit: 1024 * 1024,
     trustProxy: true,
   });
@@ -103,24 +109,31 @@ export async function buildApp(deps: Deps): Promise<App> {
   });
 
   // ---------------------------------------------------------------- our runners send the run summary
+  // Each machine holds its own credential (src/runners/credentials.ts), signed for one runner name and one repository
+  // (and, per job, one run). The identity comes from the credential; a body that names another runner, repository or
+  // run is refused (R-012 F1). A fleet-wide token is not accepted.
   fastify.post("/v1/runner/summaries", { bodyLimit: 32 * 1024 * 1024 }, async (req, reply) => {
-    if (!runnerTokenOk(cfg.runnerTokens, req.headers.authorization)) return fail(reply, 401, "unauthorized", "A runner token is required.");
+    const scope = verifySummaryCredential(cfg.runnerTokens, req.headers.authorization);
+    if (!scope) return fail(reply, 401, "unauthorized", "This machine's summary credential is required.");
     const b = req.body as Record<string, unknown> | undefined;
     const int = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null);
-    const repositoryId = int(b?.repositoryId);
-    const runId = int(b?.runId);
+    const runId = scope.runId ?? int(b?.runId);
     const runAttempt = b?.runAttempt === undefined ? 1 : int(b.runAttempt);
-    const runnerName = typeof b?.runnerName === "string" && /^[A-Za-z0-9._-]{1,100}$/.test(b.runnerName) ? b.runnerName : null;
     const receiptsUrl = b?.receiptsUrl === undefined || b.receiptsUrl === null ? null
       : typeof b.receiptsUrl === "string" && /^https:\/\/[^\s]{1,2000}$/.test(b.receiptsUrl) ? b.receiptsUrl : undefined;
-    if (!repositoryId || !runId || !runAttempt || !runnerName || receiptsUrl === undefined) {
-      return fail(reply, 400, "bad_request", "repositoryId, runId, runAttempt and runnerName are required (receiptsUrl, if given, is an https URL).");
+    if (!runId || !runAttempt || receiptsUrl === undefined) {
+      return fail(reply, 400, "bad_request", "runId and runAttempt are required (receiptsUrl, if given, is an https URL).");
+    }
+    if ((b?.repositoryId !== undefined && b.repositoryId !== scope.repositoryId) || (b?.runnerName !== undefined && b.runnerName !== scope.runnerName)
+      || (scope.runId !== undefined && b?.runId !== undefined && b.runId !== scope.runId)) {
+      req.log.warn({ runner: scope.runnerName, repositoryId: scope.repositoryId }, "a summary for another runner, repository or run was refused");
+      return fail(reply, 403, "forbidden", "This credential is for another runner, repository or run.");
     }
     try { parseSummary(b?.summary); } catch (e) {
       return fail(reply, 422, "bad_summary", e instanceof SummaryError ? e.message : "The summary could not be read.");
     }
     const summary = trimSummary(b!.summary as Record<string, unknown>);
-    return handOff(req, reply, { kind: "summary", repositoryId, runId, runAttempt, runnerName, receiptsUrl, summary });
+    return handOff(req, reply, { kind: "summary", repositoryId: scope.repositoryId, runId, runAttempt, runnerName: scope.runnerName, receiptsUrl, summary });
   });
 
   // ---------------------------------------------------------------- connecting an installation to an organization

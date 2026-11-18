@@ -7,6 +7,7 @@ import { buildApp, type App } from "../../src/app.ts";
 import { SessionVerifier } from "../../src/auth.ts";
 import { type Config, loadConfig } from "../../src/config.ts";
 import { sign } from "../../src/github/signature.ts";
+import { signSummaryCredential } from "../../src/runners/credentials.ts";
 import type { RunnerLauncher } from "../../src/runners/launcher.ts";
 import type { WorkQueue } from "../../src/work.ts";
 import { FakeGitHub } from "./fake-github.ts";
@@ -23,6 +24,11 @@ export const DASHBOARD = "https://app.fenvix.test";
 export const SUPABASE = "https://project.supabase.invalid";
 
 type Json = Record<string, unknown>;
+
+/** What a runner machine holds: its own summary credential (src/runners/credentials.ts), signed with RUNNER_TOKEN. */
+export function runnerCredential(runnerName: string, repositoryId: number, runId?: number): string {
+  return signSummaryCredential(RUNNER_TOKEN, { runnerName, repositoryId, ...(runId ? { runId } : {}), exp: Math.floor(Date.now() / 1000) + 3600 });
+}
 
 /** Applies the migrations once (scripts/prepare-test-db.sh) and empties the tables these tests write. */
 export async function resetDb(): Promise<pg.Client> {
@@ -208,10 +214,11 @@ export class Harness {
     return res;
   }
 
-  /** What our runner sends when the test step ends. */
+  /** What our runner sends when the test step ends, with its own credential (runner name and repository). */
   async summary(o: { repositoryId?: number; runId: number; attempt?: number; runner?: string; summary: Json; receiptsUrl?: string }) {
+    const cred = runnerCredential(o.runner ?? "fenvix-m1", o.repositoryId ?? REPOS.shop.id);
     const res = await this.app.fastify.inject({
-      method: "POST", url: "/v1/runner/summaries", headers: { authorization: `Bearer ${RUNNER_TOKEN}`, "content-type": "application/json" },
+      method: "POST", url: "/v1/runner/summaries", headers: { authorization: `Bearer ${cred}`, "content-type": "application/json" },
       payload: { repositoryId: o.repositoryId ?? REPOS.shop.id, runId: o.runId, runAttempt: o.attempt ?? 1, runnerName: o.runner ?? "fenvix-m1", summary: o.summary, ...(o.receiptsUrl ? { receiptsUrl: o.receiptsUrl } : {}) },
     });
     await this.app.service.idle();

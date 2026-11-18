@@ -9,7 +9,7 @@ import { makeHttpHandler, makeSweepHandler, makeWorkerHandler, type SqsEvent } f
 import { SqsWorkQueue } from "../../src/queue/sqs.ts";
 import { jsonLogger } from "../../src/work.ts";
 import { MemoryBlobs } from "../helpers/memory-aws.ts";
-import { ACCOUNT, CI_YAML, Harness, INSTALLATION_ID, installationCreated, makeOrg, REPOS, resetDb, RUNNER_TOKEN, WEBHOOK_SECRET, workflowJob } from "../helpers/harness.ts";
+import { ACCOUNT, CI_YAML, Harness, INSTALLATION_ID, installationCreated, makeOrg, REPOS, resetDb, runnerCredential, WEBHOOK_SECRET, workflowJob } from "../helpers/harness.ts";
 
 const summary = (name: string) => JSON.parse(readFileSync(new URL(`../fixtures/runner/${name}.summary.json`, import.meta.url), "utf8")) as Record<string, unknown>;
 
@@ -52,7 +52,7 @@ describe("Lambda mode: webhook → 202 → SQS → worker", () => {
       requestContext: { http: { method: "POST", sourceIp: "140.82.115.1" }, requestId: "r1" },
     };
   };
-  const runnerEvent = (body: object, token = RUNNER_TOKEN): HttpApiEvent => ({
+  const runnerEvent = (body: object, token = runnerCredential("fenvix-m1", REPOS.shop.id)): HttpApiEvent => ({
     version: "2.0", rawPath: "/v1/runner/summaries", rawQueryString: "", body: JSON.stringify(body), isBase64Encoded: false,
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     requestContext: { http: { method: "POST", sourceIp: "203.0.113.5" } },

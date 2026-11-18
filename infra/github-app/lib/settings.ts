@@ -1,3 +1,5 @@
+import { createPublicKey } from "node:crypto";
+
 /**
  * Every setting of the stack: cdk.json "context", `-c name=value`, or an environment variable (which wins). Values
  * here are not secret; the secrets are SSM parameters (lib/parameters.ts), never settings.
@@ -31,7 +33,10 @@ export interface Settings {
    * docs/DEPLOY-AWS.md.
    */
   runnerMode: "demo" | "per-job";
-  /** demo: the repository demo-up registers the runner on when none is given (owner/name). */
+  /**
+   * demo: the ONLY repository demo-up may register a runner on (owner/name; the founder's own, private). The demo
+   * function refuses any other, so it can never put our runner on a customer's repository (R-012 F13).
+   */
   demoRepository: string;
   /** demo: the reaper terminates a demo machine older than this (somebody forgot demo-down). */
   demoMaxHours: number;
@@ -46,11 +51,16 @@ export interface Settings {
   cachePrivateIp: string;
   cacheVolumeGb: number;
   cacheAmiId: string;
-  /** The cache service's organization, and the SHA-256 of its two tokens (scripts/cache-tokens.sh prints them). */
-  cacheOrg: string;
-  cacheTokenSha256Write: string;
-  cacheTokenSha256Read: string;
-  /** Runner machines (demo and per-job): the instance type and its disk. */
+  /**
+   * per-job: the public half of the cache signing key (base64 DER, scripts/cache-tokens.sh prints it). The worker
+   * signs one token per job with the private half (SSM); the cache machine verifies with this. Each customer
+   * installation is its own cache organization (gh-<installation id>); pull requests get read-only tokens.
+   */
+  cacheSigningPublicKey: string;
+  /**
+   * Runner machines (demo and per-job): the instance type and its disk. Default c6i.large (not burstable): a T3 gets
+   * no launch credits, so a fresh one in "standard" mode runs at its 20% baseline (R-012 F8); T3 types run "unlimited".
+   */
   runnerInstanceType: string;
   runnerVolumeGb: number;
   /** Commit of Mircoguidetti/fenvix-engine-cli whose runner/bootstrap.sh the machine runs. */
@@ -68,8 +78,8 @@ const ENV: Record<keyof Settings, string> = {
   demoRepository: "FENVIX_DEMO_REPOSITORY", demoMaxHours: "FENVIX_DEMO_MAX_HOURS",
   runnerMode: "FENVIX_RUNNER_MODE", runnerMaxRunning: "FENVIX_RUNNER_MAX_RUNNING", runnerMaxHours: "FENVIX_RUNNER_MAX_HOURS",
   runnerIdleMinutes: "FENVIX_RUNNER_IDLE_MINUTES", cacheInstanceType: "FENVIX_CACHE_INSTANCE_TYPE", cachePrivateIp: "FENVIX_CACHE_PRIVATE_IP",
-  cacheVolumeGb: "FENVIX_CACHE_VOLUME_GB", cacheAmiId: "FENVIX_CACHE_AMI_ID", cacheOrg: "FENVIX_CACHE_ORG",
-  cacheTokenSha256Write: "FENVIX_CACHE_TOKEN_SHA256_WRITE", cacheTokenSha256Read: "FENVIX_CACHE_TOKEN_SHA256_READ",
+  cacheVolumeGb: "FENVIX_CACHE_VOLUME_GB", cacheAmiId: "FENVIX_CACHE_AMI_ID",
+  cacheSigningPublicKey: "FENVIX_CACHE_SIGNING_PUBLIC_KEY",
 };
 
 /** CloudWatch Logs accepts only these retention periods (days). */
@@ -109,8 +119,7 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
     runnerMode: need("runnerMode") as Settings["runnerMode"], runnerMaxRunning: int("runnerMaxRunning", 1, 100),
     runnerMaxHours: int("runnerMaxHours", 1, 120), runnerIdleMinutes: int("runnerIdleMinutes", 5, 120),
     cacheInstanceType: need("cacheInstanceType"), cachePrivateIp: need("cachePrivateIp"), cacheVolumeGb: int("cacheVolumeGb", 8, 500),
-    cacheAmiId: get("cacheAmiId"), cacheOrg: need("cacheOrg"), cacheTokenSha256Write: get("cacheTokenSha256Write").toLowerCase(),
-    cacheTokenSha256Read: get("cacheTokenSha256Read").toLowerCase(),
+    cacheAmiId: get("cacheAmiId"), cacheSigningPublicKey: get("cacheSigningPublicKey").replace(/\s+/g, ""),
     demoRepository: get("demoRepository"), demoMaxHours: int("demoMaxHours", 1, 72), runnerInstanceType: need("runnerInstanceType"),
     runnerVolumeGb: int("runnerVolumeGb", 20, 500), engineCliCommit: need("engineCliCommit"),
   };
@@ -128,12 +137,20 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
   if (!/^t4g\.(nano|micro|small)$/.test(s.cacheInstanceType)) throw new Error('Setting "cacheInstanceType" must be t4g.nano, t4g.micro or t4g.small (arm64)');
   if (!/^10\.42\.0\.([4-9]|[1-5][0-9]|6[0-2])$/.test(s.cachePrivateIp)) throw new Error('Setting "cachePrivateIp" must be an address of the runner subnet 10.42.0.0/26 (10.42.0.4 to 10.42.0.62)');
   if (s.cacheAmiId && !/^ami-[0-9a-f]{8,17}$/.test(s.cacheAmiId)) throw new Error('Setting "cacheAmiId" must look like ami-0123456789abcdef0');
-  if (!/^[A-Za-z0-9._-]{1,64}$/.test(s.cacheOrg)) throw new Error('Setting "cacheOrg" must be letters, digits, . _ -');
-  for (const k of ["cacheTokenSha256Write", "cacheTokenSha256Read"] as const) {
-    if (s[k] && !/^[0-9a-f]{64}$/.test(s[k])) throw new Error(`Setting "${k}" must be a SHA-256 in hex (scripts/cache-tokens.sh prints it)`);
+  if (s.cacheSigningPublicKey) {
+    let bits = 0;
+    try {
+      const k = createPublicKey({ key: Buffer.from(s.cacheSigningPublicKey, "base64"), format: "der", type: "spki" });
+      bits = k.asymmetricKeyType === "rsa" ? (k.asymmetricKeyDetails?.modulusLength ?? 0) : 0;
+    } catch { bits = 0; }
+    if (bits < 2048) throw new Error('Setting "cacheSigningPublicKey" must be an RSA public key of 2048 bits or more, base64 DER (scripts/cache-tokens.sh prints it)');
+  } else if (s.runnerMode === "per-job") {
+    throw new Error('Setting "cacheSigningPublicKey" is required in per-job mode (scripts/cache-tokens.sh creates the key pair)');
   }
-  if (s.cacheTokenSha256Write && s.cacheTokenSha256Write === s.cacheTokenSha256Read) throw new Error("The write and read cache tokens must differ");
-  if (!/^t3\.(medium|large|xlarge)$|^(c6i|m6i)\.(large|xlarge)$/.test(s.runnerInstanceType)) throw new Error('Setting "runnerInstanceType" must be an x86_64 type like t3.medium');
+  if (s.runnerMode === "demo" && !s.demoRepository) {
+    throw new Error('Setting "demoRepository" is required in demo mode: the only repository demo-up may register a runner on (your own, private)');
+  }
+  if (!/^t3\.(medium|large|xlarge)$|^(c6i|m6i)\.(large|xlarge)$/.test(s.runnerInstanceType)) throw new Error('Setting "runnerInstanceType" must be an x86_64 type like c6i.large');
   if (!/^[0-9a-f]{40}$/.test(s.engineCliCommit)) throw new Error('Setting "engineCliCommit" must be a full 40-character commit SHA');
   return s;
 }

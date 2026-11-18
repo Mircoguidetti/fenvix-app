@@ -43,18 +43,18 @@ async function poster(spool: string, url: string, tokenFile: string): Promise<st
 
 describe("runner machine scripts", () => {
   it("are valid bash (and pass shellcheck when it is installed)", () => {
-    const sh = ["install.sh", "fenvix-imds-block", "fenvix-register", "fenvix-fetch-runner-token", "fenvix-job-completed", "fenvix-job-started", "fenvix-jit-prepare", "fenvix-job-done", "fenvix-idle-watchdog"];
+    const sh = ["install.sh", "fenvix-imds-block", "fenvix-register", "fenvix-summary-credential", "fenvix-job-completed", "fenvix-job-started", "fenvix-jit-prepare", "fenvix-job-done", "fenvix-idle-watchdog"];
     for (const f of sh) execFileSync("bash", ["-n", join(FILES, f)]);
     if (spawnSync("shellcheck", ["--version"]).status === 0) execFileSync("shellcheck", ["-s", "bash", ...sh.map((f) => join(FILES, f))]);
     execFileSync("python3", ["-I", "-c", `import ast,sys; ast.parse(open(sys.argv[1]).read())`, join(FILES, "fenvix-summary-poster")]);
   });
 
-  it("job-completed hook → spool → poster: the App gets the job's ids, this machine's runner name, the token", async () => {
+  it("job-completed hook → spool → poster: the App gets the job's ids, this machine's runner name, its credential", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fenvix-runner-"));
     const spool = join(dir, "spool"); mkdirSync(spool);
     const temp = join(dir, "runner-temp"); mkdirSync(join(temp, "fenvix"), { recursive: true });
     writeFileSync(join(temp, "fenvix", "summary.json"), readFileSync(SUMMARY));
-    const token = join(dir, "token"); writeFileSync(token, "runner-token-0123456789abcdef0123456789\n");
+    const token = join(dir, "token"); writeFileSync(token, "fxr1.eyJuIjoiZmVudml4LWVjMi0xIn0.c2lnbmF0dXJl\n");
     // A job that claims another runner name: the poster sends its own.
     const out = hook(spool, { RUNNER_TEMP: temp, GITHUB_REPOSITORY_ID: "70001", GITHUB_RUN_ID: "9001", GITHUB_RUN_ATTEMPT: "2", RUNNER_NAME: "someone-else" });
     assert.match(out, /summary queued for run 9001 attempt 2/);
@@ -64,7 +64,7 @@ describe("runner machine scripts", () => {
     try {
       assert.match(await poster(spool, a.url, token), /sent \(202\)/);
       assert.equal(a.got.length, 1);
-      assert.equal(a.got[0]!.auth, "Bearer runner-token-0123456789abcdef0123456789");
+      assert.equal(a.got[0]!.auth, "Bearer fxr1.eyJuIjoiZmVudml4LWVjMi0xIn0.c2lnbmF0dXJl");
       const b = a.got[0]!.body;
       assert.deepEqual({ ...b, summary: undefined }, { repositoryId: 70001, runId: 9001, runAttempt: 2, runnerName: "fenvix-ec2-1", summary: undefined });
       assert.deepEqual(b.summary, JSON.parse(readFileSync(SUMMARY, "utf8")));
@@ -114,9 +114,26 @@ describe("customer-mode spike (infra/customer-mode/spike)", () => {
     assert.deepEqual(cfg["machine-config"], { vcpu_count: 2, mem_size_mib: 2048 });
     assert.equal(cfg["network-interfaces"][0].guest_mac, "06:00:AC:10:07:02");
     assert.equal(cfg["network-interfaces"][0].host_dev_name, "fctap7");
-    assert.deepEqual(cfg.drives.map((d: { drive_id: string; is_root_device: boolean }) => [d.drive_id, d.is_root_device]), [["rootfs", true], ["job", false]]);
+    // The input disk is read-only for the guest; results come back on a raw disk the host parses in userspace (R-012 F9).
+    assert.deepEqual(cfg.drives.map((d: { drive_id: string; is_root_device: boolean; is_read_only: boolean }) => [d.drive_id, d.is_root_device, d.is_read_only]),
+      [["rootfs", true, false], ["input", false, true], ["result", false, false]]);
+    assert.ok(cfg["network-interfaces"][0].rx_rate_limiter && cfg["network-interfaces"][0].tx_rate_limiter, "per-sandbox bandwidth limits (R-012 F10)");
     const bad = spawnSync("bash", [join(SPIKE, "run-job.sh"), "--print-config"], { env: { PATH: process.env.PATH!, SLOT: "0" } });
     assert.equal(bad.status, 2);
+  });
+
+  it("the result reader: only a well-formed record, size-capped; never the guest's ids or runner name (R-012 F9)", () => {
+    const read = (bytes: Buffer) => JSON.parse(execFileSync("python3", ["-I", join(SPIKE, "read-result.py")], { input: bytes, encoding: "utf8" }));
+    const rec = (o: unknown) => { const b = Buffer.from(JSON.stringify(o)); const n = Buffer.alloc(4); n.writeUInt32BE(b.length); return Buffer.concat([Buffer.from("FXRES001"), n, b, Buffer.alloc(1024)]); };
+    const summary = JSON.parse(readFileSync(SUMMARY, "utf8"));
+    assert.deepEqual(read(rec({ summary, t_guest_up: 1.5, t_job_done: 9, repositoryId: 666, runnerName: "fenvix-j666" })), { summary, t_guest_up: 1.5, t_job_done: 9 });
+    assert.deepEqual(read(Buffer.alloc(4096)), { summary: null, error: "no result record" });
+    const huge = Buffer.concat([Buffer.from("FXRES001"), Buffer.from([0x7f, 0xff, 0xff, 0xff])]);
+    assert.match(read(huge).error, /refused/);
+    assert.equal(read(rec([1, 2])).summary, null);
+    const runJob = readFileSync(join(SPIKE, "run-job.sh"), "utf8");
+    assert.match(runJob, /trap cleanup EXIT/, "no disk of a job stays on the host when a step fails");
+    assert.match(runJob, /jailer --id/, "Firecracker under the jailer, not as root (R-012 F17)");
   });
 
   it("the Docker kernel check: passes a config with the required options, names a missing one", () => {

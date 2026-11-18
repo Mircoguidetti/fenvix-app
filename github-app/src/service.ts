@@ -3,7 +3,9 @@ import { GitHubError, type GitHubApp, type GitHubHttp, repoPath } from "./github
 import { onboardRepository, type OnboardingResult } from "./onboarding/onboard.ts";
 import { CHECK_NAME, COMMENT_MARKER, checkRunOutput, conclusionOf, prComment, type RenderContext } from "./results/render.ts";
 import { parseSummary, type RunSummary } from "./results/summary.ts";
-import type { RunnerLauncher } from "./runners/launcher.ts";
+import type { KeyObject } from "node:crypto";
+import { signCacheToken, signSummaryCredential } from "./runners/credentials.ts";
+import { RetryLater, type RunnerLauncher } from "./runners/launcher.ts";
 
 export interface ServiceSettings {
   runsOnLabel: string;
@@ -12,7 +14,14 @@ export interface ServiceSettings {
   dashboardUrl: string;
   webUrl: string;
   summaryWaitSeconds: number;
+  /** Signs each per-job machine's summary credential (RUNNER_TOKEN). Required to start machines. */
+  summaryKey?: string;
+  /** Signs each per-job cache token (the shared cache, per-job mode). Absent: jobs get no cache token. */
+  cacheSigningKey?: KeyObject | null;
 }
+
+/** How long a per-job machine's credentials live: past the reaper's hard limit and the poster's retries. */
+const JOB_CREDENTIAL_SECONDS = 24 * 3600;
 
 export interface Logger {
   info(o: object, msg?: string): void;
@@ -349,22 +358,49 @@ export class GitHubService {
     const defaultBranch = repo.default_branch ?? (await this.repo(repo.id))?.default_branch ?? null;
     const trusted = !!run && ["push", "schedule", "workflow_dispatch", "merge_group"].includes(run.event ?? "")
       && !!defaultBranch && run.head_branch === defaultBranch && run.head_repository?.id === repo.id;
+    if (!this.s.summaryKey) throw new Error("no summary signing key (RUNNER_TOKEN): no machine is started without its own credential");
+    // The fleet at its limit: no just-in-time runner is registered for a job that gets no machine (R-012 F12). The
+    // queue tries again later.
+    if (this.launcher!.hasCapacity && !(await this.launcher!.hasCapacity())) throw new RetryLater(`the fleet is full; job ${jobId} waits`);
     // A retry after a partial failure finds the first name taken (409): a fresh one; EC2 still starts one machine.
+    type Jit = { encoded_jit_config: string; runner?: { id?: number } };
     let runnerName = `fenvix-j${jobId}`;
-    let jit = await gh.request<{ encoded_jit_config: string }>("POST", `${base}/actions/runners/generate-jitconfig`, {
+    let jit = await gh.request<Jit>("POST", `${base}/actions/runners/generate-jitconfig`, {
       body: { name: runnerName, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" }, allow: [409],
     });
     if (jit.status === 409) {
       runnerName = `fenvix-j${jobId}-${Date.now().toString(36)}`;
-      jit = await gh.request<{ encoded_jit_config: string }>("POST", `${base}/actions/runners/generate-jitconfig`, {
+      jit = await gh.request<Jit>("POST", `${base}/actions/runners/generate-jitconfig`, {
         body: { name: runnerName, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" },
       });
     }
-    const res = await this.launcher!.launch({
-      jobId, runId: row.run_id, repositoryId: repo.id, repositoryFullName: repo.full_name, installationId, runnerName,
-      jitConfig: jit.data.encoded_jit_config, cacheAccess: trusted ? "write" : "read",
-    });
-    this.log.info({ job: jobId, repository: repo.full_name, runner: runnerName, instance: res.instanceId, already: res.already, cache: trusted ? "write" : "read" }, "runner machine requested");
+    const unregister = async (why: string) => {
+      const id = jit.data.runner?.id;
+      if (!id) return;
+      await gh.request("DELETE", `${base}/actions/runners/${id}`, { allow: [404, 422] })
+        .catch((e: unknown) => this.log.warn({ job: jobId, runner: runnerName, err: e instanceof Error ? e.message : String(e) }, "could not delete an unused just-in-time runner"));
+      this.log.info({ job: jobId, runner: runnerName, why }, "unused just-in-time runner deleted");
+    };
+    // This machine's own credentials (R-012 F1, F3): its summaries count only for this runner, repository and run;
+    // its cache token reaches only this installation's cache organization, and writes only on a trusted ref.
+    const exp = Math.floor(Date.now() / 1000) + JOB_CREDENTIAL_SECONDS;
+    const cacheAccess = trusted ? "write" as const : "read" as const;
+    const summaryToken = signSummaryCredential(this.s.summaryKey, { runnerName, repositoryId: repo.id, runId: row.run_id, exp });
+    const cacheToken = this.s.cacheSigningKey ? signCacheToken(this.s.cacheSigningKey, { installationId, write: trusted, exp, jobId }) : undefined;
+    let res: { instanceId: string | null; already: boolean };
+    try {
+      res = await this.launcher!.launch({
+        jobId, runId: row.run_id, repositoryId: repo.id, repositoryFullName: repo.full_name, installationId, runnerName,
+        jitConfig: jit.data.encoded_jit_config, cacheAccess, summaryToken, ...(cacheToken ? { cacheToken } : {}),
+      });
+    } catch (e) {
+      await unregister(e instanceof RetryLater ? "the fleet is full" : "the machine did not start");
+      throw e;
+    }
+    // A redelivery after a partial failure: EC2 returned the first machine (same client token), which has the first
+    // just-in-time configuration; this one would never be used.
+    if (res.already) await unregister("the job's machine already exists");
+    this.log.info({ job: jobId, repository: repo.full_name, runner: runnerName, instance: res.instanceId, already: res.already, cache: cacheAccess }, "runner machine requested");
   }
 
   /** A check run "in progress" on the commit while the job runs on fenvix. */

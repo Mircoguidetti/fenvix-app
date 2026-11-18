@@ -56,22 +56,47 @@
       "Sid": "IamRolesOfThisStack",
       "Effect": "Allow",
       "Action": [
-        "iam:CreateRole",
         "iam:DeleteRole",
         "iam:GetRole",
         "iam:UpdateRole",
         "iam:UpdateAssumeRolePolicy",
         "iam:TagRole",
         "iam:UntagRole",
-        "iam:PutRolePolicy",
         "iam:GetRolePolicy",
-        "iam:DeleteRolePolicy",
-        "iam:AttachRolePolicy",
-        "iam:DetachRolePolicy",
         "iam:ListRolePolicies",
         "iam:ListAttachedRolePolicies"
       ],
       "Resource": "arn:aws:iam::865859654353:role/fenvix-prod-github-app-*"
+    },
+    {
+      "Sid": "WriteRolesOnlyWithTheBoundary",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::865859654353:role/fenvix-prod-github-app-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::865859654353:policy/fenvix-prod-github-app-boundary"
+        }
+      }
+    },
+    {
+      "Sid": "NeverRemoveTheBoundary",
+      "Effect": "Deny",
+      "Action": [
+        "iam:DeleteRolePermissionsBoundary",
+        "iam:PutRolePermissionsBoundary",
+        "iam:CreatePolicyVersion",
+        "iam:SetDefaultPolicyVersion",
+        "iam:DeletePolicy",
+        "iam:DeletePolicyVersion"
+      ],
+      "Resource": "*"
     },
     {
       "Sid": "OnlyTheseManagedPolicies",

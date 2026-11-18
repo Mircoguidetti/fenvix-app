@@ -53,8 +53,14 @@ export interface Config {
   supabaseJwksUrl: string;
   /** Signs the `state` of the installation link (which organization asked for it). Secret. */
   stateSigningKey: string;
-  /** Bearer tokens our runner machines use to send run summaries (current and, during a rotation, previous). Secret. */
+  /**
+   * The keys of the per-machine summary credentials (src/runners/credentials.ts): RUNNER_TOKEN signs (the worker, the
+   * demo function) and verifies (HTTP); RUNNER_TOKEN_PREVIOUS still verifies during a rotation (HTTP only). No machine
+   * ever holds one of these. Secret.
+   */
   runnerTokens: string[];
+  /** per-job: signs one shared-cache token per job (worker only; CACHE_SIGNING_KEY, RSA PEM). Secret. */
+  cacheSigningKey: KeyObject | null;
   /** A completed job whose summary never came is published without it after this long. */
   summaryWaitSeconds: number;
   /** How often the background sweep looks for such jobs (0: never; the tests drive it by hand). */
@@ -137,9 +143,20 @@ export function loadConfig(env: Env = process.env, opts: { surface?: "all" | "wo
     throw new Error("ONBOARDING_BRANCH is not a valid branch name");
   }
   const supabaseUrl = httpsUrl(env, "SUPABASE_URL", undefined, nodeEnv);
-  const runnerTokens = http ? [secret(env, "RUNNER_TOKEN", { required: true, minLength: 32 })] : [];
+  // The HTTP side verifies summary credentials (RUNNER_TOKEN required); the worker signs them for the machines it
+  // starts (per-job mode: RUNNER_TOKEN given to the worker only then).
+  const current = secret(env, "RUNNER_TOKEN", { required: http, minLength: 32 });
+  const runnerTokens = current ? [current] : [];
   const previous = http ? secret(env, "RUNNER_TOKEN_PREVIOUS", { required: false, minLength: 32 }) : "";
   if (previous) runnerTokens.push(previous);
+  const cachePem = secret(env, "CACHE_SIGNING_KEY", { required: false });
+  let cacheSigningKey: KeyObject | null = null;
+  if (cachePem) {
+    try { cacheSigningKey = createPrivateKey(cachePem.includes("\\n") && !cachePem.includes("\n") ? cachePem.replace(/\\n/g, "\n") : cachePem); } catch {
+      throw new Error("CACHE_SIGNING_KEY is not a PEM private key (scripts/cache-key.sh creates it)");
+    }
+    if (cacheSigningKey.asymmetricKeyType !== "rsa") throw new Error("CACHE_SIGNING_KEY must be an RSA key");
+  }
 
   return {
     surface,
@@ -166,6 +183,7 @@ export function loadConfig(env: Env = process.env, opts: { surface?: "all" | "wo
     supabaseJwksUrl: httpsUrl(env, "SUPABASE_JWKS_URL", `${supabaseUrl}/auth/v1/.well-known/jwks.json`, nodeEnv),
     stateSigningKey: http ? secret(env, "STATE_SIGNING_KEY", { required: true, minLength: 32 }) : "",
     runnerTokens,
+    cacheSigningKey,
     summaryWaitSeconds: int(env, "SUMMARY_WAIT_SECONDS", 600, 0),
     sweepSeconds: int(env, "SWEEP_SECONDS", 60, 0),
     githubTimeoutMs: int(env, "GITHUB_TIMEOUT_MS", 15_000, 100),

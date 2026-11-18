@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The machine's AWS role can read RUNNER_TOKEN and the registration token. Job code runs as `fenvix`: it must not
-# reach the instance metadata service (where the role's credentials are), and neither does the poster.
+# The user data (served by the instance metadata service) holds this machine's credentials: the summary credential,
+# the per-job cache token, the just-in-time configuration or the registration token. Job code runs as `fenvix`: it
+# must not reach the metadata service, and neither does the poster.
 set -euo pipefail
 for u in fenvix fenvix-post; do
   id "$u" >/dev/null 2>&1 || continue

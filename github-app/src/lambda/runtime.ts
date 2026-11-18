@@ -8,7 +8,7 @@ import { type BlobPort, s3Port, SqsWorkQueue, sqsPort } from "../queue/sqs.ts";
 import { Ec2Launcher, type RunnerLauncher } from "../runners/launcher.ts";
 import type { Logger } from "../service.ts";
 import { jsonLogger } from "../work.ts";
-import { loadSecrets, type Surface } from "./secrets.ts";
+import { loadParameter, loadSecrets, type Surface } from "./secrets.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -20,7 +20,8 @@ export async function lambdaConfig(env: Env, surface: Surface, ssm: SSMClient = 
   const prefix = env.SSM_PREFIX;
   if (!prefix) throw new Error("SSM_PREFIX is required");
   const secrets = await loadSecrets(ssm, prefix, surface);
-  return loadConfig({ ...env, ...secrets }, { surface });
+  if (surface === "launcher" && env.CACHE_SIGNING_KEY_PARAM) secrets.CACHE_SIGNING_KEY = await loadParameter(ssm, env.CACHE_SIGNING_KEY_PARAM);
+  return loadConfig({ ...env, ...secrets }, { surface: surface === "all" ? "all" : "worker" });
 }
 
 export function overflowBlobs(env: Env): BlobPort | null {
@@ -54,11 +55,49 @@ export function launcherFrom(env: Env, log: Logger, ec2: EC2Client = new EC2Clie
 }
 
 /** The worker's and the sweep's service (no HTTP secrets). Only the worker starts runner machines. */
-export async function workerCore(env: Env, opts: { launches?: boolean } = {}): Promise<Core & { log: Logger; blobs: BlobPort | null }> {
-  const cfg = await lambdaConfig(env, "worker");
+export async function workerCore(env: Env, opts: { launches?: boolean } = {}): Promise<Core & { log: Logger; blobs: BlobPort | null; close(): Promise<void> }> {
+  const launches = !!opts.launches && env.RUNNER_MODE === "per-job";
+  const cfg = await lambdaConfig(env, launches ? "launcher" : "worker");
   const log = jsonLogger(cfg.logLevel);
-  return { ...buildCore(cfg, log, opts.launches ? launcherFrom(env, log) : null), log, blobs: overflowBlobs(env) };
+  if (launches && !cfg.runnerTokens.length) throw new Error("RUNNER_TOKEN is required to start machines (each gets its own summary credential)");
+  const core = buildCore(cfg, log, launches ? launcherFrom(env, log) : null);
+  return { ...core, log, blobs: overflowBlobs(env), close: () => core.db.close() };
 }
+
+/**
+ * Like once(), but made again after `ttlMs` (default SECRETS_TTL_SECONDS, 300 s), so that a rotated secret takes effect
+ * within minutes without a deploy (R-012 F15). The previous value is closed after the new one is ready; a Lambda
+ * container handles one invocation at a time, so nothing is in flight on it then.
+ */
+export function refreshing<T extends { close(): Promise<void> }>(make: () => Promise<T>, ttlMs = ttlFromEnv(), now = Date.now): () => Promise<T> {
+  let cur: { p: Promise<T>; at: number } | null = null;
+  return async () => {
+    if (cur && now() - cur.at >= ttlMs) {
+      const old = cur.p;
+      const next = make();
+      try {
+        await next;
+        cur = { p: next, at: now() };
+        void old.then((o) => o.close()).catch(() => undefined);
+      } catch {
+        // Keep serving with the old secrets; try again on the next invocation.
+        cur = { p: old, at: cur.at };
+        return old;
+      }
+    }
+    if (!cur) {
+      const p = make();
+      cur = { p, at: now() };
+      p.catch(() => { if (cur?.p === p) cur = null; });
+    }
+    return cur.p;
+  };
+}
+
+const ttlFromEnv = () => {
+  const n = Number(process.env.SECRETS_TTL_SECONDS ?? "300");
+  return (Number.isFinite(n) && n > 0 ? n : 300) * 1000;
+};
 
 /** A promise kept across warm invocations; forgotten if it failed, so the next invocation tries again. */
 export function once<T>(make: () => Promise<T>): () => Promise<T> {

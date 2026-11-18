@@ -9,3 +9,4 @@ dist-e2e-noenv
 e2e-failure.png
 screenshots/
 dist-api
+__pycache__/

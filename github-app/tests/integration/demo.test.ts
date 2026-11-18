@@ -3,7 +3,8 @@ import { generateKeyPairSync } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { DescribeImagesCommand, DescribeInstancesCommand, RunInstancesCommand, TerminateInstancesCommand } from "@aws-sdk/client-ec2";
 import { GitHubApp } from "../../src/github/client.ts";
-import { demoDown, demoStatus, demoUp, demoUserData, type DemoDeps } from "../../src/runners/demo.ts";
+import { demoDown, demoStatus, demoUp, demoUserData, deregisterGoneDemoRunners, type DemoDeps } from "../../src/runners/demo.ts";
+import { verifySummaryCredential } from "../../src/runners/credentials.ts";
 import { parseReap } from "../../src/lambda/reaper.ts";
 import { FakeGitHub } from "../helpers/fake-github.ts";
 
@@ -29,7 +30,7 @@ class FakeEc2 {
   }
 }
 
-const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://github.fenvix.dev/v1/runner/summaries", FENVIX_RUNNER_TOKEN_PARAM: "/fenvix/prod/github-app/runner-token" };
+const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://github.fenvix.dev/v1/runner/summaries" };
 
 describe("demo mode: one fresh machine per demo (demo-up / demo-down)", () => {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -77,13 +78,13 @@ describe("demo mode: one fresh machine per demo (demo-up / demo-down)", () => {
     assert.deepEqual(s.runners.map((r) => [r.name, r.status]), [["fenvix-demo-202611181504", "online"]]);
   });
 
-  it("down: deregisters only fenvix-demo-* runners, terminates the demo machines; a busy runner is reported", async () => {
+  it("down: terminates the demo machines first, then deregisters only fenvix-demo-* runners; one still busy is reported", async () => {
     const repo = gh.repos.get("acme/demo")!;
     repo.runners.push({ id: 503, name: "fenvix-demo-old", status: "online", busy: true });
-    const r = await demoDown(d, null);
+    const r = await demoDown(d, null, { retryMs: 0 });
     assert.deepEqual(r.deregistered, ["fenvix-demo-202611181504"]);
     assert.deepEqual(r.terminated, ["i-1"]);
-    assert.match(r.problems.join(), /fenvix-demo-old is running a job/);
+    assert.match(r.problems.join(), /fenvix-demo-old still busy on GitHub: the reaper deregisters it/);
     assert.deepEqual(repo.runners.map((x) => x.name).sort(), ["fenvix-demo-old", "someone-elses-runner"]);
     assert.equal(ec2.instances[0]!.State.Name, "terminated");
     // A new demo: a new machine, a new runner name.
@@ -92,8 +93,32 @@ describe("demo mode: one fresh machine per demo (demo-up / demo-down)", () => {
     assert.deepEqual(gh.validateAll().map((x) => `${x.method} ${x.path}: ${JSON.stringify(x.problems)}`), []);
   });
 
+  it("the machine's summary credential: its runner name and the demo repository only; the reaper deregisters gone machines' runners", async () => {
+    await demoDown(d, null, { retryMs: 0 });
+    const key = "k".repeat(40);
+    d.now = () => new Date();
+    const up = await demoUp({ ...d, summaryKey: key, maxHours: 12 }, "acme/demo");
+    const ud = Buffer.from(ec2.instances.at(-1)!.input.UserData!, "base64").toString();
+    const tok = /printf '%s' '(fxr1\.[^']+)' >\/etc\/fenvix\/summary-token/.exec(ud)![1]!;
+    const scope = verifySummaryCredential([key], `Bearer ${tok}`)!;
+    assert.deepEqual({ ...scope, exp: 0 }, { runnerName: up.runnerName, repositoryId: 70001, exp: 0 });
+    // A runner left registered after its machine was terminated (demo-down never ran to the end): the reaper removes it.
+    gh.repos.get("acme/demo")!.runners.push({ id: 601, name: up.runnerName, status: "offline", busy: false });
+    ec2.instances.at(-1)!.State.Name = "terminated";
+    assert.deepEqual(await deregisterGoneDemoRunners(d), [up.runnerName]);
+    assert.ok(!gh.repos.get("acme/demo")!.runners.some((r) => r.name === up.runnerName));
+    d.now = () => new Date("2026-11-19T09:00:00Z");
+  });
+
+  it("only the demo repository (setting demoRepository): up, down and status refuse any other", async () => {
+    const scoped = { ...d, allowedRepositories: ["acme/demo"] };
+    for (const f of [demoUp(scoped, "acme/elsewhere"), demoDown(scoped, "acme/elsewhere"), demoStatus(scoped, "acme/elsewhere")]) {
+      await assert.rejects(f, /not the demo repository/);
+    }
+  });
+
   it("the App not installed on the repository: a clear error", async () => {
-    await demoDown(d, null);
+    await demoDown(d, null, { retryMs: 0 });
     gh.addRepo({ id: 70009, fullName: "acme/not-installed", ownerId: 9001, files: {} });
     await assert.rejects(demoUp(d, "acme/not-installed"), /not installed on acme\/not-installed/);
   });
