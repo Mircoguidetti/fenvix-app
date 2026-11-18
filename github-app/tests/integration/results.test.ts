@@ -183,6 +183,8 @@ describe("run results on GitHub, runs and usage events", () => {
     await h.send("workflow_job", p);
     const ev = (await admin.query("select billable, reason from ci_usage_events where github_job_id = 606")).rows[0];
     assert.deepEqual(ev, { billable: false, reason: "cancelled_before_tests" });
+    // No run row: the dashboard counts every ci_runs row as a used run.
+    assert.equal((await admin.query("select count(*)::int as n from ci_runs where commit_sha = $1", [sha])).rows[0].n, 0);
   });
 
   it("GitHub failing on the check run: the run is retried by the sweep, never billed twice", async () => {

@@ -227,7 +227,9 @@ export class GitHubService {
    */
   private async syncProject(c: Client, repo: RepoRow, fromRun: { language: string; testRunner: string } | null): Promise<string | null> {
     const language = repo.detected_language ?? fromRun?.language ?? null;
-    const runner = repo.detected_test_runner ?? fromRun?.testRunner ?? (language === "python" ? "pytest" : language === "go" ? "go test" : null);
+    // The run's test runner only for its own language: a Node repository is never labelled pytest.
+    const runner = repo.detected_test_runner ?? (fromRun && fromRun.language === language ? fromRun.testRunner : null)
+      ?? (language === "python" ? "pytest" : language === "go" ? "go test" : null);
     if (!language || !runner) return null;
     const prState = repo.onboarding_state === "merged" ? "merged" : repo.onboarding_state === "closed" ? "closed" : repo.setup_pr_number ? "open" : null;
     const setup = repo.onboarding_state === "pr_open" ? "pr_open" : "app_installed";
@@ -455,7 +457,9 @@ export class GitHubService {
         if (projectId) {
           const proj = (await c.query<{ comment_on_pull_requests: boolean }>("select comment_on_pull_requests from ci_projects where id = $1 for update", [projectId])).rows[0]!;
           commentsOn = proj.comment_on_pull_requests;
-          if (!ciRunId) ciRunId = await this.insertRun(c, projectId, job, summary, run, pr?.number ?? null, startedAt, completedAt, durationMs, otherStepMinutes);
+          // A job that never ran on our machine (not billable) gets no run row: the dashboard counts every row of
+          // ci_runs as a used run (src/data/ci.ts usageFrom on main), so rows and billable usage events agree.
+          if (!ciRunId && billable) ciRunId = await this.insertRun(c, projectId, job, summary, run, pr?.number ?? null, startedAt, completedAt, durationMs, otherStepMinutes);
           if (summary) await c.query("update ci_projects set setup_state = 'active' where id = $1", [projectId]);
         }
       }
