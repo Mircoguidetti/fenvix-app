@@ -1,0 +1,146 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CdkDeployThroughBootstrapRoles",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": [
+        "arn:aws:iam::865859654353:role/cdk-hnb659fds-deploy-role-865859654353-eu-west-1",
+        "arn:aws:iam::865859654353:role/cdk-hnb659fds-file-publishing-role-865859654353-eu-west-1",
+        "arn:aws:iam::865859654353:role/cdk-hnb659fds-lookup-role-865859654353-eu-west-1"
+      ]
+    },
+    {
+      "Sid": "CdkBootstrapVersionCheck",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": "arn:aws:ssm:eu-west-1:865859654353:parameter/cdk-bootstrap/hnb659fds/version"
+    },
+    {
+      "Sid": "ReadOwnStack",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:DescribeStackResources"
+      ],
+      "Resource": "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-github-app/*"
+    },
+    {
+      "Sid": "PrintCertificateValidationRecord",
+      "Effect": "Allow",
+      "Action": [
+        "acm:ListCertificates",
+        "acm:DescribeCertificate"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ResolveUbuntuAmi",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": "arn:aws:ssm:eu-west-1::parameter/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+    },
+    {
+      "Sid": "ManageOwnSecretsAndRegistrationToken",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter",
+        "ssm:DeleteParameter",
+        "ssm:DescribeParameters",
+        "ssm:GetParameterHistory"
+      ],
+      "Resource": [
+        "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/github-app/*",
+        "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/runner/*"
+      ]
+    },
+    {
+      "Sid": "ListParameterNames",
+      "Effect": "Allow",
+      "Action": "ssm:DescribeParameters",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadOwnLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:DescribeLogStreams",
+        "logs:StartLiveTail"
+      ],
+      "Resource": [
+        "arn:aws:logs:eu-west-1:865859654353:log-group:/aws/lambda/fenvix-prod-github-app-*",
+        "arn:aws:logs:eu-west-1:865859654353:log-group:/aws/apigateway/fenvix-prod-github-app-*"
+      ]
+    },
+    {
+      "Sid": "DescribeLogGroups",
+      "Effect": "Allow",
+      "Action": "logs:DescribeLogGroups",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "LookAtQueuesAndRunner",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:GetQueueAttributes",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceStatus",
+        "ec2:GetConsoleOutput"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "SessionManagerOnTheRunner",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": "arn:aws:ec2:eu-west-1:865859654353:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ssm:resourceTag/component": "github-app"
+        }
+      }
+    },
+    {
+      "Sid": "SessionManagerOnTheRunnerDocument",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": [
+        "arn:aws:ssm:eu-west-1::document/AWS-StartInteractiveCommand",
+        "arn:aws:ssm:eu-west-1:865859654353:document/SSM-SessionManagerRunShell"
+      ]
+    },
+    {
+      "Sid": "OwnSessions",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:TerminateSession",
+        "ssm:ResumeSession"
+      ],
+      "Resource": "arn:aws:ssm:eu-west-1:865859654353:session/*"
+    }
+  ]
+}

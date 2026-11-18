@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Sends the run summaries the job-completed hook spooled to the fenvix GitHub App (POST /v1/runner/summaries).
+
+Runs as `fenvix-post`, the only user that can read RUNNER_TOKEN. The runner name is this machine's (not the job's
+word for it). 2xx: done. 4xx other than 408/429: kept in rejected/ for a look. Anything else: tried again later.
+
+Environment: FENVIX_SUMMARIES_URL, FENVIX_RUNNER_NAME, FENVIX_TOKEN_FILE, FENVIX_SPOOL, FENVIX_POSTER_ONCE=1 (one pass).
+"""
+import json, os, sys, time, urllib.error, urllib.request
+
+URL = os.environ["FENVIX_SUMMARIES_URL"]
+RUNNER = os.environ["FENVIX_RUNNER_NAME"]
+TOKEN_FILE = os.environ.get("FENVIX_TOKEN_FILE", "/run/fenvix-post/runner-token")
+SPOOL = os.environ.get("FENVIX_SPOOL", "/var/spool/fenvix-summaries")
+ONCE = os.environ.get("FENVIX_POSTER_ONCE") == "1"
+MAX_AGE = 2 * 86400  # the App publishes without a summary after SUMMARY_WAIT_SECONDS anyway
+
+
+def log(msg):
+    print(f"[fenvix-summary-poster] {msg}", flush=True)
+
+
+def token():
+    with open(TOKEN_FILE, encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def send(path):
+    with open(path, encoding="utf-8") as f:
+        env = json.load(f)
+    body = {k: env[k] for k in ("repositoryId", "runId", "runAttempt")}
+    if not all(isinstance(v, int) and v > 0 for v in body.values()) or not isinstance(env.get("summary"), dict):
+        return 400, "malformed spool file"
+    body["runnerName"] = RUNNER
+    body["summary"] = env["summary"]
+    req = urllib.request.Request(URL, data=json.dumps(body).encode(), method="POST",
+                                 headers={"content-type": "application/json", "authorization": f"Bearer {token()}",
+                                          "user-agent": "fenvix-summary-poster"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, ""
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(500).decode("utf-8", "replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        return 0, str(e)
+
+
+def one_pass():
+    now = time.time()
+    for name in sorted(os.listdir(SPOOL)):
+        path = os.path.join(SPOOL, name)
+        if not os.path.isfile(path):
+            continue
+        age = now - os.path.getmtime(path)
+        if name.startswith("."):
+            if age > 3600:
+                os.remove(path)  # a hook that died half way
+            continue
+        if age > MAX_AGE:
+            log(f"{name}: older than {MAX_AGE}s, dropped")
+            os.remove(path)
+            continue
+        try:
+            status, detail = send(path)
+        except (ValueError, KeyError) as e:
+            status, detail = 400, f"unreadable: {e}"
+        if 200 <= status < 300:
+            os.remove(path)
+            log(f"{name}: sent ({status})")
+        elif 400 <= status < 500 and status not in (408, 429):
+            os.makedirs(os.path.join(SPOOL, "rejected"), exist_ok=True)
+            os.replace(path, os.path.join(SPOOL, "rejected", name))
+            log(f"{name}: refused ({status}) {detail[:200]}; kept in rejected/")
+        else:
+            log(f"{name}: not sent ({status or 'network'}) {detail[:200]}; will retry")
+
+
+def main():
+    while True:
+        try:
+            one_pass()
+        except OSError as e:
+            log(f"pass failed: {e}")
+        if ONCE:
+            return 0
+        time.sleep(5)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

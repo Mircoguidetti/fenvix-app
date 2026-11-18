@@ -1,0 +1,12 @@
+[Unit]
+Description=fenvix: block instance metadata for the job and poster users
+After=network-pre.target
+Before=fenvix-runner.service fenvix-summary-poster.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/fenvix/bin/fenvix-imds-block
+
+[Install]
+WantedBy=multi-user.target

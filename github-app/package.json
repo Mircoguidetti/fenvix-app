@@ -33,6 +33,7 @@
     "@types/pg": "^8.23.1",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
+    "esbuild": "^0.25.12",
     "typescript": "^5.9.3"
   }
 }

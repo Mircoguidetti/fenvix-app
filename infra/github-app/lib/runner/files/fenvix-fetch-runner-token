@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Runs as root before the poster starts (ExecStartPre=+): RUNNER_TOKEN from SSM into the poster's private directory.
+set -euo pipefail
+# shellcheck source=/dev/null
+. /etc/fenvix/runner.env
+AWS="$(command -v aws || echo /snap/bin/aws)"
+umask 077
+dir=/run/fenvix-post
+install -d -m 0700 -o fenvix-post -g fenvix-post "$dir"
+"$AWS" ssm get-parameter --with-decryption --name "$FENVIX_RUNNER_TOKEN_PARAM" --query Parameter.Value --output text >"$dir/runner-token.new"
+chown fenvix-post:fenvix-post "$dir/runner-token.new"
+chmod 0400 "$dir/runner-token.new"
+mv -f "$dir/runner-token.new" "$dir/runner-token"

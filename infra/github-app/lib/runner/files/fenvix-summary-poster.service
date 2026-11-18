@@ -1,0 +1,23 @@
+[Unit]
+Description=fenvix: send run summaries to the GitHub App
+Wants=network-online.target
+After=network-online.target fenvix-imds-block.service
+Requires=fenvix-imds-block.service
+
+[Service]
+User=fenvix-post
+Group=fenvix-post
+EnvironmentFile=/etc/fenvix/runner.env
+Environment=FENVIX_TOKEN_FILE=/run/fenvix-post/runner-token FENVIX_SPOOL=/var/spool/fenvix-summaries
+ExecStartPre=+/opt/fenvix/bin/fenvix-fetch-runner-token
+ExecStart=/usr/bin/python3 -I /opt/fenvix/bin/fenvix-summary-poster
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/spool/fenvix-summaries
+
+[Install]
+WantedBy=multi-user.target
