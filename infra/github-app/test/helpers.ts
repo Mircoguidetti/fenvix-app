@@ -21,22 +21,27 @@ export async function settings(over: Record<string, string> = {}): Promise<Setti
   return readSettings((k) => ctx[k], {});
 }
 
-let cached: { template: Template; stack: FenvixGitHubAppStack; s: Settings } | null = null;
+const cached = new Map<string, { template: Template; stack: FenvixGitHubAppStack; s: Settings }>();
 
-/** Synthesizes the stack once (bundles the three functions with esbuild), with cdk-nag as in bin/app.ts. */
-export async function synth(): Promise<{ template: Template; stack: FenvixGitHubAppStack; s: Settings; nagErrors: string[] }> {
-  if (!cached) {
-    const s = await settings();
+/** Synthesizes the stack once per setting set (bundles the functions with esbuild), with cdk-nag as in bin/app.ts. */
+export async function synth(over: Record<string, string> = {}): Promise<{ template: Template; stack: FenvixGitHubAppStack; s: Settings; nagErrors: string[] }> {
+  const key = JSON.stringify(over);
+  if (!cached.has(key)) {
+    const s = await settings(over);
     const app = new App({ outdir: (await import("node:fs")).mkdtempSync(`${(await import("node:os")).tmpdir()}/fenvix-cdk-`) });
     const stack = new FenvixGitHubAppStack(app, "test-stack", { env: { account: s.account, region: s.region }, settings: s });
     applySuppressions(stack);
     Aspects.of(app).add(new AwsSolutionsChecks());
     app.synth();
-    cached = { template: Template.fromStack(stack), stack, s };
+    cached.set(key, { template: Template.fromStack(stack), stack, s });
   }
-  const nagErrors = Annotations.fromStack(cached.stack).findError("*", Match.stringLikeRegexp("AwsSolutions-.*")).map((m) => String(m.entry.data));
-  return { ...cached, nagErrors };
+  const c = cached.get(key)!;
+  const nagErrors = Annotations.fromStack(c.stack).findError("*", Match.stringLikeRegexp("AwsSolutions-.*")).map((m) => String(m.entry.data));
+  return { ...c, nagErrors };
 }
+
+/** The always-on mode's settings (one machine registered on one repository). */
+export const ALWAYS_ON = { runnerMode: "always-on" };
 
 export type Res = { Type: string; Properties: Record<string, unknown> };
 export const resources = (t: Template, type: string): [string, Res][] => Object.entries(t.findResources(type)) as [string, Res][];

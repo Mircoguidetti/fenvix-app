@@ -74,7 +74,7 @@
       "Resource": "arn:aws:iam::865859654353:role/fenvix-prod-github-app-*"
     },
     {
-      "Sid": "OnlyTheSessionManagerManagedPolicy",
+      "Sid": "OnlyTheseManagedPolicies",
       "Effect": "Deny",
       "Action": [
         "iam:AttachRolePolicy"
@@ -82,7 +82,10 @@
       "Resource": "arn:aws:iam::865859654353:role/fenvix-prod-github-app-*",
       "Condition": {
         "ArnNotEquals": {
-          "iam:PolicyARN": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+          "iam:PolicyARN": [
+            "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+            "arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder"
+          ]
         }
       }
     },
@@ -109,7 +112,8 @@
           "iam:PassedToService": [
             "lambda.amazonaws.com",
             "ec2.amazonaws.com",
-            "scheduler.amazonaws.com"
+            "scheduler.amazonaws.com",
+            "imagebuilder.amazonaws.com"
           ]
         }
       }

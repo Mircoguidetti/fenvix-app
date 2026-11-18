@@ -2,4 +2,4 @@
 import { makeWorkerHandler } from "./handlers.ts";
 import { once, workerCore } from "./runtime.ts";
 
-export const handler = makeWorkerHandler(once(() => workerCore(process.env)));
+export const handler = makeWorkerHandler(once(() => workerCore(process.env, { launches: true })));

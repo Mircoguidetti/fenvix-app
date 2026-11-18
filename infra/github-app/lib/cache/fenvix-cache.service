@@ -1,0 +1,19 @@
+[Unit]
+Description=fenvix shared cache service (detpy.cache_service from fenvix-engine-cli, pinned)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=fenvix-cache
+Group=fenvix-cache
+ExecStart=/usr/bin/python3 -I /opt/fenvix-cache/cache_service.py serve --data /var/lib/fenvix-cache --host 0.0.0.0 --port 8787 --quiet
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/fenvix-cache
+
+[Install]
+WantedBy=multi-user.target

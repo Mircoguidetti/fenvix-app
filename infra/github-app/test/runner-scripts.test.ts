@@ -43,7 +43,7 @@ async function poster(spool: string, url: string, tokenFile: string): Promise<st
 
 describe("runner machine scripts", () => {
   it("are valid bash (and pass shellcheck when it is installed)", () => {
-    const sh = ["setup.sh", "fenvix-imds-block", "fenvix-register", "fenvix-fetch-runner-token", "fenvix-job-completed"];
+    const sh = ["install.sh", "setup.sh", "fenvix-imds-block", "fenvix-register", "fenvix-fetch-runner-token", "fenvix-job-completed", "fenvix-job-started", "fenvix-jit-prepare", "fenvix-job-done", "fenvix-idle-watchdog"];
     for (const f of sh) execFileSync("bash", ["-n", join(FILES, f)]);
     if (spawnSync("shellcheck", ["--version"]).status === 0) execFileSync("shellcheck", ["-s", "bash", ...sh.map((f) => join(FILES, f))]);
     execFileSync("python3", ["-I", "-c", `import ast,sys; ast.parse(open(sys.argv[1]).read())`, join(FILES, "fenvix-summary-poster")]);

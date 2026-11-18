@@ -1,9 +1,11 @@
+import { EC2Client } from "@aws-sdk/client-ec2";
 import { S3Client } from "@aws-sdk/client-s3";
 import { SQSClient } from "@aws-sdk/client-sqs";
 import { SSMClient } from "@aws-sdk/client-ssm";
 import { buildApp, buildCore, type App, type Core } from "../app.ts";
 import { type Config, loadConfig } from "../config.ts";
 import { type BlobPort, s3Port, SqsWorkQueue, sqsPort } from "../queue/sqs.ts";
+import { Ec2Launcher, type RunnerLauncher } from "../runners/launcher.ts";
 import type { Logger } from "../service.ts";
 import { jsonLogger } from "../work.ts";
 import { loadSecrets, type Surface } from "./secrets.ts";
@@ -33,11 +35,29 @@ export async function httpApp(env: Env): Promise<App> {
   return buildApp({ cfg, queue });
 }
 
-/** The worker's and the sweep's service (no HTTP secrets). */
-export async function workerCore(env: Env): Promise<Core & { log: Logger; blobs: BlobPort | null }> {
+/** The plain settings a per-job machine gets in its user data (the infra sets them as FENVIX_MACHINE_<NAME>). */
+export function machineEnv(env: Env): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) if (k.startsWith("FENVIX_MACHINE_") && v) out[k.slice("FENVIX_MACHINE_".length)] = v;
+  return out;
+}
+
+/** RUNNER_MODE=per-job: the launcher of runner machines (the worker only). */
+export function launcherFrom(env: Env, log: Logger, ec2: EC2Client = new EC2Client({})): RunnerLauncher | null {
+  if (env.RUNNER_MODE !== "per-job") return null;
+  if (!env.RUNNER_LAUNCH_TEMPLATE_ID) throw new Error("RUNNER_LAUNCH_TEMPLATE_ID is required with RUNNER_MODE=per-job");
+  const max = Number(env.RUNNER_MAX_RUNNING ?? "4");
+  if (!Number.isInteger(max) || max < 1) throw new Error("RUNNER_MAX_RUNNING must be a positive integer");
+  const tags: Record<string, string> = { project: "fenvix" };
+  if (env.FENVIX_ENV) tags.env = env.FENVIX_ENV;
+  return new Ec2Launcher({ ec2, launchTemplateId: env.RUNNER_LAUNCH_TEMPLATE_ID, maxRunning: max, machineEnv: machineEnv(env), tags, log });
+}
+
+/** The worker's and the sweep's service (no HTTP secrets). Only the worker starts runner machines. */
+export async function workerCore(env: Env, opts: { launches?: boolean } = {}): Promise<Core & { log: Logger; blobs: BlobPort | null }> {
   const cfg = await lambdaConfig(env, "worker");
   const log = jsonLogger(cfg.logLevel);
-  return { ...buildCore(cfg, log), log, blobs: overflowBlobs(env) };
+  return { ...buildCore(cfg, log, opts.launches ? launcherFrom(env, log) : null), log, blobs: overflowBlobs(env) };
 }
 
 /** A promise kept across warm invocations; forgotten if it failed, so the next invocation tries again. */

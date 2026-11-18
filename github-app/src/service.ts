@@ -3,6 +3,7 @@ import { GitHubError, type GitHubApp, type GitHubHttp, repoPath } from "./github
 import { onboardRepository, type OnboardingResult } from "./onboarding/onboard.ts";
 import { CHECK_NAME, COMMENT_MARKER, checkRunOutput, conclusionOf, prComment, type RenderContext } from "./results/render.ts";
 import { parseSummary, type RunSummary } from "./results/summary.ts";
+import type { RunnerLauncher } from "./runners/launcher.ts";
 
 export interface ServiceSettings {
   runsOnLabel: string;
@@ -63,9 +64,11 @@ export class GitHubService {
   private readonly gh: GitHubApp;
   private readonly s: ServiceSettings;
   private readonly log: Logger;
+  /** "One machine per job" mode: starts a runner machine for each queued fenvix job. Absent: an always-on runner. */
+  private readonly launcher: RunnerLauncher | null;
 
-  constructor(db: Db, gh: GitHubApp, s: ServiceSettings, log: Logger) {
-    this.db = db; this.gh = gh; this.s = s; this.log = log;
+  constructor(db: Db, gh: GitHubApp, s: ServiceSettings, log: Logger, launcher: RunnerLauncher | null = null) {
+    this.db = db; this.gh = gh; this.s = s; this.log = log; this.launcher = launcher;
   }
 
   background(what: string, fn: () => Promise<unknown>): void {
@@ -318,9 +321,50 @@ export class GitHubService {
          updated_at = now()`,
       [job.id, repo.id, installationId, job.run_id, job.run_attempt ?? 1, job.workflow_name ?? "", job.name, job.head_sha, job.head_branch ?? null,
         job.labels, job.runner_name || null, status, job.conclusion ?? null, job.created_at ?? null, job.started_at ?? null, job.completed_at ?? null]);
+    if (status === "queued" && p.action === "queued" && this.launcher) await this.launchRunner(job.id, installationId, repo);
     if (status === "in_progress") await this.startCheckRun(job.id, job.html_url ?? null);
     if (status === "completed") await this.tryPublish(job.id);
     return true;
+  }
+
+  /**
+   * One machine for one queued job: a just-in-time runner configuration from GitHub (repository permission
+   * "Administration: Read and write"), then the machine. Only for installations linked to an organization, so a
+   * stranger installing the App cannot start machines; only while the job is still queued.
+   */
+  private async launchRunner(jobId: number, installationId: number, repo: RepoFull): Promise<void> {
+    const [row] = await this.db.q<{ status: string; run_id: number }>("select status, run_id from gh_jobs where job_id = $1", [jobId]);
+    if (!row || row.status !== "queued") return;
+    const [inst] = await this.db.q<{ workspace_id: string | null; suspended_at: Date | null; deleted_at: Date | null }>(
+      "select workspace_id, suspended_at, deleted_at from gh_installations where installation_id = $1", [installationId]);
+    if (!inst?.workspace_id || inst.suspended_at || inst.deleted_at) {
+      this.log.warn({ job: jobId, installation: installationId }, "no runner machine: the installation is not linked to an organization");
+      return;
+    }
+    const gh = this.gh.installation(installationId);
+    const base = repoPath(repo.full_name);
+    // Cache writes only for trusted refs: a push, schedule or manual run on the default branch of this repository.
+    const run = await gh.request<{ event?: string; head_branch?: string | null; head_repository?: { id: number } | null }>(
+      "GET", `${base}/actions/runs/${row.run_id}`, { allow: [404] }).then((r) => (r.status === 404 ? null : r.data)).catch(() => null);
+    const defaultBranch = repo.default_branch ?? (await this.repo(repo.id))?.default_branch ?? null;
+    const trusted = !!run && ["push", "schedule", "workflow_dispatch", "merge_group"].includes(run.event ?? "")
+      && !!defaultBranch && run.head_branch === defaultBranch && run.head_repository?.id === repo.id;
+    // A retry after a partial failure finds the first name taken (409): a fresh one; EC2 still starts one machine.
+    let runnerName = `fenvix-j${jobId}`;
+    let jit = await gh.request<{ encoded_jit_config: string }>("POST", `${base}/actions/runners/generate-jitconfig`, {
+      body: { name: runnerName, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" }, allow: [409],
+    });
+    if (jit.status === 409) {
+      runnerName = `fenvix-j${jobId}-${Date.now().toString(36)}`;
+      jit = await gh.request<{ encoded_jit_config: string }>("POST", `${base}/actions/runners/generate-jitconfig`, {
+        body: { name: runnerName, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" },
+      });
+    }
+    const res = await this.launcher!.launch({
+      jobId, runId: row.run_id, repositoryId: repo.id, repositoryFullName: repo.full_name, installationId, runnerName,
+      jitConfig: jit.data.encoded_jit_config, cacheAccess: trusted ? "write" : "read",
+    });
+    this.log.info({ job: jobId, repository: repo.full_name, runner: runnerName, instance: res.instanceId, already: res.already, cache: trusted ? "write" : "read" }, "runner machine requested");
   }
 
   /** A check run "in progress" on the commit while the job runs on fenvix. */

@@ -25,7 +25,9 @@ export interface FakeRepo {
   pulls: { number: number; title: string; body: string; head: string; base: string; state: string; headSha: string }[];
   checkRuns: Map<number, Json>;
   comments: Map<number, { id: number; issue: number; body: string; byApp: boolean }>;
-  runs: Map<number, { event: string; createdAt: string; headSha: string; headBranch: string; message: string; pullRequests: number[] }>;
+  runs: Map<number, { event: string; createdAt: string; headSha: string; headBranch: string; message: string; pullRequests: number[]; headRepoId?: number }>;
+  /** Just-in-time runners created (generate-jitconfig). */
+  jitRunners: { id: number; name: string; labels: string[]; runnerGroupId: number; config: string }[];
 }
 
 export interface FakeInstallation { id: number; account: { login: string; id: number; type: "User" | "Organization" }; repos: number[]; selection: "all" | "selected" }
@@ -74,13 +76,14 @@ export class FakeGitHub {
     const repo: FakeRepo = {
       id: o.id, owner, ownerId: o.ownerId, name, fullName: o.fullName, defaultBranch: o.defaultBranch ?? "main", private: o.private ?? true, archived: false,
       branches: new Map([[o.defaultBranch ?? "main", { sha: sha1(o.fullName + "base"), files }]]),
-      pulls: [], checkRuns: new Map(), comments: new Map(), runs: new Map(),
+      pulls: [], checkRuns: new Map(), comments: new Map(), runs: new Map(), jitRunners: [],
     };
     this.repos.set(o.fullName, repo);
     return repo;
   }
 
-  addRun(fullName: string, runId: number, r: { event: string; headSha: string; headBranch: string; message: string; pullRequests?: number[]; createdAt?: string }): void {
+  /** `headRepoId`: the repository the run's code comes from (another id: a pull request from a fork). */
+  addRun(fullName: string, runId: number, r: { event: string; headSha: string; headBranch: string; message: string; pullRequests?: number[]; createdAt?: string; headRepoId?: number }): void {
     this.repos.get(fullName)!.runs.set(runId, { ...r, pullRequests: r.pullRequests ?? [], createdAt: r.createdAt ?? new Date().toISOString() });
   }
 
@@ -257,12 +260,25 @@ export class FakeGitHub {
       const prTemplate = (ex.pull_requests as Json[])[0] ?? { url: "", id: 1, number: 1, head: { ref: "", sha: "", repo: { id: repo.id, url: "", name: repo.name } }, base: { ref: "", sha: "", repo: { id: repo.id, url: "", name: repo.name } } };
       return [200, {
         ...ex, id: Number(m[1]), event: run.event, head_sha: run.headSha, head_branch: run.headBranch, created_at: run.createdAt,
+        repository: { ...(ex.repository as Json), id: repo.id }, head_repository: { ...(ex.head_repository as Json), id: run.headRepoId ?? repo.id },
         head_commit: { ...(ex.head_commit as Json), id: run.headSha, message: run.message },
         pull_requests: run.pullRequests.map((n) => {
           const pr = repo.pulls.find((x) => x.number === n);
           return { ...prTemplate, number: n, head: { ...(prTemplate.head as Json), ref: pr?.head ?? run.headBranch, sha: run.headSha }, base: { ...(prTemplate.base as Json), ref: pr?.base ?? repo.defaultBranch } };
         }),
       }];
+    }
+    if (method === "POST" && rest === "/actions/runners/generate-jitconfig") {
+      const b = body as { name: string; runner_group_id: number; labels: string[]; work_folder?: string };
+      if (repo.jitRunners.some((r) => r.name === b.name)) return [409, { message: "Already exists - A runner with the name already exists.", documentation_url: "https://docs.github.com/rest", status: "409" }];
+      const id = nextId();
+      const config = Buffer.from(JSON.stringify({ ".runner": id, name: b.name })).toString("base64");
+      repo.jitRunners.push({ id, name: b.name, labels: b.labels, runnerGroupId: b.runner_group_id, config });
+      const ex = exampleResponse("POST", "/repos/{owner}/{repo}/actions/runners/generate-jitconfig", 201);
+      const runner = ex.runner as Json;
+      return [201, { ...ex, runner: { ...runner, id, name: b.name, status: "offline", busy: false,
+        labels: [...["self-hosted", "Linux", "X64"].map((n, i) => ({ id: i + 1, name: n, type: "read-only" })), ...b.labels.map((n, i) => ({ id: 10 + i, name: n, type: "custom" }))] },
+        encoded_jit_config: config }];
     }
     if (method === "POST" && rest === "/check-runs") {
       const b = body as Json;

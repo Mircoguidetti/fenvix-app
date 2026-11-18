@@ -4,14 +4,14 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { appParameters, registrationTokenName } from "../lib/parameters.ts";
 import { RUNNER_FILES } from "../lib/runner.ts";
-import { resources, synth, type Res } from "./helpers.ts";
+import { ALWAYS_ON, resources, synth, type Res } from "./helpers.ts";
 
 type Stmt = { Effect: string; Action: string | string[]; Resource: unknown; Sid?: string };
 const arr = <T,>(x: T | T[]): T[] => (Array.isArray(x) ? x : [x]);
 const json = (x: unknown) => JSON.stringify(x);
 
-describe("the stack (cdk synth)", async () => {
-  const { template: t, s, nagErrors } = await synth();
+describe("the stack, always-on mode (cdk synth)", async () => {
+  const { template: t, s, nagErrors } = await synth(ALWAYS_ON);
   const fns = resources(t, "AWS::Lambda::Function");
   const roles = Object.fromEntries(resources(t, "AWS::IAM::Role").map(([id, r]) => [id, r]));
   const policies = resources(t, "AWS::IAM::Policy");
@@ -103,11 +103,10 @@ describe("the stack (cdk synth)", async () => {
     assert.deepEqual(i.Properties.MetadataOptions, { HttpTokens: "required", HttpPutResponseHopLimit: 1, HttpEndpoint: "enabled" });
     assert.match(json(i.Properties.ImageId), /canonicalubuntuserver2404/, "Ubuntu 24.04 when no AMI is pinned");
     const sgs = resources(t, "AWS::EC2::SecurityGroup");
-    assert.equal(sgs.length, 1);
-    const sg = sgs[0]![1].Properties;
+    const sg = sgs.find(([, x]) => String(x.Properties.GroupDescription).startsWith("fenvix runners"))![1].Properties;
     assert.equal(sg.SecurityGroupIngress, undefined);
     assert.equal(resources(t, "AWS::EC2::SecurityGroupIngress").length, 0);
-    assert.deepEqual((sg.SecurityGroupEgress as { FromPort: number; IpProtocol: string }[]).map((e) => `${e.IpProtocol}/${e.FromPort}`).sort(), ["tcp/443", "tcp/80"]);
+    assert.deepEqual((sg.SecurityGroupEgress as { FromPort: number; IpProtocol: string; CidrIp?: string }[]).filter((e) => e.CidrIp).map((e) => `${e.IpProtocol}/${e.FromPort}`).sort(), ["tcp/443", "tcp/80"]);
     assert.equal(resources(t, "AWS::EC2::NatGateway").length, 0, "no NAT gateway (it costs by the hour)");
   });
 
@@ -144,7 +143,7 @@ describe("the stack (cdk synth)", async () => {
 
   it("a pinned AMI is used as is (kept across deploys)", async () => {
     const { settings } = await import("./helpers.ts");
-    const s2 = await settings({ runnerAmiId: "ami-0123456789abcdef0" });
+    const s2 = await settings({ ...ALWAYS_ON, runnerAmiId: "ami-0123456789abcdef0" });
     const { App } = await import("aws-cdk-lib");
     const { Template } = await import("aws-cdk-lib/assertions");
     const { FenvixGitHubAppStack } = await import("../lib/stack.ts");

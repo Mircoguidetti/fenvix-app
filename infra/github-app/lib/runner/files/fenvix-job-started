@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# GitHub runner job-started hook (ACTIONS_RUNNER_HOOK_JOB_STARTED), as the job user: a marker for the idle watchdog of
+# a per-job machine (a machine whose job never came powers off). Never fails the job.
+mkdir -p "$HOME/.fenvix" 2>/dev/null && touch "$HOME/.fenvix/job-started" 2>/dev/null
+exit 0

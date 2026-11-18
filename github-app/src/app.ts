@@ -5,6 +5,7 @@ import { Db } from "./db.ts";
 import { GitHubApp, GitHubError } from "./github/client.ts";
 import { verifySignature } from "./github/signature.ts";
 import { SummaryError, parseSummary, trimSummary } from "./results/summary.ts";
+import type { RunnerLauncher } from "./runners/launcher.ts";
 import { GitHubService, type Logger } from "./service.ts";
 import { describeWork, InProcessQueue, type Work, type WorkQueue } from "./work.ts";
 
@@ -23,18 +24,20 @@ export interface Deps {
   logger?: boolean | object;
   /** Where checked webhooks and runner summaries go. Default: this process, in the background (node server mode). */
   queue?: WorkQueue;
+  /** "One machine per job": started for each queued fenvix job (in Lambda mode only the worker has one). */
+  launcher?: RunnerLauncher;
 }
 
 export interface Core { service: GitHubService; db: Db; gh: GitHubApp }
 
 /** The database, the GitHub client and the service: what the HTTP side, the worker and the sweep share. */
-export function buildCore(cfg: Config, log: Logger): Core {
+export function buildCore(cfg: Config, log: Logger, launcher: RunnerLauncher | null = null): Core {
   const db = new Db(cfg.databaseUrl, cfg.dbPoolMax);
   const gh = new GitHubApp({ apiUrl: cfg.apiUrl, appId: cfg.appId, privateKey: cfg.privateKey, timeoutMs: cfg.githubTimeoutMs });
   const service = new GitHubService(db, gh, {
     runsOnLabel: cfg.runsOnLabel, onboardingBranch: cfg.onboardingBranch, onboardAllRepositories: cfg.onboardAllRepositories,
     dashboardUrl: cfg.dashboardUrl, webUrl: cfg.webUrl, summaryWaitSeconds: cfg.summaryWaitSeconds,
-  }, log);
+  }, log, launcher);
   return { service, db, gh };
 }
 
@@ -53,7 +56,7 @@ export async function buildApp(deps: Deps): Promise<App> {
     bodyLimit: 1024 * 1024,
     trustProxy: true,
   });
-  const { service, db, gh } = buildCore(cfg, fastify.log);
+  const { service, db, gh } = buildCore(cfg, fastify.log, deps.launcher ?? null);
   const queue = deps.queue ?? new InProcessQueue(service);
   const sessions = deps.sessions ?? new SessionVerifier(cfg.supabaseUrl, cfg.supabaseJwksUrl);
 

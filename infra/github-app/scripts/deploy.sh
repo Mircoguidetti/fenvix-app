@@ -40,8 +40,23 @@ say "2/5 install and test"
 npm ci --no-audit --no-fund
 npm test
 
-say "3/5 runner AMI"
-if [ -z "${FENVIX_RUNNER_AMI_ID:-}" ] && [ -z "$(ctx runnerAmiId)" ]; then
+MODE="${FENVIX_RUNNER_MODE:-$(ctx runnerMode)}"
+say "3/5 machine images (runnerMode $MODE)"
+# Keeps the AMI a machine was started from, so a deploy never replaces it because Canonical published a new one.
+keep_ami() { # $1 output name, $2 SSM parameter of the current Ubuntu 24.04 image
+  local id
+  id="$(aws cloudformation describe-stacks --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue | [0]" --output text 2>/dev/null || true)"
+  if [ -z "$id" ] || [ "$id" = "None" ]; then id="$(aws ssm get-parameter --name "$2" --query Parameter.Value --output text)"; fi
+  printf '%s' "$id"
+}
+if [ "$MODE" = "per-job" ]; then
+  if [ -z "${FENVIX_CACHE_AMI_ID:-}" ] && [ -z "$(ctx cacheAmiId)" ]; then
+    FENVIX_CACHE_AMI_ID="$(keep_ami CacheAmiId /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id)"
+    export FENVIX_CACHE_AMI_ID
+    echo "cache machine image: $FENVIX_CACHE_AMI_ID"
+  fi
+  [ -n "$(ctx cacheTokenSha256Write)" ] || echo "note: no cache tokens yet (scripts/cache-tokens.sh): jobs run without the shared cache"
+elif [ -z "${FENVIX_RUNNER_AMI_ID:-}" ] && [ -z "$(ctx runnerAmiId)" ]; then
   FENVIX_RUNNER_AMI_ID="$(aws cloudformation describe-stacks --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='RunnerAmiId'].OutputValue | [0]" --output text 2>/dev/null || true)"
   if [ -z "$FENVIX_RUNNER_AMI_ID" ] || [ "$FENVIX_RUNNER_AMI_ID" = "None" ]; then
     FENVIX_RUNNER_AMI_ID="$(aws ssm get-parameter --name /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id --query Parameter.Value --output text)"
@@ -69,10 +84,12 @@ kill $dnspid 2>/dev/null || true
 [ $rc -eq 0 ] || die "cdk deploy failed (see above; docs/DEPLOY-AWS.md, 'When something fails')"
 
 bash "$HERE/scripts/dns-records.sh"
-cat <<NEXT
-
-Deployed. Next (docs/DEPLOY-AWS.md):
-  - Cloudflare: both records above, DNS only. Then:  curl -s https://$(ctx domainName)/healthz   ->  {"ok":true}
-  - the runner machine is building the engine (about 15 minutes), then waits for its registration token:
-      step 11 puts it in SSM: /fenvix/$ENVNAME/runner/registration-token
-NEXT
+echo
+echo "Deployed. Next (docs/DEPLOY-AWS.md):"
+echo "  - Cloudflare: both records above, DNS only. Then:  curl -s https://$(ctx domainName)/healthz   ->  {\"ok\":true}"
+if [ "$MODE" = "per-job" ]; then
+  echo "  - the runner image: bash scripts/build-image.sh   (first deploy, and after changing engineCliCommit or lib/runner/files)"
+else
+  echo "  - the runner machine builds the engine (about 15 minutes), then waits for its registration token in SSM:"
+  echo "      /fenvix/$ENVNAME/runner/registration-token   (stop / start it: scripts/runner-stop.sh, scripts/runner-start.sh)"
+fi

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Per-job machine, as root before the runner starts (ExecStartPre=+): the just-in-time configuration for the runner
+# user; the shared-cache token the job may use (write: trusted ref; read: anything else), as the hand-off file that
+# fenvix-run reads once and deletes; the cache settings in the runner's job environment.
+set -euo pipefail
+# shellcheck source=/dev/null
+. /etc/fenvix/runner.env
+AWS="$(command -v aws || echo /snap/bin/aws)"
+home=/home/fenvix
+umask 077
+install -d -m 0700 -o fenvix -g fenvix "$home/.fenvix"
+install -m 0600 -o fenvix -g fenvix /etc/fenvix/jitconfig "$home/.fenvix/jitconfig"
+shred -u /etc/fenvix/jitconfig 2>/dev/null || rm -f /etc/fenvix/jitconfig
+
+env_file="$home/fenvix/actions-runner/.env"
+if [ -n "${FENVIX_CACHE_URL:-}" ]; then
+  case "${FENVIX_CACHE_ACCESS:-read}" in
+    write) param="${FENVIX_CACHE_WRITE_TOKEN_PARAM:-}" ;;
+    *) param="${FENVIX_CACHE_READ_TOKEN_PARAM:-}" ;;
+  esac
+  token=""
+  [ -n "$param" ] && token="$("$AWS" ssm get-parameter --with-decryption --name "$param" --query Parameter.Value --output text 2>/dev/null || true)"
+  {
+    printf 'FENVIX_CACHE_URL=%s\n' "$FENVIX_CACHE_URL"
+    printf 'FENVIX_CACHE_ALLOW_HTTP=1\n'   # inside the VPC only: the cache machine has no public address
+  } >>"$env_file"
+  if [ -n "$token" ] && [ "$token" != "None" ]; then
+    install -m 0600 -o fenvix -g fenvix /dev/null "$home/.fenvix/cache-token"
+    printf '%s' "$token" >"$home/.fenvix/cache-token"
+    printf 'FENVIX_CACHE_TOKEN_FILE=%s\n' "$home/.fenvix/cache-token" >>"$env_file"
+  else
+    echo "[fenvix-jit-prepare] no shared-cache token ($param): the cache service refuses; the job uses the local cache"
+  fi
+  unset token
+  chown fenvix:fenvix "$env_file"
+fi

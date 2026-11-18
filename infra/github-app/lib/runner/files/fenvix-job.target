@@ -1,0 +1,3 @@
+[Unit]
+Description=fenvix per-job machine: the runner for one job, the summary poster, the idle watchdog
+Wants=fenvix-imds-block.service fenvix-summary-poster.service fenvix-runner-jit.service fenvix-idle-watchdog.timer

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { readSettings } from "../lib/settings.ts";
-import { cdkContext, SAMPLE, settings, synth } from "./helpers.ts";
+import { ALWAYS_ON, cdkContext, SAMPLE, settings, synth } from "./helpers.ts";
 
 type Stmt = { Sid: string; Effect: string; Action: string | string[]; Resource: string | string[]; Condition?: unknown };
 const policy = (f: string) => JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url), "utf8")) as { Statement: Stmt[] };
@@ -21,7 +21,11 @@ describe("settings", () => {
 
   it("refuses values that would break the deploy or the machine", async () => {
     await assert.rejects(settings({ dashboardUrl: "http://app.fenvix.dev" }), /https/);
-    await assert.rejects(settings({ runnerScopeUrl: "https://gitlab.com/x/y" }), /runnerScopeUrl/);
+    await assert.rejects(settings({ ...ALWAYS_ON, runnerScopeUrl: "https://gitlab.com/x/y" }), /runnerScopeUrl/);
+    await assert.rejects(settings({ runnerMode: "sometimes" }), /per-job or always-on/);
+    await assert.rejects(settings({ cachePrivateIp: "10.42.1.10" }), /cachePrivateIp/);
+    await assert.rejects(settings({ cacheTokenSha256Write: "abc" }), /SHA-256/);
+    await assert.rejects(settings({ cacheTokenSha256Write: "a".repeat(64), cacheTokenSha256Read: "a".repeat(64) }), /must differ/);
     await assert.rejects(settings({ engineCliCommit: "main" }), /40-character/);
     await assert.rejects(settings({ logRetentionDays: "10" }), /one of/);
     await assert.rejects(settings({ runnerInstanceType: "t4g.medium" }), /x86_64/);
@@ -35,7 +39,7 @@ describe("settings", () => {
 });
 
 describe("IAM policy files", () => {
-  const files = ["deploy-policy.json", "cfn-exec-policy-app.json", "cfn-exec-policy-edge.json"];
+  const files = ["deploy-policy.json", "cfn-exec-policy-app.json", "cfn-exec-policy-edge.json", "cfn-exec-policy-fleet.json"];
 
   it("each fits in one managed policy (6,144 characters without whitespace) and names this account and region only", async () => {
     const ctx = await cdkContext();
@@ -57,27 +61,32 @@ describe("IAM policy files", () => {
     const assume = p.Statement.find((s) => s.Sid === "CdkDeployThroughBootstrapRoles")!;
     for (const r of arr(assume.Resource)) assert.match(r, /:role\/cdk-hnb659fds-(deploy|file-publishing|lookup)-role-/);
     const put = p.Statement.find((s) => arr(s.Action).includes("ssm:PutParameter"))!;
-    for (const r of arr(put.Resource)) assert.match(r, /parameter\/fenvix\/prod\/(github-app|runner)\/\*$/);
+    for (const r of arr(put.Resource)) assert.match(r, /parameter\/fenvix\/prod\/(github-app|runner|cache)\/\*$/);
   });
 
-  it("CloudFormation may create every resource type of the template (execution policies), never an inbound rule", async () => {
-    const { template } = await synth();
-    const types = new Set(Object.values(template.toJSON().Resources as Record<string, { Type: string }>).map((r) => r.Type));
+  it("CloudFormation may create every resource type of both modes (execution policies); inbound only from a security group", async () => {
+    const execs = ["cfn-exec-policy-app.json", "cfn-exec-policy-edge.json", "cfn-exec-policy-fleet.json"].flatMap((f) => policy(f).Statement);
     const prefix: Record<string, string> = {
       Lambda: "lambda", IAM: "iam", SQS: "sqs", S3: "s3", Logs: "logs", Scheduler: "scheduler", CertificateManager: "acm",
-      ApiGatewayV2: "apigateway", CloudWatch: "cloudwatch", SNS: "sns", EC2: "ec2",
+      ApiGatewayV2: "apigateway", CloudWatch: "cloudwatch", SNS: "sns", EC2: "ec2", ImageBuilder: "imagebuilder",
     };
-    const allowed = new Set([...policy("cfn-exec-policy-app.json").Statement, ...policy("cfn-exec-policy-edge.json").Statement]
-      .filter((s) => s.Effect === "Allow").flatMap((s) => arr(s.Action)).map((a) => a.split(":")[0]));
-    for (const t of types) {
-      const svc = prefix[t.split("::")[1]!];
-      assert.ok(svc, `no mapping for ${t}`);
-      assert.ok(allowed.has(svc), `${t}: no ${svc}: action allowed`);
+    const allowed = new Set(execs.filter((s) => s.Effect === "Allow").flatMap((s) => arr(s.Action)).map((a) => a.split(":")[0]));
+    for (const over of [{}, ALWAYS_ON]) {
+      const { template } = await synth(over);
+      for (const t of new Set(Object.values(template.toJSON().Resources as Record<string, { Type: string }>).map((r) => r.Type))) {
+        const svc = prefix[t.split("::")[1]!];
+        assert.ok(svc, `no mapping for ${t}`);
+        assert.ok(allowed.has(svc), `${t}: no ${svc}: action allowed`);
+      }
+      // The only inbound rule in either mode: runner machines → the cache, by security group.
+      for (const [, r] of Object.entries(template.toJSON().Resources as Record<string, { Type: string; Properties: Record<string, unknown> }>)) {
+        if (r.Type === "AWS::EC2::SecurityGroupIngress") { assert.ok(r.Properties.SourceSecurityGroupId); assert.equal(r.Properties.CidrIp, undefined); }
+        if (r.Type === "AWS::EC2::SecurityGroup") assert.equal(r.Properties.SecurityGroupIngress, undefined);
+      }
     }
-    const edge = policy("cfn-exec-policy-edge.json").Statement;
-    assert.ok(edge.some((s) => s.Effect === "Deny" && arr(s.Action).includes("ec2:AuthorizeSecurityGroupIngress")));
-    const app = policy("cfn-exec-policy-app.json").Statement;
-    const pass = app.find((s) => arr(s.Action).includes("iam:PassRole"))!;
-    assert.ok(pass.Condition, "PassRole only to Lambda, EC2, Scheduler");
+    const pass = execs.find((s) => arr(s.Action).includes("iam:PassRole"))!;
+    assert.ok(pass.Condition, "PassRole only to Lambda, EC2, Scheduler, Image Builder");
+    const sizes = execs.find((s) => s.Sid === "Ec2OnlyTheseSizes")!;
+    assert.equal(sizes.Effect, "Deny");
   });
 });

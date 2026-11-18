@@ -1,6 +1,15 @@
 {
   "app": "node bin/app.ts",
-  "watch": { "include": ["**"], "exclude": ["node_modules", "cdk.out", "test"] },
+  "watch": {
+    "include": [
+      "**"
+    ],
+    "exclude": [
+      "node_modules",
+      "cdk.out",
+      "test"
+    ]
+  },
   "notices": false,
   "versionReporting": false,
   "context": {
@@ -18,12 +27,23 @@
     "sweepMinutes": "1",
     "logRetentionDays": "14",
     "alarmEmail": "",
+    "runnerMode": "per-job",
+    "runnerMaxRunning": "4",
+    "runnerMaxHours": "6",
+    "runnerIdleMinutes": "20",
+    "cacheInstanceType": "t4g.nano",
+    "cachePrivateIp": "10.42.0.10",
+    "cacheVolumeGb": "8",
+    "cacheAmiId": "",
+    "cacheOrg": "fenvix",
+    "cacheTokenSha256Write": "",
+    "cacheTokenSha256Read": "",
     "runnerScopeUrl": "",
     "runnerName": "fenvix-ec2-1",
     "runnerInstanceType": "t3.medium",
     "runnerVolumeGb": "30",
     "runnerAmiId": "",
-    "engineCliCommit": "4391eb04d01334ba07c5ef10b59da8675ec48b02",
+    "engineCliCommit": "a20b93d7f840b23f71c73c03efdaee3d6a233252",
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:checkSecretUsage": true,
     "@aws-cdk/aws-iam:minimizePolicies": true,
