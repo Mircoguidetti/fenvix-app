@@ -1,0 +1,34 @@
+{
+  "name": "fenvix-github-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "fenvix GitHub App backend: webhooks, onboarding pull requests, run results on GitHub, usage events",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --test --test-reporter=spec tests/unit/*.test.ts",
+    "test:integration": "node --test --test-reporter=spec --test-concurrency=1 tests/integration/*.test.ts",
+    "test": "npm run typecheck && npm run test:unit && npm run test:integration",
+    "db:prepare": "bash scripts/prepare-test-db.sh"
+  },
+  "dependencies": {
+    "fastify": "^5.12.8",
+    "jose": "^6.2.17",
+    "pg": "^8.23.1",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@octokit/openapi": "^24.0.0",
+    "@octokit/webhooks-examples": "^7.6.1",
+    "@octokit/webhooks-schemas": "^7.6.1",
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "typescript": "^5.9.3"
+  }
+}
