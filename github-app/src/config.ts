@@ -138,7 +138,7 @@ export function loadConfig(env: Env = process.env): Config {
     host: env.HOST ?? "0.0.0.0",
     logLevel: env.LOG_LEVEL ?? "info",
     nodeEnv,
-    databaseUrl: required(env, "DATABASE_URL"),
+    databaseUrl: required(env, "GITHUB_APP_DATABASE_URL"),
     dbPoolMax: int(env, "DB_POOL_MAX", 10, 1),
     appId,
     appSlug,

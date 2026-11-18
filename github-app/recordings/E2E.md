@@ -161,10 +161,10 @@ Rendered summary:
   "conclusion": "failure",
   "completed_at": "2026-11-18T09:41:50.000Z",
   "external_id": "81000",
-  "details_url": "https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/e11de003-801b-4803-aa35-8d867b7b062d",
+  "details_url": "https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/1eb7153e-658a-45b4-a2b9-b0fcee64481c",
   "output": {
     "title": "0 of 56 tests skipped with proof · under 0.1 min (0.0 s) saved · 1 failed (1 flaky, reproducible)",
-    "summary": "**CI / test** on fenvix · commit `c663f502f475` · cache cold (first run on this machine)\n\n| | |\n|---|---|\n| Tests | **56** |\n| Tests run | 56 |\n| Skipped with proof | **0** ([receipts](https://github.com/acme/shop/actions/runs/31000#artifacts)) |\n| Minutes saved | **under 0.1 min (0.0 s)** (0.0% of test time) |\n| Failures | 0 |\n| Flaky, reproducible | 1 |\n\n### Flaky tests, explained\n\nEach failed in the suite and passed when run alone: another test leaves state behind (order-dependent). The run is deterministic, so the replay fails the same way every time.\n\n- `tests/test_cart.py::test_default_currency_is_eur`\n  - replay: `python -m pytest --det --det-urandom -p no:cacheprovider -q -rN --tb=short  # whole suite, same order: fails again`\n  - find the test that breaks it: `detpy repro tests/test_cart.py::test_default_currency_is_eur --seed fixed`\n\n[Run on fenvix](https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/e11de003-801b-4803-aa35-8d867b7b062d) · [Job log](https://github.com/acme/shop/actions/runs/31000/job/81000)",
+    "summary": "**CI / test** on fenvix · commit `c663f502f475` · cache cold (first run on this machine)\n\n| | |\n|---|---|\n| Tests | **56** |\n| Tests run | 56 |\n| Skipped with proof | **0** ([receipts](https://github.com/acme/shop/actions/runs/31000#artifacts)) |\n| Minutes saved | **under 0.1 min (0.0 s)** (0.0% of test time) |\n| Failures | 0 |\n| Flaky, reproducible | 1 |\n\n### Flaky tests, explained\n\nEach failed in the suite and passed when run alone: another test leaves state behind (order-dependent). The run is deterministic, so the replay fails the same way every time.\n\n- `tests/test_cart.py::test_default_currency_is_eur`\n  - replay: `python -m pytest --det --det-urandom -p no:cacheprovider -q -rN --tb=short  # whole suite, same order: fails again`\n  - find the test that breaks it: `detpy repro tests/test_cart.py::test_default_currency_is_eur --seed fixed`\n\n[Run on fenvix](https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/1eb7153e-658a-45b4-a2b9-b0fcee64481c) · [Job log](https://github.com/acme/shop/actions/runs/31000/job/81000)",
     "text": "Why the other tests ran (an input changed, or no entry yet): new 56.\n\nNot cacheable (the test touched something the engine cannot prove): outcome 1.\n\nTest time: run under 0.1 min (0.3 s), skipped with proof under 0.1 min (0.0 s).\n\nEngine: detpy 0.1.0."
   }
 }
@@ -191,7 +191,7 @@ Rendered summary:
 >   - replay: `python -m pytest --det --det-urandom -p no:cacheprovider -q -rN --tb=short  # whole suite, same order: fails again`
 >   - find the test that breaks it: `detpy repro tests/test_cart.py::test_default_currency_is_eur --seed fixed`
 > 
-> [Run on fenvix](https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/e11de003-801b-4803-aa35-8d867b7b062d) · [Job log](https://github.com/acme/shop/actions/runs/31000/job/81000)
+> [Run on fenvix](https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/1eb7153e-658a-45b4-a2b9-b0fcee64481c) · [Job log](https://github.com/acme/shop/actions/runs/31000/job/81000)
 
 ### `POST /repos/acme/shop/check-runs` → 201
 
@@ -223,10 +223,10 @@ Rendered summary:
   "conclusion": "failure",
   "completed_at": "2026-11-18T10:01:35.000Z",
   "external_id": "81001",
-  "details_url": "https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/cccc120b-a753-4ea2-ba71-1f7833d511a2",
+  "details_url": "https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/b7d44a07-7b0e-4c29-9f06-9bee141cb222",
   "output": {
     "title": "45 of 56 tests skipped with proof · under 0.1 min (0.2 s) saved · 1 failed",
-    "summary": "**CI / test** on fenvix · commit `4bec63ba3143` · cache warm\n\n| | |\n|---|---|\n| Tests | **56** |\n| Tests run | 11 |\n| Skipped with proof | **45** ([receipts](https://github.com/acme/shop/actions/runs/31001#artifacts)) |\n| Minutes saved | **under 0.1 min (0.2 s)** (81.0% of test time) |\n| Failures | 1 |\n| Flaky, reproducible | 0 |\n\n### Failures\n\n- `tests/test_tax.py::test_vat[3]`\n\n[Run on fenvix](https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/cccc120b-a753-4ea2-ba71-1f7833d511a2) · [Job log](https://github.com/acme/shop/actions/runs/31001/job/81001)",
+    "summary": "**CI / test** on fenvix · commit `4bec63ba3143` · cache warm\n\n| | |\n|---|---|\n| Tests | **56** |\n| Tests run | 11 |\n| Skipped with proof | **45** ([receipts](https://github.com/acme/shop/actions/runs/31001#artifacts)) |\n| Minutes saved | **under 0.1 min (0.2 s)** (81.0% of test time) |\n| Failures | 1 |\n| Flaky, reproducible | 0 |\n\n### Failures\n\n- `tests/test_tax.py::test_vat[3]`\n\n[Run on fenvix](https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/b7d44a07-7b0e-4c29-9f06-9bee141cb222) · [Job log](https://github.com/acme/shop/actions/runs/31001/job/81001)",
     "text": "Why the other tests ran (an input changed, or no entry yet): code 10, new 1.\n\nNot cacheable (the test touched something the engine cannot prove): outcome 1.\n\nTest time: run under 0.1 min (0.1 s), skipped with proof under 0.1 min (0.2 s).\n\nEngine: detpy 0.1.0."
   }
 }
@@ -249,7 +249,7 @@ Rendered summary:
 > 
 > - `tests/test_tax.py::test_vat[3]`
 > 
-> [Run on fenvix](https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/cccc120b-a753-4ea2-ba71-1f7833d511a2) · [Job log](https://github.com/acme/shop/actions/runs/31001/job/81001)
+> [Run on fenvix](https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/b7d44a07-7b0e-4c29-9f06-9bee141cb222) · [Job log](https://github.com/acme/shop/actions/runs/31001/job/81001)
 
 ### `POST /repos/acme/shop/check-runs` → 201
 
@@ -281,10 +281,10 @@ Rendered summary:
   "conclusion": "success",
   "completed_at": "2026-11-18T10:11:05.000Z",
   "external_id": "81002",
-  "details_url": "https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/af559f99-4129-416a-a07c-f3dbfb120a1a",
+  "details_url": "https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/2c10cf13-ea91-49a7-89ad-c3b66806dc62",
   "output": {
     "title": "46 of 56 tests skipped with proof · under 0.1 min (0.2 s) saved · no failures",
-    "summary": "**CI / test** on fenvix · commit `e8206072cf83` · cache warm\n\n| | |\n|---|---|\n| Tests | **56** |\n| Tests run | 10 |\n| Skipped with proof | **46** ([receipts](https://github.com/acme/shop/actions/runs/31002#artifacts)) |\n| Minutes saved | **under 0.1 min (0.2 s)** (80.2% of test time) |\n| Failures | 0 |\n| Flaky, reproducible | 0 |\n\n[Run on fenvix](https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/af559f99-4129-416a-a07c-f3dbfb120a1a) · [Job log](https://github.com/acme/shop/actions/runs/31002/job/81002)",
+    "summary": "**CI / test** on fenvix · commit `e8206072cf83` · cache warm\n\n| | |\n|---|---|\n| Tests | **56** |\n| Tests run | 10 |\n| Skipped with proof | **46** ([receipts](https://github.com/acme/shop/actions/runs/31002#artifacts)) |\n| Minutes saved | **under 0.1 min (0.2 s)** (80.2% of test time) |\n| Failures | 0 |\n| Flaky, reproducible | 0 |\n\n[Run on fenvix](https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/2c10cf13-ea91-49a7-89ad-c3b66806dc62) · [Job log](https://github.com/acme/shop/actions/runs/31002/job/81002)",
     "text": "Why the other tests ran (an input changed, or no entry yet): code 9, new 1.\n\nTest time: run under 0.1 min (0.1 s), skipped with proof under 0.1 min (0.2 s).\n\nEngine: detpy 0.1.0."
   }
 }
@@ -303,7 +303,7 @@ Rendered summary:
 > | Failures | 0 |
 > | Flaky, reproducible | 0 |
 > 
-> [Run on fenvix](https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/af559f99-4129-416a-a07c-f3dbfb120a1a) · [Job log](https://github.com/acme/shop/actions/runs/31002/job/81002)
+> [Run on fenvix](https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/2c10cf13-ea91-49a7-89ad-c3b66806dc62) · [Job log](https://github.com/acme/shop/actions/runs/31002/job/81002)
 
 ## 3. The pull request comment (one comment, updated in place)
 
@@ -311,7 +311,7 @@ Rendered summary:
 
 ```json
 {
-  "body": "<!-- fenvix:run-summary -->\n### ❌ fenvix · 45 of 56 tests skipped with proof · under 0.1 min (0.2 s) saved · 1 failed\n\n| | |\n|---|---|\n| Tests | **56** |\n| Tests run | 11 |\n| Skipped with proof | **45** ([receipts](https://github.com/acme/shop/actions/runs/31001#artifacts)) |\n| Minutes saved | **under 0.1 min (0.2 s)** (81.0% of test time) |\n| Failures | 1 |\n| Flaky, reproducible | 0 |\n\n### Failures\n\n- `tests/test_tax.py::test_vat[3]`\n\n<sub>CI / test · commit `4bec63b` · [Check run](https://github.com/acme/shop/runs/1002) · [Run on fenvix](https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/cccc120b-a753-4ea2-ba71-1f7833d511a2) · [Job log](https://github.com/acme/shop/actions/runs/31001/job/81001) · this comment is updated on every run</sub>"
+  "body": "<!-- fenvix:run-summary -->\n### ❌ fenvix · 45 of 56 tests skipped with proof · under 0.1 min (0.2 s) saved · 1 failed\n\n| | |\n|---|---|\n| Tests | **56** |\n| Tests run | 11 |\n| Skipped with proof | **45** ([receipts](https://github.com/acme/shop/actions/runs/31001#artifacts)) |\n| Minutes saved | **under 0.1 min (0.2 s)** (81.0% of test time) |\n| Failures | 1 |\n| Flaky, reproducible | 0 |\n\n### Failures\n\n- `tests/test_tax.py::test_vat[3]`\n\n<sub>CI / test · commit `4bec63b` · [Check run](https://github.com/acme/shop/runs/1002) · [Run on fenvix](https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/b7d44a07-7b0e-4c29-9f06-9bee141cb222) · [Job log](https://github.com/acme/shop/actions/runs/31001/job/81001) · this comment is updated on every run</sub>"
 }
 ```
 
@@ -333,13 +333,13 @@ Rendered:
 > 
 > - `tests/test_tax.py::test_vat[3]`
 > 
-> <sub>CI / test · commit `4bec63b` · [Check run](https://github.com/acme/shop/runs/1002) · [Run on fenvix](https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/cccc120b-a753-4ea2-ba71-1f7833d511a2) · [Job log](https://github.com/acme/shop/actions/runs/31001/job/81001) · this comment is updated on every run</sub>
+> <sub>CI / test · commit `4bec63b` · [Check run](https://github.com/acme/shop/runs/1002) · [Run on fenvix](https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/b7d44a07-7b0e-4c29-9f06-9bee141cb222) · [Job log](https://github.com/acme/shop/actions/runs/31001/job/81001) · this comment is updated on every run</sub>
 
 ### `PATCH /repos/acme/shop/issues/comments/1003` → 200
 
 ```json
 {
-  "body": "<!-- fenvix:run-summary -->\n### ✅ fenvix · 46 of 56 tests skipped with proof · under 0.1 min (0.2 s) saved · no failures\n\n| | |\n|---|---|\n| Tests | **56** |\n| Tests run | 10 |\n| Skipped with proof | **46** ([receipts](https://github.com/acme/shop/actions/runs/31002#artifacts)) |\n| Minutes saved | **under 0.1 min (0.2 s)** (80.2% of test time) |\n| Failures | 0 |\n| Flaky, reproducible | 0 |\n\n<sub>CI / test · commit `e820607` · [Check run](https://github.com/acme/shop/runs/1004) · [Run on fenvix](https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/af559f99-4129-416a-a07c-f3dbfb120a1a) · [Job log](https://github.com/acme/shop/actions/runs/31002/job/81002) · this comment is updated on every run</sub>"
+  "body": "<!-- fenvix:run-summary -->\n### ✅ fenvix · 46 of 56 tests skipped with proof · under 0.1 min (0.2 s) saved · no failures\n\n| | |\n|---|---|\n| Tests | **56** |\n| Tests run | 10 |\n| Skipped with proof | **46** ([receipts](https://github.com/acme/shop/actions/runs/31002#artifacts)) |\n| Minutes saved | **under 0.1 min (0.2 s)** (80.2% of test time) |\n| Failures | 0 |\n| Flaky, reproducible | 0 |\n\n<sub>CI / test · commit `e820607` · [Check run](https://github.com/acme/shop/runs/1004) · [Run on fenvix](https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/2c10cf13-ea91-49a7-89ad-c3b66806dc62) · [Job log](https://github.com/acme/shop/actions/runs/31002/job/81002) · this comment is updated on every run</sub>"
 }
 ```
 
@@ -357,6 +357,6 @@ Rendered:
 > | Failures | 0 |
 > | Flaky, reproducible | 0 |
 > 
-> <sub>CI / test · commit `e820607` · [Check run](https://github.com/acme/shop/runs/1004) · [Run on fenvix](https://app.fenvix.test/projects/d42b6bf6-603e-4ea9-9353-6ef7f06275e4/runs/af559f99-4129-416a-a07c-f3dbfb120a1a) · [Job log](https://github.com/acme/shop/actions/runs/31002/job/81002) · this comment is updated on every run</sub>
+> <sub>CI / test · commit `e820607` · [Check run](https://github.com/acme/shop/runs/1004) · [Run on fenvix](https://app.fenvix.test/projects/ee8c8d6f-9e66-4dcc-a7a8-97187ef40067/runs/2c10cf13-ea91-49a7-89ad-c3b66806dc62) · [Job log](https://github.com/acme/shop/actions/runs/31002/job/81002) · this comment is updated on every run</sub>
 
 Dashboard links in these payloads point at https://app.fenvix.test (the test's dashboard URL).

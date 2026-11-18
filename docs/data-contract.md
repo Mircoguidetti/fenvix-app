@@ -238,6 +238,66 @@ Monthly plans by number of runs, sized by project.
 | `priceUsdMonth` | number \| null | **null today: prices are not set** (the founder sets them after the pricing study) |
 | `features` | string[] | |
 
+## GitHub App records (migration 0013)
+
+Written by the GitHub App (`github-app/`, `docs/GITHUB-APP.md`) as the restricted role `fenvix_github_app`.
+
+**Installation** (`gh_installations`): one installation of the App on a GitHub account. `installationId`,
+`accountLogin`, `accountType` (`User` | `Organization` | `Enterprise`), `repositorySelection` (`all` | `selected`),
+`permissions`, `events`, `suspendedAt`, `deletedAt`, `linkedBy`, `linkedAt`; `workspaceId` is null until an owner or
+admin links it. Members read their organization's installations.
+
+**Repository** (`gh_repositories`): a repository an installation gives access to. `repositoryId` (GitHub's id),
+`fullName`, `defaultBranch`, `removedAt`, `projectId` (the Project once created), `onboardingState`
+(`pending` | `pr_open` | `merged` | `closed` | `no_workflow` | `no_test_job` | `already_fenvix` | `unsupported` |
+`failed`), `onboardingDetail` (why), `onboardingWorkflowPath`, `onboardingJob`, `setupPrNumber`, `setupPrUrl`,
+`detectedLanguage`, `detectedTestRunner`. A Project is created for a linked repository once its language is known
+(from the workflow or the first run); its `setupState` and `setupPullRequest` follow the onboarding pull request.
+
+**Usage event** (`ci_usage_events`, per-run billing): one per GitHub job that asked for `runs-on: fenvix`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | |
+| `workspaceId` | string \| null | the installation's organization; null until it is linked, filled in by the link |
+| `installationId`, `repositoryId` | number | GitHub ids |
+| `repositoryFullName` | string | |
+| `projectId`, `runId` | string \| null | the Project and the Run summary, when the organization is linked |
+| `githubJobId` | number | unique: a job is billed once |
+| `githubRunId`, `githubRunAttempt` | number | |
+| `kind` | `"ci_run"` | |
+| `quantity` | number | 1 |
+| `billable` | boolean | see `reason` |
+| `reason` | `"completed"` \| `"failed"` \| `"cancelled_after_start"` \| `"no_summary"` \| `"cancelled_before_tests"` | only `cancelled_before_tests` is not billable |
+| `planId` | string \| null | the organization's plan when the run ended |
+| `conclusion` | string \| null | GitHub's conclusion of the job |
+| `testMinutesRan`, `minutesSaved`, `otherStepMinutes` | number | as in the Run summary |
+| `occurredAt` | time | when the job completed |
+| `month` | date | first day of the month of `occurredAt` (UTC), generated |
+
+The Usage record's `runsUsed` becomes the count of billable usage events of the month.
+
+**From the runner's `summary.json` to the Run summary** (the App writes `ci_runs` when a fenvix job completes;
+`runner/fenvix-run` on fenvix-engine-cli branch `claude/runner-prototype-ee21he` writes the summary):
+
+| Run summary | From |
+| --- | --- |
+| `commitSha`, `branch`, `startedAt`, `finishedAt`, `durationMs` | the `workflow_job` event (`head_sha`, `head_branch`, `started_at`, `completed_at`) |
+| `commitMessage`, `trigger`, `pullRequest` | the workflow run (`GET /repos/{o}/{r}/actions/runs/{id}`: `head_commit.message` first line, `event`, `pull_requests`), or the App's `pull_request` events. `pull_request_target` → `pull_request`; any other event outside the five → `workflow_dispatch` |
+| `pushedAt` | the `push` event of that commit (`repository.pushed_at`), else the workflow run's `created_at` |
+| `status` | `cancelled` if the job was; else `failed` when the summary has failures, flaky tests or a non-zero `exit`; else `passed` |
+| `tests.total`, `tests.ran`, `tests.skippedWithProof` | `tests`, `ran`, `reused_with_proof` |
+| `tests.failed`, `tests.flakyDefects` | `len(failed) + len(flaky)`, `len(flaky)` (the runner's `failed` holds only real failures; `flaky` = failed in the suite, passed alone) |
+| `tests.passed` | `outcome_counts.passed − reused_with_proof` (tests that ran and passed) |
+| `testTimeMs.ran`, `testTimeMs.skipped` | `test_seconds_run`, `test_seconds_saved` × 1000 |
+| `otherStepMinutes` | (job wall time − `wall_seconds` of pytest) / 60 |
+| `engineVersion` | the `detpy==X` entry of `runtime.dist_list` |
+| `skipMisses` | `not_reused_reasons` |
+| `engineRunId`, `seed`, `missDetails` | not in the runner's summary yet: null / empty |
+
+Per-test outcomes, skip receipts and defect bundles are not sent by the runner yet; the check run links the receipts
+the runner uploads (`receiptsUrl`), else the dashboard run.
+
 ## How records reach the dashboard (not built yet)
 
 The runner will post each run, its test outcomes, receipts and new bundles to the control plane
@@ -247,6 +307,8 @@ tables directly through Supabase (row level security) or uses the mock.
 
 ## Changes
 
+- 2026-11-18: GitHub App records (installation, repository, usage event) and the mapping from the runner's
+  `summary.json` to the Run summary (migration 0013, `docs/GITHUB-APP.md`).
 - 2026-11-17: run summary gets `skipMisses` and `missDetails`; new Exploration record (migration 0012).
 
 - 2026-11-17: first version.

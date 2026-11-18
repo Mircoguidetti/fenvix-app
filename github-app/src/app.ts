@@ -56,7 +56,8 @@ export async function buildApp(deps: Deps): Promise<App> {
   fastify.get("/healthz", async () => ({ ok: true }));
 
   // ---------------------------------------------------------------- GitHub webhooks
-  fastify.post("/webhooks/github", async (req, reply) => {
+  // GitHub caps webhook payloads at 25 MB (an installation on "All repositories" lists every repository).
+  fastify.post("/webhooks/github", { bodyLimit: 26 * 1024 * 1024 }, async (req, reply) => {
     const event = String(req.headers["x-github-event"] ?? "");
     const delivery = String(req.headers["x-github-delivery"] ?? "");
     if (!req.rawBody) return fail(reply, 415, "unsupported_media_type", "Set the webhook's content type to application/json.");

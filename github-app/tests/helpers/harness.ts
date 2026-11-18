@@ -175,7 +175,7 @@ export class Harness {
     this.signKey = sk;
     const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(pk)), kid: "k1", alg: "ES256" }] });
     this.cfg = loadConfig({
-      NODE_ENV: "test", DATABASE_URL: appUrl(), GITHUB_APP_ID: String(APP_ID), GITHUB_APP_SLUG: "fenvix-test",
+      NODE_ENV: "test", GITHUB_APP_DATABASE_URL: appUrl(), GITHUB_APP_ID: String(APP_ID), GITHUB_APP_SLUG: "fenvix-test",
       GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(), GITHUB_WEBHOOK_SECRET: WEBHOOK_SECRET,
       GITHUB_CLIENT_ID: "Iv1.testclient", GITHUB_CLIENT_SECRET: "client-secret-for-tests", GITHUB_API_URL: this.gh.url, GITHUB_OAUTH_URL: this.gh.url,
       DASHBOARD_URL: DASHBOARD, SUPABASE_URL: SUPABASE, STATE_SIGNING_KEY: "state-signing-key-for-tests-0123456789", RUNNER_TOKEN, SWEEP_SECONDS: "0",

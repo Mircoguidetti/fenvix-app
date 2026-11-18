@@ -77,7 +77,7 @@ describe("config", () => {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
   const base = {
-    DATABASE_URL: "postgresql://fenvix_github_app@localhost/db", GITHUB_APP_ID: "123", GITHUB_APP_SLUG: "fenvix",
+    GITHUB_APP_DATABASE_URL: "postgresql://fenvix_github_app@localhost/db", GITHUB_APP_ID: "123", GITHUB_APP_SLUG: "fenvix",
     GITHUB_APP_PRIVATE_KEY: pem, GITHUB_WEBHOOK_SECRET: "w".repeat(32), GITHUB_CLIENT_ID: "Iv1.abc", GITHUB_CLIENT_SECRET: "c".repeat(40),
     DASHBOARD_URL: "https://app.fenvix.dev", SUPABASE_URL: "https://x.supabase.co", STATE_SIGNING_KEY: "s".repeat(40), RUNNER_TOKEN: "r".repeat(40),
   };
