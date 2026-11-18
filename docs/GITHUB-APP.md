@@ -71,6 +71,7 @@ Fill in, top to bottom:
 | Permission | Access | Why |
 |---|---|---|
 | Actions | **Read-only** | read the workflow run of a job (its trigger, commit message and pull request); needed for the `workflow_job` event |
+| **Administration** | **Read and write** | one machine per job (`DEPLOY-AWS.md`): `POST /repos/{owner}/{repo}/actions/runners/generate-jitconfig` creates the just-in-time runner of one queued job, on that repository only. Used for nothing else |
 | Checks | **Read and write** | the `fenvix` check run on each commit |
 | Contents | **Read and write** | read the workflow files; create the `fenvix/runs-on` branch and commit the one-line change on it |
 | Metadata | **Read-only** | mandatory for every App (GitHub sets it) |
@@ -79,9 +80,10 @@ Fill in, top to bottom:
 
 **Organization permissions**: none. **Account permissions**: none.
 
-> Later, not now (Block 4 part 2, the runner fleet): minting just-in-time runners for customers' repositories needs
-> **Administration: Read and write** (repository self-hosted runners) or the organization permission **Self-hosted
-> runners: Read and write**. Customers must approve every added permission, so add it only when the fleet is ready.
+> Just-in-time runners (one machine per job, `DEPLOY-AWS.md`) use **Administration: Read and write** on the
+> repository. The organization permission **Self-hosted runners: Read and write** would also allow it, but not for
+> personal accounts, and its runners could take any repository's jobs; it is not used. Customers who installed the App
+> before must approve the added permission.
 
 ### 3. Events
 

@@ -1,6 +1,13 @@
 DONE
 
-# Report: the GitHub App on AWS Lambda, the runner on EC2 (branch `claude/github-app`)
+# Report: the GitHub App on AWS Lambda, the runners on EC2 (branch `claude/github-app`)
+
+**Updated after two requests from the founder (through the coordinator):**
+
+1. **One EC2 machine per job is now the default** (section 3b): just-in-time runners, a prebuilt image, self-terminating
+   machines, a reaper, and the shared cache on a private t4g.nano.
+2. **The always-on machine stays, as an option** (`runnerMode: always-on`), with one command to stop it and one to start
+   it. It comes back by itself, and queued jobs are neither failed nor billed while it is stopped (section 3c).
 
 All five parts are built, committed and tested in the container. Nothing is deployed, because no AWS account was
 available. "Not verified" below lists what only a real deploy can show. The founder's steps are in
@@ -61,8 +68,9 @@ available. "Not verified" below lists what only a real deploy can show. The foun
 
 **What the stack holds (one stack, `fenvix-prod-github-app`):**
 
-- **Three Lambdas:** `http` (512 MB, 29 s), `worker` (512 MB, 120 s; SQS batch 5, max concurrency 2) and `sweep`
-  (256 MB, 300 s). All are Node 22 on x86_64, bundled as ESM, with source maps.
+- **Lambdas:** `http` (512 MB, 29 s), `worker` (512 MB, 120 s; SQS batch 5, max concurrency 2), `sweep` (256 MB,
+  300 s), and in per-job mode `reaper` (256 MB, 60 s; every 10 minutes). All are Node 22 on x86_64, bundled as ESM,
+  with source maps.
 - **SQS:**
   - the work queue: visibility 720 s, which is 6 × the worker's timeout;
   - a dead-letter queue after 5 receives, kept 14 days;
@@ -116,7 +124,9 @@ available. "Not verified" below lists what only a real deploy can show. The foun
     `fenvix-prod-github-app-*`. They deny any EC2 inbound rule, restrict instance types, and allow `PassRole` only to
     Lambda, EC2 and Scheduler.
 
-## 3. The runner machine (EC2)
+## 3. The runner machines (EC2)
+
+### 3a. What every runner machine has (both modes)
 
 - **Instance:** t3.medium, Ubuntu 24.04 (Canonical's SSM parameter, then pinned), 30 GB gp3 encrypted, and IMDSv2 only
   with hop limit 1. CPU credits are set to "standard", so there is never a surplus-credit charge.
@@ -150,6 +160,94 @@ available. "Not verified" below lists what only a real deploy can show. The foun
     `https://github.fenvix.dev/v1/runner/summaries`. It sends the **machine's** runner name, whatever the job says, and
     `Authorization: Bearer` with the token read from SSM by root at start.
   - On 2xx the file is removed. On 4xx it is moved to `rejected/`. On 5xx or a network error it is retried.
+
+### 3b. One machine per job (default, `runnerMode: per-job`)
+
+- **Trigger:** on `workflow_job.queued` with the fenvix label, the worker (`src/service.ts` `launchRunner`) starts one
+  machine. The guards:
+  - only for an installation **linked to an organization**, not suspended and not deleted, so a stranger who
+    installs the public App cannot start machines;
+  - only while the job is still queued: a late `queued` event after `in_progress` starts nothing.
+- **Steps:**
+  - It asks GitHub for a just-in-time runner:
+    `POST /repos/{owner}/{repo}/actions/runners/generate-jitconfig`, name `fenvix-j<job id>`, label `fenvix`, default
+    group. On a retry, a 409 (name taken) gets a fresh name.
+  - It starts one EC2 from the launch template and the newest image tagged `fenvix:image=runner`
+    (`src/runners/launcher.ts`). The client token is `fenvix-job-<id>`, so a job delivered twice gets one machine; a
+    retry that finds the machine already started is treated as done.
+  - The user data (root only) holds the machine's settings and the just-in-time configuration. It then starts
+    `fenvix-job.target`: the poster, the just-in-time runner and the idle watchdog.
+- **GitHub permission: repository "Administration: Read and write"**, which GitHub requires for `generate-jitconfig`.
+  It was added to the App form in `DEPLOY-AWS.md` and `GITHUB-APP.md`. The organization alternative ("Self-hosted
+  runners: Read and write") was not chosen: it does not work for personal accounts, and its runners could take jobs
+  of any repository in the organization.
+- **One job, then gone:**
+  - `run.sh --jitconfig` takes exactly one job.
+  - `ExecStopPost` gives the poster up to 2 minutes to send the summary, then powers off. The shutdown behaviour
+    "terminate" deletes the machine and its disk.
+  - If no job started within 20 minutes (the job was cancelled, or another machine took it), the watchdog powers the
+    machine off.
+  - The **reaper** Lambda (every 10 minutes) terminates any machine tagged `fenvix:role=runner-job` older than 6 hours.
+    It may terminate only that tag.
+- **Fleet limit:** at most 4 machines pending or running. Beyond that, the delivery fails, SQS retries it every 12
+  minutes (5 times), then it goes to the dead-letter queue and the alarm fires.
+- **Prebuilt image:** EC2 Image Builder (`lib/runner-fleet.ts`).
+  - The component runs `install.sh`: tools, strace, users, the metadata block, uv, Python, Rust, the engine wheel
+    through `runner/bootstrap.sh install`, the GitHub runner and the hooks. The always-on files are left out, so the
+    document is 13,765 of 16,000 characters.
+  - The parent image is Ubuntu 24.04, through Canonical's SSM parameter.
+  - The resulting AMI is tagged `fenvix:image=runner`.
+  - `scripts/build-image.sh` starts the build and waits for it.
+- **Shared cache:** the engine's own `detpy.cache_service`, from `claude/shared-cache` at `a20b93d`, vendored byte for
+  byte with its SHA-256 checked by a test. It runs on a **t4g.nano** at the fixed private address 10.42.0.10, with no
+  public address and no outbound route. Only the runners' security group can reach port 8787, and HTTP is allowed
+  inside the VPC (`FENVIX_CACHE_ALLOW_HTTP=1`).
+  - **Why not Lambda + S3:** the service stores in SQLite in WAL mode, which does not work on EFS, and its client
+    sends batches of up to 16 MB, against API Gateway's 10 MB and Lambda's 6 MB. Lambda would mean rewriting its
+    storage and batching in the engine repository, which this session cannot change.
+  - **Tokens:** `scripts/cache-tokens.sh` creates two tokens in SSM. Only their SHA-256 goes into `cdk.json` and onto
+    the cache machine.
+  - **Which token a job gets:** the worker gives the **write** token only to trusted refs (a push, schedule, manual or
+    merge-queue run on the default branch, from the repository itself, read from the workflow run). Pull requests,
+    forks and other branches get the read-only one.
+  - **Hand-off:** `fenvix-jit-prepare` (root) writes the chosen token as the file that `fenvix-run` reads once and
+    deletes.
+  - `engineCliCommit` is now `a20b93d` (the shared-cache client). `bootstrap.sh` is identical to the old pin.
+- **Job machine role:** read only `runner-token` and the two cache tokens. The job user cannot reach the metadata
+  service, so it cannot use the role.
+- **Worker's EC2 rights:** `RunInstances` only from our launch template, our own images (`ec2:Owner`), and with the
+  request tag `fenvix:role=runner-job`. `CreateTags` only at launch. `PassRole` only for the job role, to EC2. No
+  `TerminateInstances`.
+- **Time from queued to the first test: ESTIMATE, not measured** (no AWS account). The job starts ≈ 45–75 s after it
+  is queued, and the first test runs ≈ 1–2.5 minutes after, depending on the project's install. `DEPLOY-AWS.md` gives
+  the breakdown and how to measure it on the first real job.
+- **Monthly cost** (prices DECLARED, read 2026-11-18; usage ESTIMATED with 10 machine-minutes per job):
+
+  | Jobs per month | 0 | 100 | 1,000 |
+  |---|---|---|---|
+  | Without free tiers | ≈ $4.79 | ≈ $5.70 | ≈ $14.06 |
+  | With free tiers | ≈ $4.36 | ≈ $5.26 | ≈ $13.40 |
+
+  - The fixed part is the cache machine ($3.36 + $0.70 disk) and the image snapshot (≈ $0.30).
+  - A job costs ≈ $0.0090: t3.medium per second, $0.0456 an hour; IPv4, $0.005 an hour; 30 GB gp3.
+
+### 3c. The always-on option (`runnerMode: always-on`) and stopping it
+
+- **Commands:** `scripts/runner-stop.sh` and `scripts/runner-start.sh`. Each reads the `RunnerInstanceId` output,
+  stops or starts the machine and waits. The deploy identity may stop and start only instances tagged
+  `component=github-app`.
+- **After a start, the runner is back with no new token:**
+  - the registration (`.runner`, credentials) is on its disk;
+  - `fenvix-runner` and `fenvix-summary-poster` are enabled;
+  - `fenvix-register` returns at once when `.runner` exists;
+  - the poster fetches its token again at start;
+  - cloud-init runs the user data only on the first boot.
+- **While the machine is stopped, the App works as usual.** Queued jobs are never published, failed or billed: the
+  App acts only on completed jobs, and the sweep only looks at completed ones. A job that GitHub cancels after 24
+  hours in the queue is `cancelled_before_tests`, not billable, with no run row. A new test checks this:
+  `runners.test.ts`, "always-on runner stopped".
+- **Cost while stopped:** the 30 GB disk only, **$2.64 a month** (DECLARED gp3 $0.088 per GB-month). The
+  auto-assigned IPv4 is released while the machine is stopped. Running all month costs ≈ $40.02.
 
 ## 4. The App's rows against `src/data/ci-rows.ts` on main
 
@@ -206,37 +304,59 @@ the contract test (`ci_run_id`, `project_id`, `month`).
 
 ## 5. Docs and cost
 
-- **`docs/DEPLOY-AWS.md`:** 28 numbered steps, one action each:
-  - A, secrets and the test repository: random values, the test repository, the GitHub App form with Callback URL
-    `https://github.fenvix.dev/github/setup` and Webhook URL `https://github.fenvix.dev/webhooks/github`;
+- **`docs/DEPLOY-AWS.md`:** 28 numbered steps, one action each, plus section H for the always-on option.
+  - A, secrets and the test repository: random values, the test repository, the GitHub App form (Callback URL
+    `https://github.fenvix.dev/github/setup`, Webhook URL `https://github.fenvix.dev/webhooks/github`, now with
+    **Administration: Read and write**);
   - B, Supabase: 0013, the role password, the **session pooler** URL (Lambda has no IPv6 for the direct host);
-  - C, AWS account: the two execution policies, `cdk bootstrap`, the deploy identity (IAM Identity Center or an IAM
-    user);
-  - D, secrets in SSM: commands that keep values out of shell history;
+  - C, AWS account: the three execution policies, `cdk bootstrap`, the deploy identity;
+  - D, secrets in SSM, and the cache tokens;
   - E, deploy: settings, `npm run deploy`, the two Cloudflare records, the checks;
-  - F, the runner: setup watch, registration token;
-  - G, the first onboarding PR, the run on the EC2 runner, linking by SQL for the dashboard, and the first PR comment;
-  - a "When something fails" table.
-- **Cost:** every price is DECLARED, read on 2026-11-18. **≈ $40.02 a month without free tiers, ≈ $39.58 with them,
-  at ~100 jobs a month.** 99% of it is the always-on machine: t3.medium $33.29, 30 GB gp3 $2.64, public IPv4 $3.65.
-  The serverless half is under $0.50.
-- **Price source:** the aws.amazon.com pricing pages load their regional numbers from a data host this container's
-  proxy refused, so the regional prices were read from AWS's official Price List API
-  (`pricing.us-east-1.amazonaws.com`, with SKU and publication date). The pages themselves were read for free tiers,
-  metering units and flat prices. `DEPLOY-AWS.md` says this line by line. The SNS email price was not read (an email
-  alert is optional).
+  - F, the runner image: `scripts/build-image.sh`;
+  - G, the first onboarding PR, linking (required before any machine starts), the first job machine, the first PR
+    comment, and reuse across machines through the shared cache;
+  - H, the always-on option: registration token, stop and start;
+  - a "When something fails" table, why the cache is not on Lambda, the time to the first test (ESTIMATE), and the
+    monthly cost.
+- **Cost:** every price is DECLARED, read on 2026-11-18. With a job machine ≈ 10 minutes per job:
+
+  | Jobs per month | 0 | 100 | 1,000 |
+  |---|---|---|---|
+  | Per-job mode, without free tiers | ≈ $4.79 | ≈ $5.70 | ≈ $14.06 |
+  | Per-job mode, with free tiers | ≈ $4.36 | ≈ $5.26 | ≈ $13.40 |
+
+  The always-on option costs ≈ $40.02 a month running, ≈ $3.08 stopped.
+- **Price sources:** the aws.amazon.com pricing pages load their regional numbers from a data host this container's
+  proxy refused, so the regional prices were read from AWS's official Price List API (`pricing.us-east-1.amazonaws.com`,
+  with SKU and publication date). The pages themselves were read for free tiers, metering units, per-second billing
+  and flat prices. Not read:
+  - the SNS email price (the email alert is optional);
+  - the Image Builder pricing page (HTTP 404; the product page says "no cost, other than the cost of the underlying
+    AWS resources");
+  - whether Lambda's free tier is permanent (no page says).
 
 ## Tests run (all green)
 
 | Where | Command | Result |
 |---|---|---|
-| `github-app/` | `npm test` (typecheck, unit, integration against Postgres 16 with migrations 0001–0013 applied twice) | 46 unit + 48 integration pass (before this work: 34 + 37, one of which was failing on the clock) |
-| `infra/github-app/` | `npm test` (typecheck + 4 test files) | 24 pass: template assertions (IAM per function, SQS, Scheduler, API, certificate, logs, EC2, user data round trip under 16 KB), cdk-nag clean, the three bundles load in Node and export `handler`, runner scripts (bash -n, **shellcheck**, hook → spool → poster against a local HTTP server: ids, runner name, token, retry on 5xx, rejected/ on 4xx), settings validation, policy files (size, account and region, every resource type covered) |
-| `infra/github-app/` | `npx cdk synth --quiet` with sample settings | exit 0; 0 non-compliant in the cdk-nag report; no AWS call needed (zones and AMI need no lookup) |
+| `github-app/` | `npm test` (typecheck, unit, integration against Postgres 16 with migrations 0001–0013 applied twice) | **52 unit + 54 integration pass** (before this work: 34 + 37, one of which was failing on the clock). The per-job tests: `tests/unit/runners.test.ts` (user data, launch input, client token, limit, idempotent retry, reaper, settings) and `tests/integration/runners.test.ts` (linked-only, one just-in-time runner and one machine per job, write/read cache by trust, late `queued` ignored, limit → retry with a fresh name, every GitHub call checked against the OpenAPI description, stopped always-on runner) |
+| `infra/github-app/` | `npm test` (typecheck + 7 test files) | **34 pass**, in both modes: template assertions; per-job (worker launch rights and conditions, reaper, launch template, job role, Image Builder component under the limit, cache machine private with inbound from runners only); cdk-nag clean; the four bundles load; the runner scripts (bash -n, **shellcheck**, hook → spool → poster); the **vendored cache service run locally with the stack's `tokens.json`** (write token records, read token gets 403 on write, unknown token 401); settings; the policy files cover every resource type of both modes |
+| `infra/github-app/` | `npx cdk synth --quiet` with sample settings, per-job and always-on | exit 0 in both; cdk-nag 0 non-compliant. CloudFormation's own validation found a real bug (Image Builder's untyped `AmiDistributionConfiguration` keys), now fixed |
 | `lib/runner/files/*.service` | `systemd-analyze verify` | no finding |
 | `scripts/deploy.sh` | run with a stub `aws` CLI, answering N | steps 1–4 work (account, parameters, install and tests, AMI pick); stops at `cdk diff`, which needs credentials |
 
 ## Not verified (needs an AWS account, or a real machine)
+
+- **One machine per job, end to end:**
+  - the Image Builder build (`install.sh` on the build machine, through SSM, with Ubuntu's snap SSM agent);
+  - the just-in-time runner taking its job;
+  - the power-off ending in termination;
+  - the idle watchdog and the reaper on real machines;
+  - the real start-up time.
+- **The cache machine on a real arm64 machine without internet,** and `fenvix-run --cache http://10.42.0.10:8787/...`
+  from a job machine. The service and its `tokens.json` were run here (x86, loopback).
+- **RunInstances under the worker's conditions:** the `ec2:Owner` condition on images, and the request-tag condition
+  on volumes created from a launch template.
 
 - **The deploy itself:**
   - CloudFormation's execution policies are written from the template's resource types, not from a real deploy run;
@@ -266,8 +386,11 @@ the contract test (`ci_run_id`, `project_id`, `month`).
 - **The runner token can be read from the job.** The job-completed hook runs as the job user, so a job could put a
   forged `summary.json` for its own run. It cannot read `RUNNER_TOKEN`, cannot reach the instance role, and cannot
   claim another runner's name. The App accepts a summary only for a job GitHub reported on that runner.
-- **One machine serves one repository or organization** (`runnerScopeUrl`). Per-customer just-in-time runners are
-  Block 4 part 2.
+- **One cache organization for all repositories** (`cacheOrg`): a write token for one customer could write entries
+  that another customer's jobs then pull (the engine still checks every input, but a forged entry can claim any
+  inputs; see SHARED-CACHE.md "Trust"). Before a second customer, give each organization its own tokens.
+- **The start-up delay in per-job mode** (≈ 1 minute before the job starts) is the price of starting nothing when no
+  job runs. A warm, stopped machine or EBS fast snapshot restore would cut it.
 - **Region `eu-west-1` and account `865859654353`** come from the existing `infra/cdk.json`.
 
 ## Commits on `claude/github-app`
@@ -276,4 +399,8 @@ the contract test (`ci_run_id`, `project_id`, `month`).
   test fixed.
 - `c0258e7` github-app: the rows checked against the dashboard's reader, and the two fixes.
 - `0fa0659` infra/github-app: the CDK stack, the runner machine, the deploy command, the policies, 24 tests.
-- (this commit) docs: `DEPLOY-AWS.md`, this report, the READMEs, the execution policy additions.
+- `0c7d1c0` docs: `DEPLOY-AWS.md`, this report, the READMEs, the execution policy additions.
+- `e2cd1c7` one machine per job (default), the shared cache machine, the always-on option with stop/start; tests for
+  both modes.
+- (this commit) docs for the per-job design: `DEPLOY-AWS.md`, `GITHUB-APP.md` (Administration permission), this
+  report.
