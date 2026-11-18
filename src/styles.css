@@ -1777,3 +1777,8 @@ table.data.dbs thead th { font-size: 12px; }
 .audit-list li:last-child { border-bottom: 0; }
 .audit-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .audit-item .hash { max-width: 100%; }
+/* Phone: links that stand alone (run numbers in tables, pull request and project links) are 44 px touch targets. */
+@media (max-width: 640px) {
+  td .row-link, .setup-done .row-link, .audit-list .row-link, .running-note .row-link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
+}
+@media (max-width: 640px) { .repo-row .name-cell > .row-link, .latest-title .row-link { display: inline-flex; align-items: center; min-height: 44px; } }

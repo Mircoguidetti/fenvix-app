@@ -1,14 +1,15 @@
 # fenvix dashboard
 
 Customer dashboard for fenvix: CI test runs made deterministic on `runs-on: fenvix`, tests skipped with proof, flaky
-tests turned into reproducible defects. A static React app (Vite) that talks to Supabase: Supabase Auth for sign-in
-(GitHub, Google, email link) and Postgres, behind row level security, for the data.
+tests turned into reproducible defects. A static React app (Vite) that talks only to the fenvix API
+(`openapi/fenvix-api.yaml`, served by `github-app/src/api/`), never to the database; Supabase Auth is used for sign-in
+(GitHub, Google, email link) and the API checks the session token, the organization and the role on every call.
 
 Pages: Overview (runs, minutes saved, time to green before and with fenvix, GitHub-hosted cost against the plan),
 Projects, Connect a project (GitHub App install and the setup pull request), the project page (runs, skip share over
 time, the `runs-on: fenvix` snippet, settings), the run page (every test's outcome, skip receipts), Defects (families,
-cause, minimal order, seed, fingerprint, replay command), Usage (per project, CSV), Billing (plans by runs, no prices
-set yet), API keys, Members and Settings.
+cause, minimal order, seed, fingerprint, replay command), Usage (per project, CSV), Billing (plans by run units, the nightly
+exploration add-on, the 30-day shadow trial), API keys, Members and Settings.
 
 The records the dashboard shows are defined in `docs/data-contract.md` (runner → dashboard). The tables are
 `supabase/migrations/0011_ci_runs.sql`. The earlier serverless database product was removed from the repository; what
@@ -18,34 +19,42 @@ went is listed in `docs/DELETED-old-database-product.md`.
 
 ```bash
 npm install
-cp .env.example .env.local     # then fill in the two values, see "Environment"
-npm run dev                    # http://localhost:5173
-npm run build                  # static output in dist/
+cp .env.example .env.local     # then fill in the values, see "Environment"
+npm run dev                    # http://localhost:5173, talking to the fenvix API at VITE_API_URL
+npm run build                  # checks the API types (api:check), type-checks, static output in dist/
 npm run preview                # serve dist/ at http://localhost:4173
 ```
 
-To run it with no Supabase project at all, use the built-in mock (fake data, fake sign-in):
+For local development without the API or a Supabase project, use the built-in mock (sample data, labelled "Sample
+data" on every page, and a fake sign-in). Every real build talks to the API; the mock is never the default:
 
 ```bash
 VITE_DATA_BACKEND=mock npm run dev
 ```
 
+The mock covers every screen: a 30-day shadow trial (Harbor Analytics; `sessionStorage.setItem("fenvix-mock-trial",
+"below")` in the browser console shows a trial under the 35% gate), audit reruns, three GitHub App installations
+(active, suspended, uninstalled) with repositories in all nine onboarding states, a run that is still running and
+advances while its page is open, and defects with the runner's replay command.
+
 ## Environment
 
-Only two values reach the browser, and both are public by design (every table is protected by row
-level security, so the anon key alone can read nothing):
+The dashboard talks only to the fenvix API (`openapi/fenvix-api.yaml`); it never reaches the database. Supabase is
+used for sign-in only (Supabase Auth): the API receives the session's access token as `Authorization: Bearer` and the
+chosen organization as `X-Fenvix-Workspace`. Every value below is public by design:
 
 | Variable | What it is |
 | --- | --- |
-| `VITE_SUPABASE_URL` | Project URL, `https://<project-ref>.supabase.co` (Project settings → API) |
-| `VITE_SUPABASE_ANON_KEY` | The `anon` `public` key (Project settings → API) |
-| `VITE_DATA_BACKEND` | Optional. `supabase` (default) or `mock` |
+| `VITE_API_URL` | The fenvix API, including `/v1`, for example `https://github.fenvix.dev/v1` (a bare host gets `/v1` added) |
+| `VITE_SUPABASE_URL` | Supabase project URL, `https://<project-ref>.supabase.co` (Project settings → API), for sign-in only |
+| `VITE_SUPABASE_ANON_KEY` | The `anon` `public` key (Project settings → API), for sign-in only |
+| `VITE_DATA_BACKEND` | Optional. `mock` for local development and the checks; anything else (or nothing) uses the API |
 
-Vite bakes these in when it builds, so change them and build again.
+Vite bakes these in when it builds, so change them and build again. If one of `VITE_API_URL`, `VITE_SUPABASE_URL` or
+`VITE_SUPABASE_ANON_KEY` is missing, the sign-in page says which one instead of showing a blank page.
 
 **Never put the `service_role` key, the database password or an OAuth client secret in this project.**
-`.env*` files are git-ignored (only `.env.example` is committed). If a value is missing the sign-in
-page says which one, instead of showing a blank page.
+`.env*` files are git-ignored (only `.env.example` is committed).
 
 ## Set up Supabase
 
@@ -101,9 +110,12 @@ After a provider or email sign-in the user lands on `/overview`, not on the page
 
 | Command | What it covers | Needs |
 | --- | --- | --- |
-| `npm run check` | Behaviour checks on desktop and phone (onboarding, runs, receipts, defects, usage CSV, billing, organizations), status colours, accessibility and layout checks, screenshots, all with the mock backend | Playwright browsers |
-| `npm run test:unit` | Overview, usage, billing and defect logic (`src/data/ci.ts`), row mapping, error messages, CSV, API-key hashing, colours | Node 22 |
-| `npm run test:rls` | Runs the migrations twice each, `supabase/tests/rls.sql`, `functions.sql`, `orgs-rls.sql`, `ci-rls.sql` (the CI tables: members read, nobody reads another organization, only owners and admins change project settings) | A scratch Postgres 15+ |
+| `npm run build` | `api:check` (`src/api/schema.d.ts` is what `openapi/fenvix-api.yaml` generates today), the TypeScript check of every screen against those types, the Vite build | Node 22 |
+| `npm run test:unit` | The shared logic (`src/data/ci.ts`: run units, the shadow trial and its gate, audit reruns and the rule-of-three bound, usage rows that add up, billing, replay commands), row mapping, the API client over a stub fetch (paths, query names, headers, the live view's 304, error messages), the build's missing settings, organizations, colours | Node 22 |
+| `npm run check` | Builds with the mock and serves it, then: behaviour checks on desktop and phone (`scripts/checks.mjs`: every page, the trial gate met and not met, the live run view and that its polling stops once the run finishes or the page is hidden, the Connect flow and each `?github=` return, audit reruns, units, billing, region for owners, API keys coming soon), organization checks (`scripts/orgs-checks.mjs`: members see the region and everything else read-only, invitations), status colours (`scripts/status-colors-checks.mjs`), and the screenshots with axe and layout checks (`scripts/screenshots.mjs`) | Playwright and Chromium |
+| `npm run screenshots` | Every page at 1440 and 390 px, light and dark, into `docs/screenshots/` | a preview server on :4173 |
+| `node scripts/ui-shots.mjs` | Every page at six widths: no sideways scroll, 44 px touch targets on a phone, axe | a preview server on :4173 |
+| `npm run test:rls` | Runs the migrations twice each and the row level security tests in `supabase/tests/` | A scratch Postgres 15+ |
 
 `npm run test:rls` takes `TEST_DATABASE_URL`, the address of an **empty, disposable** Postgres database, for example:
 
@@ -112,16 +124,23 @@ createdb fenvix_scratch
 TEST_DATABASE_URL=postgresql://postgres@localhost:5432/fenvix_scratch npm run test:rls
 ```
 
-It refuses addresses that look like a hosted Supabase project, because it creates roles and a stand-in
-`auth` schema. `supabase/tests/rls.sql` and `functions.sql` are also safe to paste into the Supabase SQL editor:
-each runs in one transaction and rolls back.
-
-What these cannot show: that your Google and GitHub apps, redirect URLs, SMTP and keys are set up correctly,
-and how the real GoTrue and PostgREST behave. That needs a real sign-in.
+What these cannot show: the real API's answers (another check runs every page against it locally) and that your
+Google and GitHub apps, redirect URLs, SMTP and keys are set up correctly. That needs a real sign-in.
 
 ## Where things are
 
-- `src/data/client.ts` is the interface the screens use. `src/data/supabase.ts` implements it on Supabase,
-  `src/data/mock.ts` is the sample data (from fenvix's measured shapes, labelled "Sample data" on every page).
-  `src/data/index.ts` picks one. `src/data/ci.ts` turns rows into what the screens show, for both.
-- `src/session/` is the same for sign-in. `src/lib/env.ts` reads the environment.
+- `openapi/fenvix-api.yaml` describes the API; `npm run api:generate` writes `src/api/schema.d.ts` from it and
+  `src/data/types.ts` re-exports its records. A field changed there breaks this build until the screens follow.
+- `src/data/client.ts` is the interface the screens use, one method per API operation. `src/data/api.ts` implements
+  it with `openapi-fetch` over the generated `paths` (and the organizations client); `src/data/api-browser.ts` wires
+  it to `VITE_API_URL`, the Supabase session and the chosen organization; `src/data/api-errors.ts` turns errors into
+  sentences. `src/data/mock.ts` and `src/data/orgs-mock.ts` are the sample data. `src/data/index.ts` and
+  `src/data/orgs-client.ts` pick one.
+- `src/data/ci.ts` and `src/data/ci-rows.ts` are shared with the API server: the mock builds its answers with the same
+  functions, so the mock and the API agree.
+- `src/lib/useLiveRun.ts` is the live run view (GET `/runs/{runId}` every 4 s with `If-None-Match` while the run is
+  running and the page is visible).
+- `src/session/` is sign-in (Supabase Auth, or the mock). `src/lib/env.ts` reads the environment.
+- `src/pages/` are the screens, `src/components/` the shared parts, `src/styles.css` the one stylesheet;
+  `docs/status-colors.md` the rules for status colours.
+- `scripts/` holds the Playwright checks and the screenshots (`docs/screenshots/`).

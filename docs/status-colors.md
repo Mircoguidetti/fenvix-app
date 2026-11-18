@@ -3,9 +3,10 @@
 The dashboard is black, white and grey. Colour appears only where it means something, the way Uber does it:
 green, red and amber are status colours, never decoration. Silver is one small detail on top of that.
 
-The dashboard is this repository's root app (`src/`), so this file lives in `docs/`. It has one fixed theme:
-white content with a near-black navigation column. There is no dark mode. The "dark" values below are for the dark
-surfaces in that theme: the navigation, the drawer and the toasts.
+The dashboard is this repository's root app (`src/`), so this file lives in `docs/`. It has a light and a dark theme
+(the device setting, or the button in the top bar). The "on dark" values below are the status colours on dark
+surfaces: the toasts and the setup diff in the light theme, and every surface in the dark theme, which redefines
+`--success`, `--danger` and `--warning` as their "on dark" values.
 
 ## Tokens
 
@@ -80,18 +81,24 @@ white, so on the white content it reads as a sheen rather than a stripe.
 | Defect state | open / fixed | red / green | "Open" / "Fixed" | `.state-danger`, `.state-ok` |
 | Onboarding step done | done | green circle | a tick and "(done)" for screen readers | `.step[data-done] .step-n` |
 | The setup pull request's diff (on a dark box) | removed / added line | red / green, dark-surface shades | "-" and "+" before each line | `.diff-del`, `.diff-add` |
-| API key status | active | green dot and border | "Active" | `.state-ok` (`KeyStatus`) |
+| GitHub App installation (Connect) | active / suspended / uninstalled | green / amber / grey | "Active", "Suspended" (and a warning that says what to do), "Uninstalled" | `.state-ok`, `.state-warn`, `.state` (`InstallationStatusPill`) |
+| Repository onboarding (Connect) | on fenvix, already on fenvix / pull request open / could not open it | green / amber / red | "On fenvix", "Already on fenvix", "Pull request open", "Could not open the pull request" | `.state-ok`, `.state-warn`, `.state-danger` (`OnboardingPill`) |
+| Repository onboarding (Connect) | not set up yet, pull request closed, no workflow file, no test job, runner not supported | grey | the words, and the App's detail under them | `.state` (`OnboardingPill`) |
+| Back from GitHub (Connect) | installed / waiting for an owner / failed | green / amber / red icon | tick in a circle and "The fenvix GitHub App is installed on …"; warning triangle and "Waiting for an owner…"; alert circle and the reason in words | `.callout-success`, `.callout-warning`, `.message-error` |
+| Shadow trial gate (Overview, Billing) | met / below / no run yet | green / amber / grey | "35% gate met", "Below the 35% gate", "No finished run yet", and a sentence | `.state-ok`, `.state-warn`, `.state` (`GatePill`) |
+| Audit reruns (Skip with proof) | no wrong skip / a wrong skip | green / red | "Expected 0" under the count, and the sentence with the bound or why there is none | `.state-ok`, `.state-danger` |
+| Audit reruns of a run (Run page) | wrong skips | red number when above 0 | "n wrong skips" | `.fail-count` |
+| Live run (Run page) | running | amber dot and border | "Running", the phase in words; the progress bar stays grey | `.state-warn` (`RunStatusPill`) |
 | Invoice status (Billing) | paid | green dot and border | "Paid" | `.state-ok` (`InvoiceStatus`) |
 | Invoice status (Billing) | open, waiting for payment | amber ring and border | "Open" | `.state-warn` (`InvoiceStatus`) |
-| New API key created | confirmation | green icon | tick in a circle, "Key … created." | `.callout-success` |
 | Sign-in link sent | confirmation | green icon | tick in a circle, "Check your inbox." | `.callout-success` |
 | Copy buttons, after copying | done | green tick | "Copied" | `.copy-done` |
-| Toasts after an action that worked | success | green icon (dark-surface shade) | tick in a circle, the message | `.toast-success` |
+| Toasts after an action that worked (settings, region, a setup pull request opened) | success | green icon (dark-surface shade) | tick in a circle, the message | `.toast-success` |
 | Toasts after an action that failed | error | red icon and a red edge (dark-surface shade) | alert circle, the message | `.toast-error` |
 | Form and dialog errors everywhere | error | red text | "Error: " written before the message | `.error` |
 | A field with an error | error | red border | the error below it | `input[aria-invalid="true"]` |
 | Load failures (lists, pages, charts, 403, network errors) | error | red text and icon | alert circle, the message | `.message-error` (`Message role="alert"`) |
-| Revoke key, Remove member, Revoke invitation | destructive | red text and border; red fill on hover | the word on the button | `.btn-danger` |
+| Remove member, Revoke invitation | destructive | red text and border; red fill on hover | the word on the button | `.btn-danger` |
 | The dialogs of those actions, and Leave organization | destructive | the confirm button filled red with white text, a darker red on hover (the dialog itself has no border or line) | the title and text say what is lost; the button says the action | `.dialog-danger` (`ConfirmDialog danger`) |
 | Selected settings tab | — | none (the black fill is enough) | the tab is filled black | — |
 | Selected menu item (sidebar and drawer) | — | — | filled dark grey, bold; no line under it | `.nav-link.active` |
@@ -102,7 +109,11 @@ white, so on the white content it reads as a sheen rather than a stripe.
 
 | Place | Why it stays black, white or grey |
 | --- | --- |
-| Revoked API keys | A past action, not a current problem. Hollow grey dot and "Revoked". |
+| Uninstalled GitHub App installations | A past action, not a current problem. A dash and "Uninstalled". |
+| Repositories with nothing to do or not set up yet | "Not set up yet", "No workflow file", "No test job found", "Test runner not supported", "Pull request closed" describe the repository; none is a failure of fenvix. |
+| The shadow trial's numbers, run units, the region, the live progress bar | Quantities and settings, not states. |
+| "Shadow run: nothing was skipped" | A mode, not a state: a grey notice. |
+| API keys ("Coming soon") | Nothing to report yet. |
 | Counts and the Overview numbers | Quantities, not states. |
 | Charts (runs, minutes, cost) | No series means success or error; rule 3 keeps charts black and grey. |
 | Primary buttons | Rule 6: primary buttons stay black; only the confirm of a destructive dialog is red. |
