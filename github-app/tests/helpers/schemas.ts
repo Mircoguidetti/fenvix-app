@@ -104,7 +104,10 @@ export function checkExchange(x: { method: string; path: string; query: Record<s
     problems.push({ where: "request body", errors: "required" });
   }
   const res = op.responses[String(x.status)];
-  if (!res) problems.push({ where: `response ${x.status}`, errors: "not a documented status" });
+  // GitHub answers any operation with its basic error object on 401, 403, 404 and 5xx, documented or not.
+  const basicError = typeof x.response === "object" && x.response !== null && typeof (x.response as Json).message === "string";
+  if (!res && [401, 403, 404, 500, 502, 503].includes(x.status) && basicError) { /* a generic GitHub error */ }
+  else if (!res) problems.push({ where: `response ${x.status}`, errors: "not a documented status" });
   else {
     const rs = res.content?.["application/json"]?.schema;
     if (rs && x.response !== null && x.response !== undefined) { const fn = validator(rs); if (!fn(x.response)) problems.push({ where: `response ${x.status}`, errors: fmt(fn) }); }

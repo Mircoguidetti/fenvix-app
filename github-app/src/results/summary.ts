@@ -86,6 +86,7 @@ export function parseSummary(raw: unknown): RunSummary {
   const o = raw as Record<string, unknown>;
   const tests = num(o, "tests", { required: true, int: true });
   const reused = num(o, "reused_with_proof", { required: true, int: true });
+  if (reused > tests) throw new SummaryError("summary: reused_with_proof is larger than tests");
   const ran = o.ran === undefined ? tests - reused : num(o, "ran", { int: true });
   if (reused + ran !== tests) throw new SummaryError("summary: reused_with_proof + ran must equal tests");
   const failedRaw = o.failed ?? [];
