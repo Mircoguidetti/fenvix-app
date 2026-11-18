@@ -1,204 +1,229 @@
-// Regenerates every screenshot in screenshots/ and checks layout, rendering and accessibility on each one.
+// Regenerates every screenshot of the dashboard in docs/screenshots/ (each page at 1440 and 390 px wide, in the light
+// and the dark theme: <name>-<width>-<light|dark>.png) and checks layout, rendering and accessibility (axe, colour
+// contrast included) on each one. The sign-in page and the screens before the dashboard are light only, as designed.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: npm run screenshots
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
-import { BANNED, BASE, VIEWPORTS, axeViolations, flakyRun, go, isMobile, launch, layoutProblems, makeReporter, newPage, renderProblems, settled, visibleText } from "./lib.mjs";
+import { BANNED, BASE, VIEWPORTS, axeViolations, flakyRun, go, isMobile, launch, layoutProblems, makeReporter, newPage, renderProblems, runningRun, settled, shadowRun, useOrgOf, visibleText } from "./lib.mjs";
 
 const { fail, state } = makeReporter();
-const MAX_HEIGHT = 2600; // long lists are cut here so the files stay a sensible size
+const OUT = "docs/screenshots";
+const MAX_HEIGHT = 3200; // long pages are cut here so the files stay a sensible size
+const SCHEMES = ["light", "dark"];
+const ONLY = process.env.ONLY_SCREENS ? new Set(process.env.ONLY_SCREENS.split(",")) : null;
 
+/** Pages of Northwind Cloud, where the signed-in person is the owner. */
 const SCREENS = [
   ["overview", "overview"],
   ["projects", "projects"],
   ["project-runs", "projects/prj_homehub"],
   ["project-runs-failed", "projects/prj_storefront?status=failed"],
-  ["project-setup", "projects/prj_docs?tab=setup"],
-  ["project-settings", "projects/prj_homehub?tab=settings"],
+  ["project-settings", "projects/prj_homehub/settings"],
+  ["skip-with-proof", "projects/prj_homehub/skip-with-proof"],
+  ["nightly", "projects/prj_homehub/nightly"],
+  ["time-to-green", "projects/prj_homehub/time-to-green"],
+  ["project-defects", "projects/prj_storefront/defects"],
   ["connect", "projects/connect"],
+  ["connect-connected", "projects/connect?github=connected&installation=51204331&account=northwind"],
+  ["connect-requested", "projects/connect?github=requested"],
+  ["connect-error", "projects/connect?github=error&reason=other_organization"],
   ["defects", "defects"],
   ["defect", "defects/dfx_9a10"],
   ["defect-node", "defects/dfx_3b05"],
   ["usage", "usage"],
   ["billing", "billing"],
-  ["api-keys", "api-keys"],
   ["members", "settings/members"],
   ["settings", "settings"],
+  ["api-keys", "api-keys"],
 ];
 
-mkdirSync("screenshots", { recursive: true });
-for (const f of readdirSync("screenshots")) if (f.endsWith(".png")) rmSync(`screenshots/${f}`);
+/** Pages of Harbor Analytics: in its shadow trial, the signed-in person a member there. */
+const TRIAL_SCREENS = [
+  ["overview-trial", "overview"],
+  ["billing-trial", "billing"],
+  ["nightly-addon", "projects/prj_homehub/nightly"],
+  ["settings-member", "settings"],
+];
+
+rmSync(OUT, { recursive: true, force: true });
+mkdirSync(OUT, { recursive: true });
 const browser = await launch();
+const want = (name) => !ONLY || ONLY.has(name);
 
-for (const [vpName, viewport] of VIEWPORTS) {
-  const { ctx, page, errors } = await newPage(browser, { viewport });
+for (const scheme of SCHEMES) {
+  for (const [, viewport] of VIEWPORTS) {
+    const width = viewport.width;
+    // The live run must still be running when it is drawn: the page asks once a minute here.
+    const { ctx, page, errors } = await newPage(browser, { viewport, colorScheme: scheme, pollMs: 60_000 });
+    page.setDefaultTimeout(20000);
+    const tag = `${width} ${scheme}`;
 
-  const check = async (label) => {
-    (await layoutProblems(page)).forEach((p) => fail(`${label}: ${p}`));
-    (await renderProblems(page)).forEach((p) => fail(`${label}: ${p}`));
-    (await axeViolations(page)).forEach((v) => fail(`${label}: ${v}`));
-    const text = await visibleText(page);
-    if (BANNED.test(text)) fail(`${label}: says "${text.match(BANNED)?.[0]}"`);
-    // No underlined text anywhere, and one background behind full-page screens (no seam between two blacks).
-    const underlined = await page.evaluate(() => [...document.querySelectorAll("body *")].filter((e) => getComputedStyle(e).textDecorationLine.includes("underline")).map((e) => `${e.tagName.toLowerCase()}.${e.className}`));
-    if (underlined.length) fail(`${label}: underlined ${underlined.slice(0, 3).join(", ")}`);
-    const seam = await page.evaluate(() => {
-      const full = document.querySelector(".signin-page");
-      if (!full) return null;
-      const bgs = new Set([document.documentElement, document.body, full].map((e) => getComputedStyle(e).backgroundColor));
-      return bgs.size === 1 ? null : [...bgs].join(" / ");
-    });
-    if (seam) fail(`${label}: the full-page screen has more than one background (${seam})`);
-  };
-  /**
-   * The shell fills the window and the content column scrolls inside it, so a "full page"
-   * screenshot is just the window. To show a whole page, the window is grown to fit the
-   * content first: the navigation column then still runs the full height of the picture.
-   */
-  const shot = async (name, fixed) => {
-    await page.mouse.move(2, 2); // no stray hover highlight in the picture
-    const path = `screenshots/${name}-${vpName}.png`;
-    if (fixed) return page.screenshot({ path });
-    const needed = await page.evaluate(() => {
-      const el = document.querySelector(".cx-content") ?? document.documentElement;
-      return Math.ceil(el.scrollHeight);
-    });
-    const height = Math.min(Math.max(needed, viewport.height), MAX_HEIGHT);
-    if (height !== viewport.height) {
-      await page.setViewportSize({ width: viewport.width, height });
-      await page.waitForTimeout(250); // charts measure themselves again
+    const check = async (label) => {
+      (await layoutProblems(page)).forEach((p) => fail(`${label}: ${p}`));
+      (await renderProblems(page)).forEach((p) => fail(`${label}: ${p}`));
+      (await axeViolations(page)).forEach((v) => fail(`${label}: ${v}`));
+      const text = await visibleText(page);
+      if (BANNED.test(text)) fail(`${label}: says "${text.match(BANNED)?.[0]}"`);
+      // No underlined text anywhere, and one background behind full-page screens (no seam between two blacks).
+      const underlined = await page.evaluate(() => [...document.querySelectorAll("body *")].filter((e) => getComputedStyle(e).textDecorationLine.includes("underline")).map((e) => `${e.tagName.toLowerCase()}.${e.className}`));
+      if (underlined.length) fail(`${label}: underlined ${underlined.slice(0, 3).join(", ")}`);
+      const seam = await page.evaluate(() => {
+        const full = document.querySelector(".signin-page");
+        if (!full) return null;
+        const bgs = new Set([document.documentElement, document.body, full].map((e) => getComputedStyle(e).backgroundColor));
+        return bgs.size === 1 ? null : [...bgs].join(" / ");
+      });
+      if (seam) fail(`${label}: the full-page screen has more than one background (${seam})`);
+    };
+    /**
+     * The shell fills the window and the content column scrolls inside it, so a "full page" screenshot is just the
+     * window. To show a whole page, the window is grown to fit the content first.
+     */
+    const shot = async (name, fixed) => {
+      await page.mouse.move(2, 2); // no stray hover highlight in the picture
+      const path = `${OUT}/${name}-${width}-${scheme}.png`;
+      if (fixed) return page.screenshot({ path });
+      const needed = await page.evaluate(() => Math.ceil((document.querySelector(".cx-content") ?? document.documentElement).scrollHeight));
+      const height = Math.min(Math.max(needed, viewport.height), MAX_HEIGHT);
+      if (height !== viewport.height) {
+        await page.setViewportSize({ width, height });
+        await page.waitForTimeout(250); // charts measure themselves again
+      }
+      await page.screenshot({ path });
+      if (height !== viewport.height) {
+        await page.setViewportSize(viewport);
+        await page.waitForTimeout(150);
+      }
+    };
+    const screen = async (name, route, fixed) => {
+      if (!want(name)) return;
+      await go(page, route);
+      await page.waitForSelector("main h1");
+      await settled(page);
+      await page.waitForTimeout(250);
+      await check(`${name} ${tag}`);
+      await shot(name, fixed);
+    };
+
+    // Signed out (light only, as designed).
+    await go(page, "overview");
+    await page.getByRole("button", { name: "Continue with GitHub" }).waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    if (scheme === "light" && want("sign-in")) {
+      await check(`sign-in ${tag}`);
+      await shot("sign-in");
     }
-    await page.screenshot({ path });
-    if (height !== viewport.height) {
-      await page.setViewportSize(viewport);
-      await page.waitForTimeout(150);
-    }
-  };
-
-  // Signed out.
-  await go(page, "overview");
-  await page.getByRole("button", { name: "Continue with GitHub" }).waitFor();
-  await page.evaluate(() => document.fonts.ready);
-  await check(`sign-in ${vpName}`);
-  await shot("sign-in");
-
-  await page.getByRole("button", { name: "Continue with GitHub" }).click();
-  await page.locator(".shell").waitFor();
-  await settled(page);
-
-  for (const [name, hash] of SCREENS) {
-    const label = `${name} ${vpName}`;
-    await go(page, hash);
-    await page.waitForSelector("main h1");
+    await page.getByRole("button", { name: "Continue with GitHub" }).click();
+    await page.locator(".shell").waitFor();
     await settled(page);
-    await page.waitForTimeout(250);
-    await check(label);
-    await shot(name);
+
+    for (const [name, route] of SCREENS) await screen(name, route);
+
+    // A run with a flaky failure, its failed tests, and a skip receipt.
+    const flaky = await flakyRun(page);
+    await screen("run", `projects/${flaky.projectId}/runs/${flaky.runId}`);
+    if (want("run")) {
+      await page.locator("#tests").getByRole("button", { name: /^Failed/ }).click();
+      await page.locator(".test-failure").first().waitFor();
+      await check(`run-failed ${tag}`);
+      await shot("run-failed");
+      await page.locator("#tests").getByRole("button", { name: /^Skipped/ }).click();
+      await page.waitForFunction(() => document.querySelector(".test-row")?.dataset.outcome === "skipped_with_proof");
+      await page.locator(".test-row").first().getByRole("button", { name: /^Receipt for / }).click();
+      await page.getByRole("dialog").getByText("Cache key").waitFor();
+      await check(`receipt ${tag}`);
+      await shot("skip-receipt", true);
+      await page.keyboard.press("Escape");
+      await page.getByRole("dialog").waitFor({ state: "hidden" });
+    }
+
+    // The run that is still running: the live view.
+    const running = await runningRun(page);
+    await screen("run-live", `projects/${running.projectId}/runs/${running.runId}`);
+
+    // A select, open: the list under it with the choice ticked.
+    if (want("select-open")) {
+      await go(page, "defects");
+      await settled(page);
+      await page.locator("#d-project").click();
+      await page.getByRole("listbox").waitFor();
+      await check(`select-open ${tag}`);
+      await shot("select-open", true);
+      await page.keyboard.press("Escape");
+    }
+
+    // A confirmation message.
+    if (want("confirmation")) {
+      await go(page, "projects/prj_homehub/settings");
+      await settled(page);
+      await page.getByRole("switch", { name: /Comment on pull requests/ }).click();
+      await page.getByRole("button", { name: "Save settings" }).click();
+      await page.getByText("Project settings saved").waitFor();
+      await shot("confirmation", true);
+      await page.locator(".toast").getByRole("button", { name: "Dismiss message" }).click();
+      await page.locator(".toast").waitFor({ state: "hidden" });
+    }
+
+    // Navigation drawer and the account menu.
+    if (want("user-menu")) {
+      if (isMobile(viewport)) {
+        await page.getByRole("button", { name: "Open navigation" }).click();
+        await page.locator(".cx-drawer .cx-drawer-top").waitFor();
+        await check(`drawer ${tag}`);
+        await shot("drawer", true);
+        await page.locator(".cx-drawer .user-btn").click();
+      } else {
+        await page.locator(".cx-account .user-btn").click();
+      }
+      await page.getByRole("button", { name: "Sign out" }).waitFor();
+      await check(`user-menu ${tag}`);
+      await shot("user-menu", true);
+      await page.keyboard.press("Escape");
+    }
+
+    // Harbor Analytics: the shadow trial, a shadow run, the add-on note and the member's read-only settings.
+    await useOrgOf(page, "org_harbor", "overview");
+    for (const [name, route] of TRIAL_SCREENS) await screen(name, route);
+    const shadow = await shadowRun(page);
+    await screen("run-shadow", `projects/${shadow.projectId}/runs/${shadow.runId}`);
+
+    // The invitation screen (accept), as an invited person sees it after signing in.
+    if (scheme === "light" && want("invite")) {
+      await page.evaluate(() => sessionStorage.setItem("fenvix-invite", "A".repeat(43)));
+      await page.reload();
+      await page.getByRole("heading", { name: "Join an organization" }).waitFor();
+      await page.evaluate(() => document.fonts.ready);
+      await check(`invite ${tag}`);
+      await shot("invite", true);
+      await page.evaluate(() => sessionStorage.removeItem("fenvix-invite"));
+    }
+
+    errors.forEach((e) => fail(`console ${tag}: ${e}`));
+    await ctx.close();
+
+    // A brand-new account: the first screen names its organization (light only, like the sign-in page).
+    if (scheme === "light" && want("name-organization")) {
+      const fresh = await newPage(browser, { viewport });
+      await go(fresh.page, "overview");
+      await fresh.page.getByLabel("Work email").fill("spazio.milano@example.com");
+      await fresh.page.getByRole("button", { name: "Email me a sign-in link" }).click();
+      await fresh.page.getByText(/We sent a sign-in link/).waitFor();
+      await go(fresh.page, "?token=one-time");
+      await fresh.page.getByRole("heading", { name: "Name your organization" }).waitFor();
+      await fresh.page.evaluate(() => document.fonts.ready);
+      (await layoutProblems(fresh.page)).forEach((x) => fail(`name-organization ${tag}: ${x}`));
+      (await axeViolations(fresh.page)).forEach((v) => fail(`name-organization ${tag}: ${v}`));
+      const bgs = await fresh.page.evaluate(() => [document.documentElement, document.body, document.querySelector(".signin-page")].map((e) => getComputedStyle(e).backgroundColor));
+      if (new Set(bgs).size !== 1) fail(`name-organization ${tag}: more than one background (${bgs.join(" / ")})`);
+      const prefill = await fresh.page.getByLabel("Organization name").inputValue();
+      if (prefill !== "Spazio Milano") fail(`name-organization ${tag}: the field starts with "${prefill}"`);
+      await fresh.page.screenshot({ path: `${OUT}/name-organization-${width}-${scheme}.png` });
+      fresh.errors.forEach((e) => fail(`console ${tag}: ${e}`));
+      await fresh.ctx.close();
+    }
   }
-
-  // A run with a flaky failure, its failed tests, and a skip receipt.
-  const flaky = await flakyRun(page);
-  await go(page, `projects/${flaky.projectId}/runs/${flaky.runId}`);
-  await page.waitForSelector("main h1");
-  await settled(page);
-  await page.waitForTimeout(250);
-  await check(`run ${vpName}`);
-  await shot("run");
-  await page.locator("#tests").getByRole("button", { name: /^Failed/ }).click();
-  await page.locator(".test-failure").first().waitFor();
-  await check(`run-failed ${vpName}`);
-  await shot("run-failed");
-  await page.locator("#tests").getByRole("button", { name: /^Skipped/ }).click();
-  await page.waitForFunction(() => document.querySelector(".test-row")?.dataset.outcome === "skipped_with_proof");
-  await page.locator(".test-row").first().getByRole("button", { name: /^Receipt for / }).click();
-  await page.getByRole("dialog").getByText("Cache key").waitFor();
-  await check(`receipt ${vpName}`);
-  await shot("skip-receipt", true);
-  await page.keyboard.press("Escape");
-  await page.getByRole("dialog").waitFor({ state: "hidden" });
-
-  // A select, open: the list under it with the choice ticked.
-  await go(page, "defects");
-  await settled(page);
-  await page.getByLabel("Project").click();
-  await page.getByRole("listbox").waitFor();
-  await check(`select-open ${vpName}`);
-  await shot("select-open", true);
-  await page.keyboard.press("Escape");
-
-  // Onboarding: GitHub's install page (stood in for), then the setup pull request.
-  await go(page, "projects/connect");
-  await settled(page);
-  await page.getByRole("button", { name: "Add repositories on GitHub" }).click();
-  await page.getByRole("dialog").getByRole("checkbox").first().check();
-  await check(`connect-install ${vpName}`);
-  await shot("connect-install-dialog", true);
-  await page.getByRole("dialog").getByRole("button", { name: "Install" }).click();
-  await page.locator(".setup-row").first().waitFor();
-  await page.locator(".toast").getByRole("button", { name: "Dismiss message" }).click();
-  await check(`connect-setup ${vpName}`);
-  await shot("connect-setup");
-  await page.locator(".setup-row").first().getByRole("button", { name: "Open the pull request" }).click();
-  await page.locator(".setup-done").first().waitFor();
-  await page.locator(".toast").getByRole("button", { name: "Dismiss message" }).click();
-  await check(`connect-pr ${vpName}`);
-  await shot("connect-pull-request");
-
-  await go(page, "api-keys");
-  await settled(page);
-  await page.getByRole("button", { name: "Revoke key Release pipeline" }).click();
-  await page.getByRole("dialog").waitFor();
-  await page.waitForTimeout(300); // the dialog has finished appearing before its colours are measured
-  await page.waitForFunction(() => !document.querySelector(".toast"), null, { timeout: 15000 }).catch(() => {});
-  await check(`revoke-dialog ${vpName}`);
-  await shot("api-keys-revoke-dialog", true);
-  await page.keyboard.press("Escape");
-
-  // A confirmation message
-  await go(page, "projects/prj_homehub?tab=settings");
-  await settled(page);
-  await page.getByRole("switch", { name: /Comment on pull requests/ }).click();
-  await page.getByRole("button", { name: "Save settings" }).click();
-  await page.getByText("Project settings saved").waitFor();
-  await shot("confirmation", true);
-  await page.locator(".toast").getByRole("button", { name: "Dismiss message" }).click();
-  await page.locator(".toast").waitFor({ state: "hidden" });
-
-  // Navigation drawer and the account menu
-  if (isMobile(viewport)) {
-    await page.getByRole("button", { name: "Open navigation" }).click();
-    await page.locator(".cx-drawer .cx-drawer-top").waitFor();
-    await check(`drawer ${vpName}`);
-    await shot("drawer", true);
-    await page.locator(".cx-drawer .user-btn").click();
-  } else {
-    await page.locator(".cx-account .user-btn").click();
-  }
-  await page.getByRole("button", { name: "Sign out" }).waitFor();
-  await check(`user-menu ${vpName}`);
-  await shot("user-menu", true);
-
-  errors.forEach((e) => fail(`console ${vpName}: ${e}`));
-  await ctx.close();
-
-  // A brand-new account: the first screen names its organization.
-  const fresh = await newPage(browser, { viewport });
-  await go(fresh.page, "overview");
-  await fresh.page.getByLabel("Work email").fill("spazio.milano@example.com");
-  await fresh.page.getByRole("button", { name: "Email me a sign-in link" }).click();
-  await fresh.page.getByText(/We sent a sign-in link/).waitFor();
-  await go(fresh.page, "?token=one-time");
-  await fresh.page.getByRole("heading", { name: "Name your organization" }).waitFor();
-  await fresh.page.evaluate(() => document.fonts.ready);
-  (await layoutProblems(fresh.page)).forEach((x) => fail(`name-organization ${vpName}: ${x}`));
-  (await axeViolations(fresh.page)).forEach((v) => fail(`name-organization ${vpName}: ${v}`));
-  const bgs = await fresh.page.evaluate(() => [document.documentElement, document.body, document.querySelector(".signin-page")].map((e) => getComputedStyle(e).backgroundColor));
-  if (new Set(bgs).size !== 1) fail(`name-organization ${vpName}: more than one background (${bgs.join(" / ")})`);
-  const prefill = await fresh.page.getByLabel("Organization name").inputValue();
-  if (prefill !== "Spazio Milano") fail(`name-organization ${vpName}: the field starts with "${prefill}"`);
-  await fresh.page.screenshot({ path: `screenshots/name-organization-${vpName}.png` });
-  fresh.errors.forEach((e) => fail(`console ${vpName}: ${e}`));
-  await fresh.ctx.close();
 }
 
 await browser.close();
-console.log(state.failures ? `${state.failures} screenshot problem(s)` : "screenshots: all checks passed");
+const files = readdirSync(OUT).filter((f) => f.endsWith(".png")).length;
+console.log(state.failures ? `${state.failures} screenshot problem(s)` : `screenshots: all checks passed, ${files} pictures in ${OUT}/`);
 process.exit(state.failures ? 1 : 0);

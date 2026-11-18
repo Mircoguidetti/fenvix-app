@@ -2,7 +2,7 @@
 // state is actually drawn in, that a coloured state also has a word or an icon, that no other hue shows anywhere, that
 // silver is only where it belongs, and that nothing sticks out of the screen.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: node scripts/status-colors-checks.mjs
-import { VIEWPORTS, go, isMobile, launch, layoutProblems, makeReporter, newPage, settled, signIn, flakyRun } from "./lib.mjs";
+import { VIEWPORTS, go, isMobile, launch, layoutProblems, makeReporter, newPage, settled, signIn, flakyRun, runningRun, useOrgOf } from "./lib.mjs";
 
 const { fail, pass, state } = makeReporter();
 const browser = await launch();
@@ -159,47 +159,67 @@ const TESTS = {
     assert(/fingerprints differ/.test(unstable.text) && unstable.border === WARNING, `an unstable replay is not amber with words: "${unstable.text}"`);
   },
 
-  async "connect: a done step is green with a tick, the diff is red and green with - and +"(page) {
+  async "connect: a done step is green with a tick, the diff is red and green with - and +, each onboarding state has its colour and words"(page) {
     await signIn(page, "projects/connect");
     const done = await paint(page, ".step[data-done] .step-n");
     assert(done.bg === SUCCESS && done.svg, `a done step is ${done.bg}`);
-    await page.getByRole("button", { name: "Add repositories on GitHub" }).click();
-    await page.getByRole("dialog").getByRole("checkbox").first().check();
-    await page.getByRole("dialog").getByRole("button", { name: "Install" }).click();
     const del = await paint(page, ".diff-del");
     const add = await paint(page, ".diff-add");
     assert(del.text.startsWith("-") && add.text.startsWith("+"), "the diff lines do not start with - and +");
     assert(del.color === "rgb(255, 106, 92)" && add.color === "rgb(61, 220, 132)", `the diff colours are ${del.color} / ${add.color}`);
+    const pill = async (repo) => paint(page, `.repo-row:has-text("${repo}") .state`);
+    const expect = [["northwind/homehub", SUCCESS, "On fenvix"], ["northwind/search-service", SUCCESS, "Already on fenvix"], ["northwind/mobile-app", WARNING, "Pull request open"], ["northwind/notifications", DANGER, "Could not open the pull request"]];
+    for (const [repo, colour, word] of expect) {
+      const p = await pill(repo);
+      assert(p.border === colour && p.text === word && p.svg, `${repo}: "${p.text}" ${p.border}`);
+    }
+    for (const repo of ["northwind/billing-worker", "northwind/analytics", "northwind/infra-scripts", "northwind/design-system", "northwind/checkout-legacy"]) {
+      const p = await pill(repo);
+      assert(!STATUS.includes(p.border) && p.svg && p.text, `${repo} is coloured: "${p.text}" ${p.border}`);
+    }
+    const suspended = await paint(page, '.install:has(h3:text-is("northwind-labs")) .install-head .state');
+    assert(suspended.border === WARNING && suspended.text === "Suspended", `suspended: "${suspended.text}" ${suspended.border}`);
+    const uninstalled = await paint(page, '.install:has(h3:text-is("elena-marsh")) .install-head .state');
+    assert(!STATUS.includes(uninstalled.border) && uninstalled.text === "Uninstalled", `uninstalled: "${uninstalled.text}" ${uninstalled.border}`);
+    await huesOnPage(page, STATUS);
+    await fits(page);
+    // Back from GitHub: a green confirmation, an amber wait, a red error, each with an icon and words.
+    await go(page, "projects/connect?github=connected&installation=1&account=acme");
+    assert((await paint(page, ".callout-success .callout-row svg")).color === SUCCESS, "the connected icon is not green");
+    await go(page, "projects/connect?github=requested");
+    assert((await paint(page, ".callout-warning .callout-row svg")).color === WARNING, "the waiting icon is not amber");
+    await go(page, "projects/connect?github=error&reason=expired");
+    assert((await paint(page, ".message-error")).color === DANGER, "the error is not red");
     await huesOnPage(page, STATUS);
     await fits(page);
   },
 
-  async "api keys: active is green, revoke is red, an empty name is a red error, a created key is a green confirmation"(page) {
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-    await signIn(page, "api-keys");
-    const active = page.locator('.state[data-tone="ok"]', { hasText: "Active" }).first();
-    await active.waitFor();
-    assert((await active.locator(".dot").evaluate((e) => getComputedStyle(e).backgroundColor)) === SUCCESS, "active is not green");
-    const revoked = page.locator(".state", { hasText: "Revoked" }).first();
-    if (await revoked.count()) assert(!STATUS.includes(await revoked.evaluate((e) => getComputedStyle(e).borderTopColor)), "revoked is coloured");
-    const revoke = await paint(page, "table .btn-danger");
-    assert(revoke.text === "Revoke" && revoke.color === DANGER, `revoke: ${revoke.color}`);
-    await page.getByRole("button", { name: "Create key" }).click();
-    assert((await paint(page, "#key-error")).color === DANGER, "the empty name error is not red");
-    await page.getByLabel("Key name").fill("Deploy pipeline");
-    await page.getByRole("button", { name: "Create key" }).click();
-    const done = await paint(page, ".callout-success");
-    assert(done.borderWidth === "0px 0px 0px 0px" && done.shadow === "none" && /created/.test(done.text), `created: ${done.borderWidth} ${done.shadow}`);
-    assert((await paint(page, ".callout-success .callout-row svg")).color === SUCCESS, "the created icon is not green");
-    await page.locator(".callout-success").getByRole("button", { name: "Copy new key" }).click();
-    const copied = await paint(page, ".copy-done svg");
-    assert(copied.color === SUCCESS, `the copied tick is ${copied.color}`);
+  async "trial, audit and the live run: the gate and the wrong skips are green with words, running is amber"(page) {
+    await signIn(page, "projects/prj_homehub/skip-with-proof");
+    const expected = await paint(page, "#audit .state-ok");
+    assert(expected.border === SUCCESS && expected.text === "Expected 0" && expected.svg, `wrong skips: "${expected.text}" ${expected.border}`);
     await huesOnPage(page, STATUS);
     await fits(page);
-    await page.locator("table .btn-danger").first().click();
-    await noBorder(page, "revoke");
-    const revokeConfirm = await paint(page, "dialog[open] .btn-primary");
-    assert(revokeConfirm.bg === DANGER && revokeConfirm.color === WHITE, `the revoke confirm is ${revokeConfirm.bg} / ${revokeConfirm.color}`);
+    const run = await runningRun(page);
+    await go(page, `projects/${run.projectId}/runs/${run.runId}`);
+    const running = await paint(page, ".page-header .state-warn");
+    assert(running.text === "Running" && running.border === WARNING, `running: "${running.text}" ${running.border}`);
+    const bar = await paint(page, "#live .meter-fill");
+    assert(!STATUS.includes(bar.bg), `the progress bar is ${bar.bg}`);
+    await huesOnPage(page, STATUS);
+    await fits(page);
+    await useOrgOf(page, "org_harbor", "overview");
+    const gate = await paint(page, "#trial .state-ok");
+    assert(gate.text === "35% gate met" && gate.border === SUCCESS && gate.svg, `the gate: "${gate.text}" ${gate.border}`);
+    await huesOnPage(page, STATUS);
+    await fits(page);
+  },
+
+  async "api keys: coming soon, nothing coloured"(page) {
+    await signIn(page, "api-keys");
+    await page.locator(".coming-soon").waitFor();
+    await huesOnPage(page, STATUS);
+    await fits(page);
   },
 
   async "billing: the current plan has the silver border and nothing else is coloured"(page) {
