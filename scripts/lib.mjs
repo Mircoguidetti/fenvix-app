@@ -200,7 +200,7 @@ export async function renderProblems(page) {
 }
 
 export async function axeViolations(page) {
-  const axe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+  const axe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
   return axe.violations.map((v) => `axe ${v.id} (${v.nodes.length}) ${v.nodes[0]?.target}: ${v.nodes[0]?.any?.[0]?.message ?? ""}`);
 }
 

@@ -95,11 +95,9 @@ export function AccountMenu() {
     }
   }
 
-  const label = current.status === "ready" ? `${user.name}. Organization: ${current.name}, ${current.sub}. Account and organizations` : `${user.name}. Account`;
-
   return (
     <div className="account workspace-slot" data-state={current.status} ref={ref}>
-      <button type="button" className="user-btn account-btn" aria-expanded={open} aria-controls={panelId} aria-label={label} title={current.status === "ready" ? `${user.name} · ${current.name}` : user.name} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className="user-btn account-btn" aria-expanded={open} aria-controls={panelId} title={current.status === "ready" ? `${user.name} · ${current.name}` : user.name} onClick={() => setOpen((o) => !o)}>
         {user.avatarUrl ? (
           <img className="avatar avatar-photo" src={user.avatarUrl} alt="" width={32} height={32} referrerPolicy="no-referrer" />
         ) : (
@@ -107,16 +105,17 @@ export function AccountMenu() {
             {initials(user.name)}
           </span>
         )}
-        <span className="workspace-text" aria-hidden="true">
-          <span className="account-name">{user.name}</span>
+        <span className="workspace-text">
+          <span className="account-name">{user.name}</span>{" "}
           {current.status === "ready" && (
             <span className="account-org">
-              <span className="workspace-name">{current.name}</span>
-              <span className="account-dot">·</span>
+              <span className="workspace-name">{current.name}</span>{" "}
+              <span className="account-dot">·</span>{" "}
               <span className="workspace-sub">{current.sub}</span>
             </span>
           )}
         </span>
+        <span className="sr-only">: account and organizations</span>
         <ChevronsUpDown size={16} aria-hidden="true" className="workspace-chevron" />
       </button>
 

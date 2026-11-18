@@ -520,7 +520,7 @@ const TESTS = {
       }
       // The block at the bottom: the person, with the organization and role under the name. Its accessible name holds
       // all of it and says what the button does.
-      await page.locator(nav).getByRole("button", { name: `Elena Marsh. Organization: ${name.trim()}, Owner. Account and organizations`, exact: true }).waitFor();
+      await page.locator(nav).getByRole("button", { name: new RegExp(`^Elena Marsh\\s*${name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*·\\s*Owner\\s*: account and organizations$`) }).waitFor();
       const box = page.locator(`${nav} .account-btn`);
       await box.click();
       const current = page.locator(`${nav} .account-panel .org-item[aria-current="true"]`);

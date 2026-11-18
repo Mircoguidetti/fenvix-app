@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
 
-/** `text` replaces the visible word ("Copy") when the button stands alone, for example in the side bar. */
+/**
+ * `text` replaces the visible word ("Copy") when the button stands alone, for example in the side bar; it is then the
+ * button's whole name (an aria-label that differs from the visible words fails WCAG 2.5.3, "label in name").
+ */
 export function CopyButton({ value, label = "Copy", what, text }: { value: string; label?: string; what: string; text?: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   async function copy() {
@@ -15,7 +18,7 @@ export function CopyButton({ value, label = "Copy", what, text }: { value: strin
   }
   return (
     <>
-      <button type="button" className={state === "copied" ? "btn copy-done" : "btn"} onClick={copy} aria-label={`${label} ${what}`}>
+      <button type="button" className={state === "copied" ? "btn copy-done" : "btn"} onClick={copy} aria-label={text ? undefined : `${label} ${what}`}>
         {state === "copied" ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
         {state === "copied" ? "Copied" : (text ?? label)}
       </button>

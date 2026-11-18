@@ -380,9 +380,10 @@ function OrgCrumb({ name }: { name: string }) {
     );
   return (
     <span className="cx-crumb-menu" ref={ref}>
-      <button type="button" className="cx-crumb-btn" aria-expanded={open} aria-controls={listId} aria-label={`Organization: ${name}. Switch organization`} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className="cx-crumb-btn" aria-expanded={open} aria-controls={listId} onClick={() => setOpen((o) => !o)}>
         <span className="cx-crumb-kind">Org</span>
         <span className="cx-crumb-name">{name}</span>
+        <span className="sr-only">: switch organization</span>
         <ChevronDown size={14} strokeWidth={2} aria-hidden="true" />
       </button>
       {open && (
@@ -435,9 +436,10 @@ function ProjectCrumb({ projectId, name }: { projectId: string; name: string }) 
   const target = PROJECT_SECTIONS.find((s) => s.key === (section ?? "runs")) ?? PROJECT_SECTIONS[0];
   return (
     <span className="cx-crumb-menu" ref={ref}>
-      <button type="button" className="cx-crumb-btn" aria-expanded={open} aria-controls={listId} aria-label={`Project: ${name}. Switch project`} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className="cx-crumb-btn" aria-expanded={open} aria-controls={listId} onClick={() => setOpen((o) => !o)}>
         <span className="cx-crumb-kind">Project</span>
         <span className="cx-crumb-name cx-crumb-db">{name}</span>
+        <span className="sr-only">: switch project</span>
         <ChevronDown size={14} strokeWidth={2} aria-hidden="true" />
       </button>
       {open && (

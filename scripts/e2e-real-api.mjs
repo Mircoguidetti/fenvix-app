@@ -75,8 +75,10 @@ const apiProc = spawn("node", ["src/api/local.ts"], {
 const dist = join(tmpdir(), `fenvix-e2e-dist-${run}`);
 const build = spawnSync("npx", ["vite", "build", "--outDir", dist, "--emptyOutDir"], { stdio: "inherit", env: { ...process.env, VITE_DATA_BACKEND: "api", VITE_API_URL: API, VITE_SUPABASE_URL: SUPABASE, VITE_SUPABASE_ANON_KEY: "local-anon-key" } });
 if (build.status !== 0) throw new Error("dashboard build failed");
-const web = spawn("npx", ["vite", "preview", "--outDir", dist, "--port", String(WEB_PORT), "--strictPort"], { stdio: "ignore" });
-const stopAll = () => { apiProc.kill(); web.kill(); };
+// Its own process group, so that stopping it also stops the vite process npx starts (a stale preview server on the port
+// would serve an old build).
+const web = spawn("npx", ["vite", "preview", "--outDir", dist, "--port", String(WEB_PORT), "--strictPort"], { stdio: "ignore", detached: true });
+const stopAll = () => { apiProc.kill(); try { process.kill(-web.pid); } catch { /* gone */ } };
 process.on("exit", stopAll);
 for (let i = 0; i < 100; i++) {
   try { if ((await fetch(`${WEB}/`)).ok && (await fetch(`${API}/me`)).status === 401) break; } catch { /* not up yet */ }
@@ -86,10 +88,10 @@ for (let i = 0; i < 100; i++) {
 // ---------------------------------------------------------------- the browser, signed in with the real session
 const browser = await chromium.launch();
 const storageKey = `sb-${new URL(SUPABASE).hostname.split(".")[0]}-auth-token`;
-async function signedIn(person, { width = 1440, height = 1000, scheme = "light" } = {}) {
+async function signedIn(person, { width = 1440, height = 1000, scheme = "light", ws = person.workspaceId } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height }, colorScheme: scheme, deviceScaleFactor: 1 });
   const s = person.session;
-  await ctx.addInitScript(([k, v, ws]) => { localStorage.setItem(k, v); localStorage.setItem("fenvix-org", ws); }, [storageKey, JSON.stringify({ ...s, expires_at: Math.floor(Date.now() / 1000) + 3600 }), person.workspaceId]);
+  await ctx.addInitScript(([k, v, ws]) => { localStorage.setItem(k, v); localStorage.setItem("fenvix-org", ws); }, [storageKey, JSON.stringify({ ...s, expires_at: Math.floor(Date.now() / 1000) + 3600 }), ws]);
   const page = await ctx.newPage();
   page.apiLog = [];
   page.consoleErrors = [];
@@ -135,7 +137,8 @@ async function visit(page, name, path, markers, { shot = true } = {}) {
   for (const m of markers) check(name, text.includes(m), `shows "${m}"`);
   check(name, page.consoleErrors.length === 0, `no console errors${page.consoleErrors.length ? `: ${page.consoleErrors.slice(0, 3).join(" | ")}` : ""}`);
   const axe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
-  check(name, axe.violations.length === 0, `axe: ${axe.violations.length ? axe.violations.map((v) => `${v.id} (${v.nodes.length})`).join(", ") : "no violations"}`);
+  check(name, axe.violations.length === 0, `axe: ${axe.violations.length ? axe.violations.map((v) => `${v.id} (${v.nodes.map((n) => n.target.join(" ")).join("; ")})`).join(", ") : "no violations"}`);
+  if (process.env.DEBUG_AXE) for (const v of axe.violations) for (const n of v.nodes) console.log(`  ${v.id}: ${n.html.slice(0, 400)}\n    ${n.failureSummary}`);
   if (shot) await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: true });
   return text;
 }
@@ -178,7 +181,7 @@ await phone.context().close();
 {
   const page = ownerPage;
   const text = await visit(page, "connect-connected", `/projects/connect?github=connected&installation=${seeded.installationId}&account=${account}`, [account], { shot: true });
-  check("connect-connected", /connected/i.test(text), "says the installation is connected");
+  check("connect-connected", text.includes(`The fenvix GitHub App is installed on ${account}`), "says the App is installed on the account GitHub sent back");
   for (const st of STATES) check("connect", text.includes(`repo-${st.replace(/_/g, "-")}`), `lists the repository in state ${st}`);
   await visit(page, "connect-error", "/projects/connect?github=error&reason=not_admin", [], { shot: true });
   let installUrl = null;
@@ -197,19 +200,19 @@ await phone.context().close();
 {
   const page = ownerPage;
   await page.goto(`${WEB}/settings`, { waitUntil: "networkidle" });
-  const eu = page.getByLabel(/EU|Europe/i).first();
+  const eu = page.locator('input[type=radio][name=region][value=eu]');
   if (await eu.count()) {
-    await eu.check().catch(async () => eu.click());
-    await page.getByRole("button", { name: /save/i }).first().click();
+    await eu.check();
+    await page.getByRole("button", { name: "Save region" }).click();
     await page.waitForTimeout(1500);
     const r = (await db.query("select region from workspaces where id = $1", [owner.workspaceId])).rows[0].region;
     check("settings-region", r === "eu", `the owner sets the region to EU (stored: ${r})`);
   } else check("settings-region", false, "no EU control found");
-  const mp = await signedIn(member);
+  const mp = await signedIn(member, { ws: owner.workspaceId });
   await mp.goto(`${WEB}/settings`, { waitUntil: "networkidle" });
   await mp.waitForTimeout(400);
-  const meu = mp.getByLabel(/EU|Europe/i).first();
-  check("settings-region", (await meu.count()) > 0 && (await meu.isDisabled().catch(() => false) || !(await mp.getByRole("button", { name: /save/i }).count())), "a member sees the region read only");
+  const mt = await mp.locator("body").innerText();
+  check("settings-region", (await mp.locator("input[name=region]").count()) === 0 && mt.includes("European Union") && mt.includes("Only an owner or admin can change the region."), "a member sees the region (European Union) read only, with no control to change it");
   await mp.screenshot({ path: `${OUT}/settings-member.png`, fullPage: true });
   await mp.context().close();
 }
