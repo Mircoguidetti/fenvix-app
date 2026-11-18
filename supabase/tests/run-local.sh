@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the migrations, the SQL tests (including the CI dashboard's, 0011 and ci-rls.sql) and the seed against a SCRATCH Postgres (15 or newer).
+# Runs the migrations, the SQL tests (including the CI dashboard's, 0011 and ci-rls.sql, and the GitHub App's, 0013 and gh-rls.sql) and the seed against a SCRATCH Postgres (15 or newer).
 #
 #   TEST_DATABASE_URL=postgresql://postgres@localhost:5432/fenvix_scratch npm run test:rls
 #
@@ -35,10 +35,13 @@ psql_run -f supabase/migrations/0011_ci_runs.sql >/dev/null 2>&1; psql_run -f su
 psql_run -f supabase/tests/ci-rls.sql 2>&1 | grep -E "CI RLS OK" >/dev/null && echo "     CI RLS OK"
 psql_run -f supabase/migrations/0012_ci_explorations.sql >/dev/null 2>&1; psql_run -f supabase/migrations/0012_ci_explorations.sql >/dev/null 2>&1
 psql_run -f supabase/tests/ci-explore-rls.sql 2>&1 | grep -E "CI EXPLORE RLS OK" >/dev/null && echo "     CI EXPLORE RLS OK"
+echo "   GitHub App: 0013 (twice), then its row level security"
+psql_run -f supabase/migrations/0013_github_app.sql >/dev/null 2>&1; psql_run -f supabase/migrations/0013_github_app.sql >/dev/null 2>&1
+psql_run -f supabase/tests/gh-rls.sql 2>&1 | grep -E "GH RLS OK" >/dev/null && echo "     GH RLS OK"
 echo "7/7 seed (twice: the second run must change nothing)"
 psql_run -c "insert into auth.users (email, raw_user_meta_data) values ('mircoguidetti1994@gmail.com', '{\"full_name\":\"Mirco Guidetti\"}') on conflict do nothing" >/dev/null
 psql_run -f supabase/seed.sql 2>&1 | grep -E "Seeded" || { echo "seed did not run" >&2; exit 1; }
 psql_run -f supabase/seed.sql 2>&1 | grep -E "Nothing was changed" >/dev/null && echo "     second run changed nothing"
 count=$(psql "$url" -tAc "select count(*) from public.databases")
 [[ "$count" == "3000" ]] || { echo "expected 3000 databases, found $count" >&2; exit 1; }
-echo "done: migration, RLS, functions, organizations, CI dashboard and seed all pass"
+echo "done: migration, RLS, functions, organizations, CI dashboard, GitHub App and seed all pass"

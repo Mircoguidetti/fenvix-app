@@ -303,7 +303,8 @@ export class FakeGitHub {
   // ---------------------------------------------------------------- GitHub-shaped JSON from the examples
 
   private installationJson(id: number, ex: Json): Json {
-    const i = this.installations.get(id)!;
+    // An installation of someone else's App or account that this test did not set up: a plausible stand-in.
+    const i = this.installations.get(id) ?? { id, account: { login: `account-${id}`, id: id + 1_000_000, type: "User" as const }, repos: [], selection: "selected" as const };
     return { ...ex, id, account: { ...(ex.account as Json), login: i.account.login, id: i.account.id, type: i.account.type }, repository_selection: i.selection, app_id: this.appId, target_id: i.account.id, target_type: i.account.type, suspended_at: null, suspended_by: null };
   }
 
