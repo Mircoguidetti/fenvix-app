@@ -1,0 +1,8 @@
+# Lint rules for openapi/fenvix-api.yaml (npm run api:lint). Every operation answers errors with the `default` response
+# (one shape for every 4xx and 5xx), so the rule asking for an explicit 4XX entry is off; operationId names each
+# operation, so a separate summary is optional.
+extends:
+  - recommended
+rules:
+  operation-4xx-response: off
+  operation-summary: off
