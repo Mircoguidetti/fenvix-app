@@ -38,6 +38,7 @@ describe("settings", () => {
     await assert.rejects(settings({ secondFenvixRegion: "eu" }), /all three, or none/);
     await assert.rejects(settings({ secondFenvixRegion: "us", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "lt-0123456789abcdef0" }), /the other of us and eu/);
     await assert.rejects(settings({ secondFenvixRegion: "eu", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "template" }), /lt-/);
+    await assert.rejects(settings({ secondCacheUrl: "http://10.43.0.10:8787" }), /secondCacheUrl/);
     const s = await settings();
     assert.equal(s.domainName, "github.fenvix.dev");
     assert.equal(s.runnerInstanceType, "c6i.large");

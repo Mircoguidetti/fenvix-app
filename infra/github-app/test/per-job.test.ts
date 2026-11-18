@@ -52,9 +52,12 @@ describe("the stack, per-job mode", async () => {
     assert.deepEqual(placement(fnEnv("worker").RUNNER_PLACEMENT), { us: { awsRegion: "eu-west-1", launchTemplateId: "LT" } });
     assert.match(json(fnEnv("worker").RUNNER_PLACEMENT), /FleetLaunchTemplate/);
     assert.match(json(fnEnv("worker").RUNNER_LAUNCH_TEMPLATE_ID), /FleetLaunchTemplate/, "kept");
-    const two = await synth({ runnerMode: "per-job", fenvixRegion: "eu", secondFenvixRegion: "us", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "lt-0123456789abcdef0" });
+    const two = await synth({ runnerMode: "per-job", fenvixRegion: "eu", secondFenvixRegion: "us", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "lt-0123456789abcdef0", secondCacheUrl: "http://10.43.0.10:8787" });
     const env2 = (resources(two.template, "AWS::Lambda::Function").find(([, r]) => (r.Properties.FunctionName as string).endsWith("worker"))![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
-    assert.deepEqual(placement(env2.RUNNER_PLACEMENT), { eu: { awsRegion: "eu-west-1", launchTemplateId: "LT" }, us: { awsRegion: "us-east-1", launchTemplateId: "lt-0123456789abcdef0" } });
+    assert.deepEqual(placement(env2.RUNNER_PLACEMENT), {
+      eu: { awsRegion: "eu-west-1", launchTemplateId: "LT" },
+      us: { awsRegion: "us-east-1", launchTemplateId: "lt-0123456789abcdef0", machineEnv: { FENVIX_CACHE_URL: "http://10.43.0.10:8787" } },
+    });
     assert.deepEqual(two.nagErrors, []);
   });
 

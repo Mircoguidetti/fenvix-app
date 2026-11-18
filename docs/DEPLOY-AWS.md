@@ -313,7 +313,7 @@ line, `"cacheSigningPublicKey": "<base64>",`: the public half, not secret, and t
 | `alarmEmail` | optional: an email for the dead-letter alarm (confirm the subscription email AWS sends) |
 | `apiCorsOrigins` | optional: more browser origins the dashboard API accepts besides `dashboardUrl`'s (comma separated `https://` origins, e.g. a preview of the dashboard). Every other origin gets no CORS header, and its preflight a 403 |
 | `fenvixRegion` | `us` (default) or `eu`: the region (an organization's setting) this stack's runner machines serve |
-| `secondFenvixRegion`, `secondAwsRegion`, `secondLaunchTemplateId` | optional, all three or none: the other region's runner fleet (another deploy, in another AWS region). The worker gets both as `RUNNER_PLACEMENT`. The worker's IAM permissions to start machines cover this stack's region only; a fleet in a second AWS region needs that region's statements added before it can be used |
+| `secondFenvixRegion`, `secondAwsRegion`, `secondLaunchTemplateId` (and `secondCacheUrl`) | optional, the first three together or none: the other region's runner fleet (this stack deployed again, in another AWS region) and, per-job, its shared cache's URL. The worker gets both fleets as `RUNNER_PLACEMENT` (the second cache URL as that placement's `machineEnv`). Each region's machines are reaped by the reaper of the stack deployed in that region (a reaper cleans its own AWS region only). The worker's IAM permissions to start machines cover this stack's region only; a fleet in a second AWS region needs that region's statements added before it can be used |
 
 The other settings keep their defaults:
 

@@ -32,6 +32,7 @@
     "secondFenvixRegion": "",
     "secondAwsRegion": "",
     "secondLaunchTemplateId": "",
+    "secondCacheUrl": "",
     "runnerMode": "demo",
     "demoRepository": "",
     "demoMaxHours": "12",

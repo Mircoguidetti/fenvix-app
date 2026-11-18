@@ -44,6 +44,7 @@ bash scripts/cache-key.sh                        # per-job: the cache signing ke
 | `lib/runner-fleet.ts` | the Image Builder pipeline (the runner image; its build machine may read no /fenvix parameter), the launch template (terminate on shutdown), the machines' role (no permission) |
 | `lib/cache.ts`, `lib/cache/` | per-job: the shared cache machine and the engine's cache service, vendored at a pinned commit (`PROVENANCE.md`), behind `fenvix_cache_auth.py` (per-job signed tokens, one organization per installation) |
 | `lib/parameters.ts` | the SSM parameters (names, who reads which) |
+| Regions | the worker's `RUNNER_PLACEMENT` names this stack's fleet (`fenvixRegion`) and, optionally, another region's (`second*` settings, with its own cache URL as that placement's `machineEnv`). The reaper cleans its own AWS region only: each region's machines are reaped by the stack deployed in that region. |
 | `lib/settings.ts`, `cdk.json` | the settings (non-secret) |
 | `lib/nag.ts` | the cdk-nag findings that do not apply, each with its reason |
 | `deploy-policy.json` | the deploy identity's permissions (assume the CDK bootstrap roles, own parameters, logs, Session Manager) |
@@ -51,6 +52,5 @@ bash scripts/cache-key.sh                        # per-job: the cache signing ke
 | `permissions-boundary.json` | `fenvix-prod-github-app-boundary`: the most any role of the stack may do (created by hand, step 11) |
 | `scripts/` | the deploy; the two Cloudflare records read from AWS; the image build; demo up and down; the cache signing key |
 
-Why CDK and not SAM: this repository's `infra/` is already CDK in TypeScript (with cdk-nag), the service is
-TypeScript, and `NodejsFunction` bundles it with esbuild locally (no Docker); the EC2 runner, its VPC and IAM are
+Why CDK and not SAM: CDK in TypeScript (with cdk-nag) matches the service, which is TypeScript, and `NodejsFunction` bundles it with esbuild locally (no Docker); the EC2 runner, its VPC and IAM are
 first-class in CDK, while SAM is aimed at the serverless half and adds a second toolchain (SAM CLI).

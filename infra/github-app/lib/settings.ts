@@ -39,6 +39,11 @@ export interface Settings {
   secondFenvixRegion: string;
   secondAwsRegion: string;
   secondLaunchTemplateId: string;
+  /**
+   * Optional, per-job: the shared cache URL of the other region's fleet (its own private cache machine), given to the
+   * machines started there (RUNNER_PLACEMENT.<region>.machineEnv.FENVIX_CACHE_URL). Without it they get this stack's.
+   */
+  secondCacheUrl: string;
   // ---------------------------------------------------------------- runner machines
   /**
    * "demo" (default): no runner machine between demos; scripts/demo-up.sh starts one fresh machine from the runner
@@ -90,7 +95,7 @@ const ENV: Record<keyof Settings, string> = {
   supabaseUrl: "SUPABASE_URL", runsOnLabel: "FENVIX_RUNS_ON", summaryWaitSeconds: "SUMMARY_WAIT_SECONDS", sweepMinutes: "FENVIX_SWEEP_MINUTES",
   logRetentionDays: "FENVIX_LOG_RETENTION_DAYS", alarmEmail: "FENVIX_ALARM_EMAIL", apiCorsOrigins: "FENVIX_API_CORS_ORIGINS",
   fenvixRegion: "FENVIX_RUNNER_REGION", secondFenvixRegion: "FENVIX_SECOND_RUNNER_REGION", secondAwsRegion: "FENVIX_SECOND_AWS_REGION",
-  secondLaunchTemplateId: "FENVIX_SECOND_LAUNCH_TEMPLATE_ID",
+  secondLaunchTemplateId: "FENVIX_SECOND_LAUNCH_TEMPLATE_ID", secondCacheUrl: "FENVIX_SECOND_CACHE_URL",
   runnerInstanceType: "FENVIX_RUNNER_INSTANCE_TYPE", runnerVolumeGb: "FENVIX_RUNNER_VOLUME_GB", engineCliCommit: "FENVIX_ENGINE_CLI_COMMIT",
   demoRepository: "FENVIX_DEMO_REPOSITORY", demoMaxHours: "FENVIX_DEMO_MAX_HOURS",
   runnerMode: "FENVIX_RUNNER_MODE", runnerMaxRunning: "FENVIX_RUNNER_MAX_RUNNING", runnerMaxHours: "FENVIX_RUNNER_MAX_HOURS",
@@ -135,6 +140,7 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
     logRetentionDays: int("logRetentionDays", 1, 365), alarmEmail: get("alarmEmail"),
     apiCorsOrigins: get("apiCorsOrigins"), fenvixRegion: (get("fenvixRegion") || "us") as Settings["fenvixRegion"],
     secondFenvixRegion: get("secondFenvixRegion"), secondAwsRegion: get("secondAwsRegion"), secondLaunchTemplateId: get("secondLaunchTemplateId"),
+    secondCacheUrl: get("secondCacheUrl"),
     runnerMode: need("runnerMode") as Settings["runnerMode"], runnerMaxRunning: int("runnerMaxRunning", 1, 100),
     runnerMaxHours: int("runnerMaxHours", 1, 120), runnerIdleMinutes: int("runnerIdleMinutes", 5, 120),
     cacheInstanceType: need("cacheInstanceType"), cachePrivateIp: need("cachePrivateIp"), cacheVolumeGb: int("cacheVolumeGb", 8, 500),
@@ -164,6 +170,9 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
     if (!["us", "eu"].includes(s.secondFenvixRegion) || s.secondFenvixRegion === s.fenvixRegion) throw new Error('Setting "secondFenvixRegion" must be the other of us and eu');
     if (!/^[a-z]{2}-[a-z]+-\d$/.test(s.secondAwsRegion)) throw new Error('Setting "secondAwsRegion" is not an AWS region');
     if (!/^lt-[0-9a-f]{8,17}$/.test(s.secondLaunchTemplateId)) throw new Error('Setting "secondLaunchTemplateId" must look like lt-0123456789abcdef0');
+  }
+  if (s.secondCacheUrl && (!s.secondFenvixRegion || !/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(s.secondCacheUrl))) {
+    throw new Error('Setting "secondCacheUrl" must be the other region\'s cache origin (http://<private address>:8787), with the second region set');
   }
   if (s.demoRepository && !/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(s.demoRepository)) throw new Error('Setting "demoRepository" must be owner/name');
   if (!/^t4g\.(nano|micro|small)$/.test(s.cacheInstanceType)) throw new Error('Setting "cacheInstanceType" must be t4g.nano, t4g.micro or t4g.small (arm64)');

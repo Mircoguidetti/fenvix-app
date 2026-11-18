@@ -152,10 +152,16 @@ export class FenvixGitHubAppStack extends Stack {
     queue.grantSendMessages(dashboardApi);
 
     // Where an organization's jobs run, by its region (us | eu): this stack's fleet under its fenvix region, and the other
-    // region's fleet when the settings name one (github-app/src/runners/launcher.ts reads it).
-    const placement: Record<string, { awsRegion: string; launchTemplateId: string }> = {
+    // region's fleet when the settings name one, with its own shared cache when given (placementsFromEnv in
+    // github-app/src/runners/launcher.ts reads it; a placement's machineEnv overrides the FENVIX_MACHINE_* settings).
+    // Each AWS region's machines are reaped by the reaper of the stack deployed there (the reaper's EC2 client and IAM
+    // permissions are for its own region): deploy this stack in the second region too.
+    const placement: Record<string, { awsRegion: string; launchTemplateId: string; machineEnv?: Record<string, string> }> = {
       [s.fenvixRegion]: { awsRegion: this.region, launchTemplateId: fleet.launchTemplate.ref },
-      ...(s.secondFenvixRegion ? { [s.secondFenvixRegion]: { awsRegion: s.secondAwsRegion, launchTemplateId: s.secondLaunchTemplateId } } : {}),
+      ...(s.secondFenvixRegion ? { [s.secondFenvixRegion]: {
+        awsRegion: s.secondAwsRegion, launchTemplateId: s.secondLaunchTemplateId,
+        ...(s.secondCacheUrl ? { machineEnv: { FENVIX_CACHE_URL: s.secondCacheUrl } } : {}),
+      } } : {}),
     };
     const launchEnv: Record<string, string> = perJob ? {
       RUNNER_MODE: "per-job", RUNNER_LAUNCH_TEMPLATE_ID: fleet.launchTemplate.ref, RUNNER_MAX_RUNNING: String(s.runnerMaxRunning), FENVIX_ENV: s.env,
