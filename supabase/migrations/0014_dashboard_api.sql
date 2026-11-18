@@ -319,7 +319,7 @@ create policy workspace_members_api_delete on public.workspace_members for delet
 grant select, insert on public.workspace_invites to fenvix_api;
 grant update (revoked_at, revoked_by) on public.workspace_invites to fenvix_api;
 drop policy if exists workspace_invites_api_read on public.workspace_invites;
-create policy workspace_invites_api_read on public.workspace_invites for select to fenvix_api using (workspace_id = public.api_workspace());
+create policy workspace_invites_api_read on public.workspace_invites for select to fenvix_api using (workspace_id = public.api_admin_workspace());
 drop policy if exists workspace_invites_api_admin on public.workspace_invites;
 create policy workspace_invites_api_admin on public.workspace_invites for insert to fenvix_api with check (workspace_id = public.api_admin_workspace());
 drop policy if exists workspace_invites_api_revoke on public.workspace_invites;

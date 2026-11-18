@@ -1,21 +1,70 @@
 /*
- * The dashboard's domain: CI test runs made deterministic on `runs-on: fenvix`. Every shape here follows
- * docs/data-contract.md (the contract between the fenvix runner and the dashboard). Read that file first.
+ * The dashboard's domain: CI test runs made deterministic on `runs-on: fenvix`.
+ *
+ * Every record the screens show is a schema of the API description, openapi/fenvix-api.yaml, re-exported here from the
+ * generated src/api/schema.d.ts (`npm run api:generate`). Changing a field there breaks this build until the screens
+ * follow. Only shapes that never cross the API (queries, file downloads) are written by hand below.
+ * docs/data-contract.md says where each field comes from.
  */
+import type { components } from "../api/schema";
 
-export type Language = "python" | "node" | "go";
-export type TestRunner = "pytest" | "vitest" | "jest" | "go test";
-export type RunTrigger = "push" | "pull_request" | "merge_group" | "schedule" | "workflow_dispatch";
-export type RunStatus = "running" | "passed" | "failed" | "cancelled";
-export type SetupState = "app_installed" | "pr_open" | "active";
-export type TestOutcome = "passed" | "failed" | "skipped_with_proof";
+type S = components["schemas"];
 
-/** A file the browser can download. */
-export interface ExportResult {
-  filename: string;
-  mimeType: string;
-  downloadUrl: string;
-}
+export type Language = S["Language"];
+export type TestRunner = S["TestRunner"];
+export type RunTrigger = S["RunTrigger"];
+export type RunStatus = S["RunStatus"];
+export type RunMode = S["RunMode"];
+export type SetupState = S["SetupState"];
+export type TestOutcome = S["TestOutcome"];
+export type MissKind = S["MissKind"];
+export type Region = S["Region"];
+
+export type SetupPullRequest = S["SetupPullRequest"];
+/** "Before fenvix": measured from the repository's GitHub Actions history when it was connected. */
+export type Baseline = S["Baseline"];
+export type ProjectSettings = S["ProjectSettings"];
+export type Project = S["Project"];
+/** A project with its numbers for the current month, for lists. */
+export type ProjectRow = S["ProjectRow"];
+/** Minutes that add up on screen: ran + skipped + other = total (largest-remainder rounding). */
+export type MinuteBreakdown = S["MinuteBreakdown"];
+export type RunTests = S["RunTests"];
+export type RunProgress = S["RunProgress"];
+/** skipMisses is keyed by the reason a test was not reused. */
+export type Run = Omit<S["Run"], "skipMisses"> & { skipMisses: Partial<Record<MissKind, number>> };
+export type RunDetail = { run: Run; project: Project };
+export type Exploration = S["Exploration"];
+export type RunFile = S["RunFile"];
+export type ActivityItem = S["ActivityItem"];
+export type TestFailure = S["TestFailure"];
+export type TestResult = S["TestResult"];
+export type TestPage = S["TestPage"];
+export type SkipReceipt = S["SkipReceipt"];
+export type AuditRerun = S["AuditRerun"];
+export type AuditSummary = S["AuditSummary"];
+export type DefectCause = S["DefectCause"];
+export type Defect = S["Defect"];
+export type DefectFamily = Omit<S["DefectFamily"], "defects"> & { defects: Defect[] };
+export type GitHubRate = S["GitHubRate"];
+export type Plan = S["Plan"];
+export type DayPoint = S["DayPoint"];
+export type Trial = S["Trial"];
+export type Overview = Omit<S["Overview"], "projects" | "recentDefects"> & { projects: ProjectRow[]; recentDefects: Defect[] };
+export type UsageTotals = S["UsageTotals"];
+export type UsageProjectRow = S["UsageProjectRow"];
+export type UsageReport = S["UsageReport"];
+export type BillingOverview = S["BillingOverview"];
+export type Settings = S["Settings"];
+export type InstallationStatus = S["InstallationStatus"];
+export type Installation = S["Installation"];
+export type GitHubConnection = S["GitHubConnection"];
+export type OnboardingState = S["OnboardingState"];
+/** A repository an installation of the fenvix GitHub App gives access to, with its onboarding state. */
+export type GitHubRepository = S["GitHubRepository"];
+/** What the setup pull request changes. */
+export type SetupChange = S["SetupChange"];
+export type SkipSharePoint = S["SkipSharePoint"];
 
 /** One page of a list. Pages are numbered from 1. */
 export interface Page<T> {
@@ -25,186 +74,11 @@ export interface Page<T> {
   pageSize: number;
 }
 
-export interface SetupPullRequest {
-  number: number;
-  url: string;
-  state: "open" | "merged" | "closed";
-}
-
-/** "Before fenvix": measured from the repository's GitHub Actions history when it was connected. */
-export interface Baseline {
-  medianTimeToGreenS: number;
-  medianJobMinutes: number;
-  runsSampled: number;
-  from: string;
-  to: string;
-}
-
-export interface ProjectSettings {
-  skipWithProof: boolean;
-  commentOnPullRequests: boolean;
-  nightlyExploration: boolean;
-  /** The test command the runner wraps, for example "pytest tests". Empty: the job's own command. */
-  testCommand: string;
-}
-
-export interface Project {
-  id: string;
-  /** owner/name on GitHub. */
-  fullName: string;
-  language: Language;
-  testRunner: TestRunner;
-  defaultBranch: string;
-  installationId: number;
-  setupState: SetupState;
-  setupPullRequest: SetupPullRequest | null;
-  connectedAt: string;
-  baseline: Baseline | null;
-  settings: ProjectSettings;
-}
-
-/** A project with its numbers for the current month, for lists. */
-export interface ProjectRow extends Project {
-  runsThisMonth: number;
-  /** Median share of test time skipped with proof over this month's finished runs, 0 to 1. Null without runs. */
-  medianSkipShare: number | null;
-  openDefects: number;
-  /** This month, whole minutes that add up: testMinutesRan + minutesSaved + otherStepMinutes = githubEquivalentMinutes. */
-  minutesThisMonth: MinuteBreakdown;
-  /** Same as minutesThisMonth.skipped. */
-  minutesSavedThisMonth: number;
-  lastRunAt: string | null;
-  lastRunStatus: RunStatus | null;
-}
-
-/**
- * Minutes of CI time, split so the parts add up on screen: ran + skipped + other = total. Each part is rounded with
- * the largest-remainder rule, so the displayed parts always sum to the displayed total.
- */
-export interface MinuteBreakdown {
-  /** Test minutes that ran. */
-  ran: number;
-  /** Test minutes skipped with proof: the minutes saved. */
-  skipped: number;
-  /** Other steps that still run: checkout, dependency install, build. */
-  other: number;
-  /** The same job on a GitHub-hosted runner without fenvix. */
-  total: number;
-}
-
-export interface RunTests {
-  total: number;
-  ran: number;
-  passed: number;
-  failed: number;
-  skippedWithProof: number;
-  /** The part of `failed` that is a reproducible flaky defect. */
-  flakyDefects: number;
-}
-
-export interface Run {
-  id: string;
-  projectId: string;
-  number: number;
-  engineRunId: string | null;
-  commitSha: string;
-  commitMessage: string;
-  branch: string;
-  pullRequest: number | null;
-  trigger: RunTrigger;
-  status: RunStatus;
-  pushedAt: string;
-  startedAt: string;
-  finishedAt: string | null;
-  durationMs: number;
-  tests: RunTests;
-  testTimeMs: { ran: number; skipped: number };
-  /** Share of test time skipped with proof, 0 to 1. */
-  skipShare: number;
-  /** Test minutes skipped with proof (testTimeMs.skipped). fenvix skips nothing else, so this is all it saves. */
-  minutesSaved: number;
-  /** The job's other steps that still run on fenvix: checkout, dependency install, build. */
-  otherStepMinutes: number;
-  /**
-   * What the job would take on a GitHub-hosted runner without fenvix: test minutes run + test minutes skipped with
-   * proof + other steps.
-   */
-  githubEquivalentMinutes: number;
-  engineVersion: string;
-  seed: number | null;
-  /** Tests that ran because they could not be reused, by reason. */
-  skipMisses: Partial<Record<MissKind, number>>;
-  /** The reasons that made the most tests run again: kind, detail (e.g. src/x.py::func), tests. */
-  missDetails: { kind: MissKind; detail: string; tests: number }[];
-}
-
-/** Why a test was not reused (receipts.jsonl: {"reused": false, "why": "<kind>: <detail>"}). */
-export type MissKind = "new" | "failed-before" | "config" | "runtime" | "clock" | "env" | "data" | "code";
-
-/** One night of exploration on a project (the engine's explore.json, docs/data-contract.md "Exploration"). */
-export interface Exploration {
-  id: string;
-  projectId: string;
-  startedAt: string;
-  finishedAt: string;
-  commitSha: string;
-  branch: string;
-  /** Seeds tried; every seed is one full run of the suite in a seeded order. */
-  seeds: number;
-  runs: number;
-  /** Tests collected. */
-  collected: number;
-  seconds: number;
-  /** Tests that failed under some seeds and passed under others. */
-  flakyFailing: string[];
-  /** Tests that failed under every seed: real failures, not flaky. */
-  alwaysFailing: string[];
-  /** Flaky tests the time budget did not allow to reproduce. */
-  notReproduced: string[];
-  /** Defects this night reproduced for the first time. */
-  newDefectIds: string[];
-  /** Families by polluter: key (cause tests joined by " + ", or "<none>") and how many tests. */
-  familiesByPolluter: { key: string; tests: number }[];
-  seedsLog: { seed: number; seconds: number; failing: number }[];
-}
-
-/** A run's tests by file, for the suite drawn as squares. */
-export interface RunFile {
-  file: string;
-  tests: number;
-  ran: number;
-  skipped: number;
-  failed: number;
-}
-
-/** What happened lately, newest first. Derived from runs, defects, explorations and setup pull requests. */
-export interface ActivityItem {
-  id: string;
-  at: string;
-  kind: "run_green" | "run_failed" | "defect_reproduced" | "exploration" | "setup_pr";
-  title: string;
-  detail: string;
-  projectId: string;
-  to: string;
-}
-
-export interface TestFailure {
-  kind: "real" | "flaky_defect";
-  phase: string;
-  exceptionType: string;
-  message: string;
-  location: string;
-  defectId: string | null;
-}
-
-export interface TestResult {
-  runId: string;
-  testId: string;
-  file: string;
-  outcome: TestOutcome;
-  durationMs: number;
-  failure: TestFailure | null;
-  receiptId: string | null;
+/** A file the browser can download. */
+export interface ExportResult {
+  filename: string;
+  mimeType: string;
+  downloadUrl: string;
 }
 
 export interface TestQuery {
@@ -214,187 +88,7 @@ export interface TestQuery {
   pageSize?: number;
 }
 
-export interface TestPage extends Page<TestResult> {
-  /** Tests of the run per outcome, whatever the filter. */
-  counts: Record<TestOutcome, number>;
-}
-
-/** Why a test could be skipped: everything it depends on was checked and is unchanged since a passing run. */
-export interface SkipReceipt {
-  id: string;
-  runId: string;
-  testId: string;
-  cacheKey: string;
-  reusedRunId: string | null;
-  reusedEngineRunId: string;
-  reusedRunNumber: number | null;
-  reusedOutcome: "passed";
-  fingerprint: string;
-  reusedDurationMs: number;
-  code: { path: string; qualname: string; digest: string }[];
-  modules: { path: string; kind: "content" | "skeleton" | "hooks"; digest: string }[];
-  filesRead: { path: string; dep: string }[];
-  envRead: { name: string; digest: string }[];
-  runtime: { digest: string; interpreter: string; system: string; machine: string; libc: string; distributions: number };
-  config: { digest: string; runner: string; engine: string; inifile: string; options: string };
-  changedFilesProven: number;
-}
-
-export type DefectCause = "polluter" | "state_setter" | "fails_alone";
-
-export interface Defect {
-  id: string;
-  projectId: string;
-  projectName: string;
-  testId: string;
-  status: "reproduced" | "replay_unstable";
-  state: "open" | "fixed";
-  cause: DefectCause;
-  /** The polluters (cause "polluter") or the state setters (cause "state_setter"). */
-  causeTests: string[];
-  /** order.txt: the target test last. */
-  minimalOrder: string[];
-  prefixLength: number;
-  seed: number | null;
-  fingerprint: string;
-  replays: { runs: number; fails: number; identicalFingerprint: boolean };
-  outcome: string;
-  exception: { type: string; phase: string; message: string; location: string };
-  divergence: { index: number; reason: string; description: string } | null;
-  familyKey: string;
-  firstSeenAt: string;
-  lastSeenAt: string;
-  firstRunId: string | null;
-  lastRunId: string | null;
-  occurrences: number;
-  engineVersion: string;
-  language: "python" | "node";
-  testRunner: TestRunner;
-}
-
-/** Defects that share a cause: the same polluter or state setter. */
-export interface DefectFamily {
-  key: string;
-  projectId: string;
-  projectName: string;
-  cause: DefectCause;
-  causeTests: string[];
-  defects: Defect[];
-}
-
 export interface DefectQuery {
   projectId?: string;
   state?: "open" | "fixed" | "all";
 }
-
-export interface GitHubRate {
-  usdPerMinute: number;
-  runner: string;
-  source: string;
-  checkedOn: string;
-}
-
-export interface Plan {
-  id: string;
-  name: string;
-  description: string;
-  /** Null: no limit. */
-  runsPerMonth: number | null;
-  maxProjects: number | null;
-  /** Null: the price is not set yet. */
-  priceUsdMonth: number | null;
-  features: string[];
-  current: boolean;
-}
-
-export interface DayPoint {
-  /** ISO start of the day (UTC). */
-  at: string;
-  value: number;
-}
-
-export interface Overview {
-  month: string;
-  runs: { thisMonth: number; lastMonthSameDays: number; perDay: DayPoint[] };
-  minutesSaved: { thisMonth: number; perDay: DayPoint[] };
-  /** Median seconds from push to the first green run. */
-  timeToGreen: { beforeMedianS: number | null; withMedianS: number | null; commits: number };
-  /** Median share of test time skipped with proof per day. */
-  skipShare: { median: number | null; perDay: DayPoint[] };
-  /** This month's minutes, the same numbers as the Usage page. */
-  minutes: MinuteBreakdown;
-  cost: { githubEquivalentUsd: number; githubEquivalentMinutes: number; plan: Plan | null; rate: GitHubRate };
-  projects: ProjectRow[];
-  openDefects: number;
-  recentDefects: Defect[];
-}
-
-export interface UsageProjectRow {
-  projectId: string;
-  fullName: string;
-  runs: number;
-  /** testMinutesRan + minutesSaved + otherStepMinutes = githubEquivalentMinutes, in whole minutes. */
-  testMinutesRan: number;
-  minutesSaved: number;
-  otherStepMinutes: number;
-  githubEquivalentMinutes: number;
-  githubEquivalentUsd: number;
-}
-
-export interface UsageReport {
-  month: string;
-  plan: Plan | null;
-  runsUsed: number;
-  runsIncluded: number | null;
-  totals: Omit<UsageProjectRow, "projectId" | "fullName">;
-  rows: UsageProjectRow[];
-  /** Runs per day, one series per project. */
-  daily: { days: string[]; series: { label: string; values: number[] }[] };
-  rate: GitHubRate;
-}
-
-export interface BillingOverview {
-  currency: string;
-  plan: Plan | null;
-  period: { start: string; end: string };
-  runsUsed: number;
-  runsIncluded: number | null;
-  projects: number;
-  /** Runs per month over the last three full months, for sizing. */
-  averageMonthlyRuns: number;
-  /** The smallest plan that fits the projects and the runs. */
-  suggestedPlanId: string | null;
-}
-
-export interface Settings {
-  workspaceName: string;
-  /** Emails about usage, new defects and account notices. */
-  emailNotices: boolean;
-}
-
-/** A repository the GitHub App can see, for onboarding. */
-export interface GitHubRepository {
-  fullName: string;
-  private: boolean;
-  language: Language;
-  testRunner: TestRunner;
-  /** Already a fenvix project. */
-  connected: boolean;
-}
-
-export interface GitHubConnection {
-  /** The GitHub account the app is installed on, or null when it is not installed yet. */
-  account: string | null;
-  /** Where the browser goes to install the app (GitHub's page), or null when the app is not set up for this deployment. */
-  installUrl: string | null;
-}
-
-/** What the setup pull request changes. */
-export interface SetupChange {
-  path: string;
-  job: string;
-  before: string;
-  after: string;
-}
-
-export type { CreatedPublicKey, NewPublicKey, PublicApiKey, PublicKeyPage, PublicKeyRole, PublicKeyStatus } from "./public-keys";

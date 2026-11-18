@@ -118,6 +118,7 @@ paths:
     get:
       tags: [dashboard]
       operationId: listInvitations
+      x-fenvix-role: admin
       responses:
         "200":
           description: Pending invitations

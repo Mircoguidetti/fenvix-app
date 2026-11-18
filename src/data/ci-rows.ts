@@ -2,21 +2,24 @@
  * Postgres rows (supabase/migrations/0011_ci_runs.sql, snake_case) to the contract's records (camelCase). Pure, so
  * tests/unit/ci.test.ts covers it without a database.
  */
-import type { Exploration, Defect, GitHubRate, Plan, Project, Run, SkipReceipt, TestResult, TestRunner } from "./types";
-import { familyKeyOf } from "./ci.ts";
+import type { AuditRerun, Exploration, Defect, GitHubRate, GitHubRepository, Installation, OnboardingState, Plan, Project, Run, RunProgress, SkipReceipt, TestResult, TestRunner } from "./types";
+import { familyKeyOf, type UsageEvent } from "./ci.ts";
 
 export type Row = Record<string, unknown>;
 
-const str = (v: unknown, d = "") => (typeof v === "string" ? v : v === null || v === undefined ? d : String(v));
+/** Text; a Date (node-postgres gives timestamptz as Date) becomes ISO 8601. */
+const str = (v: unknown, d = "") => (typeof v === "string" ? v : v instanceof Date ? v.toISOString() : v === null || v === undefined ? d : String(v));
 const num = (v: unknown, d = 0) => (v === null || v === undefined || v === "" || Number.isNaN(Number(v)) ? d : Number(v));
 const numOrNull = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
 const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : str(v));
 const obj = (v: unknown): Row => (v && typeof v === "object" && !Array.isArray(v) ? (v as Row) : {});
 
+/** `currentId`: the organization's plan id; an add-on is current when `currentId` is its id too (pass it per add-on). */
 export function mapPlan(r: Row, currentId: string | null): Plan {
   return {
-    id: str(r.id), name: str(r.name), description: str(r.description),
-    runsPerMonth: numOrNull(r.runs_per_month), maxProjects: numOrNull(r.max_projects), priceUsdMonth: numOrNull(r.price_usd_month),
+    id: str(r.id), name: str(r.name), description: str(r.description), kind: str(r.kind) === "addon" ? "addon" : "plan",
+    unitsIncluded: numOrNull(r.units_included), maxProjects: numOrNull(r.max_projects), priceUsdMonth: numOrNull(r.price_usd_month),
     features: arr<string>(r.features), current: str(r.id) === currentId,
   };
 }
@@ -25,11 +28,12 @@ export function mapRate(r: Row | null | undefined): GitHubRate {
   return { usdPerMinute: num(r?.usd_per_minute, 0.008), runner: str(r?.runner, "GitHub-hosted Linux, 2 cores"), source: str(r?.source, "not set"), checkedOn: str(r?.checked_on) };
 }
 
+/** A ci_projects row; `repository_id` (GitHub's id) when the query joined gh_repositories. */
 export function mapProject(r: Row): Project {
   const ttg = numOrNull(r.baseline_median_ttg_s);
   return {
     id: str(r.id), fullName: str(r.full_name), language: str(r.language) as Project["language"], testRunner: str(r.test_runner) as TestRunner,
-    defaultBranch: str(r.default_branch, "main"), installationId: num(r.installation_id), setupState: str(r.setup_state, "app_installed") as Project["setupState"],
+    defaultBranch: str(r.default_branch, "main"), installationId: num(r.installation_id), repositoryId: numOrNull(r.repository_id), setupState: str(r.setup_state, "app_installed") as Project["setupState"],
     setupPullRequest: r.setup_pr_number ? { number: num(r.setup_pr_number), url: str(r.setup_pr_url), state: (str(r.setup_pr_state, "open") as "open" | "merged" | "closed") } : null,
     connectedAt: str(r.connected_at),
     baseline: ttg === null ? null : { medianTimeToGreenS: ttg, medianJobMinutes: num(r.baseline_median_job_minutes), runsSampled: num(r.baseline_runs_sampled), from: str(r.baseline_from), to: str(r.baseline_to) },
@@ -48,6 +52,22 @@ export function mapRun(r: Row): Run {
     skipShare: num(r.skip_share), minutesSaved: num(r.minutes_saved), otherStepMinutes: num(r.other_step_minutes), githubEquivalentMinutes: num(r.github_equivalent_minutes),
     engineVersion: str(r.engine_version), seed: numOrNull(r.seed),
     skipMisses: obj(r.skip_misses) as Run["skipMisses"], missDetails: arr(r.miss_details),
+    mode: str(r.mode) === "shadow" ? "shadow" : "enforce", wouldSkipTests: num(r.would_skip_tests), wouldSaveMs: num(r.would_save_ms),
+    audit: { rerun: num(r.audit_rerun), wrongSkips: num(r.audit_wrong_skips) },
+    region: r.region === "us" || r.region === "eu" ? r.region : null,
+    progress: str(r.status) === "running" && r.progress ? mapProgress(obj(r.progress), r.progress_at) : null,
+  };
+}
+
+const PHASES = new Set(["setup", "collecting", "testing", "reporting"]);
+
+/** ci_runs.progress (the runner's latest record, docs/data-contract.md "Run progress"). */
+export function mapProgress(p: Row, at: unknown): RunProgress {
+  return {
+    phase: (PHASES.has(str(p.phase)) ? str(p.phase) : "setup") as RunProgress["phase"],
+    testsTotal: numOrNull(p.testsTotal), testsDone: num(p.testsDone), passed: num(p.passed), failed: num(p.failed), skippedWithProof: num(p.skippedWithProof),
+    currentTest: typeof p.currentTest === "string" ? p.currentTest : null, elapsedMs: num(p.elapsedMs),
+    updatedAt: at instanceof Date ? at.toISOString() : str(at),
   };
 }
 
@@ -88,6 +108,7 @@ export function mapDefect(r: Row, project: { fullName: string; testRunner: TestR
     familyKey: str(r.family_key) || familyKeyOf(causeTests), firstSeenAt: str(r.first_seen_at), lastSeenAt: str(r.last_seen_at),
     firstRunId: r.first_run_id ? str(r.first_run_id) : null, lastRunId: r.last_run_id ? str(r.last_run_id) : null, occurrences: num(r.occurrences, 1),
     engineVersion: str(r.engine_version), language: str(r.language) === "node" ? "node" : "python", testRunner: project?.testRunner ?? "pytest",
+    replayCommand: r.replay_command ? str(r.replay_command) : null,
   };
 }
 
@@ -101,6 +122,47 @@ export function mapReceipt(r: Row, reusedRunNumber: number | null): SkipReceipt 
     runtime: { digest: str(rt.digest), interpreter: str(rt.interpreter), system: str(rt.system), machine: str(rt.machine), libc: str(rt.libc), distributions: num(rt.distributions) },
     config: { digest: str(cf.digest), runner: str(cf.runner), engine: str(cf.engine), inifile: str(cf.inifile), options: str(cf.options) },
     changedFilesProven: num(r.changed_files_proven),
+  };
+}
+
+/** ci_audit_reruns, with the number of its run. */
+export function mapAuditRerun(r: Row): AuditRerun {
+  return {
+    runId: str(r.run_id), runNumber: num(r.run_number), testId: str(r.test_id), cacheKey: str(r.cache_key),
+    outcome: str(r.outcome) === "wrong_skip" ? "wrong_skip" : "confirmed", untrusted: r.untrusted === true, detail: str(r.detail), at: iso(r.at),
+  };
+}
+
+/** ci_usage_events. */
+export function mapUsageEvent(r: Row): UsageEvent {
+  return { projectId: r.project_id ? str(r.project_id) : null, occurredAt: iso(r.occurred_at), billable: r.billable === true, baselineMinutes: num(r.baseline_minutes) };
+}
+
+/** gh_installations, with `repositories` counted by the query. */
+export function mapInstallation(r: Row): Installation {
+  return {
+    installationId: num(r.installation_id), account: str(r.account_login), accountType: (["User", "Organization", "Enterprise"].includes(str(r.account_type)) ? str(r.account_type) : "User") as Installation["accountType"],
+    status: r.deleted_at ? "deleted" : r.suspended_at ? "suspended" : "active",
+    repositorySelection: str(r.repository_selection) === "all" ? "all" : "selected", linkedAt: r.linked_at ? iso(r.linked_at) : null, repositories: num(r.repositories),
+  };
+}
+
+const ONBOARDING = new Set(["pending", "pr_open", "merged", "closed", "no_workflow", "no_test_job", "already_fenvix", "unsupported", "failed"]);
+
+/** gh_repositories: the 9 onboarding states as they are, the setup pull request when there is one. */
+export function mapGitHubRepository(r: Row): GitHubRepository {
+  const state = (ONBOARDING.has(str(r.onboarding_state)) ? str(r.onboarding_state) : "pending") as OnboardingState;
+  const prState = state === "merged" ? "merged" : state === "closed" ? "closed" : "open";
+  const lang = str(r.detected_language);
+  const runner = str(r.detected_test_runner);
+  return {
+    repositoryId: num(r.repository_id), installationId: num(r.installation_id), fullName: str(r.full_name), private: r.private !== false, removed: !!r.removed_at,
+    language: lang === "python" || lang === "node" || lang === "go" ? lang : null,
+    testRunner: runner === "pytest" || runner === "vitest" || runner === "jest" || runner === "go test" ? runner : null,
+    onboardingState: state, onboardingDetail: str(r.onboarding_detail), workflowPath: r.onboarding_workflow_path ? str(r.onboarding_workflow_path) : null,
+    job: r.onboarding_job ? str(r.onboarding_job) : null,
+    setupPullRequest: r.setup_pr_number ? { number: num(r.setup_pr_number), url: str(r.setup_pr_url), state: prState } : null,
+    projectId: r.project_id ? str(r.project_id) : null,
   };
 }
 
