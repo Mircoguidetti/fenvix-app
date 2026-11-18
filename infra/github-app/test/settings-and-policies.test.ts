@@ -109,3 +109,18 @@ describe("IAM policy files", () => {
     assert.equal(sizes.Effect, "Deny");
   });
 });
+
+describe("scripts/scram-verifier.mjs (DEPLOY-AWS.md step 8: the DB password never enters the SQL editor)", () => {
+  it("prints a Postgres SCRAM-SHA-256 verifier, never the password; refuses a non-ASCII password", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const out = execFileSync("node", [new URL("../scripts/scram-verifier.mjs", import.meta.url).pathname], { input: "pw-0123456789-abcdef", encoding: "utf8" }).trim();
+    assert.match(out, /^SCRAM-SHA-256\$4096:[A-Za-z0-9+/]{22}==\$[A-Za-z0-9+/]{43}=:[A-Za-z0-9+/]{43}=$/);
+    assert.ok(!out.includes("pw-0123456789"));
+    const mod: string = "../scripts/scram-verifier.mjs";
+    const { scramVerifier } = (await import(mod)) as { scramVerifier: (p: string, s?: Buffer) => string };
+    const salt = Buffer.alloc(16, 1);
+    assert.equal(scramVerifier("same", salt), scramVerifier("same", salt), "deterministic for a given salt");
+    assert.notEqual(scramVerifier("same"), scramVerifier("same"), "a fresh salt each time");
+    assert.throws(() => scramVerifier("pässword"), /ASCII/);
+  });
+});

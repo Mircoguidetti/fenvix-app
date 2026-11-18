@@ -50,15 +50,22 @@ declare module "fastify" {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EVENTS = new Set(["installation", "installation_repositories", "push", "pull_request", "workflow_job", "ping"]);
 
+/**
+ * The request log: never the Authorization or signature headers, and never the query string, since /github/setup
+ * carries the one-time OAuth code and the signed state in it (R-012 F18).
+ */
+export function loggerOptions(level: string) {
+  return {
+    level, redact: ["req.headers.authorization", "req.headers[\"x-hub-signature-256\"]"],
+    serializers: { req: (r: { method: string; url: string; hostname?: string; ip?: string }) => ({ method: r.method, url: r.url.split("?")[0], hostname: r.hostname, remoteAddress: r.ip }) },
+  };
+}
+
 export async function buildApp(deps: Deps): Promise<App> {
   const { cfg } = deps;
   if (cfg.surface !== "all") throw new Error("buildApp needs the HTTP secrets (loadConfig with surface \"all\")");
   const fastify = Fastify({
-    // The query string is never logged: /github/setup carries the one-time OAuth code and the state (R-012 F18).
-    logger: deps.logger ?? {
-      level: cfg.logLevel, redact: ["req.headers.authorization", "req.headers[\"x-hub-signature-256\"]"],
-      serializers: { req: (r: { method: string; url: string; hostname?: string; ip?: string }) => ({ method: r.method, url: r.url.split("?")[0], hostname: r.hostname, remoteAddress: r.ip }) },
-    },
+    logger: deps.logger ?? loggerOptions(cfg.logLevel),
     bodyLimit: 1024 * 1024,
     trustProxy: true,
   });

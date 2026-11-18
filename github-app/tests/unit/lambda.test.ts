@@ -5,7 +5,7 @@ import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sd
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
 import { GetParametersCommand } from "@aws-sdk/client-ssm";
 import Fastify from "fastify";
-import { buildApp } from "../../src/app.ts";
+import { buildApp, loggerOptions } from "../../src/app.ts";
 import { loadConfig } from "../../src/config.ts";
 import { invoke } from "../../src/lambda/apigw.ts";
 import { once, refreshing } from "../../src/lambda/runtime.ts";
@@ -157,6 +157,14 @@ describe("API Gateway (HTTP API, payload 2.0) to Fastify", () => {
     const b = await invoke(app, ev("GET", "/bin"));
     assert.equal(b.isBase64Encoded, true);
     assert.deepEqual([...Buffer.from(b.body, "base64")], [0, 255, 1]);
+  });
+});
+
+describe("request log (R-012 F18)", () => {
+  it("never logs the query string (the OAuth code of /github/setup)", () => {
+    const req = loggerOptions("info").serializers.req({ method: "GET", url: "/github/setup?code=one-time-code&state=s&installation_id=1", hostname: "h", ip: "1.2.3.4" });
+    assert.deepEqual(req, { method: "GET", url: "/github/setup", hostname: "h", remoteAddress: "1.2.3.4" });
+    assert.ok(!JSON.stringify(req).includes("one-time-code"));
   });
 });
 

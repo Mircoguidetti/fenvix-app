@@ -44,7 +44,7 @@ id fenvix-post >/dev/null 2>&1 || useradd --system --no-create-home --shell /sbi
 id fenvix-parse >/dev/null 2>&1 || useradd --system --no-create-home --shell /sbin/nologin fenvix-parse
 install -d -m 0711 /srv/jailer
 
-log "3. slots: 12 (the value rounds up to a multiple of 4 slots per 8 in the pool; each 8 take 128 MiB of the pool)"
+log "3. slots: 12 (slots grow from 4 in steps of 8: 12, 20, ...; each step uses 128 MiB of the memory pool)"
 [ "$(cat "$ne/pcie_slots")" -ge 12 ] || echo 12 >"$ne/pcie_slots" || die "could not set 12 slots (pool too small? see step 1)"
 log "   pcie_slots $(cat "$ne/pcie_slots") of $(cat "$ne/pcie_slots_total")"
 

@@ -2,17 +2,26 @@ DONE
 
 # Report: the GitHub App on AWS Lambda, the runners on EC2 (branch `claude/github-app`)
 
+> **Updated after review R-012** (`docs/REVIEW-R-012.md` on `claude/review-r012`; fixes in
+> `docs/REPORT-aws-deploy-2.md`). The statements below that the review proved wrong are corrected in place and marked
+> **(R-012)**. In short: runners are c6i.large, not t3.medium "standard"; no runner machine reads any secret (each gets
+> its own credentials in its user data); one cache organization per customer installation; every role carries a
+> permissions boundary; the image build machine is denied every `/fenvix/*` parameter; demo-down terminates before it
+> deregisters; the customer-mode fallback is nested virtualization on the same C7i, not a metal host.
+
 **Updated for the founder's final hosting plan** (sent through the coordinator; it replaces the two earlier requests):
 
 1. **Demo mode is the default, and is built** (section 3c).
-   - `scripts/demo-up.sh` starts one fresh t3.medium from the prebuilt runner image and registers it through the App;
-     `scripts/demo-down.sh` deregisters it and terminates it.
+   - `scripts/demo-up.sh` starts one fresh c6i.large **(R-012)** from the prebuilt runner image and registers it
+     through the App on `demoRepository` only **(R-012)**; `scripts/demo-down.sh` terminates it, then deregisters it
+     **(R-012)**.
    - Each demo gets a new machine and disk, so no data is shared between demos.
    - Lambda, the App and the dashboard stay up.
 2. **Per-job mode is kept as an option** (section 3b): one EC2 machine per queued job, with the shared cache.
 3. **Customer mode is a design and a spike, not built** (section 3d): one c7i.xlarge per host, each job in its own
-   Firecracker microVM through the Nitro Sandboxes backend (Firecracker v1.18.0), destroyed after the job; a `.metal`
-   KVM host as the fallback; Docker inside the job checked.
+   Firecracker microVM through the Nitro Sandboxes backend (Firecracker v1.18.0), destroyed after the job; KVM Firecracker
+   with nested virtualization on the same C7i as the fallback **(R-012; was a `.metal` host)**; Docker inside the job
+   checked.
 4. **No Docker-per-job path.**
 5. **The always-on machine (and its stop/start scripts) is removed**; demo mode replaces it.
 
@@ -105,7 +114,8 @@ available. "Not verified" below lists what only a real deploy can show. The foun
   - L1: Node 22 is the runtime the service is tested on;
   - S1: the overflow bucket's objects are transient;
   - VPC7, EC28, EC29: one replaceable runner machine;
-  - IAM4: `AmazonSSMManagedInstanceCore`, for Session Manager;
+  - IAM4: `AmazonSSMManagedInstanceCore`, for Session Manager on the image build machine only, with an explicit Deny
+    on every `/fenvix/*` parameter **(R-012 F5)**;
   - IAM5: the log-stream `:*` suffix and the random `work/*` keys.
 - **One deploy command:** `cd infra/github-app && npm run deploy` (`scripts/deploy.sh`). It runs these steps:
   1. checks Node ≥ 22.18, the AWS account, and that the 6 required SSM parameters exist (names only);
@@ -135,15 +145,17 @@ available. "Not verified" below lists what only a real deploy can show. The foun
 
 ### 3a. What every runner machine has (both modes)
 
-- **Instance:** t3.medium, Ubuntu 24.04 (Canonical's SSM parameter, then pinned), 30 GB gp3 encrypted, and IMDSv2 only
-  with hop limit 1. CPU credits are set to "standard", so there is never a surplus-credit charge.
+- **Instance:** c6i.large **(R-012 F8: a T3 in "standard" mode gets no launch credits and would run at its 20%
+  baseline)**, Ubuntu 24.04 (Canonical's SSM parameter, then pinned), 30 GB gp3 encrypted, and IMDSv2 only with hop
+  limit 1. A T3 type, if chosen, runs "unlimited".
 - **Network:** its own VPC, one public subnet, **no NAT gateway** and no inbound rule. Outbound is TCP 443 and 80 only
   (80 for Ubuntu's mirrors). There is no SSH; use Session Manager.
 - **User data:** the settings, plus the 9 files gzip+base64 (about 10 KB of the 16 KB limit). It then runs `setup.sh`,
   which installs tools (git, curl, **strace**, build-essential, python3, iptables, the AWS CLI snap) and creates two
   users:
   - `fenvix`, which runs the runner and the jobs;
-  - `fenvix-post`, which alone holds `RUNNER_TOKEN`.
+  - `fenvix-post`, which alone holds the machine's own summary credential **(R-012 F1: no machine holds
+    `RUNNER_TOKEN` any more; the machines' role has no permission)**.
 - **Metadata blocked for both users:** `fenvix-imds-block.service` adds iptables owner-match rules. Without them, job
   code could take the instance role's credentials and read the token.
 - **ptrace:** `kernel.yama.ptrace_scope=1`, so `strace -f` works on a job's own children. Setup checks this as `fenvix`
@@ -151,7 +163,9 @@ available. "Not verified" below lists what only a real deploy can show. The foun
   poster, which holds the token. Tracing children (what `fenvix-run` does) needs no capability. Docker is not
   installed, so a container's `--cap-add SYS_PTRACE` does not apply.
 - **Bootstrap:** it clones `Mircoguidetti/fenvix-engine-cli` at the pinned commit `4391eb0` (setting
-  `engineCliCommit`) and runs `runner/bootstrap.sh install` as `fenvix`. Then it runs `installdependencies.sh` as
+  `engineCliCommit`) and runs `runner/bootstrap.sh install` as `fenvix`. **(R-012 F5: it no longer runs `installdependencies.sh`
+  as root; the runner's libraries are installed by name, and nothing writes as root into the job user's files.)** It
+  used to run `installdependencies.sh` as
   root, because the bootstrap tries `sudo`, which `fenvix` does not have.
 - **`fenvix-runner.service`** runs `ExecStartPre=+fenvix-register`, then `bootstrap.sh run`, with `Restart=always`. It
   starts at boot and needs no re-registration.
@@ -212,7 +226,9 @@ available. "Not verified" below lists what only a real deploy can show. The foun
   - **Why not Lambda + S3:** the service stores in SQLite in WAL mode, which does not work on EFS, and its client
     sends batches of up to 16 MB, against API Gateway's 10 MB and Lambda's 6 MB. Lambda would mean rewriting its
     storage and batching in the engine repository, which this session cannot change.
-  - **Tokens:** `scripts/cache-tokens.sh` creates two tokens in SSM. Only their SHA-256 goes into `cdk.json` and onto
+  - **Tokens (superseded, R-012 F3):** per-job tokens signed by the worker for one customer installation's
+    organization (`scripts/cache-key.sh`, `lib/cache/fenvix_cache_auth.py`) replace the two static tokens. Before:
+    `scripts/cache-tokens.sh` created two tokens in SSM. Only their SHA-256 goes into `cdk.json` and onto
     the cache machine.
   - **Which token a job gets:** the worker gives the **write** token only to trusted refs (a push, schedule, manual or
     merge-queue run on the default branch, from the repository itself, read from the workflow run). Pull requests,
@@ -232,11 +248,11 @@ available. "Not verified" below lists what only a real deploy can show. The foun
 
   | Jobs per month | 0 | 100 | 1,000 |
   |---|---|---|---|
-  | Without free tiers | ≈ $4.79 | ≈ $5.70 | ≈ $14.06 |
+  | Without free tiers | ≈ $4.79 | ≈ $6.46 (R-012) | ≈ $21.66 (R-012) |
   | With free tiers | ≈ $4.36 | ≈ $5.26 | ≈ $13.40 |
 
   - The fixed part is the cache machine ($3.36 + $0.70 disk) and the image snapshot (≈ $0.30).
-  - A job costs ≈ $0.0090: t3.medium per second, $0.0456 an hour; IPv4, $0.005 an hour; 30 GB gp3.
+  - A job costs ≈ $0.0166 **(R-012)**: c6i.large per second, $0.0912 an hour; IPv4, $0.005 an hour; 30 GB gp3.
 
 ### 3c. Demo mode (default, `runnerMode: demo`)
 
@@ -262,7 +278,8 @@ available. "Not verified" below lists what only a real deploy can show. The foun
 - **The image now contains the registration path too.** Its files are bundled as **one** gzipped script, which brings
   the component down from 15,879 to 9,329 of 16,000 characters. The bundle was round-tripped through a real `bash`
   here.
-- **Cost** (DECLARED prices; ESTIMATED usage: 10 demos of 2 hours a month): **≈ $1.81 a month without free tiers,
+- **Cost** (DECLARED prices; ESTIMATED usage: 10 demos of 2 hours a month): **≈ $2.73 a month without free tiers
+  (R-012, c6i.large; it was ≈ $1.81 with a throttled t3.medium),
   ≈ $1.38 with them**; each extra demo hour ≈ $0.054.
 
 ### 3d. Customer mode: design and spike (`docs/DEPLOY-AWS.md` "Customer mode", `infra/customer-mode/spike/`)
@@ -307,7 +324,9 @@ shared cache from the guest; concurrency and cost per host; hang and reboot hand
 Sandboxes (no snapshots or pause, no virtio device reset, no memory overcommit).
 
 **Cost per host** (DECLARED, read 2026-11-18): c7i.xlarge $0.19152 an hour, ≈ **$147.86 a month** with disk and
-IPv4. The fallback, the cheapest x86 metal type, is c5n.metal at $4.392 an hour, ≈ **$3,214.21 a month**.
+IPv4. **(R-012 F16)** The fallback is KVM Firecracker with nested virtualization on the same type, at the same price
+(it was c5n.metal at $4.392 an hour, ≈ $3,214.21 a month). A c7i.xlarge runs one 2-vCPU job at full speed (the
+parent keeps one of its two cores); plan a c7i.2xlarge (≈ $287.67 a month) for three.
 
 ## 4. The App's rows against `src/data/ci-rows.ts` on main
 
@@ -384,10 +403,10 @@ the contract test (`ci_run_id`, `project_id`, `month`).
 
   | Jobs per month | 0 | 100 | 1,000 |
   |---|---|---|---|
-  | Per-job mode, without free tiers | ≈ $4.79 | ≈ $5.70 | ≈ $14.06 |
+  | Per-job mode, without free tiers | ≈ $4.79 | ≈ $6.46 (R-012) | ≈ $21.66 (R-012) |
   | Per-job mode, with free tiers | ≈ $4.36 | ≈ $5.26 | ≈ $13.40 |
 
-  Demo mode (default) costs ≈ $1.81 a month without free tiers (10 demos of 2 hours); customer mode costs ≈ $147.86
+  Demo mode (default) costs ≈ $2.73 a month without free tiers (10 demos of 2 hours; R-012); customer mode costs ≈ $147.86
   a month per c7i.xlarge host.
 - **Price sources:** the aws.amazon.com pricing pages load their regional numbers from a data host this container's
   proxy refused, so the regional prices were read from AWS's official Price List API (`pricing.us-east-1.amazonaws.com`,
@@ -399,6 +418,10 @@ the contract test (`ci_run_id`, `project_id`, `month`).
   - whether Lambda's free tier is permanent (no page says).
 
 ## Tests run (all green)
+
+**After review R-012** (details in `docs/REPORT-aws-deploy-2.md`): github-app **58 unit + 68 integration pass**;
+infra/github-app **51 pass** (with cdk-nag; `CdkNagValidationFailure` gone in per-job mode); `cdk synth` exit 0 in demo
+and per-job mode. The table below is the state before the review.
 
 | Where | Command | Result |
 |---|---|---|
@@ -446,12 +469,11 @@ the contract test (`ci_run_id`, `project_id`, `month`).
 - **Installing from GitHub directly carries no organization.** The dashboard on main does not yet call
   `/v1/github/install-link` (it still says "not set up"), so an installation made from GitHub's own page has no signed
   organization. `DEPLOY-AWS.md` step 26 links it with one SQL call.
-- **The runner token can be read from the job.** The job-completed hook runs as the job user, so a job could put a
-  forged `summary.json` for its own run. It cannot read `RUNNER_TOKEN`, cannot reach the instance role, and cannot
-  claim another runner's name. The App accepts a summary only for a job GitHub reported on that runner.
-- **One cache organization for all repositories** (`cacheOrg`): a write token for one customer could write entries
-  that another customer's jobs then pull (the engine still checks every input, but a forged entry can claim any
-  inputs; see SHARED-CACHE.md "Trust"). Before a second customer, give each organization its own tokens.
+- **A job's summary is the job's own word.** The job-completed hook runs as the job user, so a job could put a
+  forged `summary.json` for its own run. **(R-012 F1)** It cannot reach the machine's credential, and the credential
+  is good only for that machine's runner name, repository and run. Do not bill on "minutes saved" or test counts.
+- **(R-012 F3, fixed)** One cache organization per customer installation, per-job signed tokens; pull requests are
+  read-only within their own organization.
 - **The start-up delay in per-job mode** (≈ 1 minute before the job starts) is the price of starting nothing when no
   job runs. A warm, stopped machine or EBS fast snapshot restore would cut it.
 - **Region `eu-west-1` and account `865859654353`** come from the existing `infra/cdk.json`.
@@ -468,4 +490,5 @@ the contract test (`ci_run_id`, `project_id`, `month`).
 - `e58d909` docs for the per-job design.
 - `0d82511` demo mode (default): demo-up/down, the demo Lambda, the reaper per mode, the image bundle; always-on
   removed.
-- (this commit) the customer-mode design and spike, and DEPLOY-AWS.md and this report for the final plan.
+- `98cb03e` the customer-mode design and spike, and DEPLOY-AWS.md and this report for the final plan.
+- Review R-012 fixes: see `docs/REPORT-aws-deploy-2.md`.

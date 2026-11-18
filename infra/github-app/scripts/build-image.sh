@@ -6,7 +6,7 @@ set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
 arn="$(output ImagePipelineArn)"
-[ -n "$arn" ] && [ "$arn" != "None" ] || die "no image pipeline in $STACK (runnerMode is always-on, or the stack is not deployed)"
+[ -n "$arn" ] && [ "$arn" != "None" ] || die "no image pipeline in $STACK (is the stack deployed?)"
 image="$(aws imagebuilder start-image-pipeline-execution --image-pipeline-arn "$arn" --query imageBuildVersionArn --output text)"
 echo "building $image"
 while :; do

@@ -57,6 +57,8 @@ if [ "$MODE" = "per-job" ]; then
     echo "cache machine image: $FENVIX_CACHE_AMI_ID"
   fi
   [ -n "${FENVIX_CACHE_SIGNING_PUBLIC_KEY:-$(ctx cacheSigningPublicKey)}" ] || die "per-job mode needs the cache signing key: bash scripts/cache-key.sh, then put its line in cdk.json"
+  n="$(aws ssm describe-parameters --parameter-filters "Key=Name,Values=/fenvix/$ENVNAME/cache/signing-key" --query 'length(Parameters)' --output text)"
+  [ "$n" = "1" ] || die "per-job mode needs /fenvix/$ENVNAME/cache/signing-key: bash scripts/cache-key.sh"
 fi
 
 say "4/5 the change"

@@ -139,10 +139,12 @@ the direct host; see `DEPLOY-AWS.md`, step 8.
 
 ```
 openssl rand -hex 32   # STATE_SIGNING_KEY: signs the installation link's state
-openssl rand -hex 32   # RUNNER_TOKEN: our runner machines send run summaries with it
+openssl rand -hex 32   # RUNNER_TOKEN: signs each runner machine's own summary credential
 ```
 
-`RUNNER_TOKEN` goes into the same secret store and onto our runner machines (never onto customers' machines).
+`RUNNER_TOKEN` goes into the same secret store. It never goes onto a machine: the App (worker, demo function) signs a
+credential for each machine with it, bound to that machine's runner name and repository (and, per job, its run), and
+the HTTP side checks it (`src/runners/credentials.ts`; review R-012 F1).
 
 ---
 
@@ -161,7 +163,8 @@ openssl rand -hex 32   # RUNNER_TOKEN: our runner machines send run summaries wi
 | `SUPABASE_URL` | required | no | `https://<ref>.supabase.co`: session tokens of dashboard users are checked against its JWKS |
 | `SUPABASE_JWKS_URL` | `SUPABASE_URL/auth/v1/.well-known/jwks.json` | no | |
 | `STATE_SIGNING_KEY` or `_FILE` | required | **yes** | at least 32 characters |
-| `RUNNER_TOKEN` or `_FILE` | required | **yes** | at least 32 characters; `RUNNER_TOKEN_PREVIOUS` during a rotation |
+| `RUNNER_TOKEN` or `_FILE` | required (HTTP); the per-job worker signs with it | **yes** | at least 32 characters; `RUNNER_TOKEN_PREVIOUS` still verifies during a rotation |
+| `CACHE_SIGNING_KEY` or `_FILE` | per-job worker only | **yes** | RSA private key (PEM): signs one shared-cache token per job, for its installation's cache organization |
 | `GITHUB_API_URL` | `https://api.github.com` | no | GitHub Enterprise Server: `https://HOST/api/v3` |
 | `GITHUB_WEB_URL` | `https://github.com` | no | links and the install page |
 | `GITHUB_OAUTH_URL` | `GITHUB_WEB_URL` | no | where the OAuth code is exchanged |
@@ -199,12 +202,14 @@ When the test step ends, the fenvix machine posts the runner's `summary.json` (a
 
 ```
 POST APP_HOST/v1/runner/summaries
-Authorization: Bearer <RUNNER_TOKEN>
+Authorization: Bearer <this machine's summary credential, fxr1....>
 {"repositoryId": $GITHUB_REPOSITORY_ID, "runId": $GITHUB_RUN_ID, "runAttempt": $GITHUB_RUN_ATTEMPT,
  "runnerName": $RUNNER_NAME, "receiptsUrl": "<https link to the receipts, optional>", "summary": {...summary.json...}}
 ```
 
-A runner runs one job at a time, so repository + run + attempt + runner name is one job. The App matches it with
+The runner name, the repository and (per-job machines) the run come from the credential; a body that names others
+is refused (403), and a bare `RUNNER_TOKEN` is not a credential (401). A runner runs one job at a time, so
+repository + run + attempt + runner name is one job. The App matches it with
 the `workflow_job` events of that job, whichever comes first, and publishes once both are in (or after
 `SUMMARY_WAIT_SECONDS` without a summary, or at once when the job was cancelled). The per-test maps (`outcomes`,
 `reused_outcomes`) are dropped before the summary is stored.
@@ -241,7 +246,7 @@ is changed; the pull request lists other test-like jobs. Not changed, with the r
 |---|---|---|
 | `GET /healthz` | anyone | `{"ok": true}` |
 | `POST /webhooks/github` | GitHub (signed) | the webhooks above |
-| `POST /v1/runner/summaries` | our runners (`RUNNER_TOKEN`) | a job's run summary |
+| `POST /v1/runner/summaries` | our runners (each machine's own summary credential) | a job's run summary |
 | `POST /v1/github/install-link` | dashboard (Supabase session; owner or admin) | the install link with a signed state |
 | `GET /github/setup` | the person, sent back by GitHub | links the installation (above) |
 | `POST /v1/repositories/{id}/onboarding` | dashboard (owner or admin of the repository's organization) | opens (or returns) the onboarding pull request |

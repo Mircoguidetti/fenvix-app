@@ -4,7 +4,7 @@
 #   2. the demo function registers a runner (labels self-hosted, fenvix) on the repository through the App, and starts
 #      one machine from the image (a new disk: nothing from an earlier demo);
 #   3. waits until GitHub shows the runner online (about 1-2 minutes).
-# The repository: the argument, else demoRepository in cdk.json. The App must be installed on it.
+# The repository: demoRepository in cdk.json (the function refuses any other). The App must be installed on it.
 set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
