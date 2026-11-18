@@ -65,7 +65,7 @@ class HostConfig:
     bytes_per_s: int = 62_500_000  # 500 Mbit/s each way
     packets_per_s: int = 20_000
     # Per microVM disk (each of its four drives, R-014 R10): 200 MiB/s and 10,000 operations/s. A d3.c1.large's NVMe
-    # drive does several GB/s: 15 microVMs at their limit stay below it.
+    # drive does several GB/s: the cap keeps one job to about 1/4 of it (15 busy microVMs can still saturate it).
     disk_bytes_per_s: int = 200 * 1024 * 1024
     disk_ops_per_s: int = 10_000
     chroot_base: str = "/srv/jailer"

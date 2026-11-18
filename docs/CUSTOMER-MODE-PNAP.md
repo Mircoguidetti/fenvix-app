@@ -19,12 +19,13 @@ GitHub ── workflow_job.queued ──▶ App (worker Lambda): the installatio
                                    of a customer whose region changed)
 
 scaler Lambda (every minute, one run at a time), per region (one pool):
-   desired = clamp(ceil(queued+leased / 15 slots), max(min, hold), max) → orders d3.c1.large (hourly, Ubuntu 24.04)
+   desired = clamp(ceil(leasable queued+leased / 15 slots), max(min, hold), max) → orders d3.c1.large (hourly, Ubuntu 24.04)
    with cloud-init user data; drains a host idle ≥ 20 min near the end of its paid hour; releases it once drained;
    releases a host that never enrolled (90 min), went silent (5 min; but never half the fleet at once, which means
    our host route is down: alert instead; and a silent host that reported running jobs and is powered on waits up to
-   the job limit), or that phoenixNAP has with our prefix but the database does not count as rented (orphan, looked
-   for in every location). A region removed from pnapRegions is planned with min = max = 0 until its hosts are gone
+   the job limit, and counts as capacity meanwhile: a region at max orders no replacement), or that phoenixNAP has
+   with our prefix but the database does not count as rented (orphan, looked for in every location).
+   A region removed from pnapRegions is planned with min = max = 0 until its hosts are gone
 
 phoenixNAP host (d3.c1.large: 2 × Xeon Gold 6536, 32 cores / 64 threads, 256 GB, 2 × 2 TB NVMe):
    cloud-init → /opt/fenvix-host (bundle, SHA-256 checked) → install-host.sh: KVM check, SMT off (no core runs two
@@ -312,6 +313,8 @@ allow 28.
     and reboot the host in the middle of a job: afterwards no jail, namespace, cgroup or conntrack entry is left. If
     phoenixNAP's image uses both drives (software RAID), there is no free drive: jobs' disks are then on the root
     filesystem, unencrypted, and removed by the agent at start.
+    The caches (`/var/lib/fenvix-cache`, and the dedicated cache server's disk) are NOT on dm-crypt: confirm
+    phoenixNAP's disk wipe on deprovision before the first customer (R-014b note 2).
 12. The ruleset stays loaded after a reboot and an `apt upgrade` (the agent reloads it on every lease round if not).
 13. Noisy neighbours (R-014 R10): `fio` in one job and a SYN flood in another while a third job's timings are measured.
 14. Control-plane outage (R-014 R7): stop the hosts function for 6 minutes during a job: nothing is released, and the

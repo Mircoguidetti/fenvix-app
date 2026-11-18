@@ -270,7 +270,12 @@ export async function runScaler(d: ScalerDeps): Promise<ScalerReport> {
   // 4. Plan each region and act.
   const fresh = await loadHosts(d.db);
   const liveTotal = () => fresh.filter((h) => h.role === "runner" && LIVE.includes(h.state)).length;
-  const demand = await d.db.q<{ region: string; n: number }>(`select region, count(*)::int as n from pnap_jobs where state in ('queued', 'leased') group by region`);
+  // Demand counts only jobs a host of the region may lease (the same check as the lease in hosts.ts): a queued job
+  // stranded in its old region (step 2b could not move it) orders and keeps no host there (R-014b N1).
+  const demand = await d.db.q<{ region: string; n: number }>(
+    `select j.region, count(*)::int as n from pnap_jobs j left join gh_installations i on i.installation_id = j.installation_id
+      where j.state = 'leased' or (j.state = 'queued' and i.installation_id is not null and coalesce(i.pnap_region, $1::text) = j.region)
+      group by j.region`, [d.s.defaultRegion]);
   const holds = await d.db.q<{ region: string; hosts: number }>(`select region, hosts from pnap_region_holds where until > $1`, [now]);
   const noCap = await d.db.q<{ region: string; at: Date }>(
     `select region, max(updated_at) as at from pnap_hosts where state = 'failed' and detail like 'no capacity%' group by region`);
