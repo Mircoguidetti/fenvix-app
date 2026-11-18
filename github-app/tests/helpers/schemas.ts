@@ -38,9 +38,37 @@ function load(): void {
   ops.sort((a, b) => b.literal - a.literal);
 }
 
+/**
+ * OpenAPI 3.0 schema → JSON Schema: `nullable: true` becomes a "null" type (and `null` in an enum). Ajv knows
+ * `nullable` only next to `type`; GitHub's description also puts it next to anyOf/allOf.
+ */
+function toJsonSchema(s: unknown): unknown {
+  if (Array.isArray(s)) return s.map(toJsonSchema);
+  if (!s || typeof s !== "object") return s;
+  const o: Json = {};
+  for (const [k, v] of Object.entries(s as Json)) {
+    if (k === "nullable" || k === "example" || k === "examples" || k.startsWith("x-")) continue;
+    // properties / patternProperties are maps of schemas, not schemas: convert their values, keep their keys.
+    if ((k === "properties" || k === "patternProperties") && v && typeof v === "object") {
+      o[k] = Object.fromEntries(Object.entries(v as Json).map(([pk, pv]) => [pk, toJsonSchema(pv)]));
+    } else {
+      o[k] = toJsonSchema(v);
+    }
+  }
+  if ((s as Json).nullable === true) {
+    if (typeof o.type === "string") {
+      o.type = [o.type, "null"];
+      if (Array.isArray(o.enum) && !o.enum.includes(null)) o.enum = [...o.enum, null];
+      return o;
+    }
+    return { anyOf: [o, { type: "null" }] };
+  }
+  return o;
+}
+
 function validator(schema: unknown): ValidateFunction {
   let v = compiled.get(schema);
-  if (!v) { v = ajv.compile(schema as object); compiled.set(schema, v); }
+  if (!v) { v = ajv.compile(toJsonSchema(schema) as object); compiled.set(schema, v); }
   return v;
 }
 
@@ -85,12 +113,12 @@ export function checkExchange(x: { method: string; path: string; query: Record<s
 }
 
 /** GitHub's example response of an operation (from the OpenAPI description), as a starting point for a fake answer. */
-export function exampleResponse(method: string, template: string, status: number): Json {
+export function exampleResponse(method: string, template: string, status: number, key?: string): Json {
   load();
   const o = ops.find((x) => x.method === method && x.template === template);
   if (!o) throw new Error(`no operation ${method} ${template}`);
   const content = (o.op.responses as Record<string, { content?: Record<string, { examples?: Record<string, { value: unknown }>; example?: unknown }> }>)[String(status)]?.content?.["application/json"];
-  const ex = content?.examples ? Object.values(content.examples)[0]?.value : content?.example;
+  const ex = content?.examples ? (key ? content.examples[key]?.value : Object.values(content.examples)[0]?.value) : content?.example;
   if (ex === undefined) throw new Error(`no example for ${method} ${template} ${status}`);
   return structuredClone(ex) as Json;
 }
