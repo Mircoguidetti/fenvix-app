@@ -7,7 +7,7 @@ import { verifySignature } from "./github/signature.ts";
 import { SummaryError, parseSummary, trimSummary } from "./results/summary.ts";
 import { verifySummaryCredential } from "./runners/credentials.ts";
 import type { RunnerLauncher } from "./runners/launcher.ts";
-import { GitHubService, type Logger } from "./service.ts";
+import { GitHubService, type JobPlacer, type Logger } from "./service.ts";
 import { describeWork, InProcessQueue, type Work, type WorkQueue } from "./work.ts";
 
 export interface App {
@@ -27,19 +27,21 @@ export interface Deps {
   queue?: WorkQueue;
   /** "One machine per job": started for each queued fenvix job (in Lambda mode only the worker has one). */
   launcher?: RunnerLauncher;
+  /** Customer mode on phoenixNAP: queued jobs go to their region's queue (in Lambda mode only the worker has one). */
+  placer?: (db: Db) => JobPlacer;
 }
 
 export interface Core { service: GitHubService; db: Db; gh: GitHubApp }
 
 /** The database, the GitHub client and the service: what the HTTP side, the worker and the sweep share. */
-export function buildCore(cfg: Config, log: Logger, launcher: RunnerLauncher | null = null): Core {
+export function buildCore(cfg: Config, log: Logger, launcher: RunnerLauncher | null = null, placer: ((db: Db) => JobPlacer) | null = null): Core {
   const db = new Db(cfg.databaseUrl, cfg.dbPoolMax);
   const gh = new GitHubApp({ apiUrl: cfg.apiUrl, appId: cfg.appId, privateKey: cfg.privateKey, timeoutMs: cfg.githubTimeoutMs });
   const service = new GitHubService(db, gh, {
     runsOnLabel: cfg.runsOnLabel, onboardingBranch: cfg.onboardingBranch, onboardAllRepositories: cfg.onboardAllRepositories,
     dashboardUrl: cfg.dashboardUrl, webUrl: cfg.webUrl, summaryWaitSeconds: cfg.summaryWaitSeconds,
     ...(cfg.runnerTokens[0] ? { summaryKey: cfg.runnerTokens[0] } : {}), cacheSigningKey: cfg.cacheSigningKey,
-  }, log, launcher);
+  }, log, launcher, placer ? placer(db) : null);
   return { service, db, gh };
 }
 
@@ -69,7 +71,7 @@ export async function buildApp(deps: Deps): Promise<App> {
     bodyLimit: 1024 * 1024,
     trustProxy: true,
   });
-  const { service, db, gh } = buildCore(cfg, fastify.log, deps.launcher ?? null);
+  const { service, db, gh } = buildCore(cfg, fastify.log, deps.launcher ?? null, deps.placer ?? null);
   const queue = deps.queue ?? new InProcessQueue(service);
   const sessions = deps.sessions ?? new SessionVerifier(cfg.supabaseUrl, cfg.supabaseJwksUrl);
 

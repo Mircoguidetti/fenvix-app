@@ -8,6 +8,14 @@ import { type BlobPort, s3Port, SqsWorkQueue, sqsPort } from "../queue/sqs.ts";
 import { Ec2Launcher, type RunnerLauncher } from "../runners/launcher.ts";
 import type { Logger } from "../service.ts";
 import { jsonLogger } from "../work.ts";
+import { HttpPnapApi } from "../pnap/api.ts";
+import { HostsService, publicKeyJson, registerHostRoutes } from "../pnap/hosts.ts";
+import { PnapPlacement } from "../pnap/placement.ts";
+import type { ScalerDeps } from "../pnap/scaler.ts";
+import { loadPlacementSettings, loadPnapSettings } from "../pnap/settings.ts";
+import { userData } from "../pnap/userdata.ts";
+import { Db } from "../db.ts";
+import Fastify, { type FastifyInstance } from "fastify";
 import { loadParameter, loadSecrets, type Surface } from "./secrets.ts";
 
 type Env = Record<string, string | undefined>;
@@ -16,13 +24,17 @@ type Env = Record<string, string | undefined>;
  * What a Lambda needs at cold start: the plain settings from its environment (set by infra/github-app), the secrets
  * from SSM, then the config check of src/config.ts (the same rules as the node server).
  */
-export async function lambdaConfig(env: Env, surface: Surface, ssm: SSMClient = new SSMClient({})): Promise<Config> {
+export async function lambdaConfig(env: Env, surface: Surface, ssm: Pick<SSMClient, "send"> = new SSMClient({})): Promise<Config> {
   const prefix = env.SSM_PREFIX;
   if (!prefix) throw new Error("SSM_PREFIX is required");
   const secrets = await loadSecrets(ssm, prefix, surface);
-  if (surface === "launcher" && env.CACHE_SIGNING_KEY_PARAM) secrets.CACHE_SIGNING_KEY = await loadParameter(ssm, env.CACHE_SIGNING_KEY_PARAM);
+  if ((surface === "launcher" || surface === "hosts") && env.CACHE_SIGNING_KEY_PARAM) secrets.CACHE_SIGNING_KEY = await loadParameter(ssm, env.CACHE_SIGNING_KEY_PARAM);
+  if (surface === "hosts") hostKeys.set(env, [secrets.HOST_SIGNING_KEY ?? "", secrets.HOST_SIGNING_KEY_PREVIOUS ?? ""].filter(Boolean));
   return loadConfig({ ...env, ...secrets }, { surface: surface === "all" ? "all" : "worker" });
 }
+
+/** The host signing keys read with the "hosts" surface (kept beside the config, which has no field for them). */
+const hostKeys = new WeakMap<Env, string[]>();
 
 export function overflowBlobs(env: Env): BlobPort | null {
   return env.OVERFLOW_BUCKET ? s3Port(new S3Client({}), env.OVERFLOW_BUCKET) : null;
@@ -54,13 +66,18 @@ export function launcherFrom(env: Env, log: Logger, ec2: EC2Client = new EC2Clie
   return new Ec2Launcher({ ec2, launchTemplateId: env.RUNNER_LAUNCH_TEMPLATE_ID, maxRunning: max, machineEnv: machineEnv(env), tags, log });
 }
 
-/** The worker's and the sweep's service (no HTTP secrets). Only the worker starts runner machines. */
+/**
+ * The worker's and the sweep's service (no HTTP secrets). Only the worker starts runner machines (per-job mode) or
+ * places jobs in their region's queue (CUSTOMER_MODE=pnap; no secret needed for that).
+ */
 export async function workerCore(env: Env, opts: { launches?: boolean } = {}): Promise<Core & { log: Logger; blobs: BlobPort | null; close(): Promise<void> }> {
-  const launches = !!opts.launches && env.RUNNER_MODE === "per-job";
+  const pnap = !!opts.launches && env.CUSTOMER_MODE === "pnap";
+  const launches = !!opts.launches && !pnap && env.RUNNER_MODE === "per-job";
   const cfg = await lambdaConfig(env, launches ? "launcher" : "worker");
   const log = jsonLogger(cfg.logLevel);
   if (launches && !cfg.runnerTokens.length) throw new Error("RUNNER_TOKEN is required to start machines (each gets its own summary credential)");
-  const core = buildCore(cfg, log, launches ? launcherFrom(env, log) : null);
+  const placement = pnap ? loadPlacementSettings(env) : null;
+  const core = buildCore(cfg, log, launches ? launcherFrom(env, log) : null, placement ? (db) => new PnapPlacement(db, placement, log) : null);
   return { ...core, log, blobs: overflowBlobs(env), close: () => core.db.close() };
 }
 
@@ -110,3 +127,41 @@ export function once<T>(make: () => Promise<T>): () => Promise<T> {
     return p;
   };
 }
+
+/**
+ * The phoenixNAP host routes (Lambda "hosts", API route /v1/hosts/*): reads the database URL, the App's private key
+ * (just-in-time runners), RUNNER_TOKEN (summary credentials), the cache signing key and the host signing key.
+ */
+export async function hostsApp(env: Env, ssm: Pick<SSMClient, "send"> = new SSMClient({})): Promise<{ fastify: FastifyInstance; close(): Promise<void> }> {
+  const cfg = await lambdaConfig(env, "hosts", ssm);
+  const keys = hostKeys.get(env) ?? [];
+  if (!keys.length) throw new Error("HOST_SIGNING_KEY is required");
+  if (!cfg.runnerTokens.length) throw new Error("RUNNER_TOKEN is required (each leased job gets its own summary credential)");
+  const log = jsonLogger(cfg.logLevel);
+  const core = buildCore(cfg, log);
+  const fastify = Fastify({ logger: false, bodyLimit: 1024 * 1024 });
+  registerHostRoutes(fastify, new HostsService({ db: core.db, service: core.service, s: loadPnapSettings(env), log, hostKeys: keys, cacheSigningKey: cfg.cacheSigningKey }));
+  await fastify.ready();
+  return { fastify, close: async () => { await fastify.close(); await core.db.close(); } };
+}
+
+/** The scaler: the database and the phoenixNAP API client only (no GitHub secret). */
+export async function scalerDeps(env: Env, ssm: Pick<SSMClient, "send"> = new SSMClient({})): Promise<ScalerDeps & { close(): Promise<void> }> {
+  const prefix = env.SSM_PREFIX;
+  if (!prefix || !env.PNAP_CLIENT_ID_PARAM || !env.PNAP_CLIENT_SECRET_PARAM) throw new Error("SSM_PREFIX, PNAP_CLIENT_ID_PARAM and PNAP_CLIENT_SECRET_PARAM are required");
+  const s = loadPnapSettings(env);
+  const [dbUrl, clientId, clientSecret] = await Promise.all([
+    loadParameter(ssm, `${prefix}/database-url`), loadParameter(ssm, env.PNAP_CLIENT_ID_PARAM), loadParameter(ssm, env.PNAP_CLIENT_SECRET_PARAM),
+  ]);
+  // Only the PUBLIC half of the cache key, for the regions' cache servers (dedicated mode); a public value.
+  const cachePublic = env.PNAP_CACHE_PUBLIC_KEY_N && env.PNAP_CACHE_PUBLIC_KEY_E ? { n: env.PNAP_CACHE_PUBLIC_KEY_N, e: Number(env.PNAP_CACHE_PUBLIC_KEY_E) } : undefined;
+  const db = new Db(dbUrl, 2);
+  return {
+    db, s, log: jsonLogger(env.LOG_LEVEL ?? "info"),
+    api: new HttpPnapApi({ clientId, clientSecret }),
+    userData: (h) => userData(s, h, cachePublic),
+    close: () => db.close(),
+  };
+}
+
+export { publicKeyJson };

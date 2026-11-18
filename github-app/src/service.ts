@@ -20,6 +20,24 @@ export interface ServiceSettings {
   cacheSigningKey?: KeyObject | null;
 }
 
+/**
+ * Customer mode on phoenixNAP (src/pnap/placement.ts): a queued fenvix job goes to its customer's region's queue; a
+ * host of that region leases it (src/pnap/hosts.ts), and only then are its just-in-time runner and credentials made.
+ */
+export interface JobPlacer {
+  place(j: { jobId: number; installationId: number; repositoryId: number }): Promise<void>;
+  /** GitHub says the job is completed (it ran, or it was cancelled while still waiting for a host). */
+  finished(jobId: number): Promise<void>;
+}
+
+/** Everything one job's runner needs, minted at the moment a host takes the job (mintJob). */
+export interface MintedJob {
+  jobId: number; runId: number; runAttempt: number; repositoryId: number; installationId: number; runnerName: string; runnerId: number | null;
+  jitConfig: string; summaryToken: string; cacheToken?: string; cacheOrg: string; cacheAccess: "read" | "write";
+  /** Deletes the just-in-time runner registration (the host could not take the job after all). */
+  unregister(why: string): Promise<void>;
+}
+
 /** How long a per-job machine's credentials live: past the reaper's hard limit and the poster's retries. */
 const JOB_CREDENTIAL_SECONDS = 24 * 3600;
 
@@ -76,8 +94,11 @@ export class GitHubService {
   /** "One machine per job" mode: starts a runner machine for each queued fenvix job. Absent: an always-on runner. */
   private readonly launcher: RunnerLauncher | null;
 
-  constructor(db: Db, gh: GitHubApp, s: ServiceSettings, log: Logger, launcher: RunnerLauncher | null = null) {
-    this.db = db; this.gh = gh; this.s = s; this.log = log; this.launcher = launcher;
+  /** Customer mode on phoenixNAP: queued jobs go to their region's queue instead of a machine of their own. */
+  private readonly placer: JobPlacer | null;
+
+  constructor(db: Db, gh: GitHubApp, s: ServiceSettings, log: Logger, launcher: RunnerLauncher | null = null, placer: JobPlacer | null = null) {
+    this.db = db; this.gh = gh; this.s = s; this.log = log; this.launcher = launcher; this.placer = placer;
   }
 
   background(what: string, fn: () => Promise<unknown>): void {
@@ -330,9 +351,15 @@ export class GitHubService {
          updated_at = now()`,
       [job.id, repo.id, installationId, job.run_id, job.run_attempt ?? 1, job.workflow_name ?? "", job.name, job.head_sha, job.head_branch ?? null,
         job.labels, job.runner_name || null, status, job.conclusion ?? null, job.created_at ?? null, job.started_at ?? null, job.completed_at ?? null]);
-    if (status === "queued" && p.action === "queued" && this.launcher) await this.launchRunner(job.id, installationId, repo);
+    if (status === "queued" && p.action === "queued") {
+      if (this.placer) await this.placeJob(job.id, installationId, repo.id);
+      else if (this.launcher) await this.launchRunner(job.id, installationId, repo);
+    }
     if (status === "in_progress") await this.startCheckRun(job.id, job.html_url ?? null);
-    if (status === "completed") await this.tryPublish(job.id);
+    if (status === "completed") {
+      if (this.placer) await this.placer.finished(job.id);
+      await this.tryPublish(job.id);
+    }
     return true;
   }
 
@@ -401,6 +428,67 @@ export class GitHubService {
     // just-in-time configuration; this one would never be used.
     if (res.already) await unregister("the job's machine already exists");
     this.log.info({ job: jobId, repository: repo.full_name, runner: runnerName, instance: res.instanceId, already: res.already, cache: cacheAccess }, "runner machine requested");
+  }
+
+  /** Customer mode on phoenixNAP: only for installations linked to an organization (as launchRunner). */
+  private async placeJob(jobId: number, installationId: number, repositoryId: number): Promise<void> {
+    const [inst] = await this.db.q<{ workspace_id: string | null; suspended_at: Date | null; deleted_at: Date | null }>(
+      "select workspace_id, suspended_at, deleted_at from gh_installations where installation_id = $1", [installationId]);
+    if (!inst?.workspace_id || inst.suspended_at || inst.deleted_at) {
+      this.log.warn({ job: jobId, installation: installationId }, "not placed: the installation is not linked to an organization");
+      return;
+    }
+    await this.placer!.place({ jobId, installationId, repositoryId });
+  }
+
+  /**
+   * Customer mode on phoenixNAP: what a host needs to run one leased job, made now: a just-in-time runner (one job),
+   * the job's summary credential (its runner, repository and run only) and its cache token (its installation's cache
+   * organization only; write only on a trusted ref). null when the job no longer waits for a runner (cancelled,
+   * picked up, the installation unlinked). Nothing of it is stored: it goes to the host in the lease answer.
+   */
+  async mintJob(jobId: number): Promise<MintedJob | null> {
+    const [row] = await this.db.q<{ status: string; run_id: number; run_attempt: number; installation_id: number; repository_id: number; full_name: string; default_branch: string | null }>(
+      `select j.status, j.run_id, j.run_attempt, j.installation_id, j.repository_id, r.full_name, r.default_branch
+         from gh_jobs j join gh_repositories r using (repository_id) where j.job_id = $1`, [jobId]);
+    if (!row || row.status !== "queued") return null;
+    const [inst] = await this.db.q<{ workspace_id: string | null; suspended_at: Date | null; deleted_at: Date | null }>(
+      "select workspace_id, suspended_at, deleted_at from gh_installations where installation_id = $1", [row.installation_id]);
+    if (!inst?.workspace_id || inst.suspended_at || inst.deleted_at) return null;
+    if (!this.s.summaryKey) throw new Error("no summary signing key (RUNNER_TOKEN): no job is handed out without its own credential");
+    const gh = this.gh.installation(row.installation_id);
+    const base = repoPath(row.full_name);
+    const run = await gh.request<{ event?: string; head_branch?: string | null; head_repository?: { id: number } | null }>(
+      "GET", `${base}/actions/runs/${row.run_id}`, { allow: [404] }).then((r) => (r.status === 404 ? null : r.data)).catch(() => null);
+    const trusted = !!run && ["push", "schedule", "workflow_dispatch", "merge_group"].includes(run.event ?? "")
+      && !!row.default_branch && run.head_branch === row.default_branch && run.head_repository?.id === row.repository_id;
+    type Jit = { encoded_jit_config: string; runner?: { id?: number } };
+    let runnerName = `fenvix-j${jobId}`;
+    let jit = await gh.request<Jit>("POST", `${base}/actions/runners/generate-jitconfig`, {
+      body: { name: runnerName, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" }, allow: [409],
+    });
+    if (jit.status === 409) {
+      runnerName = `fenvix-j${jobId}-${Date.now().toString(36)}`;
+      jit = await gh.request<Jit>("POST", `${base}/actions/runners/generate-jitconfig`, {
+        body: { name: runnerName, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" },
+      });
+    }
+    const runnerId = jit.data.runner?.id ?? null;
+    const exp = Math.floor(Date.now() / 1000) + JOB_CREDENTIAL_SECONDS;
+    const cacheAccess = trusted ? "write" as const : "read" as const;
+    const cacheToken = this.s.cacheSigningKey ? signCacheToken(this.s.cacheSigningKey, { installationId: row.installation_id, write: trusted, exp, jobId }) : undefined;
+    return {
+      jobId, runId: row.run_id, runAttempt: row.run_attempt, repositoryId: row.repository_id, installationId: row.installation_id,
+      runnerName, runnerId, jitConfig: jit.data.encoded_jit_config, cacheAccess, cacheOrg: `gh-${row.installation_id}`,
+      summaryToken: signSummaryCredential(this.s.summaryKey, { runnerName, repositoryId: row.repository_id, runId: row.run_id, exp }),
+      ...(cacheToken ? { cacheToken } : {}),
+      unregister: async (why: string) => {
+        if (!runnerId) return;
+        await gh.request("DELETE", `${base}/actions/runners/${runnerId}`, { allow: [404, 422] })
+          .catch((e: unknown) => this.log.warn({ job: jobId, runner: runnerName, err: e instanceof Error ? e.message : String(e) }, "could not delete an unused just-in-time runner"));
+        this.log.info({ job: jobId, runner: runnerName, why }, "unused just-in-time runner deleted");
+      },
+    };
   }
 
   /** A check run "in progress" on the commit while the job runs on fenvix. */

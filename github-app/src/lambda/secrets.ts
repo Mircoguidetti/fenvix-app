@@ -13,6 +13,12 @@ import { GetParametersCommand, type SSMClient } from "@aws-sdk/client-ssm";
  *                                                              function (sign each machine's credential); never a
  *                                                              machine
  *   <prefix>/runner-token-previous   RUNNER_TOKEN_PREVIOUS     HTTP only, optional (during a rotation)
+ *   <prefix>/host-signing-key        HOST_SIGNING_KEY          the phoenixNAP hosts function only (signs and verifies
+ *                                                              host credentials); never a host
+ *   <prefix>/host-signing-key-previous                         the same, optional (during a rotation)
+ *
+ * The phoenixNAP scaler reads only the database URL and the phoenixNAP API client (PNAP_CLIENT_ID_PARAM,
+ * PNAP_CLIENT_SECRET_PARAM: /fenvix/<env>/pnap/client-id and client-secret), by full name; it holds no GitHub secret.
  *
  * The per-job worker also reads the cache signing key, by its full name (CACHE_SIGNING_KEY_PARAM, /fenvix/<env>/cache/
  * signing-key). Every function reloads its secrets after SECRETS_TTL_SECONDS (runtime.ts), so a rotation takes
@@ -20,17 +26,23 @@ import { GetParametersCommand, type SSMClient } from "@aws-sdk/client-ssm";
  *
  * <prefix> is SSM_PREFIX, e.g. /fenvix/prod/github-app. infra/github-app/lib/parameters.ts holds the same list.
  */
-/** "all": the HTTP function. "launcher": the per-job worker. "worker": the demo-mode worker and the sweep. */
-export type Surface = "all" | "launcher" | "worker";
+/**
+ * "all": the HTTP function. "launcher": the per-job worker. "worker": the demo-mode worker, the sweep and the
+ * customer-mode (phoenixNAP) worker, which only places jobs. "hosts": the phoenixNAP host routes (mint each leased
+ * job's runner and credentials, sign host credentials).
+ */
+export type Surface = "all" | "launcher" | "worker" | "hosts";
 
 export const SECRET_PARAMETERS: Record<string, { env: string; surfaces: Surface[]; required: boolean }> = {
-  "database-url": { env: "GITHUB_APP_DATABASE_URL", surfaces: ["all", "launcher", "worker"], required: true },
-  "private-key": { env: "GITHUB_APP_PRIVATE_KEY", surfaces: ["all", "launcher", "worker"], required: true },
+  "database-url": { env: "GITHUB_APP_DATABASE_URL", surfaces: ["all", "launcher", "worker", "hosts"], required: true },
+  "private-key": { env: "GITHUB_APP_PRIVATE_KEY", surfaces: ["all", "launcher", "worker", "hosts"], required: true },
   "webhook-secret": { env: "GITHUB_WEBHOOK_SECRET", surfaces: ["all"], required: true },
   "client-secret": { env: "GITHUB_CLIENT_SECRET", surfaces: ["all"], required: true },
   "state-signing-key": { env: "STATE_SIGNING_KEY", surfaces: ["all"], required: true },
-  "runner-token": { env: "RUNNER_TOKEN", surfaces: ["all", "launcher"], required: true },
+  "runner-token": { env: "RUNNER_TOKEN", surfaces: ["all", "launcher", "hosts"], required: true },
   "runner-token-previous": { env: "RUNNER_TOKEN_PREVIOUS", surfaces: ["all"], required: false },
+  "host-signing-key": { env: "HOST_SIGNING_KEY", surfaces: ["hosts"], required: true },
+  "host-signing-key-previous": { env: "HOST_SIGNING_KEY_PREVIOUS", surfaces: ["hosts"], required: false },
 };
 
 export function parameterNames(prefix: string, surface: Surface): string[] {

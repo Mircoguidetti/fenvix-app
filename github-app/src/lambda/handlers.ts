@@ -14,7 +14,7 @@ type WorkerCore = Pick<Core, "service"> & { log: Logger; blobs: BlobPort | null 
  * HTTP: API Gateway → Fastify. Every route answers before the function returns; webhooks and runner summaries are
  * checked, queued, and answered 202 (nothing runs after the response).
  */
-export function makeHttpHandler(getApp: () => Promise<App>) {
+export function makeHttpHandler(getApp: () => Promise<Pick<App, "fastify">>) {
   return async (event: HttpApiEvent): Promise<HttpApiResult> => {
     const app = await getApp();
     return invoke(app.fastify, event);
