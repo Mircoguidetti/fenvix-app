@@ -126,11 +126,19 @@ export async function layoutProblems(page) {
     const out = [];
     const vw = document.documentElement.clientWidth;
     if (document.documentElement.scrollWidth > vw) out.push(`page scrolls horizontally (${document.documentElement.scrollWidth} > ${vw})`);
+    // Visually hidden text (the .sr-only pattern: clipped to nothing) is for screen readers, not a layout problem.
+    const hiddenToEye = (el) => {
+      for (let e = el; e && e !== document.body; e = e.parentElement) {
+        const c = getComputedStyle(e).clip;
+        if (e.classList.contains("sr-only") || c === "rect(0px, 0px, 0px, 0px)" || c === "rect(0px 0px 0px 0px)") return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll("body *")) {
       const r = el.getBoundingClientRect();
       if (!r.width || !r.height || el.closest("[hidden],dialog:not([open])")) continue;
       const cs = getComputedStyle(el);
-      if (cs.position === "fixed" || el.closest(".sr-only") || el.classList.contains("sr-only") || el.classList.contains("skip-link")) continue;
+      if (cs.position === "fixed" || hiddenToEye(el) || el.classList.contains("skip-link")) continue;
       if (r.right > vw + 1 && !el.closest(".table-scroll")) out.push(`${el.tagName}.${el.className} extends past viewport (${Math.round(r.right)} > ${vw})`);
     }
     // Elements under a dialog, the drawer or an open menu are not a layout problem.

@@ -1329,7 +1329,9 @@ a.cx-crumb-btn:hover, button.cx-crumb-btn:hover, .cx-crumb-btn[aria-expanded="tr
 /* The account sits in the top bar as a round avatar; its menu opens downwards. */
 .cx-account { position: relative; }
 .cx-account .account { min-height: 0; }
-.cx-account .workspace-text, .cx-account .workspace-chevron { display: none; }
+.cx-account .workspace-chevron { display: none; }
+/* Avatar only on a computer: the name, organization and role stay in the button's accessible name, unseen. */
+.cx-account .workspace-text { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; flex: none; }
 .cx-account .account-btn { width: auto; min-height: var(--touch); padding: 4px; border-radius: 999px; }
 .cx-account .avatar { width: 34px; height: 34px; background: var(--bg); color: var(--nav-text); border: 1px solid #d7dae0; }
 .cx-account .account-panel { top: calc(100% + 8px); bottom: auto; left: auto; right: 0; width: 300px; }

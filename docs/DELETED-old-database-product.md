@@ -140,5 +140,5 @@ Dropped by section 1 of `supabase/migrations/0014_dashboard_api.sql`. Migrations
 ## Removed after the dashboard was rewritten (coordinator)
 
 - `docs/ui/` (35 files): screenshots and mockups of the old console's look (its Databases navigation); the dashboard's
-  screenshots are now `docs/screenshots/` (mock) and `docs/screenshots/real-api/` (the real API).
+  screenshots are now `docs/screenshots/` (mock) and `docs/screenshots-real-api/` (the real API).
 - `scripts/sidebar-shots.mjs`, `scripts/side-by-side.py`: wrote and combined those old screenshots.

@@ -7,7 +7,7 @@
 //
 //   bash scripts/local-supabase/up.sh && node scripts/e2e-real-api.mjs
 //
-// Writes docs/screenshots/real-api/*.png and docs/screenshots/real-api/RESULTS.md.
+// Writes docs/screenshots-real-api/*.png and docs/screenshots-real-api/RESULTS.md.
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,7 +28,7 @@ const API_PORT = 8791;
 const WEB_PORT = 4174;
 const API = `http://127.0.0.1:${API_PORT}/v1`;
 const WEB = `http://localhost:${WEB_PORT}`;
-const OUT = "docs/screenshots/real-api";
+const OUT = "docs/screenshots-real-api";
 mkdirSync(OUT, { recursive: true });
 
 const results = [];

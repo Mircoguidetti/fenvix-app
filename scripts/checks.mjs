@@ -559,7 +559,9 @@ const TESTS = {
     assert(mine.initial === "M", `My workspace shows ${mine.initial}`);
     assert(mine.role === "Owner", `the role reads ${mine.role}`);
     assert(mine.title === "Elena Marsh · My workspace", `the tooltip reads ${mine.title}`);
-    assert(!mine.clipped, "My workspace is cut off");
+    // On a computer the text is visually hidden (the avatar shows; screen readers still get the name): only the
+    // phone's drawer shows it, so only there can it be cut off or run out of its box.
+    if (isMobile(vp)) assert(!mine.clipped, "My workspace is cut off");
     assert(!mine.empty.length, `empty elements in the organization box: ${mine.empty.join(", ")}`);
     assert(mine.tag === "BUTTON", "the organization box is not a button");
     assert(!mine.brandInside, "the brand is inside the organization box");
@@ -580,7 +582,7 @@ const TESTS = {
     const l = await rename(long);
     // On a computer the top bar shows the account as an avatar only; the drawer on a phone shows the name, cut.
     if (isMobile(vp)) assert(l.clipped && l.ellipsis, "a long name is not cut with an ellipsis");
-    assert(l.inside, "a long name runs out of its box");
+    if (isMobile(vp)) assert(l.inside, "a long name runs out of its box");
     assert(l.title === `Elena Marsh · ${long}`, `the tooltip does not hold the whole name: ${l.title}`);
 
     // Keyboard order: skip link, then the brand in the top bar (desktop) or the menu button (phone).
