@@ -364,7 +364,24 @@ or policy was lost.
 
 ## Suites (run as the report lists, on this branch: `daa9b17` plus the review test)
 
-SUITES_TABLE
+Every suite passes, with the same counts as the report, except the 9 new review tests, which fail on purpose.
+
+| Command | Result |
+| --- | --- |
+| `npm run api:lint` | `openapi/fenvix-api.yaml` valid |
+| `npm run build` | passes (`api:check`, `tsc`, `vite build`) |
+| `npm run test:unit` | 59 / 59 |
+| `npm run check` (mock) | behaviour 34 / 34, organizations 10 / 10, status colours 18 / 18; screenshots: all layout checks pass, 140 pictures |
+| `node scripts/e2e-real-api.mjs` (local Supabase, real tokens) | 157 / 157 |
+| `cd github-app && npm test` | typecheck clean; unit 95 / 95; integration **120 / 129: the 120 existing tests pass, the 9 R-016 tests fail as intended** |
+| `cd infra/github-app && npm test` | 56 / 56, cdk-nag clean |
+| `npm run test:rls` (scratch Postgres 16) | API RLS OK, CI RLS OK, CI EXPLORE RLS OK, GH RLS OK |
+
+**Environment.**
+
+- The local Supabase comes from `scripts/local-supabase/up.sh`: `supabase/postgres:15.8.1.085` and `supabase/gotrue:v2.186.0` in Docker.
+- The App's test database and the RLS scratch database are a local Postgres 16 on port 54329.
+- The screenshots that `npm run check` and the real-API pass regenerated were not committed.
 
 Changes on this branch besides this document:
 
