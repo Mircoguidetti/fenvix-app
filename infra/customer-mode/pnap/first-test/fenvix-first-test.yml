@@ -1,0 +1,27 @@
+# Copy into .github/workflows/ of each test repository (two GitHub organizations, docs/CUSTOMER-MODE-PNAP.md).
+# first-test.sh dispatches it. Runs on fenvix (a Firecracker microVM on a phoenixNAP host) and checks, from inside the
+# job, what the job must and must not reach; the job fails if any check fails.
+name: fenvix-first-test
+on:
+  workflow_dispatch:
+    inputs:
+      nonce:
+        description: "set by first-test.sh"
+        required: true
+jobs:
+  isolation:
+    runs-on: fenvix
+    timeout-minutes: 20
+    steps:
+      - name: probes
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "FENVIX-TIME job_start $(date +%s.%N) nonce ${{ inputs.nonce }}"
+          curl -fsSL -o probe.sh "https://raw.githubusercontent.com/${PROBE_REPO}/${PROBE_REF}/infra/customer-mode/pnap/first-test/probe.sh"
+          echo "${PROBE_SHA256}  probe.sh" | sha256sum -c -
+          bash probe.sh
+        env:
+          PROBE_REPO: Mircoguidetti/fenvix-app
+          PROBE_REF: claude/customer-mode-pnap
+          PROBE_SHA256: __PROBE_SHA256__

@@ -8,8 +8,9 @@ Supabase), always up. The runners come in three modes:
   gets a new machine, so no data is shared between demos.
 - **Per-job mode (option, built):** each queued job gets its own EC2 machine, deleted after the job, with a shared
   cache in which each customer installation is its own organization.
-- **Customer mode (design and spike, not built):** one c7i.xlarge host runs each customer job in its own Firecracker
-  microVM (Nitro Sandboxes) and destroys it after the job. See "Customer mode" below.
+- **Customer mode:** on phoenixNAP Bare Metal Cloud, see `docs/CUSTOMER-MODE-PNAP.md`. The earlier AWS design (one
+  c7i.xlarge host, each customer job in its own Firecracker microVM with Nitro Sandboxes) is kept in "Customer mode"
+  below for reference.
 
 The steps are in order, with one action per step. **Nothing here has been deployed yet.** The code was synthesized
 and tested without an AWS account (see `docs/REPORT-aws-deploy.md`, and `docs/REPORT-aws-deploy-2.md` for the fixes
@@ -678,6 +679,10 @@ A job that runs longer costs proportionally more. Each extra 10 minutes of job t
 20 minutes, the job machines cost about $33.
 
 ## Customer mode (design; spike in `infra/customer-mode/spike/`; not built)
+
+> **Superseded for customers (founder's decision, 2026-11-18):** customer jobs run on **phoenixNAP Bare Metal Cloud**
+> hosts rented by the hour, each job in its own Firecracker microVM on KVM; see `docs/CUSTOMER-MODE-PNAP.md` (built
+> and tested without a real host). Demos stay on AWS (demo mode, above). The AWS design below is kept for reference.
 
 **The plan.** Customer jobs run on **c7i** hosts, each job in its own **Firecracker microVM**, using Firecracker's
 **Nitro Sandboxes** backend (v1.18.0, released with `PUT /enclave`). The microVM is destroyed after the job. More hosts

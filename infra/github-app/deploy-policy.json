@@ -140,6 +140,12 @@
       "Effect": "Allow",
       "Action": "lambda:InvokeFunction",
       "Resource": "arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-demo"
+    },
+    {
+      "Sid": "RunTheScalerByHand",
+      "Effect": "Allow",
+      "Action": "lambda:InvokeFunction",
+      "Resource": "arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-scaler"
     }
   ]
 }

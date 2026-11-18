@@ -17,6 +17,9 @@ root="$work/root"
 cleanup() { for d in dev/pts dev sys proc; do umount "$root/$d" 2>/dev/null || true; done; rm -rf -- "${work:?}"; }
 trap cleanup EXIT
 unsquashfs -q -d "$root" "$BASE"
+# The CI rootfs has no usable /tmp: apt (and the engine build) need one.
+install -d -m 1777 "$root/tmp" "$root/var/tmp"
+install -d -m 0755 "$root/var/cache/apt/archives/partial" "$root/var/lib/apt/lists/partial" "$root/var/log/apt"
 # Jobs resolve through public resolvers (phoenixNAP servers use 8.8.8.8 too); no host resolver is reachable.
 rm -f "$root/etc/resolv.conf"; printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' >"$root/etc/resolv.conf"
 install -m 0755 "$here/fenvix-guest-job" "$root/usr/local/sbin/fenvix-guest-job"
