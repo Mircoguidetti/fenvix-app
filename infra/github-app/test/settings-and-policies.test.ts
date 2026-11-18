@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { readSettings } from "../lib/settings.ts";
-import { ALWAYS_ON, cdkContext, SAMPLE, settings, synth } from "./helpers.ts";
+import { cdkContext, PER_JOB, SAMPLE, settings, synth } from "./helpers.ts";
 
 type Stmt = { Sid: string; Effect: string; Action: string | string[]; Resource: string | string[]; Condition?: unknown };
 const policy = (f: string) => JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url), "utf8")) as { Statement: Stmt[] };
@@ -21,8 +21,8 @@ describe("settings", () => {
 
   it("refuses values that would break the deploy or the machine", async () => {
     await assert.rejects(settings({ dashboardUrl: "http://app.fenvix.dev" }), /https/);
-    await assert.rejects(settings({ ...ALWAYS_ON, runnerScopeUrl: "https://gitlab.com/x/y" }), /runnerScopeUrl/);
-    await assert.rejects(settings({ runnerMode: "sometimes" }), /per-job or always-on/);
+    await assert.rejects(settings({ demoRepository: "https://github.com/x/y" }), /owner\/name/);
+    await assert.rejects(settings({ runnerMode: "always-on" }), /demo or per-job/);
     await assert.rejects(settings({ cachePrivateIp: "10.42.1.10" }), /cachePrivateIp/);
     await assert.rejects(settings({ cacheTokenSha256Write: "abc" }), /SHA-256/);
     await assert.rejects(settings({ cacheTokenSha256Write: "a".repeat(64), cacheTokenSha256Read: "a".repeat(64) }), /must differ/);
@@ -33,6 +33,8 @@ describe("settings", () => {
     const s = await settings();
     assert.equal(s.domainName, "github.fenvix.dev");
     assert.equal(s.runnerInstanceType, "t3.medium");
+    assert.equal(s.runnerMode, "demo");
+    assert.equal(s.demoMaxHours, 12);
     assert.equal(s.runnerVolumeGb, 30);
     assert.equal(s.region, "eu-west-1");
   });
@@ -57,7 +59,9 @@ describe("IAM policy files", () => {
   it("the deployer only assumes the CDK bootstrap roles and reads or writes our own parameters, stack, logs", () => {
     const p = policy("deploy-policy.json");
     const actions = p.Statement.filter((s) => s.Effect === "Allow").flatMap((s) => arr(s.Action));
-    for (const a of actions) assert.ok(!/^(iam|lambda|ec2:Run|ec2:Terminate|s3|cloudformation:(Create|Update|Delete|Execute))/.test(a), a);
+    for (const a of actions) assert.ok(!/^(iam|lambda:(?!InvokeFunction$)|ec2:Run|ec2:Terminate|s3|cloudformation:(Create|Update|Delete|Execute))/.test(a), a);
+    const invoke = p.Statement.find((s) => arr(s.Action).includes("lambda:InvokeFunction"))!;
+    assert.deepEqual(arr(invoke.Resource), ["arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-demo"], "only demo-up / demo-down");
     const assume = p.Statement.find((s) => s.Sid === "CdkDeployThroughBootstrapRoles")!;
     for (const r of arr(assume.Resource)) assert.match(r, /:role\/cdk-hnb659fds-(deploy|file-publishing|lookup)-role-/);
     const put = p.Statement.find((s) => arr(s.Action).includes("ssm:PutParameter"))!;
@@ -71,7 +75,7 @@ describe("IAM policy files", () => {
       ApiGatewayV2: "apigateway", CloudWatch: "cloudwatch", SNS: "sns", EC2: "ec2", ImageBuilder: "imagebuilder",
     };
     const allowed = new Set(execs.filter((s) => s.Effect === "Allow").flatMap((s) => arr(s.Action)).map((a) => a.split(":")[0]));
-    for (const over of [{}, ALWAYS_ON]) {
+    for (const over of [{}, PER_JOB]) {
       const { template } = await synth(over);
       for (const t of new Set(Object.values(template.toJSON().Resources as Record<string, { Type: string }>).map((r) => r.Type))) {
         const svc = prefix[t.split("::")[1]!];

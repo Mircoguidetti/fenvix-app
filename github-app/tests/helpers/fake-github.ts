@@ -28,6 +28,9 @@ export interface FakeRepo {
   runs: Map<number, { event: string; createdAt: string; headSha: string; headBranch: string; message: string; pullRequests: number[]; headRepoId?: number }>;
   /** Just-in-time runners created (generate-jitconfig). */
   jitRunners: { id: number; name: string; labels: string[]; runnerGroupId: number; config: string }[];
+  /** Registration tokens handed out, and the self-hosted runners registered with them (the tests register them). */
+  registrationTokens: string[];
+  runners: { id: number; name: string; status: "online" | "offline"; busy: boolean }[];
 }
 
 export interface FakeInstallation { id: number; account: { login: string; id: number; type: "User" | "Organization" }; repos: number[]; selection: "all" | "selected" }
@@ -76,7 +79,7 @@ export class FakeGitHub {
     const repo: FakeRepo = {
       id: o.id, owner, ownerId: o.ownerId, name, fullName: o.fullName, defaultBranch: o.defaultBranch ?? "main", private: o.private ?? true, archived: false,
       branches: new Map([[o.defaultBranch ?? "main", { sha: sha1(o.fullName + "base"), files }]]),
-      pulls: [], checkRuns: new Map(), comments: new Map(), runs: new Map(), jitRunners: [],
+      pulls: [], checkRuns: new Map(), comments: new Map(), runs: new Map(), jitRunners: [], registrationTokens: [], runners: [],
     };
     this.repos.set(o.fullName, repo);
     return repo;
@@ -179,6 +182,13 @@ export class FakeGitHub {
       if (!this.installations.has(id)) return this.notFound();
       return [200, this.installationJson(id, exampleResponse("GET", "/app/installations/{installation_id}", 200))];
     }
+    if ((m = /^\/repos\/([^/]+)\/([^/]+)\/installation$/.exec(p)) && method === "GET") {
+      if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      const repo = this.repos.get(`${decodeURIComponent(m[1]!)}/${decodeURIComponent(m[2]!)}`);
+      const inst = repo ? [...this.installations.values()].find((i) => i.repos.includes(repo.id)) : undefined;
+      if (!inst) return this.notFound();
+      return [200, this.installationJson(inst.id, exampleResponse("GET", "/repos/{owner}/{repo}/installation", 200))];
+    }
     // ---- as an installation, on a repository
     if (!(m = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(p))) return this.notFound();
     const inst = this.installationOf(auth);
@@ -267,6 +277,23 @@ export class FakeGitHub {
           return { ...prTemplate, number: n, head: { ...(prTemplate.head as Json), ref: pr?.head ?? run.headBranch, sha: run.headSha }, base: { ...(prTemplate.base as Json), ref: pr?.base ?? repo.defaultBranch } };
         }),
       }];
+    }
+    if (method === "POST" && rest === "/actions/runners/registration-token") {
+      const token = randomBytes(15).toString("hex").toUpperCase().slice(0, 29);
+      repo.registrationTokens.push(token);
+      return [201, { ...exampleResponse("POST", "/repos/{owner}/{repo}/actions/runners/registration-token", 201), token, expires_at: new Date(Date.now() + 3600_000).toISOString() }];
+    }
+    if (method === "GET" && rest === "/actions/runners") {
+      const ex = exampleResponse("GET", "/repos/{owner}/{repo}/actions/runners", 200);
+      const tpl = (ex.runners as Json[])[0]!;
+      return [200, { total_count: repo.runners.length, runners: repo.runners.map((r) => ({ ...tpl, id: r.id, name: r.name, status: r.status, busy: r.busy })) }];
+    }
+    if (method === "DELETE" && (m = /^\/actions\/runners\/(\d+)$/.exec(rest))) {
+      const i = repo.runners.findIndex((r) => r.id === Number(m![1]));
+      if (i < 0) return this.notFound();
+      if (repo.runners[i]!.busy) return [422, { message: "Bad request - Runner \"x\" is still running a job\"", documentation_url: "https://docs.github.com/rest", status: "422" }];
+      repo.runners.splice(i, 1);
+      return [204, null];
     }
     if (method === "POST" && rest === "/actions/runners/generate-jitconfig") {
       const b = body as { name: string; runner_group_id: number; labels: string[]; work_folder?: string };

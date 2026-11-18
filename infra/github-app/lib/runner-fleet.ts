@@ -5,7 +5,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as imagebuilder from "aws-cdk-lib/aws-imagebuilder";
 import { Construct } from "constructs";
 import type { RunnerNetwork } from "./network.ts";
-import { readersOf } from "./parameters.ts";
+import { appPrefix, readersOf } from "./parameters.ts";
 import { imageBuildScript, UBUNTU_2404_AMI_PARAMETER } from "./runner.ts";
 import type { Settings } from "./settings.ts";
 
@@ -13,20 +13,20 @@ import type { Settings } from "./settings.ts";
 export const COMPONENT_LIMIT = 16_000;
 
 export function componentDocument(s: Settings): string {
-  const script = imageBuildScript(s).trimEnd().split("\n").map((l) => `              ${l}`).join("\n");
+  const script = imageBuildScript(s).trimEnd().split("\n").map((l) => `        ${l}`).join("\n");
   return [
     "name: fenvix-runner",
     "description: fenvix runner machine (tools, users, engine, GitHub runner, hooks, units); nothing started",
     "schemaVersion: 1.0",
     "phases:",
-    "  - name: build",
-    "    steps:",
-    "      - name: InstallFenvixRunner",
-    "        action: ExecuteBash",
-    "        timeoutSeconds: 3600",
-    "        inputs:",
-    "          commands:",
-    "            - |",
+    "- name: build",
+    "  steps:",
+    "  - name: InstallFenvixRunner",
+    "    action: ExecuteBash",
+    "    timeoutSeconds: 3600",
+    "    inputs:",
+    "      commands:",
+    "      - |",
     script,
     "",
   ].join("\n");
@@ -105,9 +105,11 @@ export class RunnerFleet extends Construct {
     // ---------------------------------------------------------------- the job machines
     this.jobRole = new iam.Role(this, "JobRole", {
       assumedBy: new iam.ServicePrincipal("ec2.amazonaws.com"),
-      description: "fenvix per-job runner machine: read RUNNER_TOKEN and the shared-cache tokens (root only; the job user cannot reach the metadata service)",
+      description: "fenvix runner machine (demo or per-job): read RUNNER_TOKEN (and, per-job, the shared-cache tokens); root only, the job user cannot reach the metadata service",
     });
-    this.jobRole.addToPolicy(new iam.PolicyStatement({ sid: "ReadRunnerAndCacheTokens", actions: ["ssm:GetParameter"], resources: readersOf(s.env, "runner-job").map(param) }));
+    // Demo machines have no shared cache: the runner token only.
+    const reads = s.runnerMode === "per-job" ? readersOf(s.env, "runner-job") : [`${appPrefix(s.env)}/runner-token`];
+    this.jobRole.addToPolicy(new iam.PolicyStatement({ sid: "ReadRunnerAndCacheTokens", actions: ["ssm:GetParameter"], resources: reads.map(param) }));
     const jobProfile = new iam.CfnInstanceProfile(this, "JobProfile", { roles: [this.jobRole.roleName] });
 
     this.launchTemplate = new ec2.CfnLaunchTemplate(this, "LaunchTemplate", {

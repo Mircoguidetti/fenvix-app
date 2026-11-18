@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { cacheParameters, appPrefix } from "../lib/parameters.ts";
 import { COMPONENT_LIMIT } from "../lib/runner-fleet.ts";
-import { IMAGE_FILES } from "../lib/runner.ts";
+import { IMAGE_FILES, unbundle } from "../lib/runner.ts";
 import { resources, synth } from "./helpers.ts";
 
 type Stmt = { Effect: string; Action: string | string[]; Resource: unknown; Sid?: string; Condition?: Record<string, Record<string, unknown>> };
@@ -11,8 +12,8 @@ const json = (x: unknown) => JSON.stringify(x);
 const W = "a".repeat(64);
 const R = "b".repeat(64);
 
-describe("the stack, per-job mode (the default)", async () => {
-  const { template: t, s, nagErrors } = await synth({ cacheTokenSha256Write: W, cacheTokenSha256Read: R });
+describe("the stack, per-job mode", async () => {
+  const { template: t, s, nagErrors } = await synth({ runnerMode: "per-job", cacheTokenSha256Write: W, cacheTokenSha256Read: R });
   const fns = resources(t, "AWS::Lambda::Function");
   const policies = resources(t, "AWS::IAM::Policy");
   const roles = Object.fromEntries(resources(t, "AWS::IAM::Role"));
@@ -61,7 +62,7 @@ describe("the stack, per-job mode (the default)", async () => {
     const term = st.find((x) => arr(x.Action).includes("ec2:TerminateInstances"))!;
     assert.deepEqual(term.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job" } });
     assert.ok(!st.some((x) => arr(x.Action).some((a) => a.startsWith("ssm:"))), "no secret");
-    assert.equal(fnEnv("reaper").RUNNER_MAX_HOURS, "6");
+    assert.equal(fnEnv("reaper").REAP, "runner-job:6");
     t.hasResourceProperties("AWS::Scheduler::Schedule", { Name: "fenvix-prod-github-app-reaper", ScheduleExpression: "rate(10 minutes)" });
   });
 
@@ -93,8 +94,12 @@ describe("the stack, per-job mode (the default)", async () => {
     const data = comp.Properties.Data as string;
     assert.ok(data.length <= COMPONENT_LIMIT, `${data.length}`);
     assert.match(data, /bash \/opt\/fenvix\/install\.sh/);
-    for (const [, dest] of IMAGE_FILES) assert.ok(data.includes(`>${dest}`), dest);
-    assert.doesNotMatch(data, /fenvix-register|registration-token/, "no registration in the image");
+    const files = unbundle(data.split("\n").map((l) => l.trim()).find((l) => l.startsWith("echo '"))!);
+    for (const [file, dest, mode] of IMAGE_FILES) {
+      assert.equal(files[dest]?.text, readFileSync(new URL(`../lib/runner/files/${file}`, import.meta.url), "utf8"), dest);
+      assert.equal(files[dest]?.mode, mode, dest);
+    }
+    assert.doesNotMatch(data, /BEGIN|PRIVATE KEY|registration-token=/, "no secret in the image");
     t.hasResourceProperties("AWS::ImageBuilder::ImageRecipe", { ParentImage: "ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id" });
     const [, dist] = resources(t, "AWS::ImageBuilder::DistributionConfiguration")[0]!;
     const ami = (dist.Properties.Distributions as { AmiDistributionConfiguration: Record<string, unknown> }[])[0]!.AmiDistributionConfiguration;

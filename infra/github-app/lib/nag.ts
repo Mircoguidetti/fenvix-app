@@ -22,14 +22,13 @@ export function applySuppressions(stack: Stack): void {
         "Resource::*",
         { regex: "/^Resource::arn:(aws|<AWS::Partition>):ec2:[a-z0-9-]+:\\d{12}:(instance|volume|network-interface)\\/\\*$/g" },
         { regex: "/^Resource::arn:(aws|<AWS::Partition>):ec2:[a-z0-9-]+::image\\/\\*$/g" },
-        "Resource::<ReaperLogs73CECD37.Arn>:*",
       ],
     },
     {
       id: "AwsSolutions-IAM5",
       reason: "Log streams are created per Lambda container under the function's own log group (`<group arn>:*`), and overflow objects have random keys under work/ in our own bucket. Each is scoped to one resource of this stack.",
       appliesTo: [
-        "Resource::<HttpLogs2035DA0F.Arn>:*", "Resource::<WorkerLogsC1193B08.Arn>:*", "Resource::<SweepLogsD6C54147.Arn>:*",
+        { regex: "/^Resource::<(Http|Worker|Sweep|Reaper|Demo)Logs[0-9A-F]+\\.Arn>:\\*$/g" },
         "Resource::<Overflow8C2F862D.Arn>/work/*",
       ],
     },

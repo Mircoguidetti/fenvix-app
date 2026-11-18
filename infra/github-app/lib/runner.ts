@@ -1,20 +1,14 @@
 import { readFileSync } from "node:fs";
-import { gzipSync } from "node:zlib";
-import { Stack, Tags } from "aws-cdk-lib";
-import * as ec2 from "aws-cdk-lib/aws-ec2";
-import * as iam from "aws-cdk-lib/aws-iam";
-import { Construct } from "constructs";
-import type { RunnerNetwork } from "./network.ts";
-import { appPrefix, cachePrefix, registrationTokenName } from "./parameters.ts";
+import { gunzipSync, gzipSync } from "node:zlib";
+import { appPrefix, cachePrefix } from "./parameters.ts";
 import type { Settings } from "./settings.ts";
 
 export const UBUNTU_2404_AMI_PARAMETER = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id";
 
 const FILES_DIR = new URL("./runner/files/", import.meta.url);
-/** Installed on every runner machine (always-on user data, and the per-job image): [file, path on the machine, mode]. */
+/** Baked into the runner image (demo and per-job machines): [file, path on the machine, mode]. */
 export const RUNNER_FILES: [string, string, string][] = [
   ["install.sh", "/opt/fenvix/install.sh", "0755"],
-  ["setup.sh", "/opt/fenvix/setup.sh", "0755"],
   ["fenvix-imds-block", "/opt/fenvix/bin/fenvix-imds-block", "0755"],
   ["fenvix-register", "/opt/fenvix/bin/fenvix-register", "0755"],
   ["fenvix-fetch-runner-token", "/opt/fenvix/bin/fenvix-fetch-runner-token", "0755"],
@@ -33,8 +27,7 @@ export const RUNNER_FILES: [string, string, string][] = [
   ["fenvix-idle-watchdog.timer", "/etc/systemd/system/fenvix-idle-watchdog.timer", "0644"],
 ];
 
-/** The per-job image: everything but what only the always-on machine uses (its setup, registration and unit). */
-export const IMAGE_FILES = RUNNER_FILES.filter(([f]) => !["setup.sh", "fenvix-register", "fenvix-runner.service"].includes(f));
+export const IMAGE_FILES = RUNNER_FILES;
 
 /** Shell lines that write files (gzip + base64, to stay well under the user data and component size limits). */
 export function fileLines(files: [string, string, string][], dir: URL = FILES_DIR): string[] {
@@ -43,6 +36,32 @@ export function fileLines(files: [string, string, string][], dir: URL = FILES_DI
     const b64 = gzipSync(readFileSync(new URL(file, dir)), { level: 9 }).toString("base64");
     out.push(`echo '${b64}' | base64 -d | gunzip >${dest}`, `chmod ${mode} ${dest}`);
   }
+  return out;
+}
+
+/**
+ * One line that writes all the files: a shell script of here-documents, gzipped as one piece (files compress much
+ * better together than one by one), base64, piped to bash.
+ */
+export function bundleLine(files: [string, string, string][], dir: URL = FILES_DIR): string {
+  const parts: string[] = [];
+  for (const [file, dest, mode] of files) {
+    const text = readFileSync(new URL(file, dir), "utf8");
+    const end = "FENVIX_FILE_END";
+    if (text.includes(end)) throw new Error(`${file} contains ${end}`);
+    parts.push(`cat >${dest} <<'${end}'`, text.endsWith("\n") ? text.slice(0, -1) : text, end, `chmod ${mode} ${dest}`);
+  }
+  return `echo '${gzipSync(parts.join("\n") + "\n", { level: 9 }).toString("base64")}' | base64 -d | gunzip | bash -e`;
+}
+
+/** The files a bundle line writes, read back (tests). */
+export function unbundle(line: string): Record<string, { text: string; mode: string }> {
+  const m = /^echo '([A-Za-z0-9+/=]+)' \| base64 -d \| gunzip \| bash -e$/.exec(line);
+  if (!m) throw new Error("not a bundle line");
+  const script = gunzipSync(Buffer.from(m[1]!, "base64")).toString("utf8");
+  const out: Record<string, { text: string; mode: string }> = {};
+  const re = /^cat >(\S+) <<'FENVIX_FILE_END'\n([\s\S]*?)\nFENVIX_FILE_END\nchmod (\d+) \1$/gm;
+  for (const x of script.matchAll(re)) out[x[1]!] = { text: x[2]! + "\n", mode: x[3]! };
   return out;
 }
 
@@ -64,7 +83,8 @@ export function commonMachineEnv(s: Settings): Record<string, string> {
   };
 }
 
-/** Per-job machines: what the worker Lambda writes into each one's user data, besides the job's own values. */
+/** Per-job machines: what the worker Lambda writes into each one's user data, besides the job's own values. Demo
+ * machines get commonMachineEnv only (no shared cache: nothing crosses demos). */
 export function perJobMachineEnv(s: Settings): Record<string, string> {
   return {
     ...commonMachineEnv(s),
@@ -75,76 +95,10 @@ export function perJobMachineEnv(s: Settings): Record<string, string> {
   };
 }
 
-/** The always-on machine's plain settings: /etc/fenvix/runner.env. */
-export function runnerEnv(s: Settings): Record<string, string> {
-  return {
-    ...commonMachineEnv(s),
-    FENVIX_MODE: "always-on",
-    FENVIX_REPO_URL: s.runnerScopeUrl,
-    FENVIX_RUNNER_NAME: s.runnerName,
-    FENVIX_REGISTRATION_TOKEN_PARAM: registrationTokenName(s.env),
-  };
-}
-
 const DIRS = "install -d -m 0755 /etc/fenvix /opt/fenvix/bin /etc/systemd/system";
-
-/** The always-on machine's user data: settings, the files, then setup.sh. */
-export function runnerUserData(s: Settings): string {
-  return ["#!/bin/bash", "set -euo pipefail", DIRS, ...envLines("/etc/fenvix/runner.env", runnerEnv(s)), ...fileLines(RUNNER_FILES),
-    "bash /opt/fenvix/setup.sh"].join("\n") + "\n";
-}
 
 /** The image build (EC2 Image Builder component): the files and install.sh; the settings file is removed after. */
 export function imageBuildScript(s: Settings): string {
-  return ["set -euo pipefail", DIRS, ...envLines("/etc/fenvix/runner.env", commonMachineEnv(s)), ...fileLines(IMAGE_FILES),
+  return ["set -euo pipefail", DIRS, ...envLines("/etc/fenvix/runner.env", commonMachineEnv(s)), bundleLine(IMAGE_FILES),
     "bash /opt/fenvix/install.sh", "rm -f /etc/fenvix/runner.env", "rm -rf /var/log/fenvix-runner-setup.log"].join("\n") + "\n";
-}
-
-/**
- * The optional always-on machine (runnerMode "always-on"): registered once, serves jobs, keeps its local cache on its
- * disk. scripts/runner-stop.sh and runner-start.sh stop and start it; it comes back without a new token.
- */
-export class RunnerMachine extends Construct {
-  readonly instance: ec2.Instance;
-
-  constructor(scope: Construct, id: string, s: Settings, net: RunnerNetwork) {
-    super(scope, id);
-    const stack = Stack.of(this);
-    const role = new iam.Role(this, "Role", {
-      assumedBy: new iam.ServicePrincipal("ec2.amazonaws.com"),
-      description: "fenvix always-on runner: Session Manager, read RUNNER_TOKEN, read and delete the registration token",
-      managedPolicies: [iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonSSMManagedInstanceCore")],
-    });
-    const param = (name: string) => `arn:${stack.partition}:ssm:${stack.region}:${stack.account}:parameter${name}`;
-    role.addToPolicy(new iam.PolicyStatement({
-      sid: "ReadRunnerTokens", actions: ["ssm:GetParameter"],
-      resources: [param(`${appPrefix(s.env)}/runner-token`), param(registrationTokenName(s.env))],
-    }));
-    role.addToPolicy(new iam.PolicyStatement({ sid: "DeleteUsedRegistrationToken", actions: ["ssm:DeleteParameter"], resources: [param(registrationTokenName(s.env))] }));
-
-    const image = s.runnerAmiId
-      ? ec2.MachineImage.genericLinux({ [s.region]: s.runnerAmiId })
-      : ec2.MachineImage.fromSsmParameter(UBUNTU_2404_AMI_PARAMETER, { os: ec2.OperatingSystemType.LINUX });
-
-    this.instance = new ec2.Instance(this, "Instance", {
-      vpc: net.vpc,
-      vpcSubnets: { subnets: [net.subnet] },
-      instanceType: new ec2.InstanceType(s.runnerInstanceType),
-      machineImage: image,
-      securityGroup: net.runnerSg,
-      role,
-      // Credits "standard": no surplus-credit charge; a long build slows to the baseline instead of costing more.
-      creditSpecification: ec2.CpuCredits.STANDARD,
-      blockDevices: [{
-        deviceName: "/dev/sda1",
-        volume: ec2.BlockDeviceVolume.ebs(s.runnerVolumeGb, { volumeType: ec2.EbsDeviceVolumeType.GP3, encrypted: true, deleteOnTermination: true }),
-      }],
-      userData: ec2.UserData.custom(runnerUserData(s)),
-      userDataCausesReplacement: false,
-    });
-    // IMDSv2 only, and one hop: nothing in a container on the machine reaches it.
-    const cfn = this.instance.node.defaultChild as ec2.CfnInstance;
-    cfn.addPropertyOverride("MetadataOptions", { HttpTokens: "required", HttpPutResponseHopLimit: 1, HttpEndpoint: "enabled" });
-    Tags.of(this.instance).add("Name", `fenvix-${s.env}-runner`);
-  }
 }

@@ -19,7 +19,7 @@ import { Construct } from "constructs";
 import { appPrefix, readersOf } from "./parameters.ts";
 import { CacheMachine } from "./cache.ts";
 import { RunnerNetwork } from "./network.ts";
-import { perJobMachineEnv, RunnerMachine } from "./runner.ts";
+import { commonMachineEnv, perJobMachineEnv } from "./runner.ts";
 import { RunnerFleet } from "./runner-fleet.ts";
 import type { Settings } from "./settings.ts";
 
@@ -37,7 +37,8 @@ export interface FenvixGitHubAppProps extends StackProps { settings: Settings }
  *                     checks the signature / runner token, sends the work to SQS, answers 202
  *   SQS work queue (dead-letter queue after 5 tries; large payloads via the overflow bucket) ─▶ worker Lambda
  *   EventBridge Scheduler, every few minutes ─▶ sweep Lambda (runs whose summary never came)
- *   EC2 runner machine (self-hosted, fenvix) ─▶ POST https://github.<domain>/v1/runner/summaries
+ *   runner machines (demo: one per demo, scripts/demo-up.sh; per-job: one per queued job), from the runner image
+ *     ─▶ POST https://github.<domain>/v1/runner/summaries
  *
  * Secrets: SSM SecureString parameters under /fenvix/<env>/github-app/, created by hand, read by exact name.
  */
@@ -72,12 +73,13 @@ export class FenvixGitHubAppStack extends Stack {
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
-    // ---------------------------------------------------------------- runner machines (per-job: image, launch template, cache)
+    // ---------------------------------------------------------------- runner machines: image and launch template (both
+    // modes); the shared cache machine (per-job only: a demo keeps its cache on its own disk)
     const perJob = s.runnerMode === "per-job";
     const net = new RunnerNetwork(this, "Network", this.zone, { cache: perJob });
-    const fleet = perJob ? new RunnerFleet(this, "Fleet", s, net) : null;
+    const fleet = new RunnerFleet(this, "Fleet", s, net);
     const cache = perJob ? new CacheMachine(this, "Cache", s, net) : null;
-    const runner = perJob ? null : new RunnerMachine(this, "Runner", s, net);
+    const machineRole = perJob ? "runner-job" : "runner-demo";
 
     // ---------------------------------------------------------------- the functions
     const env: Record<string, string> = {
@@ -126,10 +128,10 @@ export class FenvixGitHubAppStack extends Stack {
     queue.grantSendMessages(http);
     http.addToRolePolicy(new iam.PolicyStatement({ sid: "PutOverflow", actions: ["s3:PutObject"], resources: [overflow.arnForObjects("work/*")] }));
 
-    const launchEnv: Record<string, string> = fleet ? {
+    const launchEnv: Record<string, string> = perJob ? {
       RUNNER_MODE: "per-job", RUNNER_LAUNCH_TEMPLATE_ID: fleet.launchTemplate.ref, RUNNER_MAX_RUNNING: String(s.runnerMaxRunning), FENVIX_ENV: s.env,
       ...Object.fromEntries(Object.entries(perJobMachineEnv(s)).map(([k, v]) => [`FENVIX_MACHINE_${k}`, v])),
-    } : { RUNNER_MODE: "always-on" };
+    } : { RUNNER_MODE: "demo" };
     const worker = fn("Worker", "worker.ts", {
       timeout: WORKER_TIMEOUT, memory: 512, reads: readersOf(s.env, "worker"), extraEnv: launchEnv,
       description: "fenvix GitHub App: runs queued webhooks and runner summaries",
@@ -137,30 +139,50 @@ export class FenvixGitHubAppStack extends Stack {
     worker.addToRolePolicy(new iam.PolicyStatement({ sid: "ReadAndDeleteOverflow", actions: ["s3:GetObject", "s3:DeleteObject"], resources: [overflow.arnForObjects("work/*")] }));
     worker.addEventSource(new SqsEventSource(queue, { batchSize: 5, reportBatchItemFailures: true, maxConcurrency: 2 }));
 
-    if (fleet) {
-      // Start a job machine: only from our launch template and our own images, only tagged as a job machine.
-      const arn = (r: string) => `arn:${this.partition}:ec2:${this.region}:${this.account}:${r}`;
-      worker.addToRolePolicy(new iam.PolicyStatement({
+    // Start a runner machine: only from our launch template and our own images, only tagged with its role.
+    const arn = (r: string) => `arn:${this.partition}:ec2:${this.region}:${this.account}:${r}`;
+    const mayLaunch = (f: lambda.IFunction, role: string) => {
+      f.addToRolePolicy(new iam.PolicyStatement({
         sid: "RunJobMachines", actions: ["ec2:RunInstances"],
         resources: [arn(`launch-template/${fleet.launchTemplate.ref}`), arn(`subnet/${net.subnet.subnetId}`), arn(`security-group/${net.runnerSg.securityGroupId}`), arn("network-interface/*")],
       }));
-      worker.addToRolePolicy(new iam.PolicyStatement({
+      f.addToRolePolicy(new iam.PolicyStatement({
         sid: "RunFromOwnImages", actions: ["ec2:RunInstances"], resources: [`arn:${this.partition}:ec2:${this.region}::image/*`],
         conditions: { StringEquals: { "ec2:Owner": this.account } },
       }));
-      worker.addToRolePolicy(new iam.PolicyStatement({
+      f.addToRolePolicy(new iam.PolicyStatement({
         sid: "OnlyTaggedJobMachines", actions: ["ec2:RunInstances"], resources: [arn("instance/*"), arn("volume/*")],
-        conditions: { StringEquals: { "aws:RequestTag/fenvix:role": "runner-job" } },
+        conditions: { StringEquals: { "aws:RequestTag/fenvix:role": role } },
       }));
-      worker.addToRolePolicy(new iam.PolicyStatement({
+      f.addToRolePolicy(new iam.PolicyStatement({
         sid: "TagAtLaunchOnly", actions: ["ec2:CreateTags"], resources: [arn("instance/*"), arn("volume/*")],
         conditions: { StringEquals: { "ec2:CreateAction": "RunInstances" } },
       }));
-      worker.addToRolePolicy(new iam.PolicyStatement({
+      f.addToRolePolicy(new iam.PolicyStatement({
         sid: "PassJobMachineRole", actions: ["iam:PassRole"], resources: [fleet.jobRole.roleArn],
         conditions: { StringEquals: { "iam:PassedToService": "ec2.amazonaws.com" } },
       }));
-      worker.addToRolePolicy(new iam.PolicyStatement({ sid: "FindImageAndCountMachines", actions: ["ec2:DescribeImages", "ec2:DescribeInstances"], resources: ["*"] }));
+      f.addToRolePolicy(new iam.PolicyStatement({ sid: "FindImageAndCountMachines", actions: ["ec2:DescribeImages", "ec2:DescribeInstances"], resources: ["*"] }));
+    };
+    const mayTerminate = (f: lambda.IFunction, role: string) => f.addToRolePolicy(new iam.PolicyStatement({
+      sid: "TerminateOnlyTheseMachines", actions: ["ec2:TerminateInstances"], resources: [arn("instance/*")],
+      conditions: { StringEquals: { "aws:ResourceTag/fenvix:role": role } },
+    }));
+    if (perJob) mayLaunch(worker, "runner-job");
+
+    // ---------------------------------------------------------------- demo mode: scripts/demo-up.sh and demo-down.sh
+    let demo: lambda.IFunction | null = null;
+    if (!perJob) {
+      demo = fn("Demo", "demo.ts", {
+        timeout: Duration.seconds(60), memory: 256, reads: [`${appPrefix(s.env)}/private-key`],
+        extraEnv: {
+          GITHUB_APP_ID: s.githubAppId, RUNNER_LAUNCH_TEMPLATE_ID: fleet.launchTemplate.ref, DEMO_REPOSITORY: s.demoRepository, FENVIX_ENV: s.env,
+          ...Object.fromEntries(Object.entries(commonMachineEnv(s)).map(([k, v]) => [`FENVIX_MACHINE_${k}`, v])),
+        },
+        description: "fenvix demo mode: registers a runner and starts one fresh machine (up), deregisters and terminates it (down)",
+      });
+      mayLaunch(demo, "runner-demo");
+      mayTerminate(demo, "runner-demo");
     }
 
     const sweep = fn("Sweep", "sweep.ts", {
@@ -180,22 +202,18 @@ export class FenvixGitHubAppStack extends Stack {
       target: { arn: sweep.functionArn, roleArn: schedulerRole.roleArn, retryPolicy: { maximumRetryAttempts: 0 } },
     });
 
-    // ---------------------------------------------------------------- the reaper (per-job): machines past the hard limit
-    let reaper: lambda.IFunction | null = null;
-    if (fleet) {
-      reaper = fn("Reaper", "reaper.ts", {
-        timeout: Duration.seconds(60), memory: 256, reads: [], extraEnv: { RUNNER_MAX_HOURS: String(s.runnerMaxHours) },
-        description: `fenvix: terminates per-job runner machines older than ${s.runnerMaxHours} hours`,
+    // ---------------------------------------------------------------- the reaper: machines past the hard limit
+    {
+      const hours = perJob ? s.runnerMaxHours : s.demoMaxHours;
+      const reaper = fn("Reaper", "reaper.ts", {
+        timeout: Duration.seconds(60), memory: 256, reads: [], extraEnv: { REAP: `${machineRole}:${hours}` },
+        description: `fenvix: terminates ${machineRole} machines older than ${hours} hours`,
       });
       reaper.addToRolePolicy(new iam.PolicyStatement({ sid: "ListMachines", actions: ["ec2:DescribeInstances"], resources: ["*"] }));
-      reaper.addToRolePolicy(new iam.PolicyStatement({
-        sid: "TerminateOnlyJobMachines", actions: ["ec2:TerminateInstances"],
-        resources: [`arn:${this.partition}:ec2:${this.region}:${this.account}:instance/*`],
-        conditions: { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job" } },
-      }));
+      mayTerminate(reaper, machineRole);
       schedulerRole.addToPolicy(new iam.PolicyStatement({ actions: ["lambda:InvokeFunction"], resources: [reaper.functionArn] }));
       new scheduler.CfnSchedule(this, "ReaperSchedule", {
-        name: name("reaper"), description: "Terminates per-job runner machines past the hard limit",
+        name: name("reaper"), description: "Terminates runner machines past the hard limit",
         scheduleExpression: "rate(10 minutes)", flexibleTimeWindow: { mode: "OFF" }, state: "ENABLED",
         target: { arn: reaper.functionArn, roleArn: schedulerRole.roleArn, retryPolicy: { maximumRetryAttempts: 0 } },
       });
@@ -251,17 +269,17 @@ export class FenvixGitHubAppStack extends Stack {
     new CfnOutput(this, "WorkerLogGroup", { value: `/aws/lambda/${name("worker")}` });
     new CfnOutput(this, "SweepLogGroup", { value: `/aws/lambda/${name("sweep")}` });
     new CfnOutput(this, "RunnerMode", { value: s.runnerMode });
-    if (runner) {
-      new CfnOutput(this, "RunnerInstanceId", { value: runner.instance.instanceId, description: "scripts/runner-stop.sh and runner-start.sh" });
-      new CfnOutput(this, "RunnerAmiId", { value: (runner.instance.node.defaultChild as unknown as { imageId: string }).imageId, description: "Kept on later deploys by scripts/deploy.sh" });
+    new CfnOutput(this, "ImagePipelineArn", { value: fleet.pipeline.attrArn, description: "scripts/build-image.sh builds the runner image with it" });
+    new CfnOutput(this, "LaunchTemplateId", { value: fleet.launchTemplate.ref });
+    new CfnOutput(this, "ReaperLogGroup", { value: `/aws/lambda/${name("reaper")}` });
+    if (demo) {
+      new CfnOutput(this, "DemoFunctionName", { value: name("demo"), description: "scripts/demo-up.sh and demo-down.sh invoke it" });
+      new CfnOutput(this, "DemoLogGroup", { value: `/aws/lambda/${name("demo")}` });
     }
-    if (fleet && cache && reaper) {
-      new CfnOutput(this, "ImagePipelineArn", { value: fleet.pipeline.attrArn, description: "scripts/build-image.sh builds the runner image with it" });
-      new CfnOutput(this, "LaunchTemplateId", { value: fleet.launchTemplate.ref });
+    if (cache) {
       new CfnOutput(this, "CacheInstanceId", { value: cache.instance.instanceId });
       new CfnOutput(this, "CacheAmiId", { value: (cache.instance.node.defaultChild as unknown as { imageId: string }).imageId, description: "Kept on later deploys by scripts/deploy.sh" });
       new CfnOutput(this, "CacheUrl", { value: `http://${s.cachePrivateIp}:8787/${s.cacheOrg}`, description: "Inside the VPC only" });
-      new CfnOutput(this, "ReaperLogGroup", { value: `/aws/lambda/${name("reaper")}` });
     }
   }
 }

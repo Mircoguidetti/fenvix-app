@@ -30,6 +30,8 @@ export class RetryLater extends Error {}
 /** The tag every per-job machine carries (the reaper and the IAM conditions use it). */
 export const ROLE_TAG = "fenvix:role";
 export const ROLE_VALUE = "runner-job";
+/** Demo machines (scripts/demo-up.sh): one registered runner for a demo, terminated by demo-down. */
+export const DEMO_VALUE = "runner-demo";
 export const IMAGE_TAG = "fenvix:image";
 
 const SAFE = /^[A-Za-z0-9_./:@+=-]*$/;
@@ -72,15 +74,13 @@ export class Ec2Launcher implements RunnerLauncher {
 
   constructor(o: Ec2LauncherOptions) { this.o = o; }
 
-  /** The newest runner image this account built (EC2 Image Builder tags it), looked up at most every 5 minutes. */
+  /** The newest runner image, looked up at most every 5 minutes. */
   async imageId(): Promise<string> {
     const now = (this.o.now ?? Date.now)();
     if (this.image && now - this.image.at < 5 * 60_000) return this.image.id;
-    const r = await this.o.ec2.send(new DescribeImagesCommand({ Owners: ["self"], Filters: [{ Name: `tag:${IMAGE_TAG}`, Values: ["runner"] }, { Name: "state", Values: ["available"] }] }));
-    const newest = (r.Images ?? []).filter((i) => i.ImageId).sort((a, b) => String(b.CreationDate).localeCompare(String(a.CreationDate)))[0];
-    if (!newest?.ImageId) throw new Error("no runner image yet: run the image pipeline (docs/DEPLOY-AWS.md)");
-    this.image = { id: newest.ImageId, at: now };
-    return newest.ImageId;
+    const id = await newestRunnerImage(this.o.ec2);
+    this.image = { id, at: now };
+    return id;
   }
 
   async running(): Promise<number> {
@@ -120,10 +120,21 @@ export class Ec2Launcher implements RunnerLauncher {
   }
 }
 
-/** Terminates per-job machines older than `maxHours` (a job never runs that long; such a machine is stuck). */
-export async function reap(ec2: Pick<EC2Client, "send">, maxHours: number, now = Date.now()): Promise<string[]> {
+/** The newest runner image this account built (EC2 Image Builder tags it fenvix:image=runner). */
+export async function newestRunnerImage(ec2: Pick<EC2Client, "send">): Promise<string> {
+  const r = await ec2.send(new DescribeImagesCommand({ Owners: ["self"], Filters: [{ Name: `tag:${IMAGE_TAG}`, Values: ["runner"] }, { Name: "state", Values: ["available"] }] }));
+  const newest = (r.Images ?? []).filter((i) => i.ImageId).sort((a, b) => String(b.CreationDate).localeCompare(String(a.CreationDate)))[0];
+  if (!newest?.ImageId) throw new Error("no runner image yet: run the image pipeline (scripts/build-image.sh, docs/DEPLOY-AWS.md)");
+  return newest.ImageId;
+}
+
+/**
+ * Terminates machines carrying `fenvix:role=<role>` older than `maxHours`: a per-job machine that never finished, a
+ * demo machine somebody forgot to take down.
+ */
+export async function reap(ec2: Pick<EC2Client, "send">, maxHours: number, now = Date.now(), role: string = ROLE_VALUE): Promise<string[]> {
   const r = await ec2.send(new DescribeInstancesCommand({
-    Filters: [{ Name: `tag:${ROLE_TAG}`, Values: [ROLE_VALUE] }, { Name: "instance-state-name", Values: ["pending", "running", "stopping", "stopped"] }],
+    Filters: [{ Name: `tag:${ROLE_TAG}`, Values: [role] }, { Name: "instance-state-name", Values: ["pending", "running", "stopping", "stopped"] }],
   }));
   const old = (r.Reservations ?? []).flatMap((x) => x.Instances ?? [])
     .filter((i) => i.InstanceId && i.LaunchTime && now - new Date(i.LaunchTime).getTime() > maxHours * 3_600_000)

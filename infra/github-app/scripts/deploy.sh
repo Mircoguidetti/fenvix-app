@@ -3,7 +3,8 @@
 #
 # 1. checks: Node 22.18+, AWS CLI, the AWS account, the settings, the SSM parameters (names only, never values);
 # 2. installs and tests the service (github-app: typecheck + unit tests) and this folder (template tests);
-# 3. keeps the runner's AMI (first deploy: the current Ubuntu 24.04 one), so a deploy never replaces the machine;
+# 3. per-job mode: keeps the cache machine's AMI (first deploy: the current Ubuntu 24.04 arm64 one), so a deploy never
+#    replaces it (runner machines start from the runner image, built by scripts/build-image.sh);
 # 4. shows the change (cdk diff), asks, deploys; while CloudFormation waits for the certificate, prints the DNS
 #    record to add in Cloudflare; at the end prints the host's record and the next steps (docs/DEPLOY-AWS.md).
 set -euo pipefail
@@ -56,15 +57,6 @@ if [ "$MODE" = "per-job" ]; then
     echo "cache machine image: $FENVIX_CACHE_AMI_ID"
   fi
   [ -n "$(ctx cacheTokenSha256Write)" ] || echo "note: no cache tokens yet (scripts/cache-tokens.sh): jobs run without the shared cache"
-elif [ -z "${FENVIX_RUNNER_AMI_ID:-}" ] && [ -z "$(ctx runnerAmiId)" ]; then
-  FENVIX_RUNNER_AMI_ID="$(aws cloudformation describe-stacks --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='RunnerAmiId'].OutputValue | [0]" --output text 2>/dev/null || true)"
-  if [ -z "$FENVIX_RUNNER_AMI_ID" ] || [ "$FENVIX_RUNNER_AMI_ID" = "None" ]; then
-    FENVIX_RUNNER_AMI_ID="$(aws ssm get-parameter --name /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id --query Parameter.Value --output text)"
-    echo "first deploy: current Ubuntu 24.04 AMI $FENVIX_RUNNER_AMI_ID (kept from now on)"
-  else
-    echo "keeping the runner's AMI $FENVIX_RUNNER_AMI_ID"
-  fi
-  export FENVIX_RUNNER_AMI_ID
 fi
 
 say "4/5 the change"
@@ -87,9 +79,7 @@ bash "$HERE/scripts/dns-records.sh"
 echo
 echo "Deployed. Next (docs/DEPLOY-AWS.md):"
 echo "  - Cloudflare: both records above, DNS only. Then:  curl -s https://$(ctx domainName)/healthz   ->  {\"ok\":true}"
-if [ "$MODE" = "per-job" ]; then
-  echo "  - the runner image: bash scripts/build-image.sh   (first deploy, and after changing engineCliCommit or lib/runner/files)"
-else
-  echo "  - the runner machine builds the engine (about 15 minutes), then waits for its registration token in SSM:"
-  echo "      /fenvix/$ENVNAME/runner/registration-token   (stop / start it: scripts/runner-stop.sh, scripts/runner-start.sh)"
+echo "  - the runner image: bash scripts/build-image.sh   (first deploy, and after changing engineCliCommit or lib/runner/files)"
+if [ "$MODE" = "demo" ]; then
+  echo "  - a demo: bash scripts/demo-up.sh owner/repo   ...   bash scripts/demo-down.sh"
 fi

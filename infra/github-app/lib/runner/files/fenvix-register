@@ -10,8 +10,14 @@ TOKEN_FILE=/home/fenvix/.fenvix/registration-token
 log() { printf '[fenvix-register] %s\n' "$*"; }
 
 [ -f "$RUNNER_DIR/.runner" ] && { log "already registered as $FENVIX_RUNNER_NAME"; exit 0; }
+# The token comes from the user data (demo: /etc/fenvix/registration-token, root only) or from SSM.
+fetch_token() {
+  if [ -f /etc/fenvix/registration-token ]; then cat /etc/fenvix/registration-token; shred -u /etc/fenvix/registration-token 2>/dev/null || rm -f /etc/fenvix/registration-token; return 0; fi
+  [ -n "${FENVIX_REGISTRATION_TOKEN_PARAM:-}" ] || return 1
+  "$AWS" ssm get-parameter --with-decryption --name "$FENVIX_REGISTRATION_TOKEN_PARAM" --query Parameter.Value --output text 2>/dev/null
+}
 while :; do
-  if token="$("$AWS" ssm get-parameter --with-decryption --name "$FENVIX_REGISTRATION_TOKEN_PARAM" --query Parameter.Value --output text 2>/dev/null)" && [ -n "$token" ]; then
+  if token="$(fetch_token)" && [ -n "$token" ]; then
     install -m 600 -o fenvix -g fenvix /dev/null "$TOKEN_FILE"
     printf '%s' "$token" >"$TOKEN_FILE"
     unset token
@@ -20,11 +26,11 @@ while :; do
     rc=$?
     shred -u "$TOKEN_FILE" 2>/dev/null || rm -f "$TOKEN_FILE"
     # Used or expired: either way it must not stay in SSM.
-    "$AWS" ssm delete-parameter --name "$FENVIX_REGISTRATION_TOKEN_PARAM" >/dev/null 2>&1 || true
+    [ -n "${FENVIX_REGISTRATION_TOKEN_PARAM:-}" ] && { "$AWS" ssm delete-parameter --name "$FENVIX_REGISTRATION_TOKEN_PARAM" >/dev/null 2>&1 || true; }
     if [ $rc -eq 0 ]; then log "registered as $FENVIX_RUNNER_NAME on $FENVIX_REPO_URL; token deleted"; exit 0; fi
-    log "registration failed (exit $rc; an expired token?). Put a fresh token in $FENVIX_REGISTRATION_TOKEN_PARAM."
+    log "registration failed (exit $rc; an expired token?). demo: run scripts/demo-down.sh and demo-up.sh again."
   else
-    log "waiting for the registration token in SSM: $FENVIX_REGISTRATION_TOKEN_PARAM (docs/DEPLOY-AWS.md)"
+    log "waiting for a registration token (${FENVIX_REGISTRATION_TOKEN_PARAM:-/etc/fenvix/registration-token})"
   fi
   sleep 30
 done

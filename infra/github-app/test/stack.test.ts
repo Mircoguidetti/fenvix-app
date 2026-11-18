@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
-import { gunzipSync } from "node:zlib";
-import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { appParameters, registrationTokenName } from "../lib/parameters.ts";
-import { RUNNER_FILES } from "../lib/runner.ts";
-import { ALWAYS_ON, resources, synth, type Res } from "./helpers.ts";
+import { appParameters } from "../lib/parameters.ts";
+import { resources, synth } from "./helpers.ts";
 
-type Stmt = { Effect: string; Action: string | string[]; Resource: unknown; Sid?: string };
+type Stmt = { Effect: string; Action: string | string[]; Resource: unknown; Sid?: string; Condition?: unknown };
 const arr = <T,>(x: T | T[]): T[] => (Array.isArray(x) ? x : [x]);
 const json = (x: unknown) => JSON.stringify(x);
 
-describe("the stack, always-on mode (cdk synth)", async () => {
-  const { template: t, s, nagErrors } = await synth(ALWAYS_ON);
+describe("the stack, demo mode (the default)", async () => {
+  const { template: t, s, nagErrors } = await synth();
   const fns = resources(t, "AWS::Lambda::Function");
   const roles = Object.fromEntries(resources(t, "AWS::IAM::Role").map(([id, r]) => [id, r]));
   const policies = resources(t, "AWS::IAM::Policy");
@@ -28,15 +25,17 @@ describe("the stack, always-on mode (cdk synth)", async () => {
     assert.deepEqual(nagErrors, []);
   });
 
-  it("three functions: Node 22, x86_64, the plain settings only (no secret in any environment variable)", () => {
-    assert.deepEqual(fns.map(([, f]) => f.Properties.FunctionName).sort(), ["fenvix-prod-github-app-http", "fenvix-prod-github-app-sweep", "fenvix-prod-github-app-worker"]);
+  it("functions: Node 22, x86_64, the plain settings only (no secret in any environment variable)", () => {
+    assert.deepEqual(fns.map(([, f]) => f.Properties.FunctionName).sort(), ["fenvix-prod-github-app-demo", "fenvix-prod-github-app-http", "fenvix-prod-github-app-reaper", "fenvix-prod-github-app-sweep", "fenvix-prod-github-app-worker"]);
     for (const [, f] of fns) {
       assert.equal(f.Properties.Runtime, "nodejs22.x");
       assert.deepEqual(f.Properties.Architectures, ["x86_64"]);
       const vars = (f.Properties.Environment as { Variables: Record<string, unknown> }).Variables;
       assert.equal(vars.SSM_PREFIX, "/fenvix/prod/github-app");
       assert.equal(vars.SWEEP_SECONDS, "0", "no timer inside a Lambda");
-      for (const k of Object.keys(vars)) assert.doesNotMatch(k, /SECRET|PRIVATE_KEY|TOKEN|DATABASE_URL|SIGNING/, k);
+      // Parameter names (…_PARAM) are fine; values never are.
+      for (const k of Object.keys(vars)) if (!k.endsWith("_PARAM")) assert.doesNotMatch(k, /SECRET|PRIVATE_KEY|TOKEN|DATABASE_URL|SIGNING/, k);
+      for (const [k, v] of Object.entries(vars)) if (k.endsWith("_PARAM")) assert.match(String(v), /^\/fenvix\/prod\//, k);
     }
     const http = fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-http")![1];
     assert.ok("WORK_QUEUE_URL" in (http.Properties.Environment as { Variables: object }).Variables);
@@ -45,7 +44,7 @@ describe("the stack, always-on mode (cdk synth)", async () => {
 
   it("least privilege: each function reads only its own parameters, by exact name; no managed policy, no '*' action", () => {
     const want = (who: string) => appParameters("prod").filter((p) => p.readers.includes(who as never)).map((p) => `parameter${p.name}`).sort();
-    for (const who of ["http", "worker", "sweep"]) {
+    for (const who of ["http", "worker", "sweep"] as const) {
       const roleId = fnRole(who);
       assert.equal(roles[roleId]!.Properties.ManagedPolicyArns, undefined, `${who}: no managed policy`);
       const st = statementsOf(roleId);
@@ -92,64 +91,44 @@ describe("the stack, always-on mode (cdk synth)", async () => {
 
   it("logs: every log group kept 14 days", () => {
     const lgs = resources(t, "AWS::Logs::LogGroup");
-    assert.equal(lgs.length, 4);
+    assert.equal(lgs.length, 6, "http, worker, sweep, reaper, demo, API access logs");
     for (const [, lg] of lgs) assert.equal(lg.Properties.RetentionInDays, s.logRetentionDays);
   });
 
-  it("runner machine: t3.medium, 30 GB gp3 encrypted, IMDSv2, no inbound, outbound 80/443 only", () => {
-    const [, i] = resources(t, "AWS::EC2::Instance")[0]!;
-    assert.equal(i.Properties.InstanceType, "t3.medium");
-    assert.deepEqual(i.Properties.BlockDeviceMappings, [{ DeviceName: "/dev/sda1", Ebs: { DeleteOnTermination: true, Encrypted: true, VolumeSize: 30, VolumeType: "gp3" } }]);
-    assert.deepEqual(i.Properties.MetadataOptions, { HttpTokens: "required", HttpPutResponseHopLimit: 1, HttpEndpoint: "enabled" });
-    assert.match(json(i.Properties.ImageId), /canonicalubuntuserver2404/, "Ubuntu 24.04 when no AMI is pinned");
+  it("demo mode: no machine in the stack (demo-up starts one), the runner image, the launch template, no cache machine", () => {
+    assert.equal(resources(t, "AWS::EC2::Instance").length, 0);
+    assert.equal(resources(t, "AWS::EC2::LaunchTemplate").length, 1);
+    assert.equal(resources(t, "AWS::ImageBuilder::ImagePipeline").length, 1);
+    assert.equal(resources(t, "AWS::EC2::SecurityGroupIngress").length, 0, "no inbound rule at all in demo mode");
     const sgs = resources(t, "AWS::EC2::SecurityGroup");
-    const sg = sgs.find(([, x]) => String(x.Properties.GroupDescription).startsWith("fenvix runners"))![1].Properties;
-    assert.equal(sg.SecurityGroupIngress, undefined);
-    assert.equal(resources(t, "AWS::EC2::SecurityGroupIngress").length, 0);
-    assert.deepEqual((sg.SecurityGroupEgress as { FromPort: number; IpProtocol: string; CidrIp?: string }[]).filter((e) => e.CidrIp).map((e) => `${e.IpProtocol}/${e.FromPort}`).sort(), ["tcp/443", "tcp/80"]);
+    assert.equal(sgs.length, 1);
+    assert.equal(sgs[0]![1].Properties.SecurityGroupIngress, undefined);
+    assert.deepEqual((sgs[0]![1].Properties.SecurityGroupEgress as { FromPort: number; IpProtocol: string }[]).map((e) => `${e.IpProtocol}/${e.FromPort}`).sort(), ["tcp/443", "tcp/80"]);
     assert.equal(resources(t, "AWS::EC2::NatGateway").length, 0, "no NAT gateway (it costs by the hour)");
+    t.hasOutput("DemoFunctionName", {});
   });
 
-  it("runner role: Session Manager, read the runner token and the registration token, delete only the registration token", () => {
-    const roleId = Object.entries(roles).find(([, r]) => json(r.Properties.AssumeRolePolicyDocument).includes("ec2.amazonaws.com"))![0];
+  it("the demo function: reads only the App key; starts only machines tagged runner-demo, terminates only those", () => {
+    const roleId = fnRole("demo");
     const st = statementsOf(roleId);
-    const get = st.find((x) => x.Sid === "ReadRunnerTokens")!;
-    assert.deepEqual(arr(get.Action), ["ssm:GetParameter"]);
-    assert.match(json(get.Resource), /parameter\/fenvix\/prod\/github-app\/runner-token/);
-    assert.match(json(get.Resource), /parameter\/fenvix\/prod\/runner\/registration-token/);
-    assert.doesNotMatch(json(get.Resource), /private-key|webhook-secret|database-url/);
-    const del = st.find((x) => x.Sid === "DeleteUsedRegistrationToken")!;
-    assert.deepEqual(arr(del.Action), ["ssm:DeleteParameter"]);
-    assert.match(json(del.Resource), new RegExp(`parameter${registrationTokenName("prod")}`));
-    assert.match(json(roles[roleId]!.Properties.ManagedPolicyArns), /AmazonSSMManagedInstanceCore/);
+    const ssm = st.filter((x) => arr(x.Action).some((a) => a.startsWith("ssm:")));
+    assert.deepEqual(ssm.flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]), ["parameter/fenvix/prod/github-app/private-key"]);
+    assert.deepEqual(st.find((x) => x.Sid === "OnlyTaggedJobMachines")!.Condition, { StringEquals: { "aws:RequestTag/fenvix:role": "runner-demo" } });
+    assert.deepEqual(st.find((x) => x.Sid === "TerminateOnlyTheseMachines")!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-demo" } });
+    const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-demo")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
+    assert.equal(vars.DEMO_REPOSITORY, "Mircoguidetti/fenvix-demo");
+    assert.equal(vars.FENVIX_MACHINE_FENVIX_SUMMARIES_URL, "https://github.fenvix.dev/v1/runner/summaries");
+    assert.equal(vars.FENVIX_MACHINE_FENVIX_CACHE_URL, undefined, "no shared cache in a demo");
+    // The worker never starts machines in demo mode.
+    assert.ok(!statementsOf(fnRole("worker")).some((x) => arr(x.Action).includes("ec2:RunInstances")));
   });
 
-  it("user data: under the 16 KB limit; settings without secrets; every file round-trips byte for byte", () => {
-    const [, i] = resources(t, "AWS::EC2::Instance")[0]!;
-    const ud = i.Properties.UserData as { "Fn::Base64": string };
-    const text = ud["Fn::Base64"];
-    assert.equal(typeof text, "string", "no token or reference inside");
-    assert.ok(Buffer.byteLength(text) < 16 * 1024, `${Buffer.byteLength(text)} bytes`);
-    assert.match(text, /^FENVIX_SUMMARIES_URL=https:\/\/github\.fenvix\.dev\/v1\/runner\/summaries$/m);
-    assert.match(text, /^FENVIX_REPO_URL=https:\/\/github\.com\/Mircoguidetti\/fenvix-demo$/m);
-    assert.match(text, /^FENVIX_ENGINE_CLI_COMMIT=[0-9a-f]{40}$/m);
-    for (const [file, dest] of RUNNER_FILES) {
-      const m = text.match(new RegExp(`echo '([A-Za-z0-9+/=]+)' \\| base64 -d \\| gunzip >${dest.replace(/[.]/g, "\\.")}\\n`));
-      assert.ok(m, dest);
-      assert.equal(gunzipSync(Buffer.from(m[1]!, "base64")).toString(), readFileSync(new URL(`../lib/runner/files/${file}`, import.meta.url), "utf8"), file);
-    }
-    assert.match(text, /\nbash \/opt\/fenvix\/setup\.sh\n$/);
-  });
-
-  it("a pinned AMI is used as is (kept across deploys)", async () => {
-    const { settings } = await import("./helpers.ts");
-    const s2 = await settings({ ...ALWAYS_ON, runnerAmiId: "ami-0123456789abcdef0" });
-    const { App } = await import("aws-cdk-lib");
-    const { Template } = await import("aws-cdk-lib/assertions");
-    const { FenvixGitHubAppStack } = await import("../lib/stack.ts");
-    const app = new App();
-    const st = new FenvixGitHubAppStack(app, "pinned", { env: { account: s2.account, region: s2.region }, settings: s2 });
-    const [, inst] = Object.entries(Template.fromStack(st).findResources("AWS::EC2::Instance"))[0] as [string, Res];
-    assert.equal(inst.Properties.ImageId, "ami-0123456789abcdef0");
+  it("the reaper takes forgotten demo machines down after 12 hours; the machines' role reads only the runner token", () => {
+    const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-reaper")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
+    assert.equal(vars.REAP, "runner-demo:12");
+    assert.deepEqual(statementsOf(fnRole("reaper")).find((x) => x.Sid === "TerminateOnlyTheseMachines")!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-demo" } });
+    const jobRole = Object.keys(roles).find((id) => id.startsWith("FleetJobRole"))!;
+    const reads = statementsOf(jobRole).flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]);
+    assert.deepEqual(reads, ["parameter/fenvix/prod/github-app/runner-token"]);
   });
 });

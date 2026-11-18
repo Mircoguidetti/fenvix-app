@@ -8,7 +8,7 @@ import { FenvixGitHubAppStack } from "../lib/stack.ts";
 /** cdk.json's context plus the settings the founder fills in (sample values, no secret). */
 export const SAMPLE: Record<string, string> = {
   githubAppId: "123456", githubAppSlug: "fenvix", githubClientId: "Iv1.example", dashboardUrl: "https://app.fenvix.dev",
-  supabaseUrl: "https://example.supabase.co", runnerScopeUrl: "https://github.com/Mircoguidetti/fenvix-demo",
+  supabaseUrl: "https://example.supabase.co", demoRepository: "Mircoguidetti/fenvix-demo",
 };
 
 export async function cdkContext(): Promise<Record<string, unknown>> {
@@ -40,8 +40,8 @@ export async function synth(over: Record<string, string> = {}): Promise<{ templa
   return { ...c, nagErrors };
 }
 
-/** The always-on mode's settings (one machine registered on one repository). */
-export const ALWAYS_ON = { runnerMode: "always-on" };
+/** Per-job mode (the default is demo mode). */
+export const PER_JOB = { runnerMode: "per-job" };
 
 export type Res = { Type: string; Properties: Record<string, unknown> };
 export const resources = (t: Template, type: string): [string, Res][] => Object.entries(t.findResources(type)) as [string, Res][];

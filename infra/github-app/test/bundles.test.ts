@@ -10,8 +10,8 @@ describe("the bundled functions (esbuild, ESM)", async () => {
   const outdir = (stack.node.root as unknown as { outdir: string }).outdir;
   const assets = readdirSync(outdir).filter((d) => d.startsWith("asset."));
 
-  it("four bundles; each loads in Node and exports `handler` (nothing runs at import: config is read on the first call)", async () => {
-    assert.equal(assets.length, 4, "http, worker, sweep, reaper (per-job mode)");
+  it("five bundles; each loads in Node and exports `handler` (nothing runs at import: config is read on the first call)", async () => {
+    assert.equal(assets.length, 5, "http, worker, sweep, reaper, demo (demo mode)");
     for (const a of assets) {
       const file = join(outdir, a, "index.mjs");
       assert.ok(readFileSync(file).length < 5 * 1024 * 1024);

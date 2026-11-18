@@ -51,7 +51,7 @@
       ]
     },
     {
-      "Sid": "ManageOwnSecretsAndRegistrationToken",
+      "Sid": "ManageOwnSecrets",
       "Effect": "Allow",
       "Action": [
         "ssm:PutParameter",
@@ -61,7 +61,6 @@
       ],
       "Resource": [
         "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/github-app/*",
-        "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/runner/*",
         "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/cache/*"
       ]
     },
@@ -102,7 +101,7 @@
       }
     },
     {
-      "Sid": "LookAtQueuesAndRunner",
+      "Sid": "LookAtQueuesAndMachines",
       "Effect": "Allow",
       "Action": [
         "sqs:GetQueueAttributes",
@@ -115,49 +114,6 @@
       "Condition": {
         "StringEquals": {
           "aws:RequestedRegion": "eu-west-1"
-        }
-      }
-    },
-    {
-      "Sid": "SessionManagerOnTheRunner",
-      "Effect": "Allow",
-      "Action": "ssm:StartSession",
-      "Resource": "arn:aws:ec2:eu-west-1:865859654353:instance/*",
-      "Condition": {
-        "StringEquals": {
-          "ssm:resourceTag/component": "github-app"
-        }
-      }
-    },
-    {
-      "Sid": "SessionManagerOnTheRunnerDocument",
-      "Effect": "Allow",
-      "Action": "ssm:StartSession",
-      "Resource": [
-        "arn:aws:ssm:eu-west-1::document/AWS-StartInteractiveCommand",
-        "arn:aws:ssm:eu-west-1:865859654353:document/SSM-SessionManagerRunShell"
-      ]
-    },
-    {
-      "Sid": "OwnSessions",
-      "Effect": "Allow",
-      "Action": [
-        "ssm:TerminateSession",
-        "ssm:ResumeSession"
-      ],
-      "Resource": "arn:aws:ssm:eu-west-1:865859654353:session/*"
-    },
-    {
-      "Sid": "StopAndStartTheAlwaysOnRunner",
-      "Effect": "Allow",
-      "Action": [
-        "ec2:StopInstances",
-        "ec2:StartInstances"
-      ],
-      "Resource": "arn:aws:ec2:eu-west-1:865859654353:instance/*",
-      "Condition": {
-        "StringEquals": {
-          "aws:ResourceTag/component": "github-app"
         }
       }
     },
@@ -178,6 +134,12 @@
         "imagebuilder:GetImage"
       ],
       "Resource": "arn:aws:imagebuilder:eu-west-1:865859654353:image/fenvix-prod-runner/*"
+    },
+    {
+      "Sid": "RunDemoUpAndDown",
+      "Effect": "Allow",
+      "Action": "lambda:InvokeFunction",
+      "Resource": "arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-demo"
     }
   ]
 }
