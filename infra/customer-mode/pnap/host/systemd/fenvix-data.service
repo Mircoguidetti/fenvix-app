@@ -1,0 +1,12 @@
+[Unit]
+Description=fenvix data disk: every job's jail on a drive encrypted with a per-boot key (bin/fenvix-data-disk)
+After=local-fs.target
+Before=fenvix-agent.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/fenvix-host/bin/fenvix-data-disk
+
+[Install]
+WantedBy=multi-user.target

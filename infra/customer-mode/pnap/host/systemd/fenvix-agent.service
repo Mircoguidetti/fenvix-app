@@ -1,7 +1,8 @@
 [Unit]
 Description=fenvix host agent: leases jobs of this host's region, runs each in its own Firecracker microVM
 Wants=network-online.target
-After=network-online.target nftables.service
+After=network-online.target nftables.service fenvix-data.service
+Requires=fenvix-data.service
 
 [Service]
 Type=simple
@@ -11,11 +12,14 @@ RestartSec=5
 # Every microVM's cgroup lives under this service's own subtree (fenvix_host.agent.prepare_cgroups).
 Delegate=yes
 KillMode=control-group
+# The agent's own memory is capped on its cgroup leaf (agent.prepare_cgroups), not here: a MemoryMax= on the unit would
+# also cap every microVM, which run in this unit's delegated subtree.
 # The agent holds the host credential: nothing else on the host needs to read its state.
 StateDirectory=fenvix
 StateDirectoryMode=0700
+# 0711: fenvix-post reaches its own post-<job> directory (0700, its own) without listing anything (R-014 R3).
 RuntimeDirectory=fenvix
-RuntimeDirectoryMode=0700
+RuntimeDirectoryMode=0711
 ProtectHome=yes
 NoNewPrivileges=no
 UMask=0077

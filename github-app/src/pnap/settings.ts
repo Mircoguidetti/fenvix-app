@@ -57,15 +57,18 @@ export const SERVER_TYPES: Record<string, { cores: number; threads: number; memG
   "s1.c1.medium": { cores: 6, threads: 12, memGiB: 128, disk: "2x 1TB NVMe" },
 };
 /** Kept for the host itself: the agent, the cache in colocated mode, the kernel. */
-export const HOST_RESERVE = { threads: 4, memMib: 16 * 1024 };
+export const HOST_RESERVE = { cores: 2, memMib: 16 * 1024 };
 export const VMM_OVERHEAD_MIB = 512;
 
-/** How many microVMs of this size a host runs at once: one vCPU per hardware thread (no CPU overcommit), and the
- * guest memory plus the VMM's overhead (no memory overcommit). d3.c1.large with 2 vCPUs / 8 GiB: min(30, 28) = 28. */
+/** How many microVMs of this size a host runs at once: one vCPU per PHYSICAL core (no CPU overcommit), and the guest
+ * memory plus the VMM's overhead (no memory overcommit). The host runs with SMT off (install-host.sh; the agent
+ * refuses to enrol otherwise), as Firecracker's production guidance asks when tenants share a host: no core ever runs
+ * two customers' vCPUs on its sibling threads (R-012 F16, R-014 R2). d3.c1.large with 2 vCPUs / 8 GiB:
+ * min((32 - 2) / 2, 240 GiB / 8.5 GiB) = min(15, 28) = 15. */
 export function slotsFor(serverType: string, vcpus: number, memMib: number): number {
   const t = SERVER_TYPES[serverType];
   if (!t) throw new Error(`unknown server type ${serverType}: set PNAP_SLOTS_PER_HOST`);
-  return Math.max(0, Math.min(Math.floor((t.threads - HOST_RESERVE.threads) / vcpus),
+  return Math.max(0, Math.min(Math.floor((t.cores - HOST_RESERVE.cores) / vcpus),
     Math.floor((t.memGiB * 1024 - HOST_RESERVE.memMib) / (memMib + VMM_OVERHEAD_MIB))));
 }
 
@@ -104,7 +107,9 @@ export function loadPnapSettings(env: Env): PnapSettings {
   const serverType = env.PNAP_SERVER_TYPE ?? "d3.c1.large";
   const vcpus = num(env, "PNAP_VM_VCPUS", 2, 1, 32);
   const memMib = num(env, "PNAP_VM_MEM_MIB", 8192, 1024, 131072);
-  const slotsPerHost = env.PNAP_SLOTS_PER_HOST ? num(env, "PNAP_SLOTS_PER_HOST", 1, 1, 250) : slotsFor(serverType, vcpus, memMib);
+  const fit = SERVER_TYPES[serverType] ? slotsFor(serverType, vcpus, memMib) : 250;
+  // An explicit PNAP_SLOTS_PER_HOST may lower the count, never raise it above the physical cores (R-014 R2).
+  const slotsPerHost = env.PNAP_SLOTS_PER_HOST ? num(env, "PNAP_SLOTS_PER_HOST", 1, 1, fit) : slotsFor(serverType, vcpus, memMib);
   if (slotsPerHost < 1) throw new Error(`a ${serverType} has no room for a ${vcpus} vCPU / ${memMib} MiB microVM`);
   const controlUrl = (env.PNAP_CONTROL_URL ?? "").replace(/\/+$/, "");
   if (!/^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?$/.test(controlUrl) && !/^http:\/\/127\.0\.0\.1:[0-9]{1,5}$/.test(controlUrl)) {

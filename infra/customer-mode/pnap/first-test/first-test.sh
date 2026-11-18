@@ -18,7 +18,12 @@ log() { printf '[first-test %s] %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
 die() { log "STOP: $*"; exit 1; }
 
 if [ "${1:-}" = "--print-workflow" ]; then
-  sed "s/__PROBE_SHA256__/$(sha256sum "$here/probe.sh" | cut -d' ' -f1)/" "$here/fenvix-first-test.yml"
+  # probe.sh goes INTO the workflow (R-014 R11): the test repositories cannot read our private repository.
+  grep -q '^FENVIX_PROBE$' "$here/probe.sh" && die "probe.sh may not contain the heredoc delimiter"
+  sha="$(sha256sum "$here/probe.sh" | cut -d' ' -f1)"
+  awk -v sha="$sha" -v probe="$here/probe.sh" '
+    /^__PROBE_SH__$/ { while ((getline line < probe) > 0) print (line == "" ? "" : "          " line); next }
+    { gsub(/__PROBE_SHA256__/, sha); print }' "$here/fenvix-first-test.yml"
   exit 0
 fi
 while [ $# -gt 0 ]; do
@@ -42,18 +47,32 @@ if ! [[ "$minutes" =~ ^[0-9]+$ ]] || [ "$minutes" -lt 30 ] || [ "$minutes" -gt 1
 command -v jq >/dev/null || die "jq is required"
 
 work="$(mktemp -d)"
-invoke() { # payload-json -> response json on stdout
+try_invoke() { # payload-json -> response json on stdout; returns 1 (never exits) when the call failed
   "$AWS" lambda invoke --function-name "$fn" --cli-binary-format raw-in-base64-out --payload "$1" "$work/out.json" >"$work/meta.json" \
-    || die "could not invoke $fn"
-  if jq -e '.FunctionError' "$work/meta.json" >/dev/null 2>&1; then die "$fn failed: $(jq -c . "$work/out.json")"; fi
+    || { log "   could not invoke $fn"; return 1; }
+  if jq -e '.FunctionError' "$work/meta.json" >/dev/null 2>&1; then log "   $fn failed: $(jq -c . "$work/out.json")"; return 1; fi
   cat "$work/out.json"
 }
-live_hosts() { invoke '{"action":"status"}' | jq --arg r "$region" '[.hosts[] | select(.region == $r and .role == "runner" and (.state | IN("released", "failed") | not))]'; }
+invoke() { try_invoke "$1" || die "could not invoke $fn with $1"; }
+# The release path (also run by the EXIT trap) must never exit half-way (R-014 R8): every call is retried with a
+# growing pause (throttling: the scaler has reserved concurrency 1 and also runs every minute), and nothing in it dies.
+retry_invoke() {
+  local i pause=5
+  for i in 1 2 3 4 5 6; do
+    try_invoke "$1" && return 0
+    log "   attempt $i failed; again in ${pause} s"
+    sleep "$(( POLL > 0 ? pause : 0 ))"; pause=$(( pause * 2 ))
+  done
+  return 1
+}
+live_of() { jq --arg r "$region" '[.hosts[] | select(.region == $r and .role == "runner" and (.state | IN("released", "failed") | not))]'; }
+live_hosts() { invoke '{"action":"status"}' | live_of; }
 
 cat >&2 <<INFO
 This rents ONE phoenixNAP server in $region for about $minutes minutes (d3.c1.large, hourly: \$1.27 per started hour,
 DECLARED 2026-11-18; see docs/CUSTOMER-MODE-PNAP.md for the full estimate), runs 3 jobs ($repo_a x2, $repo_b x1) and
-releases the server on every exit path.
+releases the server on every exit path. Likely cost: \$1.27 to \$2.54 plus the IP; at most about \$3.90 by this
+script's own deadlines (90 + 40 + 20 minutes: 3 started hours).
 INFO
 if [ "$yes" != 1 ]; then read -r -p "Go? [y/N] " ok; [ "$ok" = y ] || die "not confirmed"; fi
 
@@ -62,14 +81,21 @@ release() {
   [ "$released" = 1 ] && return 0
   released=1
   log "releasing every host of $region"
-  invoke "{\"action\":\"release\",\"region\":\"$region\"}" >/dev/null || true
+  local asked=0 n st end=$(( $(date +%s) + 20 * 60 ))
   for _ in $(seq 1 40); do
-    n="$(live_hosts | jq length)"
-    [ "$n" = 0 ] && { log "released: no host of $region left"; return 0; }
-    invoke '{"action":"scale"}' >/dev/null || true
+    [ "$(date +%s)" -lt "$end" ] || break  # 20 minutes at most, whatever the retries took
+    # Asked again until it went through once: a release call that failed (throttled, expired credentials) is retried.
+    if [ "$asked" = 0 ]; then retry_invoke "{\"action\":\"release\",\"region\":\"$region\"}" >/dev/null && asked=1; fi
+    if st="$(retry_invoke '{"action":"status"}')"; then
+      n="$(live_of <<<"$st" | jq length)"
+      [ "$asked" = 1 ] && [ "$n" = 0 ] && { log "released: no host of $region left"; return 0; }
+    fi
+    retry_invoke '{"action":"scale"}' >/dev/null || true
     sleep "$POLL"
   done
-  log "WARNING: a host of $region still shows as live: check the scaler log and the BMC portal (servers named fx-*)"
+  log "WARNING: a host of $region may still be live (\$1.27/h): run this script's release again, or check the"
+  log "WARNING: scaler log and the BMC portal (servers named fx-*). The hold still ends after --minutes, then the scaler"
+  log "WARNING: drains the idle host at the end of its paid hour."
   return 1
 }
 trap 'release; rm -rf -- "$work"' EXIT

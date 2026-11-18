@@ -64,6 +64,10 @@ class HostConfig:
     new_conn_per_s: int = 200
     bytes_per_s: int = 62_500_000  # 500 Mbit/s each way
     packets_per_s: int = 20_000
+    # Per microVM disk (each of its four drives, R-014 R10): 200 MiB/s and 10,000 operations/s. A d3.c1.large's NVMe
+    # drive does several GB/s: 15 microVMs at their limit stay below it.
+    disk_bytes_per_s: int = 200 * 1024 * 1024
+    disk_ops_per_s: int = 10_000
     chroot_base: str = "/srv/jailer"
     firecracker: str = "/usr/local/bin/firecracker"
     jailer: str = "/usr/local/bin/jailer"
@@ -131,7 +135,7 @@ def check(c: HostConfig) -> None:
             raise ConfigError(f"not a plain absolute path: {p!r}")
     if not re.fullmatch(r"[A-Za-z0-9._/-]+", c.parent_cgroup) or ".." in c.parent_cgroup or c.parent_cgroup.startswith("/"):
         raise ConfigError("parent_cgroup: a relative cgroup path")
-    for n in ("conn_limit", "new_conn_per_s", "bytes_per_s", "packets_per_s"):
+    for n in ("conn_limit", "new_conn_per_s", "bytes_per_s", "packets_per_s", "disk_bytes_per_s", "disk_ops_per_s"):
         if getattr(c, n) <= 0:
             raise ConfigError(f"{n} must be positive")
     if c.slots * 4 > VM_LINK_NET.num_addresses:

@@ -36,9 +36,25 @@ def files():
     return dict(sorted(m.items()))
 
 
+def directories(names) -> list[str]:
+    """Every directory the files sit in. The archive carries them as 0755 entries: the user data extracts it under
+    "umask 077", and GNU tar would create directories it is not given with that umask (0700 root), so fenvix-parse,
+    fenvix-post and fenvix-cache could read none of their programs (R-014 R3)."""
+    out = set()
+    for n in names:
+        parts = n.split("/")[:-1]
+        for i in range(1, len(parts) + 1):
+            out.add("/".join(parts[:i]))
+    return sorted(out)
+
+
 def build() -> bytes:
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for name in directories(files()):
+            ti = tarfile.TarInfo(name)
+            ti.type, ti.mode, ti.mtime, ti.uid, ti.gid, ti.uname, ti.gname = tarfile.DIRTYPE, 0o755, 0, 0, 0, "root", "root"
+            tar.addfile(ti)
         for name, path in files().items():
             data = open(path, "rb").read()
             ti = tarfile.TarInfo(name)

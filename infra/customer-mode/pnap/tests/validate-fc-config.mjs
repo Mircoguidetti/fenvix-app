@@ -11,7 +11,7 @@ const [swaggerPath, configPath] = process.argv.slice(2);
 const swagger = parse(readFileSync(swaggerPath, "utf8"));
 const config = JSON.parse(readFileSync(configPath, "utf8"));
 const ajv = new Ajv({ strict: false, allErrors: true, logger: false });
-const known = { "boot-source": "BootSource", "machine-config": "MachineConfiguration", drives: "Drive", "network-interfaces": "NetworkInterface", entropy: "EntropyDevice" };
+const known = { "boot-source": "BootSource", "machine-config": "MachineConfiguration", drives: "Drive", "network-interfaces": "NetworkInterface", entropy: "EntropyDevice", serial: "SerialDevice" };
 let ok = true;
 for (const [key, value] of Object.entries(config)) {
   const def = known[key];

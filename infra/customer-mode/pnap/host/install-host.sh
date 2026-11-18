@@ -33,7 +33,7 @@ modprobe kvm_intel 2>/dev/null || modprobe kvm_amd 2>/dev/null || true
 log "2. packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq nftables iproute2 conntrack e2fsprogs xfsprogs squashfs-tools curl python3 util-linux zstd >/dev/null
+apt-get install -y -qq nftables iproute2 conntrack e2fsprogs xfsprogs squashfs-tools curl python3 util-linux zstd cryptsetup-bin >/dev/null
 modprobe nf_conntrack
 
 log "3. users: fenvix-parse (reads guest results), fenvix-post (sends summaries), fenvix-cache; jail uids 900000-900249 free"
@@ -44,26 +44,58 @@ if getent passwd | awk -F: '$3 >= 900000 && $3 < 900250 { found = 1 } END { exit
   fail "an account already uses a uid in 900000-900249 (the jail uids)"
 fi
 
-log "4. the data disk: an unused NVMe drive as XFS with reflink (each job's root disk is a reflink copy)"
+log "4. the data disk: an unused NVMe drive, encrypted with a key made at each boot and never stored (R-014 R4)"
+# Every job's disks (a customer's root, scratch and input disks) live on /srv/jailer. With a random key that exists
+# only in memory, whatever an interrupted job left, and whatever is on the drive when phoenixNAP gives the server to
+# its next tenant, is unreadable after a reboot or a release. fenvix-data.service (bin/fenvix-data-disk) opens the
+# drive, makes an XFS with reflink (each job's root disk is a reflink copy) and copies the guest image onto it, at
+# every boot, before the agent starts.
 install -d -m 0711 /srv/jailer
-if ! mountpoint -q /srv/jailer; then
-  disk=""
+install -d -m 0700 /var/lib/fenvix /var/lib/fenvix/guest-image
+if [ ! -s /etc/fenvix/data-disk ]; then
   for d in $(lsblk -dpno NAME,TYPE | awk '$2 == "disk" && $1 ~ /nvme/ { print $1 }'); do
     # unused: no partitions, no filesystem signature, not mounted, not part of the root device
-    if [ "$(lsblk -no NAME "$d" | wc -l)" = 1 ] && ! blkid -p "$d" >/dev/null 2>&1 && ! grep -q "^$d" /proc/mounts; then disk="$d"; break; fi
+    if [ "$(lsblk -no NAME "$d" | wc -l)" = 1 ] && ! blkid -p "$d" >/dev/null 2>&1 && ! grep -q "^$d" /proc/mounts; then
+      # A name that survives a reboot (nvme0n1 and nvme1n1 may swap).
+      stable="$(find -L /dev/disk/by-id -samefile "$d" -name 'nvme-*' ! -name '*-part*' 2>/dev/null | sort | head -1)"
+      printf '%s\n' "${stable:-$d}" >/etc/fenvix/data-disk
+      chmod 0600 /etc/fenvix/data-disk
+      log "   ${stable:-$d} -> /srv/jailer (dm-crypt with a per-boot key, XFS with reflink)"
+      break
+    fi
   done
-  if [ -n "$disk" ]; then
-    mkfs.xfs -q -f -m reflink=1 -L fenvix-data "$disk"
-    echo "LABEL=fenvix-data /srv/jailer xfs defaults,noatime 0 2" >>/etc/fstab
-    mount /srv/jailer
-    log "   $disk -> /srv/jailer (XFS, reflink)"
-  else
-    log "   no unused NVMe drive: jobs' disks are full copies on the root filesystem (slower start)"
-  fi
+  [ -s /etc/fenvix/data-disk ] || log "   no unused NVMe drive: jobs' disks are full copies on the root filesystem (slower start, not encrypted)"
 fi
-chmod 0711 /srv/jailer
-install -d -m 0700 /srv/jailer/guest /var/lib/fenvix
 ln -sfn /srv/jailer/guest /var/lib/fenvix/guest
+
+log "4b. host hygiene for two tenants (Firecracker prod-host-setup.md; R-014 R2): SMT off, KSM off, no swap"
+# SMT: no physical core may run two tenants' vCPUs on its sibling threads. Off now, at every boot (tmpfiles), and on
+# the kernel command line for the next boot. The agent checks /sys/devices/system/cpu/smt/active before it enrols.
+cat >/etc/tmpfiles.d/fenvix-host.conf <<'TMPFILES'
+w- /sys/devices/system/cpu/smt/control - - - - off
+w- /sys/kernel/mm/ksm/run - - - - 0
+TMPFILES
+if [ -w /sys/devices/system/cpu/smt/control ]; then
+  case "$(cat /sys/devices/system/cpu/smt/control)" in
+    on|off) echo off >/sys/devices/system/cpu/smt/control ;;
+  esac
+fi
+if [ -d /etc/default/grub.d ] && command -v update-grub >/dev/null 2>&1; then
+  # shellcheck disable=SC2016 # expanded by grub, not here
+  echo 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT nosmt"' >/etc/default/grub.d/90-fenvix-nosmt.cfg
+  update-grub >/dev/null 2>&1 || log "   update-grub failed: nosmt is set at each boot by tmpfiles only"
+fi
+# KSM: writing 2 unmerges every shared page (the write returns when it is done), then 0 keeps it stopped.
+if [ -w /sys/kernel/mm/ksm/run ]; then echo 2 >/sys/kernel/mm/ksm/run; echo 0 >/sys/kernel/mm/ksm/run; fi
+# Swap: no guest memory ever written to a disk.
+swapoff -a
+sed -i -E '/^[^#].*[[:space:]]swap[[:space:]]/s/^/# fenvix: no swap # /' /etc/fstab
+systemctl mask --now swap.target >/dev/null 2>&1 || true
+[ "$(cat /sys/devices/system/cpu/smt/active 2>/dev/null || echo 0)" = 0 ] || fail "SMT is still active"
+[ "$(cat /sys/kernel/mm/ksm/run 2>/dev/null || echo 0)" = 0 ] || fail "KSM is still running"
+[ "$(tail -n +2 /proc/swaps | wc -l)" = 0 ] || fail "swap is still on"
+log "   CPU vulnerabilities as the kernel reports them (checked on the first real host):"
+grep -H . /sys/devices/system/cpu/vulnerabilities/* 2>/dev/null | sed 's/^/   /' || true
 
 log "5. Firecracker and its jailer $FIRECRACKER_VERSION"
 tgz="/var/tmp/firecracker-$FIRECRACKER_VERSION-x86_64.tgz"
@@ -73,18 +105,24 @@ install -m 0755 "/var/tmp/release-$FIRECRACKER_VERSION-x86_64/firecracker-$FIREC
 install -m 0755 "/var/tmp/release-$FIRECRACKER_VERSION-x86_64/jailer-$FIRECRACKER_VERSION-x86_64" /usr/local/bin/jailer
 firecracker --version | head -1; jailer --version | head -1
 
-log "6. the guest kernel and root disk"
+log "6. the guest kernel and root disk (kept on the root filesystem; copied onto the data disk at each boot)"
+img=/var/lib/fenvix/guest-image
 fetch "$GUEST_KERNEL_URL" "$GUEST_KERNEL_SHA256" /var/tmp/vmlinux
 if [ -n "${GUEST_IMAGE_URL:-}" ]; then
   fetch "$GUEST_IMAGE_URL" "${GUEST_IMAGE_SHA256:?}" /var/tmp/rootfs.ext4.zst
-  zstd -q -d -f /var/tmp/rootfs.ext4.zst -o /srv/jailer/guest/rootfs.ext4
-  install -m 0444 /var/tmp/vmlinux /srv/jailer/guest/vmlinux
+  zstd -q -d -f /var/tmp/rootfs.ext4.zst -o "$img/rootfs.ext4"
+  install -m 0444 /var/tmp/vmlinux "$img/vmlinux"
 else
   : "${GUEST_BASE_URL:?}" "${GUEST_BASE_SHA256:?}"
   fetch "$GUEST_BASE_URL" "$GUEST_BASE_SHA256" /var/tmp/base.squashfs
-  KERNEL=/var/tmp/vmlinux BASE=/var/tmp/base.squashfs OUT=/srv/jailer/guest bash "$here/guest/build-guest.sh"
+  KERNEL=/var/tmp/vmlinux BASE=/var/tmp/base.squashfs OUT="$img" bash "$here/guest/build-guest.sh"
 fi
-chmod 0400 /srv/jailer/guest/rootfs.ext4
+chmod 0400 "$img/rootfs.ext4"
+install -m 0644 "$here/systemd/fenvix-data.service" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable fenvix-data.service
+systemctl start fenvix-data.service || fail "the data disk could not be prepared (journalctl -u fenvix-data)"
+[ -s /srv/jailer/guest/rootfs.ext4 ] || fail "no guest image on /srv/jailer"
 
 log "7. kernel settings"
 cat >/etc/sysctl.d/90-fenvix.conf <<'SYSCTL'

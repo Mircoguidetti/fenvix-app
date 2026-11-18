@@ -121,12 +121,16 @@ export class HostsService {
     if (scope.exp * 1000 - this.now() < (HOST_CREDENTIAL_SECONDS * 1000) / 2) out.credential = this.credential(h);
     if (h.state === "draining" || free <= 0) return { status: 200, body: out };
 
-    // Take up to `free` queued jobs of THIS host's region (never another region's), then mint each one.
+    // Take up to `free` queued jobs of THIS host's region (never another region's), then mint each one. The region is
+    // checked again against the installation's CURRENT one (its own, or the default): a job queued before its
+    // customer was set to another region is never run here (R-014 R5); the scaler moves it to its new queue.
     // Oldest first (RETURNING does not keep the subquery's order, so the rows are sorted here).
     const ids = await this.d.db.tx(null, async (c) => (await c.query<{ job_id: number; queued_at: Date }>(
       `update pnap_jobs set state = 'leased', host_id = $3, leased_at = now(), attempts = attempts + 1
-        where job_id in (select job_id from pnap_jobs where region = $1 and state = 'queued' order by queued_at, job_id limit $2 for update skip locked)
-        returning job_id, queued_at`, [h.region, Math.min(free, MAX_MINT_PER_LEASE), h.host_id])).rows
+        where job_id in (select j.job_id from pnap_jobs j join gh_installations i on i.installation_id = j.installation_id
+                          where j.region = $1 and j.state = 'queued' and coalesce(i.pnap_region, $4::text) = $1
+                          order by j.queued_at, j.job_id limit $2 for update of j skip locked)
+        returning job_id, queued_at`, [h.region, Math.min(free, MAX_MINT_PER_LEASE), h.host_id, this.d.s.defaultRegion])).rows
       .sort((a, b) => +a.queued_at - +b.queued_at || a.job_id - b.job_id).map((r) => r.job_id));
     const jobs: LeasedJob[] = [];
     for (const jobId of ids) {

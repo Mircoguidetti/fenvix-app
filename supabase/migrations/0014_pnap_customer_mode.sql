@@ -4,7 +4,8 @@
 -- of its customer's region. The App's scaler (github-app/src/pnap/scaler.ts) keeps these tables; the hosts' agents
 -- reach them only through the App's host routes (/v1/hosts/*). Safe to apply twice.
 
--- The region an installation's jobs run in. NULL: not placed until set (no job ever runs in another region).
+-- The region an installation's jobs run in. NULL: PNAP_DEFAULT_REGION if one is configured, else not placed until set.
+-- A host leases a job only while this (or the default) is still the host's region (R-014 R5).
 alter table public.gh_installations add column if not exists pnap_region text;
 do $$ begin
   alter table public.gh_installations add constraint gh_installations_pnap_region check (pnap_region in ('ASH', 'PHX', 'CHI', 'SEA', 'NLD'));
@@ -39,7 +40,8 @@ create table if not exists public.pnap_hosts (
 );
 create index if not exists pnap_hosts_live on public.pnap_hosts (region, role, state);
 
--- The per-region queue of jobs waiting for a microVM. A job is only ever leased by a host of its region.
+-- The per-region queue of jobs waiting for a microVM. A job is only ever leased by a host of its region, and only while
+-- that is still its installation's region (github-app/src/pnap/hosts.ts).
 create table if not exists public.pnap_jobs (
   job_id bigint primary key references public.gh_jobs (job_id) on delete cascade,
   region text not null check (region in ('ASH', 'PHX', 'CHI', 'SEA', 'NLD')),

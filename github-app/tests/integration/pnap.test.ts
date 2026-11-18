@@ -102,7 +102,7 @@ describe("customer mode on phoenixNAP: placement by region, the scaler, enrolmen
     assert.equal(h.gh.repos.get("acme/shop")!.jitRunners.length, 0, "no runner registered before a host takes the job");
   });
 
-  it("the scaler orders one host per region with demand (28 slots each), and none where there is none", async () => {
+  it("the scaler orders one host per region with demand (15 slots each), and none where there is none", async () => {
     const r = await run();
     assert.deepEqual(r.actions.map((a) => [a.kind, (a as { region?: string }).region]).sort(), [["order", "ASH"], ["order", "NLD"]]);
     const servers = [...fake.servers.values()];
@@ -128,7 +128,7 @@ describe("customer mode on phoenixNAP: placement by region, the scaler, enrolmen
     assert.equal(ok.status, 200);
     const cfg = ok.body.config as Record<string, unknown>;
     assert.deepEqual({ region: cfg.region, slots: cfg.slots, vcpus: cfg.vcpus, mem: cfg.mem_mib, cache: cfg.cache, sums: cfg.summaries_url },
-      { region: "ASH", slots: 28, vcpus: 2, mem: 8192, cache: { mode: "colocated", port: 8787 }, sums: "https://github.fenvix.test/v1/runner/summaries" });
+      { region: "ASH", slots: 15, vcpus: 2, mem: 8192, cache: { mode: "colocated", port: 8787 }, sums: "https://github.fenvix.test/v1/runner/summaries" });
     assert.match(String((ok.body.cachePublicKey as { n: string }).n), /^[0-9a-f]{512}$/);
     assert.doesNotMatch(JSON.stringify(ok.body), /PRIVATE KEY/);
     assert.equal((await hosts.enrol(`Bearer ${enrolToken(ash!.host_id)}`)).status, 401, "single use");

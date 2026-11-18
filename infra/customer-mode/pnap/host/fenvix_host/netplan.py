@@ -66,7 +66,8 @@ def cache_endpoint(c: HostConfig) -> tuple[str, int, str] | None:
 
 
 def host_ruleset(c: HostConfig) -> str:
-    """The root namespace's table. Loaded once at boot (fenvix-net.service); replaces any previous version atomically."""
+    """The root namespace's table. Loaded by the agent at each start (Agent.prepare_host) and checked on every lease
+    round (Agent.ensure_host_table); replaces any previous version atomically."""
     slots = [slot_net(s) for s in range(c.slots)]
     vm_src = ", ".join(f'"{n.root_if}" . {n.peer_ip}' for n in slots)
     blocked = ", ".join(sorted(set(c.blocked_nets), key=lambda n: ipaddress.ip_network(n)))
@@ -127,16 +128,21 @@ def host_ruleset(c: HostConfig) -> str:
     return "\n".join(lines)
 
 
-def vm_ruleset(n: SlotNet) -> str:
+def vm_ruleset(n: SlotNet, conn_limit: int = 4096) -> str:
     """Inside one microVM's namespace. The namespace forwards the guest's own traffic and nothing else; it accepts and
-    sends nothing itself, so the jailed Firecracker in it (a VMM escape) has no network at all (R-012b N3)."""
+    sends nothing itself, so the jailed Firecracker in it (a VMM escape) has no network at all (R-012b N3).
+    The connection cap is enforced here too, not only in the root namespace: the namespace's own conntrack table
+    confirms a flow before the root namespace sees it, so a flooding guest would otherwise fill this table (up to
+    nf_conntrack_max, kernel memory charged to no cgroup) with flows the root namespace then drops (R-014 note a)."""
     return "\n".join([
         f"table inet {VM_TABLE} {{",
+        "  set conn { type ipv4_addr; size 16; flags dynamic; }",
         "  chain input { type filter hook input priority filter; policy drop; }",
         '  chain output { type filter hook output priority filter; policy drop; counter comment "the namespace itself sends nothing"; }',
         "  chain forward {",
         "    type filter hook forward priority filter; policy drop;",
         "    meta nfproto ipv6 drop",
+        f'    iifname "{n.tap}" ct state new add @conn {{ ip saddr ct count over {conn_limit} }} counter drop comment "connections of this microVM"',
         f'    iifname "{n.tap}" oifname "{n.peer_if}" ip saddr {GUEST_IP} accept',
         f'    iifname "{n.peer_if}" oifname "{n.tap}" ct state established,related accept',
         '    counter drop comment "anything else, e.g. a spoofed guest source"',

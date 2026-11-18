@@ -16,10 +16,13 @@ fenvix-parse/fenvix-post process and no guest can read it.
 
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 import threading
 import time
 import urllib.error
@@ -28,7 +31,7 @@ from dataclasses import asdict
 from typing import Callable
 
 from .config import HostConfig
-from .job import JobSpec, Outcome, run_job
+from .job import JobSpec, Outcome, remove_cgroup, run_job
 
 log = logging.getLogger("fenvix-agent")
 ENROL = re.compile(r"^fxe1\.[a-z0-9-]{3,63}\.[A-Za-z0-9_-]{32,128}$")
@@ -48,6 +51,19 @@ class ControlPlane:
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             data = r.read(4 * 1024 * 1024)
             return json.loads(data) if data else {}
+
+
+def write_public_key(etc_dir: str, key: dict) -> None:
+    os.chmod(etc_dir, os.stat(etc_dir).st_mode & 0o7777 | 0o711)
+    os.makedirs(f"{etc_dir}/cache", exist_ok=True)
+    os.chmod(f"{etc_dir}/cache", 0o755)
+    path = f"{etc_dir}/cache/signing-key.json"
+    tmp = f"{path}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        os.fchmod(f.fileno(), 0o644)
+        json.dump(key, f)
+    os.replace(tmp, path)
 
 
 def write_private(path: str, text: str) -> None:
@@ -103,10 +119,10 @@ class Agent:
         self.cred = cred
         key = r.get("cachePublicKey")
         if self.cfg.cache.mode == "colocated" and isinstance(key, dict):
-            # The PUBLIC half of the cache signing key: the colocated cache verifies per-job tokens, mints none.
-            os.makedirs(f"{self.etc_dir}/cache", mode=0o755, exist_ok=True)
-            with open(f"{self.etc_dir}/cache/signing-key.json", "w", encoding="utf-8") as f:
-                json.dump({"n": str(key["n"]), "e": int(key["e"])}, f)
+            # The PUBLIC half of the cache signing key: the colocated cache verifies per-job tokens, mints none. It is
+            # read by fenvix-cache, so its path is traversable and the file world-readable whatever the agent's
+            # UMask=0077 (R-014 R3); the rest of /etc/fenvix stays root-only.
+            write_public_key(self.etc_dir, {"n": str(key["n"]), "e": int(key["e"])})
         os.remove(enrol_file)  # spent anyway; the App refuses a second use
         log.info("enrolled as %s in %s, %d slots", self.cfg.host_id, self.cfg.region, self.cfg.slots)
 
@@ -167,12 +183,13 @@ class Agent:
             self.outbox.append({"jobId": out.job_id, **{k: v for k, v in asdict(out).items() if k != "job_id"}})
 
     def prepare_host(self) -> None:
-        """At every start (idempotent): the host's network table, the colocated cache's namespace, the cgroups."""
+        """At every start (idempotent), before the first lease: whatever an earlier run of the agent left (R-014 R4),
+        the host's network table, the colocated cache's namespace, the cgroups."""
         assert self.cfg
-        import subprocess
-
         from . import netplan
 
+        prepare_cgroups(self.cfg.parent_cgroup)
+        sweep_stale(self.cfg)
         subprocess.run(["sysctl", "-q", "-e", "-w", *netplan.HOST_SYSCTLS], check=True)
         subprocess.run(["nft", "-f", "-"], input=netplan.host_ruleset(self.cfg).encode(), check=True)
         if self.cfg.cache.mode == "colocated":
@@ -181,14 +198,35 @@ class Agent:
             for cmd in netplan.cache_up(self.cfg):
                 subprocess.run(cmd, input=netplan.cache_ruleset(self.cfg).encode() if cmd[-2:] == ["-f", "-"] else None, check=True)
             subprocess.run(["systemctl", "start", "fenvix-cache.service"], check=True)
-        prepare_cgroups(self.cfg.parent_cgroup)
+
+    def ensure_host_table(self, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> bool:
+        """Every lease round (R-014 note b): the host's table must still be loaded. Anything that runs `nft flush
+        ruleset` (an enabled nftables.service with a default /etc/nftables.conf, ufw) would leave forwarding on with
+        no rule: microVMs would reach the host and the private network. Reloaded at once; if that fails, forwarding
+        is turned off and no job is leased until it is back. Returns whether a new job may be leased."""
+        assert self.cfg
+        from . import netplan
+
+        if run(["nft", "list", "table", "inet", netplan.TABLE], capture_output=True, check=False).returncode == 0:
+            return True
+        log.error("the host's nftables table %s was gone: reloading it", netplan.TABLE)
+        r = run(["nft", "-f", "-"], input=netplan.host_ruleset(self.cfg).encode(), capture_output=True, check=False)
+        if r.returncode == 0:
+            return True
+        run(["sysctl", "-q", "-w", "net.ipv4.ip_forward=0"], capture_output=True, check=False)
+        log.error("could not reload the host's table: forwarding is off, no new job is leased")
+        return False
 
     def run_forever(self) -> None:
+        check_host_hygiene()  # before enrolment: a host that shares cores between tenants never takes a job
         self.enrol()
         self.prepare_host()
         backoff = self.poll_s
         while not self.stop.is_set():
             try:
+                if not self.ensure_host_table():
+                    self.stop.wait(self.poll_s)
+                    continue
                 self.tick()
                 backoff = self.poll_s
             except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
@@ -197,10 +235,71 @@ class Agent:
             self.stop.wait(backoff)
 
 
+class UnsafeHost(RuntimeError):
+    pass
+
+
+def check_host_hygiene(sys_root: str = "/sys", proc_root: str = "/proc") -> None:
+    """Firecracker's production host setup (prod-host-setup.md), for two tenants on one host (R-014 R2): SMT off (no
+    physical core runs two tenants' vCPUs on its sibling threads), KSM off (no page shared across guests), no swap
+    (no guest memory on a disk). install-host.sh sets all three; the agent refuses to enrol or lease without them."""
+    problems = []
+    try:
+        smt = open(f"{sys_root}/devices/system/cpu/smt/active", encoding="ascii").read().strip()
+    except OSError:
+        smt = "0"  # no SMT support at all (the control file is absent)
+    if smt != "0":
+        problems.append("SMT is active (/sys/devices/system/cpu/smt/active)")
+    try:
+        if open(f"{sys_root}/kernel/mm/ksm/run", encoding="ascii").read().strip() != "0":
+            problems.append("KSM is running (/sys/kernel/mm/ksm/run)")
+    except OSError:
+        pass
+    try:
+        swaps = open(f"{proc_root}/swaps", encoding="ascii").read().splitlines()[1:]
+    except OSError:
+        swaps = []
+    if [x for x in swaps if x.strip()]:
+        problems.append("swap is on (/proc/swaps)")
+    if problems:
+        raise UnsafeHost("not safe for two tenants: " + "; ".join(problems))
+
+
+def sweep_stale(c: HostConfig, *, cgroup_root: str = "/sys/fs/cgroup", staging_base: str = "/run/fenvix",
+                run: Callable[..., object] = subprocess.run) -> list[str]:
+    """Everything a microVM leaves behind when the agent stops in the middle of a job (a restart, a crash, a reboot;
+    R-014 R4): processes of every jail uid, every jail (a customer's root, scratch and input disks) on the data disk,
+    every staging and post directory, every microVM cgroup and every slot namespace. Run before the first lease.
+    Returns what it removed."""
+    from . import netplan
+    from .config import slot_uid
+
+    gone: list[str] = []
+    for slot in range(c.slots):
+        run(["pkill", "-KILL", "-u", str(slot_uid(slot))], check=False, capture_output=True)
+    vms = f"{cgroup_root}/{c.parent_cgroup}"
+    for cg in sorted(glob.glob(f"{glob.escape(vms)}/*/")):
+        remove_cgroup(cg.rstrip("/"))
+        gone.append(cg.rstrip("/"))
+    for d in sorted(glob.glob(f"{glob.escape(c.chroot_base)}/firecracker/*")) + sorted(
+            glob.glob(f"{glob.escape(staging_base)}/staging-*") + glob.glob(f"{glob.escape(staging_base)}/post-*")):
+        shutil.rmtree(d, ignore_errors=True)
+        gone.append(d)
+    listed = run(["ip", "netns", "list"], check=False, capture_output=True, text=True)
+    names = [line.split()[0] for line in (getattr(listed, "stdout", "") or "").splitlines() if line.strip()]
+    for ns in names:
+        if re.fullmatch(r"fxvm[0-9]{1,3}(-guest)?", ns):
+            slot = int(re.sub(r"\D", "", ns))
+            for cmd in netplan.slot_down(netplan.slot_net(slot)):
+                run(cmd, check=False, capture_output=True)
+            gone.append(f"netns {ns}")
+    if gone:
+        log.warning("removed what an interrupted run left: %s", ", ".join(gone))
+    return gone
+
+
 def host_facts() -> dict:
     """The public interface and this host's own addresses (a guest reaches none of them)."""
-    import subprocess
-
     route = subprocess.run(["ip", "-j", "route", "show", "default"], capture_output=True, text=True, check=False).stdout
     addrs = subprocess.run(["ip", "-j", "-4", "addr", "show"], capture_output=True, text=True, check=False).stdout
     pub = (json.loads(route or "[]") or [{}])[0].get("dev", "bond0")
@@ -208,9 +307,15 @@ def host_facts() -> dict:
     return {"pub_if": pub, "host_addrs": mine}
 
 
+AGENT_MEMORY_MAX = 2 * 1024**3
+
+
 def prepare_cgroups(parent: str, root: str = "/sys/fs/cgroup") -> None:
     """cgroup v2, under the agent's own delegated subtree (Delegate=yes): the agent moves itself into a leaf, so the
-    service cgroup may enable controllers for its children; every microVM gets its own cgroup under <parent>."""
+    service cgroup may enable controllers for its children; every microVM gets its own cgroup under <parent>.
+    The agent's leaf has its own memory limit (R-014 R1): whatever happens to the agent and the commands it runs, the
+    OOM killer stays inside the leaf and never reaches a tenant's microVM. (A MemoryMax= on the unit would cap the
+    microVMs too: they are in the same service subtree.)"""
     if not os.path.exists(f"{root}/cgroup.controllers"):
         raise RuntimeError("cgroup v2 is required")
     svc = os.path.dirname(f"{root}/{parent}")
@@ -219,14 +324,14 @@ def prepare_cgroups(parent: str, root: str = "/sys/fs/cgroup") -> None:
         f.write(str(os.getpid()))
     with open(f"{svc}/cgroup.subtree_control", "w") as f:
         f.write("+cpu +memory +pids")
+    with open(f"{svc}/agent/memory.max", "w") as f:
+        f.write(str(AGENT_MEMORY_MAX))
     os.makedirs(f"{root}/{parent}", exist_ok=True)
     with open(f"{root}/{parent}/cgroup.subtree_control", "w") as f:
         f.write("+cpu +memory +pids")
 
 
 def route_dev_of(ip: str) -> str:
-    import subprocess
-
     out = subprocess.run(["ip", "-j", "route", "get", ip], capture_output=True, text=True, check=True).stdout
     return json.loads(out)[0]["dev"]
 

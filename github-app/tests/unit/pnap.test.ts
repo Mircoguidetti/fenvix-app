@@ -26,10 +26,13 @@ const view = (o: Partial<RegionView> = {}): RegionView => ({ region: "ASH", min:
 const kinds = (a: { kind: string }[]) => a.map((x) => x.kind);
 
 describe("phoenixNAP settings", () => {
-  it("d3.c1.large holds 28 microVMs of 2 vCPUs / 8 GiB (no CPU or memory overcommit, room kept for the host)", () => {
-    assert.equal(slotsFor("d3.c1.large", 2, 8192), 28);
-    assert.equal(slotsFor("d3.c1.large", 4, 16384), 14, "memory-bound: (256 GiB - 16 GiB) / (16 GiB + 512 MiB)");
-    assert.equal(S.slotsPerHost, 28);
+  it("d3.c1.large holds 15 microVMs of 2 vCPUs / 8 GiB: one vCPU per physical core, SMT off (R-014 R2), no memory overcommit", () => {
+    assert.equal(slotsFor("d3.c1.large", 2, 8192), 15, "core-bound: (32 cores - 2 for the host) / 2");
+    assert.equal(slotsFor("d3.c1.large", 4, 16384), 7, "core-bound: 30 / 4");
+    assert.equal(slotsFor("d3.c1.large", 1, 16384), 14, "memory-bound: (256 GiB - 16 GiB) / (16 GiB + 512 MiB)");
+    assert.equal(S.slotsPerHost, 15);
+    assert.throws(() => loadPnapSettings({ ...ENV, PNAP_SLOTS_PER_HOST: "28" }), /PNAP_SLOTS_PER_HOST must be an integer from 1 to 15/,
+      "an explicit slot count never puts two tenants' vCPUs on one core");
     assert.deepEqual(S.regions, { ASH: { min: 0, max: 3 }, NLD: { min: 1, max: 2 } });
     assert.equal(S.serverType, "d3.c1.large");
     assert.equal(S.os, "ubuntu/noble");

@@ -10,11 +10,13 @@ the job's own credential; the ids are the host's record of the job.
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
@@ -59,17 +61,110 @@ class JobSpec:
         return s
 
 
+@dataclass
+class VmRun:
+    """How a microVM ended. `returncode` is the jailer's (with --new-pid-ns it exits as soon as Firecracker is cloned);
+    the guest's own word is the result disk. `tail`: the last bytes of the VMM's output (its log and the guest's
+    console), never more than vm.CONSOLE_TAIL_BYTES."""
+
+    returncode: int | None
+    tail: bytes = b""
+    timed_out: bool = False
+
+
+class Tail:
+    """Drains a pipe, keeping only its last `limit` bytes: whatever a guest writes to its console, the agent's memory
+    stays bounded (R-014 R1)."""
+
+    def __init__(self, limit: int):
+        self.limit, self.buf = limit, bytearray()
+
+    def drain(self, f) -> None:
+        try:
+            while True:
+                chunk = f.read1(65536) if hasattr(f, "read1") else f.read(65536)
+                if not chunk:
+                    return
+                self.buf += chunk
+                if len(self.buf) > self.limit:
+                    del self.buf[: len(self.buf) - self.limit]
+        except (OSError, ValueError):
+            return
+
+
+def cgroup_populated(cg: str) -> bool:
+    """Whether a microVM's cgroup still holds a process (cgroup.events "populated 1"). No cgroup: nothing runs."""
+    try:
+        with open(f"{cg}/cgroup.events", encoding="ascii") as f:
+            return any(line.strip() == "populated 1" for line in f)
+    except OSError:
+        return False
+
+
+def kill_cgroup(cg: str) -> None:
+    try:
+        with open(f"{cg}/cgroup.kill", "w", encoding="ascii") as f:
+            f.write("1")
+    except OSError:
+        pass
+
+
 class Executor(Protocol):
     def run(self, argv: list[str], *, input: bytes | None = None, timeout: float | None = None, check: bool = True,
             stdin_fd: int | None = None) -> subprocess.CompletedProcess: ...
+
+    def vm(self, argv: list[str], *, cgroup: str, timeout: float) -> VmRun: ...
 
 
 class Shell:
     """Runs commands for real. Never through a shell: every argument is one argv element."""
 
+    poll_s = 0.2
+
     def run(self, argv, *, input=None, timeout=None, check=True, stdin_fd=None):
         return subprocess.run(argv, input=input, stdin=stdin_fd if input is None else None, capture_output=True,
                               timeout=timeout, check=check)
+
+    def vm(self, argv, *, cgroup, timeout):
+        """Runs the jailer, then waits for the microVM itself: with --new-pid-ns the jailer exits as soon as it has
+        cloned Firecracker, which lives on in its own cgroup until the guest powers off. The VMM's output (its log and
+        the guest's serial console) is drained into a bounded tail, never captured whole (R-014 R1)."""
+        deadline = time.monotonic() + timeout
+        p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        tail = Tail(vm.CONSOLE_TAIL_BYTES)
+        reader = threading.Thread(target=tail.drain, args=(p.stdout,), name="vmm-output", daemon=True)
+        reader.start()
+        run = VmRun(returncode=None)
+        try:
+            run.returncode = p.wait(timeout=max(0.0, deadline - time.monotonic()))
+            # Two signals that the microVM is gone, both needed: the output pipe's end of file (Firecracker inherited
+            # it and holds it until it exits), and the microVM's cgroup emptied.
+            reader.join(timeout=max(0.0, deadline - time.monotonic()))
+            if reader.is_alive():
+                raise subprocess.TimeoutExpired(argv, timeout)
+            while cgroup_populated(cgroup):
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                time.sleep(self.poll_s)
+        except subprocess.TimeoutExpired:
+            run.timed_out = True
+            kill_cgroup(cgroup)
+            p.kill()
+            p.wait()
+        reader.join(timeout=5)
+        if p.stdout:
+            p.stdout.close()
+        run.tail = bytes(tail.buf)
+        return run
+
+
+def uid_of(user: str) -> int | None:
+    import pwd
+
+    try:
+        return pwd.getpwnam(user).pw_uid
+    except KeyError:
+        return None
 
 
 @dataclass
@@ -78,7 +173,9 @@ class Users:
 
     parse: list[str] = field(default_factory=lambda: ["runuser", "-u", "fenvix-parse", "--"])
     post: list[str] = field(default_factory=lambda: ["runuser", "-u", "fenvix-post", "--"])
-    post_uid: int | None = None  # owner of the credential file (fenvix-post); None: leave as is
+    # Owner of the job's credential file and its directory: fenvix-post, looked up (R-014 R3: left as None, the file
+    # stayed root's 0400 and fenvix-post could never read it). None only where no such account exists (the tests).
+    post_uid: int | None = field(default_factory=lambda: uid_of("fenvix-post"))
 
 
 @dataclass
@@ -117,9 +214,29 @@ def input_files(c: HostConfig, spec: JobSpec) -> dict[str, str]:
     return files
 
 
+def printable(b: bytes) -> str:
+    return "".join(ch if 32 <= ord(ch) < 127 else "?" for ch in b.decode("ascii", errors="replace")).strip()
+
+
+def remove_cgroup(cg: str) -> None:
+    """A microVM's cgroup (and any child the jailer made): its processes are killed first, then it is removed."""
+    if not os.path.isdir(cg):
+        return
+    kill_cgroup(cg)
+    for d, _, _ in sorted(os.walk(cg), key=lambda x: -len(x[0])):
+        for _ in range(50):
+            try:
+                os.rmdir(d)
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                time.sleep(0.02)  # the killed processes are still exiting
+
+
 def run_job(c: HostConfig, slot: int, spec: JobSpec, *, sh: Executor | None = None, users: Users | None = None,
             tap_kind: str = "tap", clock: Callable[[], float] = time.time, staging_base: str = "/run/fenvix",
-            timeout_s: float | None = None) -> Outcome:
+            timeout_s: float | None = None, cgroup_root: str = "/sys/fs/cgroup") -> Outcome:
     sh = sh or Shell()
     users = users or Users()
     job = spec.job
@@ -132,21 +249,28 @@ def run_job(c: HostConfig, slot: int, spec: JobSpec, *, sh: Executor | None = No
     t = {"start": clock()}
     out = Outcome(job_id=job.job_id, slot=slot, result="error", timings=t)
 
-    def cleanup() -> None:
+    cg = f"{cgroup_root}/{c.parent_cgroup}/{jid}"
+
+    def cleanup(*, every_job_of_the_slot: bool = False) -> None:
         sh.run(["pkill", "-KILL", "-u", str(n.uid)], check=False)
         for cmd in netplan.slot_down(n):
             sh.run(cmd, check=False)
-        for d in (jail_parent, staging, post_dir):
+        dirs = [jail_parent, staging, post_dir]
+        cgs = [cg]
+        if every_job_of_the_slot:
+            # R-014 R4: an earlier job of this slot whose run was cut short (agent restart, crash, reboot) left its
+            # jail (root, scratch and input disks) and its cgroup; whatever its job id, they go before this job starts.
+            prefix = f"fxs{slot}-j"
+            dirs += glob.glob(f"{glob.escape(c.chroot_base)}/firecracker/{prefix}*")
+            dirs += glob.glob(f"{glob.escape(staging_base)}/staging-{prefix}*") + glob.glob(f"{glob.escape(staging_base)}/post-{prefix}*")
+            cgs += glob.glob(f"{glob.escape(cgroup_root)}/{c.parent_cgroup}/{prefix}*")
+        for d in dirs:
             shutil.rmtree(d, ignore_errors=True)
-        cg = f"/sys/fs/cgroup/{c.parent_cgroup}/{jid}"
-        if os.path.isdir(cg):
-            try:
-                os.rmdir(cg)
-            except OSError:
-                pass
+        for g in cgs:
+            remove_cgroup(g)
 
     try:
-        cleanup()  # whatever a crash left in this slot
+        cleanup(every_job_of_the_slot=True)  # whatever a crash or a restart left in this slot
         # 1. the jail and the job's disks
         os.makedirs(f"{c.chroot_base}/firecracker", mode=0o711, exist_ok=True)
         os.makedirs(jail_parent, mode=0o700)
@@ -174,18 +298,17 @@ def run_job(c: HostConfig, slot: int, spec: JobSpec, *, sh: Executor | None = No
             os.chmod(f"{root}/{name}", 0o600 if name != "vmlinux" else 0o400)
         # 2. the job's network namespace, TAP and rules
         for cmd in netplan.slot_up(n, tap_kind=tap_kind):
-            sh.run(cmd, input=netplan.vm_ruleset(n).encode() if cmd[-2:] == ["-f", "-"] else None)
+            sh.run(cmd, input=netplan.vm_ruleset(n, c.conn_limit).encode() if cmd[-2:] == ["-f", "-"] else None)
         t["prepared"] = clock()
         # 3. the microVM, until the guest powers off (or the job's time is up)
-        try:
-            r = sh.run(vm.jailer_argv(c, n, slot, job), timeout=timeout_s or c.job_timeout_minutes * 60, check=False)
-            t["vm_exit"] = clock()
-            if r.returncode != 0:
-                out.detail = f"jailer/firecracker exited {r.returncode}"
-        except subprocess.TimeoutExpired:
-            t["vm_exit"] = clock()
-            out.result, out.detail = "timeout", f"no power-off within {timeout_s or c.job_timeout_minutes * 60:.0f} s"
+        limit = timeout_s or c.job_timeout_minutes * 60
+        r = sh.vm(vm.jailer_argv(c, n, slot, job), cgroup=cg, timeout=limit)
+        t["vm_exit"] = clock()
+        if r.timed_out:
+            out.result, out.detail = "timeout", f"no power-off within {limit:.0f} s"
             return out
+        if r.returncode != 0:
+            out.detail = f"jailer exited {r.returncode}: {printable(r.tail[-200:])}"
         # 4. the result: opened without following anything, parsed as fenvix-parse from stdin only
         try:
             fd = open_result(root, n.uid, size=vm.RESULT_BYTES)
@@ -209,6 +332,9 @@ def run_job(c: HostConfig, slot: int, spec: JobSpec, *, sh: Executor | None = No
         # 5. the summary, by fenvix-post with this job's credential (a file only it reads, deleted with the job)
         out.result = "summary"
         if c.summaries_url:
+            # The staging base (/run/fenvix, the agent's RuntimeDirectory) is 0711: fenvix-post may traverse it to its
+            # own 0700 directory, but list nothing (R-014 R3). Each staging-* directory stays 0700 root.
+            os.chmod(staging_base, 0o711)
             os.makedirs(post_dir, mode=0o700)
             cred = f"{post_dir}/summary-token"
             fd = os.open(cred, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)

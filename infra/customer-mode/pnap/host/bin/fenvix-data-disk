@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# fenvix-data.service, at every boot before the agent (R-014 R4): the data disk that holds every job's jail.
+#   - /etc/fenvix/data-disk names an NVMe drive (install-host.sh chose an unused one): it is opened with dm-crypt
+#     under a random key read from the kernel's generator and never stored, then formatted XFS with reflink. A reboot
+#     or a release of the server leaves only ciphertext of every jail (a customer's root, scratch and input disks).
+#   - no such file (no unused drive): /srv/jailer stays on the root filesystem, and every jail left there is deleted.
+# Then the guest image is copied from /var/lib/fenvix/guest-image onto it (reflink copies need the same filesystem).
+set -euo pipefail
+img=/var/lib/fenvix/guest-image
+name=fenvix-data
+install -d -m 0711 /srv/jailer
+if [ -s /etc/fenvix/data-disk ]; then
+  disk="$(head -1 /etc/fenvix/data-disk)"
+  [ -b "$disk" ] || { echo "fenvix-data: $disk is not a block device" >&2; exit 1; }
+  if ! mountpoint -q /srv/jailer; then
+    [ -e "/dev/mapper/$name" ] && cryptsetup close "$name"
+    # 512-bit key (AES-256-XTS) from /dev/urandom: lost at power-off by design.
+    cryptsetup open --type plain --cipher aes-xts-plain64 --key-size 512 --key-file /dev/urandom --keyfile-size 64 \
+      "$disk" "$name"
+    mkfs.xfs -q -f -m reflink=1 -L fenvix-data "/dev/mapper/$name"
+    mount -o noatime,nodev,nosuid "/dev/mapper/$name" /srv/jailer
+  fi
+else
+  # Root filesystem: nothing is encrypted, so every jail an interrupted run left is removed here (the agent removes
+  # them too, before its first lease).
+  rm -rf --one-file-system /srv/jailer/firecracker
+fi
+chmod 0711 /srv/jailer
+install -d -m 0700 /srv/jailer/guest
+cp --reflink=auto --sparse=always "$img/rootfs.ext4" /srv/jailer/guest/rootfs.ext4.tmp
+mv -f /srv/jailer/guest/rootfs.ext4.tmp /srv/jailer/guest/rootfs.ext4
+chmod 0400 /srv/jailer/guest/rootfs.ext4
+install -m 0444 "$img/vmlinux" /srv/jailer/guest/vmlinux
+echo "fenvix-data: /srv/jailer ready$( [ -s /etc/fenvix/data-disk ] && echo ' (dm-crypt, per-boot key)')"

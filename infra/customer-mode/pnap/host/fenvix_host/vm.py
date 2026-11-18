@@ -7,6 +7,11 @@ Isolation of the VMM itself (R-012 F17, R-012b N3), translated to KVM:
   - a cgroup v2 per microVM under the agent's delegated subtree: CPU (vcpus cores), memory (guest + VMM overhead, no
     swap) and a pids limit, so one job cannot starve the others or the host;
   - resource limits: open files, and the largest file the VMM may write (its largest disk);
+  - the guest's serial console (R-014 R1): Firecracker's 8250 device is rate-limited (SERIAL_BYTES_PER_S, the rest is
+    dropped by Firecracker), and the agent keeps only the last CONSOLE_TAIL_BYTES of the VMM's output (job.Shell.vm);
+    a guest flooding /dev/ttyS0 costs neither the agent's memory nor the host's disk;
+  - an I/O limit on every disk (R-014 R10): a bandwidth and an operations bucket per drive, so one job cannot saturate
+    the shared NVMe drive for the others;
   - four disks, all created for this job and deleted after it: a copy of the guest root disk (reflink on the host's
     XFS data disk), a read-only input disk (the just-in-time config and the job's cache token), a raw result disk (no
     filesystem: the host never mounts what a guest wrote, R-012 F9), and an empty scratch disk (Docker's data, the
@@ -28,6 +33,11 @@ ROOTFS_MAX_BYTES = 32 * 1024**3
 VMM_OVERHEAD_MIB = 512
 PIDS_MAX = 128
 NO_FILE = 2048
+# The guest's console: 4 KiB/s after a 64 KiB burst (a kernel boot log), at most ~90 MB over a 6-hour job, all of it
+# dropped by the agent except the last CONSOLE_TAIL_BYTES.
+SERIAL_BYTES_PER_S = 4096
+SERIAL_BURST_BYTES = 64 * 1024
+CONSOLE_TAIL_BYTES = 64 * 1024
 FORBIDDEN_FIRECRACKER_ARGS = ("--no-seccomp", "--seccomp-filter", "--api-sock")
 
 
@@ -73,20 +83,25 @@ def firecracker_config(c: HostConfig, n: SlotNet, job: Job) -> dict:
     (tests: validate-config.mjs with the release's firecracker.yaml)."""
     bucket = lambda size: {"size": size, "refill_time": 1000}  # noqa: E731
     limiter = {"bandwidth": bucket(c.bytes_per_s), "ops": bucket(c.packets_per_s)}
+    disk = {"bandwidth": bucket(c.disk_bytes_per_s), "ops": bucket(c.disk_ops_per_s)}
+    drive = lambda drive_id, path, ro, root=False: {  # noqa: E731
+        "drive_id": drive_id, "path_on_host": path, "is_root_device": root, "is_read_only": ro, "rate_limiter": disk}
     return {
         "boot-source": {"kernel_image_path": "vmlinux", "boot_args": boot_args()},
         "machine-config": {"vcpu_count": job.vcpus, "mem_size_mib": job.mem_mib, "smt": False},
         "drives": [
-            {"drive_id": "rootfs", "path_on_host": "rootfs.ext4", "is_root_device": True, "is_read_only": False},
-            {"drive_id": "input", "path_on_host": "input.ext4", "is_root_device": False, "is_read_only": True},
-            {"drive_id": "result", "path_on_host": "result.img", "is_root_device": False, "is_read_only": False},
-            {"drive_id": "scratch", "path_on_host": "scratch.ext4", "is_root_device": False, "is_read_only": False},
+            drive("rootfs", "rootfs.ext4", False, root=True),
+            drive("input", "input.ext4", True),
+            drive("result", "result.img", False),
+            drive("scratch", "scratch.ext4", False),
         ],
         "network-interfaces": [{
             "iface_id": "eth0", "guest_mac": GUEST_MAC, "host_dev_name": n.tap,
             "rx_rate_limiter": limiter, "tx_rate_limiter": limiter,
         }],
         "entropy": {},
+        # No serial_out_path: the console goes to the VMM's stdout, which the agent drains into a bounded tail.
+        "serial": {"rate_limiter": {"size": SERIAL_BYTES_PER_S, "one_time_burst": SERIAL_BURST_BYTES, "refill_time": 1000}},
     }
 
 

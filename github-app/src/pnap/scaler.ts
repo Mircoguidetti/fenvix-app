@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "../db.ts";
 import type { Logger } from "../service.ts";
-import { isRegion, NoCapacity, type PnapApi, type Region, type Server } from "./api.ts";
+import { NoCapacity, PNAP_LOCATIONS, type PnapApi, type Region, type Server } from "./api.ts";
 import { newEnrolSecret } from "./hostcred.ts";
 import type { PnapSettings } from "./settings.ts";
 
@@ -10,6 +10,15 @@ import type { PnapSettings } from "./settings.ts";
  * of job hosts of each region between its min and max, by demand (queued + leased jobs of that region, never another
  * region's), and releases idle hosts. The database is the record of what we rent; phoenixNAP's API is checked against
  * it every run, both ways (a server we forgot is released, a server phoenixNAP lost is closed).
+ *
+ * Regions: every configured region, and every region that still has a host (a region removed from the settings is
+ * planned with min = max = 0, so its hosts drain and are released when idle; R-014 R6). Orphans are looked for in every
+ * phoenixNAP location.
+ *
+ * Silent hosts (R-014 R7): a host that stopped calling is released only if that is about the host, not about us. When
+ * several hosts go silent at once (half the fleet or more), the App's host route is the likely cause: nothing is
+ * released, an alert is logged, and only the job time limit ends the wait. A silent host that last reported running
+ * jobs, and whose server phoenixNAP reports powered on, is kept for the job time limit as well.
  *
  * Host states: ordering → provisioning (phoenixNAP accepted the order; the install runs) → ready (the agent enrolled)
  * → draining (no new jobs) → releasing → released; failed for an order phoenixNAP refused.
@@ -97,8 +106,12 @@ export function planRegion(v: RegionView, s: PnapSettings, now: Date, liveTotal:
   for (const h of runners.filter((x) => x.state === "draining" && x.running === 0 && x.leased === 0)) {
     if (!out.some((a) => a.kind === "undrain" && a.hostId === h.hostId)) out.push({ kind: "release", hostId: h.hostId, why: "drained" });
   }
-  // The region's cache server (dedicated mode): one while the region has job hosts or wants one.
-  if (s.cacheMode === "dedicated" && (live.length > 0 || desired > 0)
+  // The region's cache server (dedicated mode): one while the region has job hosts or wants one. A region that wants
+  // no host at all (max 0, e.g. removed from the settings) releases its cache server once its job hosts are gone.
+  if (v.max === 0 && !runners.some((h) => LIVE.includes(h.state) || h.state === "draining")) {
+    for (const c of v.hosts.filter((h) => h.role === "cache" && LIVE.includes(h.state))) out.push({ kind: "release", hostId: c.hostId, why: "region not served" });
+  }
+  if (s.cacheMode === "dedicated" && v.max > 0 && (live.length > 0 || desired > 0)
     && !v.hosts.some((h) => h.role === "cache" && LIVE.includes(h.state))
     && !(v.lastNoCapacityAt && minutes(now, v.lastNoCapacityAt) < s.noCapacityBackoffMinutes)) {
     out.push({ kind: "order", region: v.region, role: "cache" });
@@ -121,6 +134,10 @@ export interface ScalerReport {
   reconciled: { hostId: string; from: HostState; to: HostState; why: string }[];
   orphans: string[];
   requeued: number[];
+  /** Queued jobs moved to their installation's current region (R-014 R5). */
+  moved: number[];
+  /** What a person should look at (logged as errors too). */
+  alerts: string[];
 }
 
 interface HostRow {
@@ -133,8 +150,7 @@ export const hostPrefix = (s: PnapSettings) => `fx-${s.env}-`;
 
 export async function runScaler(d: ScalerDeps): Promise<ScalerReport> {
   const now = (d.now ?? (() => new Date()))();
-  const rep: ScalerReport = { actions: [], reconciled: [], orphans: [], requeued: [] };
-  const regions = Object.keys(d.s.regions).filter(isRegion);
+  const rep: ScalerReport = { actions: [], reconciled: [], orphans: [], requeued: [], moved: [], alerts: [] };
 
   const move = async (h: HostRow, to: HostState, why: string, extra = "") => {
     await d.db.q(`update pnap_hosts set state = $2, detail = $3, updated_at = now()${extra} where host_id = $1`, [h.host_id, to, why]);
@@ -145,6 +161,7 @@ export async function runScaler(d: ScalerDeps): Promise<ScalerReport> {
 
   // 1. What phoenixNAP says about each server we rent.
   const hosts = await loadHosts(d.db);
+  const silent: { h: HostRow; srv: Server }[] = [];
   for (const h of hosts) {
     if (h.state === "ordering") {
       // The order call itself never finished (a crash between our insert and phoenixNAP's answer): the orphan check
@@ -173,10 +190,35 @@ export async function runScaler(d: ScalerDeps): Promise<ScalerReport> {
         await move(h, "releasing", `no enrolment within ${d.s.provisionTimeoutMinutes} min of the order`);
       }
     } else if (h.role === "runner" && h.state !== "draining" && h.last_seen_at && (now.getTime() - h.last_seen_at.getTime()) / 1000 > d.s.heartbeatTimeoutSeconds) {
-      await move(h, "releasing", `silent for ${d.s.heartbeatTimeoutSeconds}+ s`);
+      silent.push({ h, srv });
     } else if (h.state === "draining" && h.drain_requested_at && minutes(now, h.drain_requested_at) > d.s.jobTimeoutMinutes + 15) {
       await move(h, "releasing", "still busy after the job time limit");
     }
+  }
+
+  // 1b. Silent hosts (R-014 R7): released one by one when the silence is about the host; never the fleet at once.
+  const readyRunners = hosts.filter((h) => h.role === "runner" && h.state === "ready").length;
+  const mass = silent.length >= 2 && silent.length * 2 >= readyRunners;
+  const patience = d.s.jobTimeoutMinutes + 15;
+  if (mass) {
+    const msg = `${silent.length} of ${readyRunners} job hosts went silent at once: the App's host route (the hosts function, API Gateway, the domain) is the likely cause; no host is released for ${patience} min`;
+    rep.alerts.push(msg);
+    d.log.error({ hosts: silent.map((x) => x.h.host_id) }, `ALERT: ${msg}`);
+  }
+  for (const { h, srv } of silent) {
+    const quiet = minutes(now, h.last_seen_at!);
+    // Busy: the host itself last reported jobs running. A job leased but never reported running probably never
+    // started: it is queued again (step 2) when GitHub still has it queued.
+    const busy = h.running > 0;
+    if (quiet < patience && (mass || (busy && srv.status === "powered-on"))) {
+      if (!mass) {
+        const msg = `${h.host_id} is silent for ${Math.round(quiet)} min with ${h.running} running job(s) and powered on: kept until ${patience} min`;
+        rep.alerts.push(msg);
+        d.log.warn({ host: h.host_id }, msg);
+      }
+      continue;
+    }
+    await move(h, "releasing", `silent for ${Math.round(quiet * 60)} s${busy ? " with jobs" : ""}`);
   }
 
   // 2. Jobs leased to a host that is gone: queued again if GitHub still has them queued, closed otherwise.
@@ -192,10 +234,22 @@ export async function runScaler(d: ScalerDeps): Promise<ScalerReport> {
     }
   }
 
-  // 3. Servers phoenixNAP has with our prefix that the database does not count as rented: released.
+  // 2b. Queued jobs whose installation is now in another region (set-region after the job was placed, or placed in
+  // the default region): moved to that region's queue, never leased where they were (R-014 R5; hosts.ts checks too).
+  const served = PNAP_LOCATIONS.filter((r) => (d.s.regions[r]?.max ?? 0) > 0);
+  const moved = await d.db.q<{ job_id: number }>(
+    `update pnap_jobs j set region = coalesce(i.pnap_region, $1::text), detail = 'moved to its installation''s current region'
+       from gh_installations i
+      where i.installation_id = j.installation_id and j.state = 'queued'
+        and coalesce(i.pnap_region, $1::text) <> j.region and coalesce(i.pnap_region, $1::text) = any($2::text[])
+      returning j.job_id`, [d.s.defaultRegion, served]);
+  rep.moved.push(...moved.map((m) => m.job_id));
+
+  // 3. Servers phoenixNAP has with our prefix that the database does not count as rented: released. Every location
+  // is listed, not only the configured ones (a region removed from the settings may still hold our servers).
   const known = new Map(hosts.filter((h) => h.server_id).map((h) => [h.server_id!, h]));
   const ordering = new Set(hosts.filter((h) => h.state === "ordering").map((h) => h.host_id));
-  for (const region of regions) {
+  for (const region of PNAP_LOCATIONS) {
     let servers: Server[] = [];
     try { servers = await d.api.listServers(region); } catch (e) {
       d.log.warn({ region, err: (e as Error).message }, "phoenixNAP: could not list servers");
@@ -220,8 +274,10 @@ export async function runScaler(d: ScalerDeps): Promise<ScalerReport> {
   const holds = await d.db.q<{ region: string; hosts: number }>(`select region, hosts from pnap_region_holds where until > $1`, [now]);
   const noCap = await d.db.q<{ region: string; at: Date }>(
     `select region, max(updated_at) as at from pnap_hosts where state = 'failed' and detail like 'no capacity%' group by region`);
+  // Every configured region, and every region that still has a host (unconfigured: min = max = 0, R-014 R6).
+  const regions = PNAP_LOCATIONS.filter((r) => d.s.regions[r] || fresh.some((h) => h.region === r));
   for (const region of regions) {
-    const lim = d.s.regions[region]!;
+    const lim = d.s.regions[region] ?? { min: 0, max: 0 };
     const view: RegionView = {
       region, min: lim.min, max: lim.max,
       hold: Math.min(lim.max, holds.find((x) => x.region === region)?.hosts ?? 0),
@@ -273,7 +329,8 @@ async function act(d: ScalerDeps, a: Action, now: Date, fresh: HostRow[]): Promi
     return "ready";
   }
   if (a.kind === "release") {
-    await d.db.q(`update pnap_hosts set state = 'releasing', detail = $2, updated_at = now() where host_id = $1 and state = 'draining' and running = 0`, [a.hostId, a.why]);
+    await d.db.q(`update pnap_hosts set state = 'releasing', detail = $2, updated_at = now()
+                   where host_id = $1 and ((state = 'draining' and running = 0) or (role = 'cache' and state in ('provisioning', 'ready')))`, [a.hostId, a.why]);
     return "releasing";
   }
   // order

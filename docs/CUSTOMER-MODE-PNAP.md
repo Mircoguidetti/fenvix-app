@@ -8,23 +8,30 @@ job. Demos stay on AWS (demo mode, `docs/DEPLOY-AWS.md`). The control plane stay
 
 **Status: built and tested without a real host.** No phoenixNAP server has been ordered yet. This container has no
 `/dev/kvm`, so no Firecracker microVM has booted here either. "The first real test" below does both, in about an hour,
-for about $1.30.
+for about $1.30 to $2.60 (at most about $3.90).
 
 ## How it works
 
 ```
 GitHub ── workflow_job.queued ──▶ App (worker Lambda): the installation is linked → placed in its region's queue
-                                   (pnap_jobs; region = gh_installations.pnap_region; never another region)
+                                   (pnap_jobs; region = gh_installations.pnap_region; never another region; a lease
+                                   checks the installation's CURRENT region again, and the scaler moves queued jobs
+                                   of a customer whose region changed)
 
 scaler Lambda (every minute, one run at a time), per region (one pool):
-   desired = clamp(ceil(queued+leased / 28 slots), max(min, hold), max) → orders d3.c1.large (hourly, Ubuntu 24.04)
+   desired = clamp(ceil(queued+leased / 15 slots), max(min, hold), max) → orders d3.c1.large (hourly, Ubuntu 24.04)
    with cloud-init user data; drains a host idle ≥ 20 min near the end of its paid hour; releases it once drained;
-   releases a host that never enrolled (90 min), went silent (5 min), or that phoenixNAP has with our prefix but the
-   database does not count as rented (orphan)
+   releases a host that never enrolled (90 min), went silent (5 min; but never half the fleet at once, which means
+   our host route is down: alert instead; and a silent host that reported running jobs and is powered on waits up to
+   the job limit), or that phoenixNAP has with our prefix but the database does not count as rented (orphan, looked
+   for in every location). A region removed from pnapRegions is planned with min = max = 0 until its hosts are gone
 
 phoenixNAP host (d3.c1.large: 2 × Xeon Gold 6536, 32 cores / 64 threads, 256 GB, 2 × 2 TB NVMe):
-   cloud-init → /opt/fenvix-host (bundle, SHA-256 checked) → install-host.sh: KVM check, Firecracker + jailer v1.18.0
-   (SHA-256 checked), guest kernel and root disk, XFS reflink data disk, nftables, fenvix-agent
+   cloud-init → /opt/fenvix-host (bundle, SHA-256 checked) → install-host.sh: KVM check, SMT off (no core runs two
+   tenants' vCPUs), KSM off, no swap, Firecracker + jailer v1.18.0 (SHA-256 checked), guest kernel and root disk, the
+   data disk (an unused NVMe drive under dm-crypt with a key made at each boot and never stored, XFS with reflink),
+   nftables, fenvix-agent (which refuses to enrol while SMT, KSM or swap is on, and at each start removes every jail,
+   cgroup and namespace an interrupted run left)
    fenvix-agent: POST /v1/hosts/enrol once (single-use secret → host credential), then every 5 s POST /v1/hosts/lease
      → jobs of ITS region only, each minted at that moment: a just-in-time runner (one job), the job's summary
        credential (its runner, repository and run only), its cache token (its customer's cache organization only;
@@ -35,7 +42,9 @@ phoenixNAP host (d3.c1.large: 2 × Xeon Gold 6536, 32 cores / 64 threads, 256 GB
         disk (Docker data, the runner's work directory)
      2. network namespace fxvmN: tap0 (owned by the jail uid) ↔ guest 172.16.0.2; veth to the host (10.200.x.2/30)
      3. jailer --netns fxvmN --new-pid-ns --cgroup cpu.max/memory.max/pids.max → firecracker --no-api (seccomp on)
-        2 vCPU / 8 GiB by default; the guest runs exactly one job, writes its result record, reboots (VM exits)
+        2 vCPU / 8 GiB by default; an I/O limit on each disk; the serial console rate-limited (4 KiB/s) and only its
+        last 64 KiB kept by the agent; the agent waits on the microVM's cgroup (the jailer exits once Firecracker is
+        cloned); the guest runs exactly one job, writes its result record, reboots (VM exits)
      4. the result is opened without following anything the jail uid controls, parsed by fenvix-parse; the summary
         is sent by fenvix-post with the job's own credential and the host's own ids
      5. everything of the job is deleted on every path (namespace, jail, cgroup, credential file, conntrack entries)
@@ -51,11 +60,11 @@ installation (gh-<installation id>), per-job RSA-signed tokens; the cache holds 
 |---|---|---|---|
 | F9 | never mount a guest disk; ids from the host's record | raw result disk, length-prefixed record, size cap, parsed as `fenvix-parse`; ids and runner name from the lease | `tests/test_job.py` (the guest's `repositoryId` is ignored), `tests/test_result.py` |
 | F10 | firewall keyed on the interface; FORWARD drop; IPv6 off; per-sandbox limits | host table `inet fenvix`: forward policy drop, `iifname . saddr` bound per slot, input drop from `fxv*`, private/link-local/metadata/host addresses dropped, the cache's one port allowed, conntrack count and new-connection rate per microVM, Firecracker rate limiters; IPv6 disabled and dropped | `tests/test_isolation_netns.py` (real packets), `tests/test_rules.py` |
-| F11 | memory pool (Nitro) | n/a on KVM; slots are computed so neither CPU threads nor memory are overcommitted (28 per d3.c1.large) | `tests/unit/pnap.test.ts` |
+| F11 | memory pool (Nitro) | n/a on KVM; slots are computed so neither physical cores nor memory are overcommitted (15 per d3.c1.large) | `tests/unit/pnap.test.ts` |
 | F12 | no runner registered before capacity | a just-in-time runner is made only when a host of the region leases the job | `tests/integration/pnap.test.ts` |
 | F13 | demo scope | unchanged; an installation without a region is never placed | integration test |
 | F15 | secret rotation | host keys: `host-signing-key` + `host-signing-key-previous`, reloaded every 5 min like the others | `tests/unit/pnap.test.ts` |
-| F16 | capacity by physical cores | one vCPU per hardware thread, 4 threads and 16 GiB kept for the host | unit test |
+| F16 | capacity by physical cores | SMT off on every host (install-host.sh; the agent refuses to enrol otherwise), one vCPU per physical core, 2 cores and 16 GiB kept for the host (R-014 R2) | `tests/unit/pnap.test.ts`, `tests/unit/review-r014.test.ts`, `tests/test_review_r014.py`, `tests/test_hardening.py` |
 | F17 | jailer, no root, nothing of ours on the guest's path | jailer per job (own uid/gid per slot, chroot, new PID namespace, cgroup v2, seccomp on, no API socket); the host credential is in a root-only file read by the agent only | `tests/test_rules.py`, `tests/test_job.py` |
 | N1 | read the result without following the jail uid's symlink | `O_NOFOLLOW` open relative to the root-owned parent, `fstat`: regular file, jail uid, 1 link, exact size; FIFO cannot block | `tests/test_result.py`, `tests/test_job.py` (escaped-VMM symlink attack) |
 | N3 | the jailed VMM must not reach credentials | each VMM is in its slot's network namespace, whose own input and output policies are drop; phoenixNAP has no metadata service, and 169.254.0.0/16 is dropped anyway | `tests/test_isolation_netns.py` (`vmm_namespace_itself_*`) |
@@ -141,7 +150,7 @@ In `infra/github-app/cdk.json` (context):
 | `pnapDefaultRegion` | empty | region of an installation that has none set (empty: such jobs are not placed) |
 | `pnapServerType` | `d3.c1.large` | |
 | `pnapPricingModel` | `HOURLY` | what the scaler orders |
-| `pnapVmVcpus`, `pnapVmMemMib` | `2`, `8192` | one microVM; 28 per d3.c1.large |
+| `pnapVmVcpus`, `pnapVmMemMib` | `2`, `8192` | one microVM; 15 per d3.c1.large (one vCPU per physical core) |
 | `pnapIdleMinutes` | `20` | an idle host is drained after this, near the end of its paid hour |
 | `pnapMaxHostsTotal` | `10` | across all regions: the cost ceiling |
 | `pnapCacheMode` | `colocated` | `colocated`, `dedicated` (one s1.c1.small per region) or `off` |
@@ -159,7 +168,8 @@ one-minute schedule and reserved concurrency 1) and the route `POST /v1/hosts/{p
    repository (`fenvix-test`).
 2. Into each repository, commit the workflow that the script prints:
    `bash infra/customer-mode/pnap/first-test/first-test.sh --print-workflow > .github/workflows/fenvix-first-test.yml`.
-   It runs `probe.sh` inside the job, pinned by its SHA-256.
+   It carries `probe.sh` inline (the test repositories cannot read fenvix-app, which is private) and checks it
+   against its SHA-256 before running it. Print and commit it again whenever `probe.sh` changes.
 3. Install the App on both organizations (that repository only). Link each installation to its own fenvix
    organization in the dashboard (two test accounts), as a customer would.
 4. Note both installation ids: the number at the end of `https://github.com/organizations/<org>/settings/installations/<id>`.
@@ -200,16 +210,16 @@ If something fails: scaler log `/aws/lambda/fenvix-prod-github-app-scaler`, host
 
 | Item | Price | First test |
 |---|---|---|
-| d3.c1.large, hourly, ASH (same in PHX, CHI, SEA, NLD) | $1.27 per hour; each started hour is billed as a full hour | 1 hour if ready + 3 jobs + release fit in 60 min after provisioning; 2 if not |
-| public IPv4 block | $0.028 per hour for a /29 (assumed allocated with each server; a /31 is $0.007) | 1 to 2 hours |
+| d3.c1.large, hourly, ASH (same in PHX, CHI, SEA, NLD) | $1.27 per hour; each started hour is billed as a full hour | 1 hour if ready + 3 jobs + release fit in 60 min after provisioning; 2 if not; 3 at most by the script's own deadlines |
+| public IPv4 block | $0.028 per hour for a /29 (assumed allocated with each server; a /31 is $0.007) | 1 to 3 hours |
 | bandwidth | 15 TB per month free per location, then $0.01 per GB | $0 |
 | Ubuntu | free | $0 |
 | AWS (Lambda, API Gateway, the hold's scaler runs) | cents | ≈ $0 |
-| **Total** | | **≈ $1.30 (1 hour), at most ≈ $2.60 (2 hours)**. The hold cannot exceed 180 minutes (≈ $3.90). |
+| **Total** | | **≈ $1.30 (1 hour) to $2.60 (2 hours) in the likely case; at most ≈ $3.90 (3 started hours)** by the script's own deadlines: 90 minutes to wait for a ready host, 40 for the runs, 20 for the release. If the laptop dies mid-test, the hold keeps the host `--minutes` (default 60), then the scaler drains it at the end of its paid hour: ≈ $2.60 at 60, ≈ $5.20 (4 started hours) at the maximum of 180. |
 
 The time to ready is an ESTIMATE until measured: phoenixNAP's provisioning (minutes), then our install. The install
 builds the guest image on the host (apt, the engines' bootstrap, which compiles the detpy wheel and detjs), probably
-15 to 30 minutes on 64 threads. A prebuilt guest image (`PNAP_GUEST_IMAGE_URL`) would cut this.
+15 to 30 minutes on 32 cores (SMT is off). A prebuilt guest image (`PNAP_GUEST_IMAGE_URL`) would cut this.
 
 ## Monthly cost per region (prices DECLARED, read 2026-11-18; 730 hours a month)
 
@@ -226,12 +236,24 @@ phoenixnap.com/bare-metal-cloud/instances) is the same in ASH, PHX, CHI, SEA and
 
 Hosts kept on all month (no scaling down):
 
+A d3.c1.large runs **15 jobs at once** (2 vCPU / 8 GiB each): one vCPU per physical core with SMT off, 2 cores kept
+for the host (R-014 R2: two customers' vCPUs never share a core; Firecracker's production guidance). Memory would
+allow 28.
+
 | Job hosts in the region | Jobs at once (2 vCPU / 8 GiB) | Hourly, 730 h | 12-month reservation |
 |---|---|---|---|
-| 1 | 28 | $927.10 + IP $20.44 + AWS $1.13 = **$948.67** | $436.59 + $20.44 + $1.13 = **$458.16** |
-| 5 | 140 | $4,635.50 + $102.20 + $5.65 = **$4,743.35** | $2,182.95 + $102.20 + $5.65 = **$2,290.80** |
-| 10 | 280 | $9,271.00 + $204.40 + $11.30 = **$9,486.70** | $4,365.90 + $204.40 + $11.30 = **$4,581.60** |
+| 1 | 15 | $927.10 + IP $20.44 + AWS $1.13 = **$948.67** | $436.59 + $20.44 + $1.13 = **$458.16** |
+| 2 | 30 | **$1,897.34** | **$916.32** |
+| 5 | 75 | $4,635.50 + $102.20 + $5.65 = **$4,743.35** | $2,182.95 + $102.20 + $5.65 = **$2,290.80** |
+| 10 | 150 | $9,271.00 + $204.40 + $11.30 = **$9,486.70** | $4,365.90 + $204.40 + $11.30 = **$4,581.60** |
+| 19 | 285 | **$18,024.73** | **$8,705.04** |
 | dedicated cache server (optional), per region | | $116.80 + $20.44 = $137.24 | $69.29 + $20.44 = $89.73 |
+
+- **Per job slot (one job at once, all month):** $948.67 / 15 = **$63.24** hourly, $458.16 / 15 = **$30.54** reserved.
+  (Before R-014, counted in hardware threads with SMT on: 28 slots, $33.88 and $16.36. That doubled up two tenants on
+  a core.) The earlier 28 / 140 / 280 jobs at once now take **2 / 10 / 19 hosts**.
+- Core scheduling (`prctl(PR_SCHED_CORE)` per microVM) could keep SMT on and about 28 slots per host, safely. It needs
+  care and a measurement on the real host: not built.
 
 - IP: one /29 per server at $0.028/h (an assumption; check what the first test's server gets).
 - AWS: each host leases every 5 s, which is 525,600 requests a month. That is $0.58 of API Gateway, $0.11 of Lambda
@@ -277,3 +299,20 @@ Hosts kept on all month (no scaling down):
 5. Timings: queued → leased (scaler and lease interval), leased → microVM up (reflink copy, mkfs of the input and
    scratch disks), boot → runner online.
 6. Billing: what the server's public IP block is, and that an incomplete hour is billed as one.
+7. Host hygiene (R-014 R2): `/sys/devices/system/cpu/smt/active` is 0 after the install and after a reboot (tmpfiles
+   and `nosmt`), KSM off, no swap; `grep . /sys/devices/system/cpu/vulnerabilities/*` (in the install log) shows only
+   "Not affected" or "Mitigation"; the microcode is current.
+8. Serial flood (R-014 R1): inside a job, `cat /dev/zero > /dev/ttyS0` for 10 minutes; the agent's memory stays flat,
+   the other microVMs are unaffected. That Firecracker v1.18.0 accepts the `serial` section of the configuration file
+   (it validates against the API description; the config-file key is the reviewer's reading of the sources).
+9. The agent waits for the microVM itself (`cgroup.events`, and end of file on the VMM's output), not for the jailer,
+   which exits once it has cloned Firecracker under `--new-pid-ns`.
+10. Non-root steps (R-014 R3): the summary appears on the pull request; `fenvix-cache.service` is active and reads its key.
+11. Data disk (R-014 R4): `fenvix-data.service` opens the drive with dm-crypt and a per-boot key; restart the agent
+    and reboot the host in the middle of a job: afterwards no jail, namespace, cgroup or conntrack entry is left. If
+    phoenixNAP's image uses both drives (software RAID), there is no free drive: jobs' disks are then on the root
+    filesystem, unencrypted, and removed by the agent at start.
+12. The ruleset stays loaded after a reboot and an `apt upgrade` (the agent reloads it on every lease round if not).
+13. Noisy neighbours (R-014 R10): `fio` in one job and a SYN flood in another while a third job's timings are measured.
+14. Control-plane outage (R-014 R7): stop the hosts function for 6 minutes during a job: nothing is released, and the
+    scaler logs an ALERT.

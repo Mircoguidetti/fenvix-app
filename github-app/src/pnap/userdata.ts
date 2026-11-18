@@ -31,14 +31,18 @@ export function userData(s: PnapSettings, h: { hostId: string; role: "runner" | 
     "set -euo pipefail",
     "umask 077",
     "exec >>/var/log/fenvix-install.log 2>&1",
-    "install -d -m 0700 /etc/fenvix /var/lib/fenvix",
+    // /etc/fenvix: traversable (0711) so that fenvix-cache reaches cache/signing-key.json (0755 / 0644); everything
+    // else in it is root-only (enrol 0400, control-url and host.json 0600 or less). R-014 R3.
+    "install -d -m 0711 /etc/fenvix",
+    "install -d -m 0700 /var/lib/fenvix",
     "install -d -m 0755 /opt/fenvix-host",
     "base64 -d >/var/tmp/fenvix-host.tgz <<'FENVIX_BUNDLE'",
     b64,
     "FENVIX_BUNDLE",
     `echo '${HOST_BUNDLE_SHA256}  /var/tmp/fenvix-host.tgz' | sha256sum -c --quiet -`,
     "tar -xzf /var/tmp/fenvix-host.tgz -C /opt/fenvix-host --no-same-owner",
-    "chmod -R go-w /opt/fenvix-host",
+    // Readable by the service users (fenvix-parse, fenvix-post, fenvix-cache), writable by root only (R-014 R3).
+    "chmod -R a+rX,go-w /opt/fenvix-host",
   ];
   if (h.role === "cache") {
     if (!cachePublicKey || !/^[0-9a-f]{256,1024}$/.test(cachePublicKey.n) || !Number.isInteger(cachePublicKey.e)) throw new Error("the cache server needs the cache signing key's public half");
