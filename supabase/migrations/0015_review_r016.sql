@@ -184,4 +184,39 @@ alter table public.gh_jobs add constraint gh_jobs_mode_check check (mode is null
 grant delete on public.gh_run_results to fenvix_github_app;
 create index if not exists gh_run_results_received on public.gh_run_results (received_at);
 
+-- ================================================================ F8: the owner-only rules in row level security
+
+-- The organization of this transaction, only if the user is an OWNER there.
+create or replace function public.api_owner_workspace() returns uuid
+language sql stable security definer set search_path = public, pg_temp as $$
+  select m.workspace_id from public.workspace_members m
+  where m.user_id = public.api_user() and m.workspace_id = nullif(current_setting('app.workspace_id', true), '')::uuid
+    and m.role = 'owner'
+$$;
+revoke all on function public.api_owner_workspace() from public, anon, authenticated;
+grant execute on function public.api_owner_workspace() to fenvix_api;
+
+-- An admin changes members only (never an admin or owner, never to admin or owner, never themselves); an owner
+-- changes anyone (the last-owner trigger still applies).
+drop policy if exists workspace_members_api_admin_update on public.workspace_members;
+create policy workspace_members_api_admin_update on public.workspace_members for update to fenvix_api
+  using (workspace_id = public.api_owner_workspace()
+         or (workspace_id = public.api_admin_workspace() and role = 'member' and user_id <> public.api_user()))
+  with check (workspace_id = public.api_owner_workspace()
+              or (workspace_id = public.api_admin_workspace() and role = 'member' and user_id <> public.api_user()));
+-- An owner removes anyone; an admin removes members; anyone leaves (removes themselves). The last owner never goes.
+drop policy if exists workspace_members_api_delete on public.workspace_members;
+create policy workspace_members_api_delete on public.workspace_members for delete to fenvix_api
+  using (workspace_id = public.api_owner_workspace()
+         or (workspace_id = public.api_admin_workspace() and role = 'member')
+         or (user_id = public.api_user() and workspace_id = public.api_workspace()));
+-- Only an owner invites an admin, or revokes an admin's invitation.
+drop policy if exists workspace_invites_api_admin on public.workspace_invites;
+create policy workspace_invites_api_admin on public.workspace_invites for insert to fenvix_api
+  with check (workspace_id = public.api_owner_workspace() or (workspace_id = public.api_admin_workspace() and role = 'member'));
+drop policy if exists workspace_invites_api_revoke on public.workspace_invites;
+create policy workspace_invites_api_revoke on public.workspace_invites for update to fenvix_api
+  using (workspace_id = public.api_owner_workspace() or (workspace_id = public.api_admin_workspace() and role = 'member'))
+  with check (workspace_id = public.api_owner_workspace() or (workspace_id = public.api_admin_workspace() and role = 'member'));
+
 notify pgrst, 'reload schema';
