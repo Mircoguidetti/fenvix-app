@@ -184,6 +184,13 @@ the HTTP side checks it (`src/runners/credentials.ts`; review R-012 F1).
 | `SUMMARY_WAIT_SECONDS` | `600` | no | a completed job whose runner summary never came is published without it after this long |
 | `RUNNER_PLACEMENT` | none | no | per-job worker: where each region's machines start, JSON `{"us": {"awsRegion": "us-east-1", "launchTemplateId": "lt-..."}, "eu": {"awsRegion": "eu-central-1", "launchTemplateId": "lt-...", "machineEnv": {...optional overrides}}}`. Without a `us` entry, `RUNNER_LAUNCH_TEMPLATE_ID` is the US placement (in the function's own AWS region). A region with no placement gets no machine |
 | `SWEEP_SECONDS` | `60` | no | how often that check runs; `0` off |
+| `WARMUP_ENABLED` | `true` | no | warm-up runs of onboarded repositories' default branches (they need a per-job launcher; `docs/data-contract.md` "Warm-up runs") |
+| `WARMUP_GRACE_SECONDS` | `180` | no | after a push (or the setup pull request's merge), how long the customer's own push run may cover the commit before a warm-up may start |
+| `WARMUP_DAILY_CAP` | `6` | no | warm-ups of one repository that take a machine in any 24 hours |
+| `WARMUP_ORG_CONCURRENCY` | `1` | no | warm-ups of one organization on machines at once |
+| `WARMUP_RESERVE` | `1` | no | machines of a region's fleet a warm-up never takes (kept for customers' jobs) |
+| `WARMUP_START_TIMEOUT_SECONDS`, `WARMUP_MAX_SECONDS`, `WARMUP_WAITING_JOB_WINDOW_SECONDS`, `WARMUP_PREEMPT_BACKOFF_SECONDS`, `WARMUP_MAX_ATTEMPTS` | `900`, `10800`, `3600`, `300`, `3` | no | a machine that never reported "started" is given up; a warm-up running longer is stopped; a customer job queued without a machine this recently blocks warm-ups in its region; a preempted warm-up waits this long; machines per warm-up |
+| `WARMUP_TICK_SECONDS` | `60` | no | node server: how often the warm-up scheduler runs (`0` off; on AWS the `warmup` Lambda's schedule runs it) |
 | `PORT`, `HOST`, `LOG_LEVEL`, `NODE_ENV`, `DB_POOL_MAX`, `GITHUB_TIMEOUT_MS` | `8790`, `0.0.0.0`, `info`, `development`, `10`, `15000` | no | |
 
 `NODE_ENV=production` refuses plain-http URLs. The service never logs a secret, the `Authorization` header or the

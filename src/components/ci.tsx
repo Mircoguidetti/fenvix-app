@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { CopyButton } from "./CopyButton";
 import { STATE_ICONS, StatusPill } from "./StateBadge";
-import type { Defect, DefectCause, MinuteBreakdown, RunTrigger, TestOutcome } from "../data";
-import { formatPercent } from "../lib/format";
+import type { Defect, DefectCause, MinuteBreakdown, RunTrigger, TestOutcome, WarmCache } from "../data";
+import { formatPercent, formatRelative } from "../lib/format";
+import { warmCacheText } from "../lib/warm";
 
 /** A block of code or a command, with a copy button. */
 export function CodeBlock({ code, what, label }: { code: string; what: string; label?: string }) {
@@ -94,3 +95,21 @@ export function MinuteSum({ m, decimals = 0 }: { m: MinuteBreakdown; decimals?: 
 export const SAVED_NOTE = "Skipped test time only: checkout, install and build still run on fenvix.";
 
 export const runMinutesNote = "Saved: test minutes skipped with proof only; checkout, install and build still run.";
+
+/**
+ * "Cache warm since <commit>": the shared cache of the repository's default branch, so the first pull request after
+ * the setup is not a cold run (fenvix warms it after the setup and after each push to the default branch). `full`
+ * adds the warm-up's own words (why it waits, how it ended): the Connect page.
+ */
+export function WarmCacheNote({ cache, now, full }: { cache: WarmCache; now: Date; full?: boolean }) {
+  const t = warmCacheText(cache);
+  return (
+    <span className="warm-cache" data-state={cache.state}>
+      <span>
+        {t.lead}
+        {cache.state === "warm" && cache.warmAt ? <span className="muted"> · {formatRelative(cache.warmAt, now)}</span> : null}
+      </span>
+      {t.sub && <span className="muted">{t.sub}{full && t.detail ? `: ${t.detail}` : ""}</span>}
+    </span>
+  );
+}

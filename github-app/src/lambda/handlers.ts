@@ -55,3 +55,15 @@ export function makeSweepHandler(getCore: () => Promise<WorkerCore>) {
     return { due };
   };
 }
+
+/**
+ * Warm-up scheduler (EventBridge schedule, every minute): terminates warm-up machines that are no longer needed,
+ * records their usage (never billed), marks warm-ups covered by the customer's own runs, and gives pending warm-ups a
+ * machine when no customer needs one (src/warmup/warmups.ts).
+ */
+export function makeWarmupHandler(getCore: () => Promise<WorkerCore>) {
+  return async (): Promise<{ dispatched: number; covered: number; terminated: number; expired: number; waiting: number }> => {
+    const { service } = await getCore();
+    return service.warmups.tick();
+  };
+}

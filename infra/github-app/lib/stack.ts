@@ -42,6 +42,8 @@ export interface FenvixGitHubAppProps extends StackProps { settings: Settings }
  *                     openapi/fenvix-api.yaml): Supabase session, membership and role, Postgres as fenvix_api
  *   SQS work queue (dead-letter queue after 5 tries; large payloads via the overflow bucket) ─▶ worker Lambda
  *   EventBridge Scheduler, every few minutes ─▶ sweep Lambda (runs whose summary never came)
+ *   EventBridge Scheduler, every minute (per-job) ─▶ warm-up Lambda (warm-up runs of onboarded default branches:
+ *     a machine only when no customer job needs one; github-app/src/warmup/)
  *   runner machines (demo: one per demo, scripts/demo-up.sh; per-job: one per queued job), from the runner image
  *     ─▶ POST https://github.<domain>/v1/runner/summaries
  *
@@ -169,10 +171,16 @@ export class FenvixGitHubAppStack extends Stack {
       CACHE_SIGNING_KEY_PARAM: `${cachePrefix(s.env)}/signing-key`,
       ...Object.fromEntries(Object.entries(perJobMachineEnv(s)).map(([k, v]) => [`FENVIX_MACHINE_${k}`, v])),
     } : { RUNNER_MODE: "demo" };
+    // Warm-up runs (per-job only; github-app/src/warmup/): the worker requests them (webhooks) and preempts them for a
+    // customer job; the warm-up scheduler gives them machines.
+    const warmupEnv: Record<string, string> = perJob ? {
+      WARMUP_ENABLED: String(s.warmupEnabled), WARMUP_DAILY_CAP: String(s.warmupDailyCap), WARMUP_ORG_CONCURRENCY: String(s.warmupOrgConcurrency),
+      WARMUP_RESERVE: String(s.warmupReserve), WARMUP_GRACE_SECONDS: String(s.warmupGraceSeconds), WARMUP_TICK_SECONDS: "0",
+    } : { WARMUP_ENABLED: "false" };
     // The worker signs each machine's credentials (per-job only): the summary key and the cache signing key.
     const workerReads = readersOf(s.env, "worker").filter((p) => perJob || !/\/(runner-token|signing-key)$/.test(p));
     const worker = fn("Worker", "worker.ts", {
-      timeout: WORKER_TIMEOUT, memory: 512, reads: workerReads, extraEnv: launchEnv,
+      timeout: WORKER_TIMEOUT, memory: 512, reads: workerReads, extraEnv: { ...launchEnv, ...warmupEnv },
       description: "fenvix GitHub App: runs queued webhooks and runner summaries",
     });
     worker.addToRolePolicy(new iam.PolicyStatement({ sid: "ReadAndDeleteOverflow", actions: ["s3:GetObject", "s3:DeleteObject"], resources: [overflow.arnForObjects("work/*")] }));
@@ -217,7 +225,23 @@ export class FenvixGitHubAppStack extends Stack {
       sid: "TerminateOnlyTheseMachines", actions: ["ec2:TerminateInstances"], resources: [arn("instance/*")],
       conditions: { StringEquals: { "aws:ResourceTag/fenvix:role": role } },
     }));
-    if (perJob) mayLaunch(worker, "runner-job");
+    // Only warm-up machines (fenvix:kind=warmup): a customer's job machine is never terminated by a function but the reaper.
+    const mayTerminateWarmups = (f: lambda.IFunction) => f.addToRolePolicy(new iam.PolicyStatement({
+      sid: "TerminateOnlyWarmupMachines", actions: ["ec2:TerminateInstances"], resources: [arn("instance/*")],
+      conditions: { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job", "aws:ResourceTag/fenvix:kind": "warmup" } },
+    }));
+    let warmup: lambda.IFunction | null = null;
+    if (perJob) {
+      mayLaunch(worker, "runner-job");
+      // A customer job that finds the fleet full takes a warm-up's machine (preemption).
+      mayTerminateWarmups(worker);
+      warmup = fn("Warmup", "warmup.ts", {
+        timeout: Duration.seconds(120), memory: 256, reads: readersOf(s.env, "warmup"), extraEnv: { ...launchEnv, ...warmupEnv },
+        description: "fenvix GitHub App: warm-up runs of onboarded default branches (lowest priority; never billed)",
+      });
+      mayLaunch(warmup, "runner-job");
+      mayTerminateWarmups(warmup);
+    }
 
     // ---------------------------------------------------------------- demo mode: scripts/demo-up.sh and demo-down.sh
     let demo: lambda.IFunction | null = null;
@@ -251,6 +275,17 @@ export class FenvixGitHubAppStack extends Stack {
       state: "ENABLED",
       target: { arn: sweep.functionArn, roleArn: schedulerRole.roleArn, retryPolicy: { maximumRetryAttempts: 0 } },
     });
+
+    // ---------------------------------------------------------------- the warm-up scheduler's schedule (per-job)
+    if (warmup) {
+      schedulerRole.addToPolicy(new iam.PolicyStatement({ actions: ["lambda:InvokeFunction"], resources: [warmup.functionArn] }));
+      new scheduler.CfnSchedule(this, "WarmupSchedule", {
+        name: name("warmup"),
+        description: "Warm-up runs: terminate unneeded warm-up machines, dispatch pending warm-ups when machines are free",
+        scheduleExpression: "rate(1 minute)", flexibleTimeWindow: { mode: "OFF" }, state: "ENABLED",
+        target: { arn: warmup.functionArn, roleArn: schedulerRole.roleArn, retryPolicy: { maximumRetryAttempts: 0 } },
+      });
+    }
 
     // ---------------------------------------------------------------- the reaper: machines past the hard limit
     {
@@ -333,6 +368,7 @@ export class FenvixGitHubAppStack extends Stack {
     new CfnOutput(this, "ImagePipelineArn", { value: fleet.pipeline.attrArn, description: "scripts/build-image.sh builds the runner image with it" });
     new CfnOutput(this, "LaunchTemplateId", { value: fleet.launchTemplate.ref });
     new CfnOutput(this, "ReaperLogGroup", { value: `/aws/lambda/${name("reaper")}` });
+    if (warmup) new CfnOutput(this, "WarmupLogGroup", { value: `/aws/lambda/${name("warmup")}` });
     if (demo) {
       new CfnOutput(this, "DemoFunctionName", { value: name("demo"), description: "scripts/demo-up.sh and demo-down.sh invoke it" });
       new CfnOutput(this, "DemoLogGroup", { value: `/aws/lambda/${name("demo")}` });

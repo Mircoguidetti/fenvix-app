@@ -47,6 +47,8 @@ export class FakeGitHub {
   readonly oauthCodes = new Map<string, string>();
   readonly userInstallations = new Map<string, number[]>();
   private readonly tokens = new Map<string, number>();
+  /** Tokens asked for with `repository_ids` / `permissions` (POST access_tokens): limited to those, as GitHub does. */
+  readonly tokenScopes = new Map<string, { repositoryIds: number[] | null; permissions: Record<string, string> | null }>();
   private server!: Server;
   url = "";
   /** Answers to force, e.g. a 500 on the next check run: method + path → status. */
@@ -172,6 +174,13 @@ export class FakeGitHub {
       if (!this.installations.has(id)) return this.notFound();
       const token = "ghs_" + randomBytes(18).toString("hex");
       this.tokens.set(token, id);
+      const b = (body ?? {}) as { repository_ids?: number[]; permissions?: Record<string, string> };
+      if (b.repository_ids || b.permissions) {
+        if (b.repository_ids?.some((r) => !this.installations.get(id)!.repos.includes(r))) {
+          return [422, { message: "There is at least one repository that does not exist or is not accessible to the parent installation.", documentation_url: "https://docs.github.com/rest", status: "422" }];
+        }
+        this.tokenScopes.set(token, { repositoryIds: b.repository_ids ?? null, permissions: b.permissions ?? null });
+      }
       const ex = exampleResponse("POST", "/app/installations/{installation_id}/access_tokens", 201);
       delete ex.repositories;
       return [201, { ...ex, token, expires_at: new Date(Date.now() + 3600_000).toISOString().replace(/\.\d+Z$/, "Z"), repository_selection: this.installations.get(id)!.selection }];
@@ -195,6 +204,12 @@ export class FakeGitHub {
     const repo = this.repos.get(`${decodeURIComponent(m[1]!)}/${decodeURIComponent(m[2]!)}`);
     if (!inst || !repo || !this.installations.get(inst)!.repos.includes(repo.id)) {
       return inst ? this.notFound() : [401, { message: "Bad credentials", documentation_url: "https://docs.github.com/rest", status: "401" }];
+    }
+    // A narrowed token: other repositories are not found; a read-only token cannot write.
+    const scope = this.tokenScopes.get(/^Bearer (ghs_\w+)$/.exec(auth)?.[1] ?? "");
+    if (scope?.repositoryIds && !scope.repositoryIds.includes(repo.id)) return this.notFound();
+    if (scope?.permissions && method !== "GET") {
+      return [403, { message: "Resource not accessible by integration", documentation_url: "https://docs.github.com/rest", status: "403" }];
     }
     const rest = m[3] ?? "";
 

@@ -4,7 +4,7 @@ Written 2026-11-17, runner part rewritten 2026-11-18. This is **our** contract b
 behind `runs-on: fenvix`, which run the engine) and the customer dashboard. It is not the engine's internal file
 format: the runner reads the engine's files and sends these records to the fenvix GitHub App (`github-app/`), which
 writes them to Postgres; the dashboard reads them through the fenvix API (`openapi/fenvix-api.yaml`), never from the
-database directly. The tables (`supabase/migrations/0011` to `0014`), the API's schemas, the mock (`src/data/mock.ts`)
+database directly. The tables (`supabase/migrations/0011` to `0015`), the API's schemas, the mock (`src/data/mock.ts`)
 and the TypeScript types (`src/data/types.ts`) all follow it. **What the runner must send, and when, is the section
 "What the runner sends" below.**
 
@@ -62,6 +62,7 @@ One GitHub repository connected through the fenvix GitHub App.
 | `connectedAt` | time | |
 | `baseline` | `{ medianTimeToGreenS, medianJobMinutes, runsSampled, from, to }` \| null | measured from the repository's GitHub Actions history when it was connected: the "before fenvix" numbers |
 | `settings` | `{ skipWithProof, commentOnPullRequests, nightlyExploration, testCommand }` | |
+| `warmCache` | `{ state, commitSha, warmAt, source, warmup }` | the shared cache of the default branch: "cache warm since `commitSha`" (see "Repository cache state" and "Warm-up runs") |
 
 ## Run summary
 
@@ -304,10 +305,31 @@ same organization keeps its project.
 **Job** (`gh_jobs`): one GitHub job that asked for `runs-on: fenvix`; `region` is where its machine was placed,
 `ciRunId` its run row.
 
+**Warm-up** (`gh_warmups`, migration 0015): one warm-up run of a repository's default branch at one commit (unique
+per repository and commit; at most one pending or running per repository). `commitSha`, `ref`, `trigger`
+(`onboarded` | `push` | `linked`), `status` (`pending` | `dispatched` | `running` | `succeeded` | `failed` |
+`unsupported` | `covered` | `superseded` | `cancelled`), `detail` (why it waits or how it ended, for a person),
+`pushedAt` (ordering), `notBefore`, `region`, `runnerName`, `attempts`, `preemptions`, `coveredByJob`,
+`machineSeconds` (our cost), `summary` (the runner's, trimmed). Members read their organization's warm-ups through the
+API; the App writes them.
+
+**Repository cache state** (`gh_repositories.cache_warm_sha`, `cache_warm_at`, `cache_warm_source` = `warmup` | `run`,
+`cache_warm_pushed_at`, migration 0015): the newest default-branch commit (by push time) whose proofs are in the shared
+cache. The API shows it as `warmCache` on every Project and GitHub repository:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `state` | `"warm"` \| `"warming"` \| `"cold"` | warming: a warm-up is pending or running; warm: `commitSha` is set; else cold |
+| `commitSha` | string \| null | "cache warm since" this commit (40 hex) |
+| `warmAt` | time \| null | when it became warm at that commit |
+| `source` | `"warmup"` \| `"run"` \| null | one of fenvix's warm-ups, or the customer's own trusted run on the default branch |
+| `warmup` | `{status, commitSha, detail, updatedAt}` \| null | the repository's latest warm-up (the one in flight first) |
+
 **Results staging** (`gh_run_results`, migration 0014): the runner's results chunks as received, one row per job and
 chunk (sent again: replaced), with `appliedAt` once applied to the run and `applyError` when not (yet).
 
-**Usage event** (`ci_usage_events`, per-run billing): one per GitHub job that asked for `runs-on: fenvix`.
+**Usage event** (`ci_usage_events`, per-run billing): one per GitHub job that asked for `runs-on: fenvix`, and one per
+warm-up run that used one of our machines (migration 0015, never billable: see "Warm-up runs").
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -316,14 +338,15 @@ chunk (sent again: replaced), with `appliedAt` once applied to the run and `appl
 | `installationId`, `repositoryId` | number | GitHub ids |
 | `repositoryFullName` | string | |
 | `projectId`, `runId` | string \| null | the Project and the Run summary, when the organization is linked |
-| `githubJobId` | number | unique: a job is billed once |
-| `githubRunId`, `githubRunAttempt` | number | |
-| `kind` | `"ci_run"` | |
+| `githubJobId` | number \| null | unique: a job is billed once; null for a warm-up |
+| `githubRunId`, `githubRunAttempt` | number \| null, number | null for a warm-up |
+| `warmupId` | number \| null | the warm-up (`gh_warmups.id`), unique: a warm-up is recorded once; null for a job |
+| `kind` | `"ci_run"` \| `"warmup"` | |
 | `quantity` | number | 1 |
 | `billable` | boolean | see `reason` |
-| `reason` | `"completed"` \| `"failed"` \| `"cancelled_after_start"` \| `"no_summary"` \| `"cancelled_before_tests"` | only `cancelled_before_tests` is not billable |
+| `reason` | `"completed"` \| `"failed"` \| `"cancelled_after_start"` \| `"no_summary"` \| `"cancelled_before_tests"` \| `"warm-up"` | `cancelled_before_tests` and `warm-up` are not billable; a `warm-up` event is never billable (database check) |
 | `planId` | string \| null | the organization's plan when the run ended |
-| `conclusion` | string \| null | GitHub's conclusion of the job |
+| `conclusion` | string \| null | GitHub's conclusion of the job; for a warm-up, how it ended (its status) |
 | `testMinutesRan`, `minutesSaved`, `otherStepMinutes` | number | as in the Run summary |
 | `occurredAt` | time | when the job completed |
 | `month` | date | first day of the month of `occurredAt` (UTC), generated |
@@ -472,6 +495,103 @@ The App writes one Exploration for the repository's project (sent again: the sam
 defects; `newDefectIds` are the defects this exploration found first. An exploration is not a run: it does not count
 as a defect occurrence. A repository without a project keeps nothing (logged).
 
+### 5. Warm-up runs: `POST /v1/runner/warmups`
+
+**Why.** A customer should almost never see a cold first run. When a repository goes on fenvix (its setup pull request
+merged, or it already ran on `runs-on: fenvix`) in an installation linked to an organization, when such an installation
+is linked, and after every push to its default branch, the App runs the repository's test job **once** at that
+default-branch commit on our machines, so the shared cache holds the default branch's proofs before the customer's
+next pull request. A warm-up is **not a run**: no run row, no check run and no status on the customer's commit, no pull
+request comment, no GitHub Actions run (so no Actions minutes and none of the customer's other jobs run), and it is
+**never billed** (its usage event is non-billable, reason `warm-up`, kept for our own cost).
+
+**How it is started (decided 2026-11-18): a dedicated warm-up job on our runner pool, not `workflow_dispatch`.**
+`workflow_dispatch` would need an `on: workflow_dispatch` trigger in the customer's workflow (a second change in the
+setup pull request) and the `actions: write` permission; it would run the **whole** workflow (lint, build, deploy jobs
+on `push`-like conditions, GitHub-hosted jobs billed to the customer) and GitHub would show its check suite on the
+customer's commit. The warm-up machine instead runs only the test job, from **the customer's own workflow file at that
+commit** (the file and job the setup pull request moved to `runs-on: fenvix`: the same steps, `env`, `with:` inputs and
+runner image as the customer's runs, so the engine computes the same cache keys as their pull request runs), outside
+GitHub Actions. When the customer's own workflow already runs the fenvix job on pushes to the default branch, that run
+(cache write access: a trusted ref) **covers** the commit and no warm-up machine starts: the App waits
+`WARMUP_GRACE_SECONDS` (180 s) after a push before it gives a warm-up a machine.
+
+**Scheduling (the App's warm-up scheduler, every minute).** Lowest priority: a warm-up takes a machine only when no
+customer job is waiting for one in the region, and never the last `WARMUP_RESERVE` (1) machines of the region's fleet;
+a customer job that finds the fleet full **preempts** the newest warm-up (its machine is terminated at once; the warm-up
+goes back to pending and runs later on a new machine). At most `WARMUP_ORG_CONCURRENCY` (1) warm-ups of an
+organization on machines at once; at most `WARMUP_DAILY_CAP` (6) warm-ups of a repository take a machine in any 24
+hours (the next waits until the oldest of the window is 24 hours old). A newer default-branch commit **supersedes** the
+warm-up in flight (a running machine is terminated); an older commit delivered late is stored superseded. The machine
+runs in the **organization's region** (`workspaces.region`) or not at all. A machine that has not reported `started`
+after `WARMUP_START_TIMEOUT_SECONDS` (900 s) is terminated and the warm-up tried again (3 machines at most); a warm-up
+running longer than `WARMUP_MAX_SECONDS` (3 h) is stopped (`failed`). Suspending or uninstalling the App, or removing
+the repository from it, cancels its warm-ups (machines terminated). After a warm-up of a repository ends `unsupported`,
+its next warm-up waits 24 hours (one try a day, not one machine per push).
+
+**What the warm-up machine receives** (user data, root only; the machine is no GitHub runner: no just-in-time
+configuration). `/etc/fenvix/runner.env` with the plain settings and:
+
+| Variable | Value |
+| --- | --- |
+| `FENVIX_KIND` | `warmup` (a job's machine has none) |
+| `FENVIX_MACHINE` | `per-job` |
+| `FENVIX_MODE` | `enforce`: skip with proof what is already proven, run the rest, write the results to the cache |
+| `FENVIX_REGION` | the organization's region |
+| `FENVIX_WARMUP_ID`, `FENVIX_RUNNER_NAME` | the warm-up and this machine's name (`fenvix-w<id>`, `fenvix-w<id>-<attempt>` after a preemption) |
+| `FENVIX_CACHE_ACCESS`, `FENVIX_CACHE_URL`, `FENVIX_CACHE_ORG` | `write`, the installation's own cache organization (`gh-<installation id>`) |
+| `FENVIX_WARMUPS_URL` | `https://github.fenvix.dev/v1/runner/warmups` |
+
+and the files `/etc/fenvix/warmup.json`:
+
+```json
+{"v": 1, "warmupId": 17, "attempt": 1, "repository": {"id": 70001, "fullName": "acme/shop"}, "installationId": 4242,
+ "commitSha": "<40 hex>", "ref": "refs/heads/main", "workflowPath": ".github/workflows/ci.yml", "job": "test"}
+```
+
+`/etc/fenvix/checkout-token` (an installation token for **this one repository**, `contents: read` and `metadata: read`
+only, one hour: it can check out the commit and nothing else; GitHub refuses any write with it, so no check run or
+comment can be made from the machine), `/etc/fenvix/cache-token` (shared cache, write, this installation's organization
+only), `/etc/fenvix/summary-token` (this machine's App credential, naming the warm-up; it stays root only and is
+accepted by `POST /v1/runner/warmups` only). The machine starts `fenvix-warmup.target` (infra/github-app/lib/runner/files):
+root moves the description, the checkout token and the cache token to the job user and reports `started`; the job user
+runs the runner's warm-up executor; root reports `finished` and powers the machine off.
+
+**What the runner must provide** (fenvix-engine-cli, `runner/warmup.sh <warmup.json> <out-dir>`, run as the job user
+with `HOME=/home/fenvix`; not in that repository yet, an image without it reports `unsupported`):
+
+1. check out `commitSha` of `repository.fullName` with the checkout token into the same workspace path a GitHub runner
+   uses (`/home/fenvix/fenvix/actions-runner/_work/<repo>/<repo>`), so paths the engine records match;
+2. read `workflowPath` at that commit and run job `job`: its steps in order (`uses:` actions at their pinned refs,
+   `run:` steps with the job's `shell`, `env` at workflow, job and step level, `with:` inputs), with the default
+   variables of a `push` run on `ref` (`GITHUB_EVENT_NAME=push`, `GITHUB_REF`, `GITHUB_SHA`, `GITHUB_REPOSITORY`,
+   `GITHUB_WORKSPACE`, `RUNNER_OS=Linux`, `CI=true`, ...), wrapping the test command in the engine exactly as
+   `runner/fenvix-run` does for a job (`FENVIX_MODE=enforce`, the shared cache with the cache token). A matrix job runs
+   its first Linux combination (in the matrix's order). `secrets.*` evaluate to empty strings, as for a pull request
+   from a fork; `if:` conditions are evaluated for a push to the default branch;
+3. never call GitHub except to fetch the commit and public actions (no check run, no status, no comment, no artifact,
+   no cache API of GitHub Actions) and never the App (root reports);
+4. write `<out-dir>/outcome.json` = `{"outcome": "succeeded" | "failed" | "unsupported", "detail": "<for a person>"}`
+   and, when the test step ran, `<out-dir>/summary.json` = `runner/fenvix-run`'s `summary.json`. `unsupported`: the
+   job cannot run outside GitHub Actions (it `needs:` another job's outputs or artifacts, uses `services:` or a
+   `container:` the runner does not run, a dynamic `runs-on`/`matrix` it cannot evaluate, a reusable workflow);
+   `failed`: a step or the tests failed (the engine still wrote what passed).
+
+**The two reports** (root, `fenvix-warmup-report`, with this machine's credential; `4xx` is not retried, `5xx` is):
+
+```json
+{"warmupId": 17, "runnerName": "fenvix-w17", "event": "started"}
+{"warmupId": 17, "runnerName": "fenvix-w17", "event": "finished", "outcome": "succeeded", "detail": "...", "summary": {...summary.json...}}
+```
+
+Schema `RunnerWarmupReport` in `openapi/fenvix-api.yaml`: `outcome` is required with `finished` and refused with
+`started` (so is `summary`). Answers: `202` stored (or a late or repeated report: nothing changes); `400` the body;
+`401` no or a bad credential; `403` a credential that is not this warm-up's machine (a job's credential, another
+warm-up, the machine of an earlier attempt), and a warm-up credential on any other runner route; `404` no such
+warm-up. A `succeeded` warm-up with its summary makes the repository's cache **warm since** its commit (unless a newer
+commit is already warm); every warm-up that used a machine gets its one non-billable usage event (test minutes from
+the summary, the rest of the machine time as other steps).
+
 ### Trial, mode and the 35% gate
 
 Linking an organization's first GitHub installation starts its **30-day shadow trial** (`gh_link_installation`,
@@ -506,6 +626,12 @@ The dashboard reads them only through the fenvix API (`openapi/fenvix-api.yaml`,
 database directly.
 
 ## Changes
+
+- 2026-11-18: Warm-up runs (migration 0015, `github-app/src/warmup/`): `gh_warmups`, the repository's cache state
+  (`cache_warm_*`), `warmCache` on Project and GitHub repository in the API, `POST /v1/runner/warmups` with the
+  warm-up machine's own credential (refused on every other runner route), what a warm-up machine receives and what the
+  runner's warm-up executor must do; usage events of kind `warmup`, reason `warm-up`, never billable (`githubJobId` and
+  `githubRunId` null for them, `warmupId` set); `gh_jobs.cache_access` and `launched_at`.
 
 - 2026-11-18: "What the runner sends" (replaces the planned direct posting): live progress (`POST /v1/runner/progress`),
   per-test results in chunks with receipts, defect bundles with the engine's replay command, audit reruns and shadow

@@ -1,5 +1,6 @@
 import { createPrivateKey, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { DEFAULT_WARMUP, type WarmupSettings } from "./warmup/policy.ts";
 
 /**
  * Every setting comes from the environment. Secrets (the App's private key, the webhook secret, the OAuth client
@@ -65,6 +66,10 @@ export interface Config {
   summaryWaitSeconds: number;
   /** How often the background sweep looks for such jobs (0: never; the tests drive it by hand). */
   sweepSeconds: number;
+  /** Warm-up runs (src/warmup/, docs/data-contract.md "Warm-up runs"): the WARMUP_* settings. */
+  warmup: WarmupSettings;
+  /** How often the node server's warm-up scheduler runs (0: never; on AWS the warm-up Lambda's schedule runs it). */
+  warmupTickSeconds: number;
   githubTimeoutMs: number;
 }
 
@@ -127,6 +132,25 @@ export function parsePrivateKey(pem: string): KeyObject {
 
 const LABEL = /^[A-Za-z0-9._-]{1,100}$/;
 
+/** WARMUP_ENABLED (true unless "false"), WARMUP_GRACE_SECONDS, WARMUP_DAILY_CAP, WARMUP_ORG_CONCURRENCY, WARMUP_RESERVE, ... */
+export function warmupFromEnv(env: Env): WarmupSettings {
+  const d = DEFAULT_WARMUP;
+  const enabled = (env.WARMUP_ENABLED ?? "true").trim().toLowerCase();
+  if (!["true", "false"].includes(enabled)) throw new Error("WARMUP_ENABLED must be true or false");
+  return {
+    enabled: enabled === "true",
+    graceSeconds: int(env, "WARMUP_GRACE_SECONDS", d.graceSeconds, 0),
+    dailyCap: int(env, "WARMUP_DAILY_CAP", d.dailyCap, 1),
+    orgConcurrency: int(env, "WARMUP_ORG_CONCURRENCY", d.orgConcurrency, 1),
+    reserve: int(env, "WARMUP_RESERVE", d.reserve, 0),
+    startTimeoutSeconds: int(env, "WARMUP_START_TIMEOUT_SECONDS", d.startTimeoutSeconds, 60),
+    maxRunSeconds: int(env, "WARMUP_MAX_SECONDS", d.maxRunSeconds, 300),
+    waitingJobWindowSeconds: int(env, "WARMUP_WAITING_JOB_WINDOW_SECONDS", d.waitingJobWindowSeconds, 60),
+    preemptBackoffSeconds: int(env, "WARMUP_PREEMPT_BACKOFF_SECONDS", d.preemptBackoffSeconds, 0),
+    maxAttempts: int(env, "WARMUP_MAX_ATTEMPTS", d.maxAttempts, 1),
+  };
+}
+
 export function loadConfig(env: Env = process.env, opts: { surface?: "all" | "worker" } = {}): Config {
   const surface = opts.surface ?? "all";
   const http = surface === "all";
@@ -186,6 +210,8 @@ export function loadConfig(env: Env = process.env, opts: { surface?: "all" | "wo
     cacheSigningKey,
     summaryWaitSeconds: int(env, "SUMMARY_WAIT_SECONDS", 600, 0),
     sweepSeconds: int(env, "SWEEP_SECONDS", 60, 0),
+    warmup: warmupFromEnv(env),
+    warmupTickSeconds: int(env, "WARMUP_TICK_SECONDS", 60, 0),
     githubTimeoutMs: int(env, "GITHUB_TIMEOUT_MS", 15_000, 100),
   };
 }

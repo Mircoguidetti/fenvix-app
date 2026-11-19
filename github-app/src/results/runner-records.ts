@@ -328,3 +328,28 @@ export const isNewerProgress = (stored: { seq?: unknown } | null | undefined, se
   const s = stored && typeof stored.seq === "number" ? stored.seq : -1;
   return seq > s;
 };
+
+// ---------------------------------------------------------------- warm-up machines (POST /v1/runner/warmups)
+
+/** What a warm-up machine reports (RunnerWarmupReport): it started; or it finished, how, with the summary if any. */
+export interface RunnerWarmupReport {
+  warmupId: number; event: "started" | "finished"; outcome?: "succeeded" | "failed" | "unsupported"; detail?: string;
+  summary?: Record<string, unknown>; repositoryId?: number; runnerName?: string;
+}
+
+export function parseWarmupReport(raw: unknown): RunnerWarmupReport {
+  const o = obj(raw, "");
+  const event = oneOf(need(o, "event", ""), "event", ["started", "finished"] as const);
+  const r = def({
+    warmupId: int(need(o, "warmupId", ""), "warmupId", 1),
+    event,
+    outcome: opt(o, "outcome", "", (v, p) => oneOf(v, p, ["succeeded", "failed", "unsupported"] as const)),
+    detail: opt(o, "detail", "", (v, p) => text(v, p, 1000)),
+    summary: opt(o, "summary", "", (v, p) => obj(v, p)),
+    repositoryId: opt(o, "repositoryId", "", (v, p) => int(v, p)),
+    runnerName: opt(o, "runnerName", "", (v, p) => text(v, p)),
+  });
+  if (event === "finished" && r.outcome === undefined) throw new RecordError("outcome", "is required when event is finished");
+  if (event === "started" && (r.outcome !== undefined || r.summary !== undefined)) throw new RecordError(r.outcome !== undefined ? "outcome" : "summary", "is only sent when event is finished");
+  return r;
+}

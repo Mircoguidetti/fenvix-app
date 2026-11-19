@@ -797,6 +797,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runner/warmups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description A warm-up machine's two reports (docs/data-contract.md "Warm-up runs"): `started` when the machine starts the
+         *     runner's warm-up executor; `finished` at the end with the outcome and, when the test step ran, the runner's
+         *     summary.json. Only the warm-up machine's own credential is accepted (it names the warm-up), and that credential
+         *     is refused on every other runner operation: a warm-up is never a run (no run row, no check run, no comment, never
+         *     billed). Written at once; a late or repeated report is answered 202 like the first.
+         */
+        post: operations["postRunnerWarmup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runner/explorations": {
         parameters: {
             query?: never;
@@ -948,6 +971,43 @@ export interface components {
             connectedAt: string;
             baseline: components["schemas"]["Baseline"] | null;
             settings: components["schemas"]["ProjectSettings"];
+            warmCache: components["schemas"]["WarmCache"];
+        };
+        /**
+         * @description pending: waiting (grace period, a free machine, the organization's other warm-up, the repository's daily cap);
+         *     dispatched: a machine was requested; running: the machine runs the test job; succeeded / failed / unsupported:
+         *     how it ended (unsupported: the job cannot run outside GitHub Actions); covered: the customer's own run of that
+         *     commit filled the cache; superseded: a newer default-branch commit came first; cancelled: the installation or the
+         *     repository went away, or no machine started for it.
+         * @enum {string}
+         */
+        WarmupStatus: "pending" | "dispatched" | "running" | "succeeded" | "failed" | "unsupported" | "covered" | "superseded" | "cancelled";
+        Warmup: {
+            status: components["schemas"]["WarmupStatus"];
+            commitSha: string;
+            /** @description Why it waits, or how it ended, in words a person can act on. */
+            detail: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /**
+         * @description The shared cache of the repository's default branch. `state`: warm (the cache holds the proofs of `commitSha`),
+         *     warming (a warm-up is pending or running), cold (no proofs yet and no warm-up in flight).
+         */
+        WarmCache: {
+            /** @enum {string} */
+            state: "warm" | "warming" | "cold";
+            /** @description Warm since this default-branch commit (40 hex); null: never warmed */
+            commitSha: string | null;
+            /** Format: date-time */
+            warmAt: string | null;
+            /**
+             * @description warmup: one of fenvix's warm-up runs; run: the customer's own run on the default branch
+             * @enum {string|null}
+             */
+            source: "warmup" | "run" | null;
+            /** @description The repository's latest warm-up */
+            warmup: components["schemas"]["Warmup"] | null;
         };
         /** @description ran + skipped + other = total, each rounded with the largest-remainder rule. */
         MinuteBreakdown: {
@@ -1459,6 +1519,7 @@ export interface components {
             job: string | null;
             setupPullRequest: components["schemas"]["SetupPullRequest"] | null;
             projectId: string | null;
+            warmCache: components["schemas"]["WarmCache"];
         };
         SetupChange: {
             path: string;
@@ -1602,6 +1663,27 @@ export interface components {
             defects?: components["schemas"]["RunnerDefect"][];
             audit?: components["schemas"]["RunnerAuditRerun"][];
             missDetails?: components["schemas"]["MissDetail"][];
+        };
+        /**
+         * @description A warm-up machine's report. The credential names the warm-up, the repository and the runner name; `warmupId`
+         *     (and `repositoryId` / `runnerName` when given) must match it. `outcome` is sent with `finished` only:
+         *     succeeded (the test step ran and the cache was written; send `summary`), failed (the job or its tests failed:
+         *     `detail` says where), unsupported (the job cannot run outside GitHub Actions, e.g. it needs another job's
+         *     outputs or a service container the runner does not support: `detail` says which).
+         */
+        RunnerWarmupReport: {
+            warmupId: number;
+            /** @enum {string} */
+            event: "started" | "finished";
+            /** @enum {string} */
+            outcome?: "succeeded" | "failed" | "unsupported";
+            detail?: string;
+            /** @description runner/fenvix-run summary.json, as for POST /runner/summaries */
+            summary?: Record<string, never>;
+            /** @description Must match the credential when given */
+            repositoryId?: number;
+            /** @description Must match the credential when given */
+            runnerName?: string;
         };
         RunnerExploration: {
             /** Format: date-time */
@@ -2823,6 +2905,23 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["RunnerResults"];
+            };
+        };
+        responses: {
+            202: components["responses"]["Accepted"];
+            default: components["responses"]["Error"];
+        };
+    };
+    postRunnerWarmup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerWarmupReport"];
             };
         };
         responses: {

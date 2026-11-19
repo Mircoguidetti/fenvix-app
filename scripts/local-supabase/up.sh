@@ -2,7 +2,7 @@
 # A local Supabase for development and the integration tests: the real Supabase Postgres image and the real Supabase
 # Auth (GoTrue) server, in Docker, signing tokens with a fresh ES256 key (published at /auth/v1/.well-known/jwks.json,
 # as a hosted project does), plus a small proxy that serves Auth under /auth/v1. Applies the migrations (0001 to 0013
-# once, then 0014 twice: it must be safe to repeat) and gives the API's and the App's roles local passwords.
+# once, then 0014 and later twice each: they must be safe to repeat) and gives the API's and the App's roles local passwords.
 #
 #   bash scripts/local-supabase/up.sh        # start (or restart from empty)
 #   bash scripts/local-supabase/down.sh      # stop and remove everything

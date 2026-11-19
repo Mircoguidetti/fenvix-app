@@ -497,6 +497,21 @@ paths:
       responses:
         "202": { $ref: "#/components/responses/Accepted" }
         default: { $ref: "#/components/responses/Error" }
+  /runner/warmups:
+    post:
+      tags: [runner]
+      operationId: postRunnerWarmup
+      security: [{ runner: [] }]
+      description: |
+        A warm-up machine's two reports (docs/data-contract.md "Warm-up runs"): `started` when the machine starts the
+        runner's warm-up executor; `finished` at the end with the outcome and, when the test step ran, the runner's
+        summary.json. Only the warm-up machine's own credential is accepted (it names the warm-up), and that credential
+        is refused on every other runner operation: a warm-up is never a run (no run row, no check run, no comment, never
+        billed). Written at once; a late or repeated report is answered 202 like the first.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RunnerWarmupReport" } } } }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        default: { $ref: "#/components/responses/Error" }
   /runner/explorations:
     post:
       tags: [runner]
@@ -664,7 +679,7 @@ components:
         testCommand: { type: string, maxLength: 500, description: "The test command the runner wraps; empty: the job's own command." }
     Project:
       type: object
-      required: [id, fullName, language, testRunner, defaultBranch, installationId, repositoryId, setupState, setupPullRequest, connectedAt, baseline, settings]
+      required: [id, fullName, language, testRunner, defaultBranch, installationId, repositoryId, setupState, setupPullRequest, connectedAt, baseline, settings, warmCache]
       properties:
         id: { type: string, format: uuid }
         fullName: { type: string, description: "owner/name on GitHub" }
@@ -678,6 +693,36 @@ components:
         connectedAt: { type: string, format: date-time }
         baseline: { oneOf: [{ $ref: "#/components/schemas/Baseline" }, { type: "null" }] }
         settings: { $ref: "#/components/schemas/ProjectSettings" }
+        warmCache: { $ref: "#/components/schemas/WarmCache" }
+    WarmupStatus:
+      type: string
+      enum: [pending, dispatched, running, succeeded, failed, unsupported, covered, superseded, cancelled]
+      description: |
+        pending: waiting (grace period, a free machine, the organization's other warm-up, the repository's daily cap);
+        dispatched: a machine was requested; running: the machine runs the test job; succeeded / failed / unsupported:
+        how it ended (unsupported: the job cannot run outside GitHub Actions); covered: the customer's own run of that
+        commit filled the cache; superseded: a newer default-branch commit came first; cancelled: the installation or the
+        repository went away, or no machine started for it.
+    Warmup:
+      type: object
+      required: [status, commitSha, detail, updatedAt]
+      properties:
+        status: { $ref: "#/components/schemas/WarmupStatus" }
+        commitSha: { type: string, pattern: "^[0-9a-f]{40}$" }
+        detail: { type: string, description: "Why it waits, or how it ended, in words a person can act on." }
+        updatedAt: { type: string, format: date-time }
+    WarmCache:
+      type: object
+      description: |
+        The shared cache of the repository's default branch. `state`: warm (the cache holds the proofs of `commitSha`),
+        warming (a warm-up is pending or running), cold (no proofs yet and no warm-up in flight).
+      required: [state, commitSha, warmAt, source, warmup]
+      properties:
+        state: { type: string, enum: [warm, warming, cold] }
+        commitSha: { type: [string, "null"], description: "Warm since this default-branch commit (40 hex); null: never warmed" }
+        warmAt: { type: [string, "null"], format: date-time }
+        source: { type: [string, "null"], enum: [warmup, run, null], description: "warmup: one of fenvix's warm-up runs; run: the customer's own run on the default branch" }
+        warmup: { oneOf: [{ $ref: "#/components/schemas/Warmup" }, { type: "null" }], description: "The repository's latest warm-up" }
     MinuteBreakdown:
       type: object
       description: "ran + skipped + other = total, each rounded with the largest-remainder rule."
@@ -1149,7 +1194,7 @@ components:
         does not support; failed: the App could not open the pull request (onboardingDetail says why).
     GitHubRepository:
       type: object
-      required: [repositoryId, installationId, fullName, private, removed, language, testRunner, onboardingState, onboardingDetail, workflowPath, job, setupPullRequest, projectId]
+      required: [repositoryId, installationId, fullName, private, removed, language, testRunner, onboardingState, onboardingDetail, workflowPath, job, setupPullRequest, projectId, warmCache]
       properties:
         repositoryId: { type: integer }
         installationId: { type: integer }
@@ -1164,6 +1209,7 @@ components:
         job: { type: [string, "null"] }
         setupPullRequest: { oneOf: [{ $ref: "#/components/schemas/SetupPullRequest" }, { type: "null" }] }
         projectId: { type: [string, "null"] }
+        warmCache: { $ref: "#/components/schemas/WarmCache" }
     SetupChange:
       type: object
       required: [path, job, before, after]
@@ -1296,6 +1342,26 @@ components:
             defects: { type: array, maxItems: 500, items: { $ref: "#/components/schemas/RunnerDefect" } }
             audit: { type: array, maxItems: 5000, items: { $ref: "#/components/schemas/RunnerAuditRerun" } }
             missDetails: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/MissDetail" } }
+    RunnerWarmupReport:
+      type: object
+      description: |
+        A warm-up machine's report. The credential names the warm-up, the repository and the runner name; `warmupId`
+        (and `repositoryId` / `runnerName` when given) must match it. `outcome` is sent with `finished` only:
+        succeeded (the test step ran and the cache was written; send `summary`), failed (the job or its tests failed:
+        `detail` says where), unsupported (the job cannot run outside GitHub Actions, e.g. it needs another job's
+        outputs or a service container the runner does not support: `detail` says which).
+      required: [warmupId, event]
+      properties:
+        warmupId: { type: integer, minimum: 1 }
+        event: { type: string, enum: [started, finished] }
+        outcome: { type: string, enum: [succeeded, failed, unsupported] }
+        detail: { type: string, maxLength: 1000 }
+        summary: { type: object, description: "runner/fenvix-run summary.json, as for POST /runner/summaries" }
+        repositoryId: { type: integer, description: "Must match the credential when given" }
+        runnerName: { type: string, description: "Must match the credential when given" }
+      if: { properties: { event: { const: finished } }, required: [event] }
+      then: { properties: { outcome: { type: string } }, required: [outcome] }
+      else: { properties: { outcome: false, summary: false } }
     RunnerExploration:
       type: object
       required: [startedAt, finishedAt, commitSha, branch, seeds, runs, collected, seconds]

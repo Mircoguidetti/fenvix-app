@@ -62,6 +62,9 @@ export type GitHubConnection = S["GitHubConnection"];
 export type OnboardingState = S["OnboardingState"];
 /** A repository an installation of the fenvix GitHub App gives access to, with its onboarding state. */
 export type GitHubRepository = S["GitHubRepository"];
+export type WarmCache = S["WarmCache"];
+export type WarmupStatus = S["WarmupStatus"];
+export type Warmup = S["Warmup"];
 /** What the setup pull request changes. */
 export type SetupChange = S["SetupChange"];
 export type SkipSharePoint = S["SkipSharePoint"];

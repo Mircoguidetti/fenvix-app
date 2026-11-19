@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Warm-up machine, as root before the warm-up starts (ExecStartPre=+). The user data wrote, root only:
+#   /etc/fenvix/warmup.json      what to run: repository, commit, ref, workflow file, job (docs/data-contract.md)
+#   /etc/fenvix/checkout-token   a read-only token for that one repository (contents: read), one hour
+#   /etc/fenvix/cache-token      the shared-cache token (write: a warm-up runs the default branch only)
+#   /etc/fenvix/summary-token    this machine's App credential (POST /v1/runner/warmups only): it stays root only, job
+#                                code never reads it; fenvix-warmup-report (root) sends the reports
+# The first three go to the job user (written AS the job user: a path in its home may be a symlink planted in the
+# image), the marker tells the idle watchdog the work started, and the App hears "started".
+set -euo pipefail
+# shellcheck source=/dev/null
+. /etc/fenvix/runner.env
+home=/home/fenvix
+umask 077
+as_fenvix() { runuser -u fenvix -- "$@"; }
+# shellcheck disable=SC2016
+put() { as_fenvix sh -c 'umask 077; cat >"$1"' _ "$1"; }
+as_fenvix mkdir -p -m 0700 "$home/.fenvix" "$home/.fenvix/warmup-out"
+put "$home/.fenvix/warmup.json" </etc/fenvix/warmup.json
+put "$home/.fenvix/checkout-token" </etc/fenvix/checkout-token
+shred -u /etc/fenvix/checkout-token 2>/dev/null || rm -f /etc/fenvix/checkout-token
+if [ -f /etc/fenvix/cache-token ]; then
+  put "$home/.fenvix/cache-token" </etc/fenvix/cache-token
+  shred -u /etc/fenvix/cache-token 2>/dev/null || rm -f /etc/fenvix/cache-token
+fi
+as_fenvix touch "$home/.fenvix/job-started"
+/opt/fenvix/bin/fenvix-warmup-report started || echo "[fenvix-warmup-prepare] the App did not take the start report; the warm-up runs anyway"

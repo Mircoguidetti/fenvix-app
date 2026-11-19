@@ -5,6 +5,7 @@ import { client, type GitHubRepository, type Installation, type SetupChange } fr
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { InstallationStatusPill, OnboardingPill } from "../components/StateBadge";
 import { useToast } from "../components/Toast";
+import { WarmCacheNote } from "../components/ci";
 import { useAsync } from "../lib/useAsync";
 import { useOrg } from "../session/OrgProvider";
 import { formatDate } from "../lib/format";
@@ -55,6 +56,9 @@ export const INSTALL_ERRORS: Record<string, string> = {
   error: "Something went wrong while the installation was being linked. Try again.",
 };
 
+/** On fenvix: the shared cache of the default branch is warmed for these (after the merge and each push). */
+const ONBOARDED = new Set(["merged", "already_fenvix"]);
+
 /** States from which the App can open (or open again) the setup pull request. */
 const CAN_OPEN = new Set(["pending", "closed", "failed"]);
 const POLLS = 6;
@@ -87,6 +91,11 @@ function RepoRow({ repo, installation, queued, onOpen }: { repo: GitHubRepositor
         <OnboardingPill state={repo.onboardingState} />
       </div>
       <p className="small repo-detail">{repo.onboardingDetail}</p>
+      {(ONBOARDED.has(repo.onboardingState) || repo.warmCache.state !== "cold" || repo.warmCache.warmup) && (
+        <p className="small repo-cache">
+          <WarmCacheNote cache={repo.warmCache} now={client.now()} full />
+        </p>
+      )}
       {canOpen && repo.workflowPath && repo.job && <SetupDiff change={{ path: repo.workflowPath, job: repo.job, before: "runs-on: ubuntu-latest", after: "runs-on: fenvix" }} />}
       {(repo.setupPullRequest || repo.projectId || (repo.workflowPath && !canOpen)) && (
         <p className="setup-done">
@@ -310,7 +319,7 @@ export function ConnectPage() {
           {connection.status === "ready" && repos.status === "ready" && installations.map((i) => <InstallationBlock key={i.installationId} installation={i} repos={list} queued={queued} onOpen={open} highlight={i.installationId === highlighted} />)}
         </Step>
         <Step n={3} done={merged} title="Merge it on GitHub">
-          <p className="muted">After the merge, the next test run goes to fenvix and the repository becomes a project, with its runs, defects and minutes saved.</p>
+          <p className="muted">After the merge, the next test run goes to fenvix and the repository becomes a project, with its runs, defects and minutes saved. fenvix also runs the test job once on the default branch, at no charge, so your first pull request finds the cache warm.</p>
         </Step>
       </ol>
       {error && <Message role="alert">{error}</Message>}

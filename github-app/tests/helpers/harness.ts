@@ -40,7 +40,7 @@ export async function resetDb(): Promise<pg.Client> {
     execFileSync("bash", [fileURLToPath(new URL("../../scripts/prepare-test-db.sh", import.meta.url))], { env: { ...process.env, TEST_DATABASE_URL: ADMIN_URL }, stdio: "inherit" });
     return resetDb();
   }
-  await admin.query(`truncate gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_repositories,
+  await admin.query(`truncate gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_warmups, gh_repositories,
     gh_installations, ci_test_results, ci_skip_receipts, ci_audit_reruns, ci_defects, ci_explorations, ci_runs, ci_projects, ci_subscriptions cascade`);
   await admin.query("delete from auth.users where email like '%@gh.fenvix.invalid'");
   await admin.query("delete from public.workspaces w where not exists (select 1 from public.workspace_members m where m.workspace_id = w.id)");
@@ -141,7 +141,7 @@ export function workflowJob(action: "queued" | "in_progress" | "completed", j: {
   });
 }
 
-export function pullRequest(action: "opened" | "closed" | "synchronize", pr: { number: number; headRef: string; headSha: string; merged?: boolean; repo?: { id: number; name: string; full_name: string } }): Json {
+export function pullRequest(action: "opened" | "closed" | "synchronize", pr: { number: number; headRef: string; headSha: string; merged?: boolean; mergeSha?: string; mergedAt?: string; repo?: { id: number; name: string; full_name: string } }): Json {
   return hook("pull_request", action, (p) => {
     const r = pr.repo ?? REPOS.shop;
     p.repository = repository(p.repository as Json, r);
@@ -150,6 +150,8 @@ export function pullRequest(action: "opened" | "closed" | "synchronize", pr: { n
     p.number = pr.number;
     p.pull_request = {
       ...x, number: pr.number, state: action === "closed" ? "closed" : "open", merged: action === "closed" ? !!pr.merged : false,
+      ...(pr.mergeSha !== undefined ? { merge_commit_sha: pr.mergeSha } : {}),
+      ...(pr.mergedAt !== undefined ? { merged_at: pr.mergedAt } : {}),
       html_url: `https://github.com/${r.full_name}/pull/${pr.number}`,
       head: { ...head, ref: pr.headRef, sha: pr.headSha, repo: repository(head.repo as Json, r) },
       base: { ...base, ref: "main", repo: repository(base.repo as Json, r) },

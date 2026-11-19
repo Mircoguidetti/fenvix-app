@@ -67,6 +67,16 @@ for (const [i, st] of STATES.entries()) {
       ["pr_open", "merged", "closed"].includes(st) ? `https://github.com/olive-${run}/repo-${st}/pull/${10 + i}` : null, i % 2 ? "node" : "python", i % 2 ? "jest" : "pytest"]);
 }
 
+// The shared cache (warm-ups, migration 0015): shop warm since a commit with a warm-up running for the next one; one
+// onboarded repository whose last warm-up could not run the job.
+const WARM_SHA = "4a7c2e9" + "0".repeat(33);
+const NEXT_SHA = "b81f0d3" + "0".repeat(33);
+await db.query("update gh_repositories set cache_warm_sha = $2, cache_warm_at = now() - interval '2 hours', cache_warm_source = 'warmup', cache_warm_pushed_at = now() - interval '2 hours' where repository_id = $1", [seeded.repoIds.shop, WARM_SHA]);
+await db.query(`insert into gh_warmups (repository_id, installation_id, commit_sha, ref, trigger, status, detail) values ($1, $2, $3, 'refs/heads/main', 'push', 'running', 'running the test job')`,
+  [seeded.repoIds.shop, seeded.installationId, NEXT_SHA]);
+await db.query(`insert into gh_warmups (repository_id, installation_id, commit_sha, ref, trigger, status, detail, finished_at) values ($1, $2, $3, 'refs/heads/main', 'push', 'unsupported', 'the job needs the outputs of job build', now())`,
+  [second + 3, second, "c".repeat(40)]);
+
 // ---------------------------------------------------------------- the API and the dashboard
 const apiProc = spawn("node", ["src/api/local.ts"], {
   cwd: "github-app", stdio: ["ignore", "inherit", "inherit"],
@@ -104,7 +114,7 @@ async function signedIn(person, { width = 1440, height = 1000, scheme = "light",
 const P = seeded.projects.shop;
 const pages = [
   ["overview", "/overview", [account, "trial"]],
-  ["projects", "/projects", [`${account}/shop`, `${account}/web`]],
+  ["projects", "/projects", [`${account}/shop`, `${account}/web`, "Cache warm since 4a7c2e9", "Warming up b81f0d3", "Cache cold: the first run fills it"]],
   ["project-runs", `/projects/${P}`, ["Change number"]],
   ["project-defects", `/projects/${P}/defects`, ["test_count"]],
   ["project-skip-with-proof", `/projects/${P}/skip-with-proof`, ["rerun"]],
@@ -121,7 +131,7 @@ const pages = [
   ["members", "/settings/members", ["Olive Owner", "Max Member"]],
   ["settings", "/settings", ["Acme Robotics", "Region"]],
   ["api-keys", "/api-keys", ["oming soon"]],
-  ["connect", "/projects/connect", [account, `olive-${run}`, "uspended"]],
+  ["connect", "/projects/connect", [account, `olive-${run}`, "uspended", "Cache warm since 4a7c2e9", "Warming up b81f0d3: running the test job", "Warm-up not possible (ccccccc): the job needs the outputs of job build"]],
 ];
 
 async function visit(page, name, path, markers, { shot = true } = {}) {

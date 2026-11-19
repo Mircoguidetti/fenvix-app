@@ -43,10 +43,12 @@ async function poster(spool: string, url: string, tokenFile: string): Promise<st
 
 describe("runner machine scripts", () => {
   it("are valid bash (and pass shellcheck when it is installed)", () => {
-    const sh = ["install.sh", "fenvix-imds-block", "fenvix-register", "fenvix-summary-credential", "fenvix-job-completed", "fenvix-job-started", "fenvix-jit-prepare", "fenvix-job-done", "fenvix-idle-watchdog"];
+    const sh = ["install.sh", "fenvix-imds-block", "fenvix-register", "fenvix-summary-credential", "fenvix-job-completed", "fenvix-job-started", "fenvix-jit-prepare", "fenvix-job-done", "fenvix-idle-watchdog",
+      "fenvix-warmup", "fenvix-warmup-prepare", "fenvix-warmup-done"];
     for (const f of sh) execFileSync("bash", ["-n", join(FILES, f)]);
     if (spawnSync("shellcheck", ["--version"]).status === 0) execFileSync("shellcheck", ["-s", "bash", ...sh.map((f) => join(FILES, f))]);
     execFileSync("python3", ["-I", "-c", `import ast,sys; ast.parse(open(sys.argv[1]).read())`, join(FILES, "fenvix-summary-poster")]);
+    execFileSync("python3", ["-I", "-c", `import ast,sys; ast.parse(open(sys.argv[1]).read())`, join(FILES, "fenvix-warmup-report")]);
   });
 
   it("job-completed hook → spool → poster: the App gets the job's ids, this machine's runner name, its credential", async () => {
@@ -150,5 +152,80 @@ describe("customer-mode spike (infra/customer-mode/spike)", () => {
     const bad = spawnSync("bash", [join(SPIKE, "guest-kernel-docker-check.sh"), join(dir, "bad")], { encoding: "utf8" });
     assert.equal(bad.status, 1);
     assert.match(bad.stdout, /MISSING  CONFIG_OVERLAY_FS/);
+  });
+});
+
+describe("warm-up machine scripts", () => {
+  /** One run of fenvix-warmup-report against a stand-in for POST /v1/runner/warmups. */
+  async function report(args: string[], env: Record<string, string>): Promise<{ code: number; out: string }> {
+    const { execFile } = await import("node:child_process");
+    return new Promise((resolve) => {
+      execFile("python3", ["-I", join(FILES, "fenvix-warmup-report"), ...args], { env: { PATH: process.env.PATH!, ...env }, encoding: "utf8", timeout: 60_000 },
+        (err, stdout, stderr) => resolve({ code: err ? Number((err as { code?: number }).code ?? 1) : 0, out: stdout + stderr }));
+    });
+  }
+
+  it("an image without the runner's warm-up executor: the outcome is unsupported (the machine still reports it)", () => {
+    const home = mkdtempSync(join(tmpdir(), "fenvix-warm-"));
+    execFileSync("bash", [join(FILES, "fenvix-warmup")], { env: { PATH: process.env.PATH!, HOME: home } });
+    const o = JSON.parse(readFileSync(join(home, ".fenvix", "warmup-out", "outcome.json"), "utf8"));
+    assert.equal(o.outcome, "unsupported");
+    assert.match(o.detail, /no warm-up executor/);
+  });
+
+  it("an executor that exits without an outcome: failed, with its exit code", () => {
+    const home = mkdtempSync(join(tmpdir(), "fenvix-warm-"));
+    mkdirSync(join(home, "engine-cli", "runner"), { recursive: true });
+    writeFileSync(join(home, "engine-cli", "runner", "warmup.sh"), "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+    execFileSync("bash", [join(FILES, "fenvix-warmup")], { env: { PATH: process.env.PATH!, HOME: home } });
+    assert.deepEqual(JSON.parse(readFileSync(join(home, ".fenvix", "warmup-out", "outcome.json"), "utf8")), { outcome: "failed", detail: "the warm-up executor exited with 3" });
+  });
+
+  it("the executor gets the description and the output directory; its outcome is kept", () => {
+    const home = mkdtempSync(join(tmpdir(), "fenvix-warm-"));
+    mkdirSync(join(home, "engine-cli", "runner"), { recursive: true });
+    writeFileSync(join(home, "engine-cli", "runner", "warmup.sh"), '#!/bin/sh\nprintf \'{"outcome":"succeeded","detail":"%s"}\' "$(basename "$1")" >"$2/outcome.json"\n', { mode: 0o755 });
+    execFileSync("bash", [join(FILES, "fenvix-warmup")], { env: { PATH: process.env.PATH!, HOME: home } });
+    assert.deepEqual(JSON.parse(readFileSync(join(home, ".fenvix", "warmup-out", "outcome.json"), "utf8")), { outcome: "succeeded", detail: "warmup.json" });
+  });
+
+  it("the report: this machine's credential and names, the outcome and the summary; retried on 5xx, given up on 4xx", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fenvix-warm-"));
+    const token = join(dir, "token"); writeFileSync(token, "fxr1.eyJuIjoiZmVudml4LXc3In0.c2lnbmF0dXJl\n");
+    const outcome = join(dir, "outcome.json"); writeFileSync(outcome, JSON.stringify({ outcome: "succeeded", detail: "warm" }));
+    const summary = join(dir, "summary.json"); writeFileSync(summary, readFileSync(SUMMARY));
+    const srv = await app([503, 202]);
+    const env = { FENVIX_WARMUPS_URL: srv.url.replace("summaries", "warmups"), FENVIX_WARMUP_ID: "7", FENVIX_RUNNER_NAME: "fenvix-w7", FENVIX_TOKEN_FILE: token };
+    try {
+      const r = await report(["finished", outcome, summary], env);
+      assert.equal(r.code, 0, r.out);
+      assert.equal(srv.got.length, 2, "tried again after the 503");
+      const b = srv.got[1]!.body;
+      assert.equal(srv.got[1]!.auth, "Bearer fxr1.eyJuIjoiZmVudml4LXc3In0.c2lnbmF0dXJl");
+      assert.deepEqual({ ...b, summary: undefined }, { warmupId: 7, runnerName: "fenvix-w7", event: "finished", outcome: "succeeded", detail: "warm", summary: undefined });
+      assert.deepEqual(b.summary, JSON.parse(readFileSync(SUMMARY, "utf8")));
+      const started = await report(["started"], env);
+      assert.equal(started.code, 0);
+      assert.deepEqual(srv.got[2]!.body, { warmupId: 7, runnerName: "fenvix-w7", event: "started" });
+    } finally { await srv.close(); }
+    const refused = await app([403]);
+    try {
+      const r = await report(["started"], { FENVIX_WARMUPS_URL: refused.url, FENVIX_WARMUP_ID: "7", FENVIX_RUNNER_NAME: "fenvix-w7", FENVIX_TOKEN_FILE: token });
+      assert.equal(r.code, 1);
+      assert.equal(refused.got.length, 1, "a 4xx is not retried");
+      assert.match(r.out, /refused 403/);
+    } finally { await refused.close(); }
+  });
+
+  it("an outcome the machine does not know is reported as failed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fenvix-warm-"));
+    const token = join(dir, "token"); writeFileSync(token, "fxr1.a.b\n");
+    const outcome = join(dir, "outcome.json"); writeFileSync(outcome, JSON.stringify({ outcome: "great" }));
+    const srv = await app([202]);
+    try {
+      const r = await report(["finished", outcome], { FENVIX_WARMUPS_URL: srv.url, FENVIX_WARMUP_ID: "8", FENVIX_RUNNER_NAME: "fenvix-w8", FENVIX_TOKEN_FILE: token });
+      assert.equal(r.code, 0);
+      assert.deepEqual(srv.got[0]!.body, { warmupId: 8, runnerName: "fenvix-w8", event: "finished", outcome: "failed" });
+    } finally { await srv.close(); }
   });
 });

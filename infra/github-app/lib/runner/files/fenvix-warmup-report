@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Sends a warm-up machine's reports to the fenvix GitHub App (POST /v1/runner/warmups; docs/data-contract.md).
+
+Runs as root: only root reads this machine's App credential (/etc/fenvix/summary-token, minted for this warm-up only).
+
+    fenvix-warmup-report started
+    fenvix-warmup-report finished OUTCOME_JSON [SUMMARY_JSON]
+
+2xx: done. 4xx other than 408/429: given up (printed). Anything else: tried again with backoff for about two minutes.
+Environment (from /etc/fenvix/runner.env when not set): FENVIX_WARMUPS_URL, FENVIX_WARMUP_ID, FENVIX_RUNNER_NAME;
+FENVIX_TOKEN_FILE (default /etc/fenvix/summary-token), FENVIX_REPORT_TRIES (default 6).
+"""
+import json, os, sys, time, urllib.error, urllib.request
+
+OUTCOMES = ("succeeded", "failed", "unsupported")
+
+
+def env():
+    e = {}
+    try:
+        with open("/etc/fenvix/runner.env", encoding="utf-8") as f:
+            for line in f:
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.rstrip("\n").split("=", 1)
+                    e[k] = v
+    except OSError:
+        pass
+    e.update({k: v for k, v in os.environ.items() if k.startswith("FENVIX_")})
+    return e
+
+
+def body(argv, e):
+    b = {"warmupId": int(e["FENVIX_WARMUP_ID"]), "runnerName": e["FENVIX_RUNNER_NAME"], "event": argv[0]}
+    if argv[0] == "finished":
+        with open(argv[1], encoding="utf-8") as f:
+            o = json.load(f)
+        b["outcome"] = o.get("outcome") if o.get("outcome") in OUTCOMES else "failed"
+        if isinstance(o.get("detail"), str) and o["detail"]:
+            b["detail"] = o["detail"][:1000]
+        if len(argv) > 2:
+            try:
+                with open(argv[2], encoding="utf-8") as f:
+                    s = json.load(f)
+                if isinstance(s, dict):
+                    b["summary"] = s
+            except (OSError, ValueError):
+                b.setdefault("detail", "the summary could not be read")
+    return b
+
+
+def send(url, token, b):
+    req = urllib.request.Request(url, data=json.dumps(b).encode(), method="POST",
+                                 headers={"content-type": "application/json", "authorization": f"Bearer {token}",
+                                          "user-agent": "fenvix-warmup-report"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, ""
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(500).decode("utf-8", "replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        return 0, str(e)
+
+
+def main(argv):
+    if not argv or argv[0] not in ("started", "finished") or (argv[0] == "finished" and len(argv) < 2):
+        print(__doc__, file=sys.stderr)
+        return 2
+    e = env()
+    with open(e.get("FENVIX_TOKEN_FILE", "/etc/fenvix/summary-token"), encoding="utf-8") as f:
+        token = f.read().strip()
+    b = body(argv, e)
+    tries = int(e.get("FENVIX_REPORT_TRIES", "6"))
+    delay = 2.0
+    for i in range(tries):
+        status, text = send(e["FENVIX_WARMUPS_URL"], token, b)
+        if 200 <= status < 300:
+            print(f"[fenvix-warmup-report] {argv[0]}: {status}", flush=True)
+            return 0
+        if 400 <= status < 500 and status not in (408, 429):
+            print(f"[fenvix-warmup-report] {argv[0]}: refused {status}: {text}", flush=True)
+            return 1
+        print(f"[fenvix-warmup-report] {argv[0]}: {status or 'no answer'} ({text[:200]}); try {i + 1} of {tries}", flush=True)
+        if i + 1 < tries:
+            time.sleep(delay)
+            delay = min(delay * 2, 40.0)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

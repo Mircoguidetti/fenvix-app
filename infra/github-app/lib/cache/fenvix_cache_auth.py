@@ -5,6 +5,8 @@ an SSM parameter only the worker reads). This machine holds only the public key,
 
     fxs1.<base64url(JSON payload)>.<base64url(RSASSA-PKCS1-v1_5 SHA-256 signature over "fxs1." + payload part)>
     payload: {"org": "gh-<installation id>", "w": true|false, "exp": <unix seconds>, "job": <job id>}
+             (a warm-up machine's token names its warm-up instead: "warm": <warm-up id>; it always writes, since a
+             warm-up runs the default branch only. Neither "job" nor "warm" is read here: they are for the logs.)
 
 The organization of every request is the token's ("one cache organization per customer installation"): a token of
 one customer never reads or writes another's entries, file facts or runs (docs/REVIEW-R-012.md F3). Pull requests and

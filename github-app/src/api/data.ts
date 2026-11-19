@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { type Ctx, type Handler, orgOf, Reply } from "./context.ts";
 import type { Row, Tx } from "./db.ts";
 import { notFound } from "./errors.ts";
+import { LATEST_WARMUP } from "./github.ts";
 import {
   activityFrom, auditFrom, billingFrom, dayStart, familiesOf, mapAuditRerun, mapDefect, mapExploration, mapPlan, mapProject, mapRate, mapReceipt,
   mapRun, mapTestResult, mapUsageEvent, median, monthBounds, monthOf, overviewFrom, type Plan, type Project, projectRow, type Run, setupChange,
@@ -19,9 +20,11 @@ const NO_RUN = "That run does not exist in this organization.";
 
 // ---------------------------------------------------------------- loading
 
-/** Projects with GitHub's repository id (when the App knows the repository). */
-const PROJECTS = `select p.*, g.repository_id from public.ci_projects p
-  left join lateral (select r.repository_id from public.gh_repositories r where r.project_id = p.id order by r.removed_at nulls first, r.repository_id limit 1) g on true
+/** Projects with GitHub's repository id (when the App knows the repository) and its shared cache's state. */
+const PROJECTS = `select p.*, g.* from public.ci_projects p
+  left join lateral (select r.repository_id, r.cache_warm_sha, r.cache_warm_at, r.cache_warm_source, wu.*
+    from public.gh_repositories r ${LATEST_WARMUP}
+    where r.project_id = p.id order by r.removed_at nulls first, r.repository_id limit 1) g on true
   where p.workspace_id = $1`;
 
 async function projects(t: Tx, ws: string): Promise<Project[]> {

@@ -66,6 +66,17 @@ export interface Settings {
   runnerMaxHours: number;
   /** per-job: a machine whose job did not start within this powers off. */
   runnerIdleMinutes: number;
+  // ---------------------------------------------------------------- warm-up runs (per-job only; github-app/src/warmup/)
+  /** per-job: warm the shared cache of onboarded repositories' default branches (never billed). Default true. */
+  warmupEnabled: boolean;
+  /** per-job: at most this many warm-ups of one repository take a machine in any 24 hours. */
+  warmupDailyCap: number;
+  /** per-job: at most this many warm-ups of one organization on machines at once. */
+  warmupOrgConcurrency: number;
+  /** per-job: machines of a region's fleet a warm-up never takes (kept for customers' jobs); below runnerMaxRunning. */
+  warmupReserve: number;
+  /** per-job: a push waits this long for the customer's own run of the commit before its warm-up may start. */
+  warmupGraceSeconds: number;
   /** per-job: the shared cache machine (docs/SHARED-CACHE.md of fenvix-engine-cli), private, no public address. */
   cacheInstanceType: string;
   cachePrivateIp: string;
@@ -99,7 +110,8 @@ const ENV: Record<keyof Settings, string> = {
   runnerInstanceType: "FENVIX_RUNNER_INSTANCE_TYPE", runnerVolumeGb: "FENVIX_RUNNER_VOLUME_GB", engineCliCommit: "FENVIX_ENGINE_CLI_COMMIT",
   demoRepository: "FENVIX_DEMO_REPOSITORY", demoMaxHours: "FENVIX_DEMO_MAX_HOURS",
   runnerMode: "FENVIX_RUNNER_MODE", runnerMaxRunning: "FENVIX_RUNNER_MAX_RUNNING", runnerMaxHours: "FENVIX_RUNNER_MAX_HOURS",
-  runnerIdleMinutes: "FENVIX_RUNNER_IDLE_MINUTES", cacheInstanceType: "FENVIX_CACHE_INSTANCE_TYPE", cachePrivateIp: "FENVIX_CACHE_PRIVATE_IP",
+  runnerIdleMinutes: "FENVIX_RUNNER_IDLE_MINUTES", warmupEnabled: "FENVIX_WARMUP_ENABLED", warmupDailyCap: "FENVIX_WARMUP_DAILY_CAP",
+  warmupOrgConcurrency: "FENVIX_WARMUP_ORG_CONCURRENCY", warmupReserve: "FENVIX_WARMUP_RESERVE", warmupGraceSeconds: "FENVIX_WARMUP_GRACE_SECONDS", cacheInstanceType: "FENVIX_CACHE_INSTANCE_TYPE", cachePrivateIp: "FENVIX_CACHE_PRIVATE_IP",
   cacheVolumeGb: "FENVIX_CACHE_VOLUME_GB", cacheAmiId: "FENVIX_CACHE_AMI_ID",
   cacheSigningPublicKey: "FENVIX_CACHE_SIGNING_PUBLIC_KEY",
 };
@@ -143,6 +155,8 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
     secondCacheUrl: get("secondCacheUrl"),
     runnerMode: need("runnerMode") as Settings["runnerMode"], runnerMaxRunning: int("runnerMaxRunning", 1, 100),
     runnerMaxHours: int("runnerMaxHours", 1, 120), runnerIdleMinutes: int("runnerIdleMinutes", 5, 120),
+    warmupEnabled: (get("warmupEnabled") || "true") === "true", warmupDailyCap: int("warmupDailyCap", 1, 48),
+    warmupOrgConcurrency: int("warmupOrgConcurrency", 1, 20), warmupReserve: int("warmupReserve", 0, 99), warmupGraceSeconds: int("warmupGraceSeconds", 0, 3600),
     cacheInstanceType: need("cacheInstanceType"), cachePrivateIp: need("cachePrivateIp"), cacheVolumeGb: int("cacheVolumeGb", 8, 500),
     cacheAmiId: get("cacheAmiId"), cacheSigningPublicKey: get("cacheSigningPublicKey").replace(/\s+/g, ""),
     demoRepository: get("demoRepository"), demoMaxHours: int("demoMaxHours", 1, 72), runnerInstanceType: need("runnerInstanceType"),
@@ -158,6 +172,8 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
   if (!RETENTIONS.includes(s.logRetentionDays)) throw new Error(`Setting "logRetentionDays" must be one of ${RETENTIONS.join(", ")}`);
   if (s.alarmEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.alarmEmail)) throw new Error('Setting "alarmEmail" is not an email address');
   if (s.runnerMode !== "demo" && s.runnerMode !== "per-job") throw new Error('Setting "runnerMode" must be demo or per-job');
+  if (!["true", "false"].includes(get("warmupEnabled") || "true")) throw new Error('Setting "warmupEnabled" must be true or false');
+  if (s.warmupReserve >= s.runnerMaxRunning) throw new Error('Setting "warmupReserve" must be below "runnerMaxRunning" (warm-ups would never get a machine)');
   for (const o of s.apiCorsOrigins.split(",").map((x) => x.trim()).filter(Boolean)) {
     let u: URL | null = null;
     try { u = new URL(o); } catch { u = null; }

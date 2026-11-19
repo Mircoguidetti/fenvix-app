@@ -52,7 +52,7 @@ Supabase (yours): the role fenvix_github_app writes gh_*, ci_projects, ci_runs, 
 | Machine credentials | Each machine gets its own, in its user data (root only): a summary credential signed for its runner name and repository (per job: also its run), and per job a cache token for its customer's cache organization only. The App takes the runner's identity from the credential, never from the request. Stealing one lets an attacker publish only that one job's summary. |
 | Machines | Two users. `fenvix` runs the runner and the job. `fenvix-post` alone holds the machine's summary credential and sends the summary. Neither user can reach the instance metadata service (it serves the user data). `strace -f` works on a job's own children. Outbound traffic is HTTPS and HTTP only. There is no SSH. A machine can only be started through our launch template, of the configured type, from our own images, tagged with its role; the demo function and the reaper may terminate only machines with that tag. |
 | IAM | Every role of the stack carries the permissions boundary `fenvix-prod-github-app-boundary` (`permissions-boundary.json`), and CloudFormation may create or change a role only with it. |
-| Logs | CloudWatch log groups `/aws/lambda/fenvix-prod-github-app-{http,api,worker,sweep,reaper,demo}` and `/aws/apigateway/fenvix-prod-github-app-api`, kept **14 days**. |
+| Logs | CloudWatch log groups `/aws/lambda/fenvix-prod-github-app-{http,api,worker,sweep,reaper,demo}` (per-job mode: `warmup` instead of `demo`) and `/aws/apigateway/fenvix-prod-github-app-api`, kept **14 days**. |
 | Dashboard API | Lambda `api`, its own role: reads only `/fenvix/prod/github-app/api-database-url` and `state-signing-key`, may only send to the work queue. It never holds the App's private key, the webhook secret, the OAuth client secret or a runner token. See "The dashboard API" below. |
 
 ## The steps
@@ -150,7 +150,9 @@ and click Run. Each is safe to repeat (0013 only before 0014: after 0014, run 00
 `gh_*` tables and `ci_usage_events`, the role `fenvix_github_app` (no password, no BYPASSRLS) and its row-level
 security policies. 0014 removes the earlier database product, takes every right on our tables away from the browser
 (`anon`, `authenticated`: the dashboard talks to the API only), and creates the dashboard API's role `fenvix_api`
-(login, no password yet, no BYPASSRLS) with its policies.
+(login, no password yet, no BYPASSRLS) with its policies. Then the whole file `supabase/migrations/0015_warm_cache.sql`
+(safe to repeat): the warm-up runs' table `gh_warmups`, the repositories' cache state, warm-up usage events (never
+billable), with their row level security.
 
 **Step 8.** Give the role its password (`DB_PASSWORD` from step 1) **without typing it into the SQL editor**, which
 keeps every query in its history. On your laptop, turn it into a SCRAM verifier (computed locally; Postgres stores it
@@ -523,6 +525,21 @@ and records every test into the shared cache.
 cache, and the comment shows most tests as **reused with proof**. This shows that proof crosses machines. The
 dashboard (after step H2) shows the project, the runs and the usage month.
 
+**Warm-up runs (per-job mode).** So that a customer's first pull request is not a cold run, the App also runs the test
+job once on the default branch after the setup pull request is merged (or when an installation whose repositories are
+already on fenvix is linked), and after each push to the default branch: on our machines, in the organization's
+region, at the lowest priority, never billed, nothing shown on GitHub (`docs/data-contract.md`, "Warm-up runs"). The
+Lambda `warmup` (EventBridge Scheduler, every minute) gives warm-ups their machines; the worker requests them and, when
+a customer job finds the fleet full, takes a warm-up's machine. EC2 → Instances shows them as `fenvix-w<id>` (tags
+`fenvix:kind=warmup`, `fenvix:warmup=<id>`); the worker and the warm-up function may terminate only those. Settings in
+`cdk.json`: `warmupEnabled` (`true`), `warmupDailyCap` (6 per repository per 24 hours), `warmupOrgConcurrency` (1),
+`warmupReserve` (1 machine per region never used by warm-ups; below `runnerMaxRunning`), `warmupGraceSeconds` (180:
+after a push, the customer's own push run of that commit fills the cache and no warm-up starts). **Until the runner's
+warm-up executor (`runner/warmup.sh` in fenvix-engine-cli at `engineCliCommit`) exists, a warm-up machine reports
+"unsupported" and powers off within about two minutes of booting** (then that repository's next warm-up waits a day);
+set `warmupEnabled` to `false` to start none.
+In the dashboard, Projects and Connect show "Cache warm since <commit>" per repository.
+
 ## When something fails
 
 | What you see | Where to look | What to do |
@@ -742,6 +759,11 @@ Image builds add about $0.08 each: 45 minutes of c6i.large, its IPv4 address and
 
 A job that runs longer costs proportionally more. Each extra 10 minutes of job time adds $0.0166. At 1,000 jobs of
 20 minutes, the job machines cost about $33.
+
+Warm-up runs (ESTIMATE): one machine like a job's per warm-up, at most `warmupDailyCap` (6) per repository a day, and
+none for a commit the customer's own push run covers. At 10 repositories with 6 warm-ups each every working day (22
+days), that is 1,320 machines of about 10 minutes: about $22 a month, never billed to the customer. The warm-up
+function runs every minute (43,800 invocations a month, within Lambda's free tier).
 
 ## Customer mode (design; spike in `infra/customer-mode/spike/`; not built)
 

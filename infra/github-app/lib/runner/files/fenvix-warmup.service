@@ -1,0 +1,21 @@
+[Unit]
+Description=fenvix warm-up: runs the repository's test job (its own workflow file) at one default-branch commit
+Wants=network-online.target
+After=network-online.target fenvix-imds-block.service
+Requires=fenvix-imds-block.service
+
+[Service]
+Type=simple
+User=fenvix
+Group=fenvix
+EnvironmentFile=/etc/fenvix/runner.env
+Environment=HOME=/home/fenvix FENVIX_HOME=/home/fenvix/fenvix
+# Root, before: the warm-up's description and credentials to the job user (not the App credential), "started" to the App.
+ExecStartPre=+/opt/fenvix/bin/fenvix-warmup-prepare
+ExecStart=/opt/fenvix/bin/fenvix-warmup
+# Root, after: "finished" with the outcome and summary to the App, then power off (the machine terminates).
+ExecStopPost=+/opt/fenvix/bin/fenvix-warmup-done
+Restart=no
+TimeoutStartSec=infinity
+TimeoutStopSec=5min
+KillMode=control-group

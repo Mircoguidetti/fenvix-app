@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Warm-up machine, as root after the warm-up (ExecStopPost=+): the outcome and the summary, read AS the job user (its
+# files may be symlinks by now; root never follows them) into a root-only directory, sent to the App
+# (POST /v1/runner/warmups, "finished"), then power off. The launch template's shutdown behaviour is "terminate".
+set -uo pipefail
+home=/home/fenvix
+dir=/run/fenvix-warmup
+install -d -m 0700 "$dir"
+take() { runuser -u fenvix -- sh -c 'test -f "$1" && head -c 4194304 "$1"' _ "$1" >"$2" 2>/dev/null || rm -f "$2"; }
+take "$home/.fenvix/warmup-out/outcome.json" "$dir/outcome.json"
+take "$home/.fenvix/warmup-out/summary.json" "$dir/summary.json"
+if [ ! -s "$dir/outcome.json" ]; then
+  printf '{"outcome":"failed","detail":"the warm-up stopped before it wrote an outcome (service result: %s)"}\n' "${SERVICE_RESULT:-unknown}" >"$dir/outcome.json"
+fi
+args=(finished "$dir/outcome.json")
+if [ -s "$dir/summary.json" ]; then args+=("$dir/summary.json"); fi
+/opt/fenvix/bin/fenvix-warmup-report "${args[@]}" || echo "[fenvix-warmup-done] the App did not take the report; it times the warm-up out"
+echo "[fenvix-warmup-done] warm-up finished; powering off"
+systemctl poweroff --no-block

@@ -21,9 +21,9 @@ describe("the stack, per-job mode", async () => {
   const fnRole = (n: string) => ((fns.find(([, r]) => (r.Properties.FunctionName as string).endsWith(n))![1].Properties.Role as { "Fn::GetAtt": string[] })["Fn::GetAtt"])[0]!;
   const fnEnv = (n: string) => (fns.find(([, r]) => (r.Properties.FunctionName as string).endsWith(n))![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
 
-  it("cdk-nag: nothing left unsuppressed; five functions (http, api, worker, sweep, reaper); no always-on machine", () => {
+  it("cdk-nag: nothing left unsuppressed; six functions (http, api, worker, sweep, reaper, warmup); no always-on machine", () => {
     assert.deepEqual(nagErrors, []);
-    assert.deepEqual(fns.map(([, f]) => (f.Properties.FunctionName as string).replace("fenvix-prod-github-app-", "")).sort(), ["api", "http", "reaper", "sweep", "worker"]);
+    assert.deepEqual(fns.map(([, f]) => (f.Properties.FunctionName as string).replace("fenvix-prod-github-app-", "")).sort(), ["api", "http", "reaper", "sweep", "warmup", "worker"]);
     assert.equal(resources(t, "AWS::EC2::Instance").length, 1, "only the cache machine");
     assert.ok(!("RunnerInstanceId" in (t.toJSON().Outputs as object)));
   });
@@ -76,7 +76,10 @@ describe("the stack, per-job mode", async () => {
     assert.deepEqual(st.find((x) => x.Sid === "TagAtLaunchOnly")!.Condition, { StringEquals: { "ec2:CreateAction": "RunInstances" } });
     const pass = st.find((x) => arr(x.Action).includes("iam:PassRole"))!;
     assert.match(json(pass.Resource), /FleetJobRole/);
-    assert.ok(!st.some((x) => arr(x.Action).includes("ec2:TerminateInstances")), "the worker never terminates");
+    // It terminates warm-up machines only (a customer job takes a warm-up's machine), never a customer's job machine.
+    const term = st.filter((x) => arr(x.Action).includes("ec2:TerminateInstances"));
+    assert.equal(term.length, 1);
+    assert.deepEqual(term[0]!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job", "aws:ResourceTag/fenvix:kind": "warmup" } });
   });
 
   it("the reaper may only terminate job machines; it runs every 10 minutes; the limit is runnerMaxHours", () => {

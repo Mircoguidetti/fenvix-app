@@ -35,12 +35,45 @@ export interface RunnerLaunch {
   mode?: RunMode;
 }
 
+/**
+ * A warm-up machine (src/warmup/): it runs the repository's test job, from the customer's own workflow file at one
+ * default-branch commit, outside GitHub Actions, to fill the shared cache. No just-in-time runner: nothing is reported
+ * to GitHub. docs/data-contract.md "Warm-up runs" is what the machine receives and sends.
+ */
+export interface WarmupLaunch {
+  warmupId: number;
+  /** Machines requested for this warm-up so far, this one included (a new machine after a preemption). */
+  attempt: number;
+  repositoryId: number;
+  repositoryFullName: string;
+  installationId: number;
+  commitSha: string;
+  /** refs/heads/<default branch> */
+  ref: string;
+  /** The workflow file and the job id the setup pull request moved to runs-on: fenvix. */
+  workflowPath: string;
+  job: string;
+  runnerName: string;
+  /** Read-only installation token for this one repository (contents: read), for the checkout. Expires in an hour. */
+  checkoutToken: string;
+  /** This machine's App credential, for POST /v1/runner/warmups only (credentials.ts, warmupId). */
+  summaryToken: string;
+  /** Shared-cache token, write access (the default branch of the repository itself is a trusted ref). */
+  cacheToken?: string;
+  region: Region;
+}
+
 export interface RunnerLauncher {
   launch(l: RunnerLaunch): Promise<{ instanceId: string | null; already: boolean }>;
   /** False while the fleet (of that region) is at its limit: no just-in-time runner is registered for a job that gets no machine. */
   hasCapacity?(region?: Region): Promise<boolean>;
   /** False when no machine can be placed in that region (no placement configured): the job gets no machine at all. */
   canPlace?(region: Region): boolean;
+  /** Warm-ups: the region's machines (jobs and warm-ups) and its limit. Absent: no warm-ups. */
+  slots?(region: Region): Promise<{ running: number; warmups: number; max: number }>;
+  launchWarmup?(w: WarmupLaunch): Promise<{ instanceId: string | null; already: boolean }>;
+  /** Terminates the warm-up's machines in that region (superseded, cancelled, preempted). Returns the instance ids. */
+  terminateWarmup?(region: Region, warmupId: number): Promise<string[]>;
 }
 
 /** No placement for the organization's region: the job is never started elsewhere. */
@@ -55,6 +88,9 @@ export const ROLE_VALUE = "runner-job";
 /** Demo machines (scripts/demo-up.sh): one registered runner for a demo, terminated by demo-down. */
 export const DEMO_VALUE = "runner-demo";
 export const IMAGE_TAG = "fenvix:image";
+/** What a per-job machine runs: a customer's GitHub job, or a warm-up (the worker may terminate only the latter). */
+export const KIND_TAG = "fenvix:kind";
+export const WARMUP_TAG = "fenvix:warmup";
 
 const SAFE = /^[A-Za-z0-9_./:@+=-]*$/;
 const TOKEN = /^fx[rs]1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
@@ -94,6 +130,64 @@ export function jobUserData(l: RunnerLaunch, machineEnv: Record<string, string>)
   if (l.summaryToken) lines.push(`printf '%s' '${l.summaryToken}' >/etc/fenvix/summary-token`);
   if (l.cacheToken && env.FENVIX_CACHE_URL) lines.push(`printf '%s' '${l.cacheToken}' >/etc/fenvix/cache-token`);
   lines.push("systemctl start --no-block fenvix-job.target");
+  return lines.join("\n") + "\n";
+}
+
+const WORKFLOW = /^\.github\/workflows\/[A-Za-z0-9._/-]{1,200}\.ya?ml$/;
+const JOB_ID = /^[A-Za-z_][A-Za-z0-9_-]{0,99}$/;
+const FULL_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const INSTALLATION_TOKEN = /^ghs_[A-Za-z0-9]{20,255}$/;
+
+/** The warm-up's description the machine reads (/etc/fenvix/warmup.json, root only; docs/data-contract.md). */
+export function warmupSpec(w: WarmupLaunch): Record<string, unknown> {
+  if (!/^[0-9a-f]{40}$/.test(w.commitSha)) throw new Error("the warm-up's commit is not a SHA");
+  if (!/^refs\/heads\/[A-Za-z0-9._/-]{1,250}$/.test(w.ref) || w.ref.includes("..")) throw new Error("the warm-up's ref is not a branch");
+  if (!WORKFLOW.test(w.workflowPath) || w.workflowPath.includes("..")) throw new Error("the warm-up's workflow path is not a workflow file");
+  if (!JOB_ID.test(w.job)) throw new Error("the warm-up's job is not a job id");
+  if (!FULL_NAME.test(w.repositoryFullName)) throw new Error("the warm-up's repository is not owner/name");
+  return {
+    v: 1, warmupId: w.warmupId, attempt: w.attempt,
+    repository: { id: w.repositoryId, fullName: w.repositoryFullName },
+    installationId: w.installationId, commitSha: w.commitSha, ref: w.ref,
+    workflowPath: w.workflowPath, job: w.job,
+  };
+}
+
+/**
+ * A warm-up machine's user data: the same plain settings as a job's machine, the warm-up's description, its
+ * credentials (no just-in-time configuration: the machine is no GitHub runner), then fenvix-warmup.target.
+ */
+export function warmupUserData(w: WarmupLaunch, machineEnv: Record<string, string>): string {
+  const spec = Buffer.from(JSON.stringify(warmupSpec(w))).toString("base64");
+  if (!INSTALLATION_TOKEN.test(w.checkoutToken)) throw new Error("unexpected checkout token format");
+  for (const t of [w.summaryToken, w.cacheToken]) if (t !== undefined && !TOKEN.test(t)) throw new Error("unexpected credential format");
+  const common = Object.fromEntries(Object.entries(machineEnv).filter(([k]) => !/_TOKEN_PARAM$/.test(k)));
+  const env: Record<string, string> = {
+    ...common,
+    FENVIX_MACHINE: "per-job",
+    FENVIX_KIND: "warmup",
+    // A warm-up fills the cache: skip with proof what is already proven, run the rest, write the results.
+    FENVIX_MODE: "enforce",
+    FENVIX_REGION: w.region,
+    FENVIX_RUNNER_NAME: w.runnerName,
+    FENVIX_WARMUP_ID: String(w.warmupId),
+    FENVIX_CACHE_ACCESS: "write",
+  };
+  if (common.FENVIX_SUMMARIES_URL) env.FENVIX_WARMUPS_URL = new URL("warmups", common.FENVIX_SUMMARIES_URL).toString();
+  if (common.FENVIX_CACHE_URL) {
+    const org = cacheOrgOf(w.installationId);
+    env.FENVIX_CACHE_URL = `${new URL(common.FENVIX_CACHE_URL).origin}/${org}`;
+    env.FENVIX_CACHE_ORG = org;
+  }
+  const lines = ["#!/bin/bash", "set -euo pipefail", "umask 022", "install -d -m 0755 /etc/fenvix", "cat >/etc/fenvix/runner.env <<'FENVIX_ENV'"];
+  for (const [k, v] of Object.entries(env)) {
+    if (!/^[A-Z][A-Z0-9_]*$/.test(k) || !SAFE.test(v)) throw new Error(`machine setting ${k} has characters the env file does not allow`);
+    lines.push(`${k}=${v}`);
+  }
+  lines.push("FENVIX_ENV", "umask 077", `printf '%s' '${spec}' | base64 -d >/etc/fenvix/warmup.json`,
+    `printf '%s' '${w.checkoutToken}' >/etc/fenvix/checkout-token`, `printf '%s' '${w.summaryToken}' >/etc/fenvix/summary-token`);
+  if (w.cacheToken && env.FENVIX_CACHE_URL) lines.push(`printf '%s' '${w.cacheToken}' >/etc/fenvix/cache-token`);
+  lines.push("systemctl start --no-block fenvix-warmup.target");
   return lines.join("\n") + "\n";
 }
 
@@ -191,6 +285,55 @@ export class Ec2Launcher implements RunnerLauncher {
 
   async hasCapacity(region: Region = "us"): Promise<boolean> {
     return (await this.running(region)) < this.o.maxRunning;
+  }
+
+  async slots(region: Region): Promise<{ running: number; warmups: number; max: number }> {
+    const r = await this.placement(region).ec2.send(new DescribeInstancesCommand({
+      Filters: [{ Name: `tag:${ROLE_TAG}`, Values: [ROLE_VALUE] }, { Name: "instance-state-name", Values: ["pending", "running"] }],
+    }));
+    const all = (r.Reservations ?? []).flatMap((x) => x.Instances ?? []);
+    const warmups = all.filter((i) => (i.Tags ?? []).some((t) => t.Key === KIND_TAG && t.Value === "warmup")).length;
+    return { running: all.length, warmups, max: this.o.maxRunning };
+  }
+
+  async launchWarmup(w: WarmupLaunch): Promise<{ instanceId: string | null; already: boolean }> {
+    const p = this.placement(w.region);
+    const n = await this.running(w.region);
+    if (n >= this.o.maxRunning) throw new RetryLater(`${n} fenvix machines are running in ${w.region} (limit ${this.o.maxRunning}); warm-up ${w.warmupId} waits`);
+    const imageId = await this.imageId(w.region);
+    const tags = [
+      ...Object.entries(this.o.tags ?? {}).map(([Key, Value]) => ({ Key, Value })),
+      { Key: ROLE_TAG, Value: ROLE_VALUE }, { Key: KIND_TAG, Value: "warmup" }, { Key: WARMUP_TAG, Value: String(w.warmupId) },
+      { Key: "fenvix:repository", Value: w.repositoryFullName }, { Key: "fenvix:region", Value: w.region }, { Key: "Name", Value: w.runnerName },
+    ];
+    try {
+      const r = await p.ec2.send(new RunInstancesCommand({
+        LaunchTemplate: { LaunchTemplateId: p.launchTemplateId, Version: "$Latest" },
+        ImageId: imageId,
+        MinCount: 1, MaxCount: 1,
+        // One machine per warm-up attempt, even if the tick runs twice.
+        ClientToken: `fenvix-warmup-${w.warmupId}-${w.attempt}`,
+        UserData: Buffer.from(warmupUserData(w, { ...this.o.machineEnv, ...(p.machineEnv ?? {}) })).toString("base64"),
+        TagSpecifications: [{ ResourceType: "instance", Tags: tags }, { ResourceType: "volume", Tags: tags }],
+      }));
+      const id = r.Instances?.[0]?.InstanceId ?? null;
+      this.o.log?.info({ warmup: w.warmupId, instance: id, image: imageId, region: w.region, awsRegion: p.awsRegion ?? null }, "warm-up machine started");
+      return { instanceId: id, already: false };
+    } catch (e) {
+      if ((e as { name?: string }).name === "IdempotentParameterMismatch") return { instanceId: null, already: true };
+      throw e;
+    }
+  }
+
+  async terminateWarmup(region: Region, warmupId: number): Promise<string[]> {
+    const p = this.placement(region);
+    const r = await p.ec2.send(new DescribeInstancesCommand({
+      Filters: [{ Name: `tag:${ROLE_TAG}`, Values: [ROLE_VALUE] }, { Name: `tag:${KIND_TAG}`, Values: ["warmup"] },
+        { Name: `tag:${WARMUP_TAG}`, Values: [String(warmupId)] }, { Name: "instance-state-name", Values: ["pending", "running", "stopping", "stopped"] }],
+    }));
+    const ids = (r.Reservations ?? []).flatMap((x) => x.Instances ?? []).map((i) => i.InstanceId).filter((x): x is string => !!x);
+    if (ids.length) await p.ec2.send(new TerminateInstancesCommand({ InstanceIds: ids }));
+    return ids;
   }
 
   async launch(l: RunnerLaunch): Promise<{ instanceId: string | null; already: boolean }> {

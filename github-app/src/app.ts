@@ -4,7 +4,7 @@ import type { Config } from "./config.ts";
 import { Db } from "./db.ts";
 import { GitHubApp, GitHubError } from "./github/client.ts";
 import { verifySignature } from "./github/signature.ts";
-import { parseExploration, parseProgress, parseResults, RecordError, type RunnerJob } from "./results/runner-records.ts";
+import { parseExploration, parseProgress, parseResults, parseWarmupReport, RecordError, type RunnerJob, type RunnerWarmupReport } from "./results/runner-records.ts";
 import { SummaryError, parseSummary, trimSummary } from "./results/summary.ts";
 import { verifySummaryCredential } from "./runners/credentials.ts";
 import type { RunnerLauncher } from "./runners/launcher.ts";
@@ -39,7 +39,7 @@ export function buildCore(cfg: Config, log: Logger, launcher: RunnerLauncher | n
   const service = new GitHubService(db, gh, {
     runsOnLabel: cfg.runsOnLabel, onboardingBranch: cfg.onboardingBranch, onboardAllRepositories: cfg.onboardAllRepositories,
     dashboardUrl: cfg.dashboardUrl, webUrl: cfg.webUrl, summaryWaitSeconds: cfg.summaryWaitSeconds,
-    ...(cfg.runnerTokens[0] ? { summaryKey: cfg.runnerTokens[0] } : {}), cacheSigningKey: cfg.cacheSigningKey,
+    ...(cfg.runnerTokens[0] ? { summaryKey: cfg.runnerTokens[0] } : {}), cacheSigningKey: cfg.cacheSigningKey, warmup: cfg.warmup,
   }, log, launcher);
   return { service, db, gh };
 }
@@ -121,6 +121,8 @@ export async function buildApp(deps: Deps): Promise<App> {
   fastify.post("/v1/runner/summaries", { bodyLimit: 32 * 1024 * 1024 }, async (req, reply) => {
     const scope = verifySummaryCredential(cfg.runnerTokens, req.headers.authorization);
     if (!scope) return fail(reply, 401, "unauthorized", "This machine's summary credential is required.");
+    // A warm-up machine reports to /v1/runner/warmups only: a warm-up is never a run (no run row, no check, no comment).
+    if (scope.warmupId !== undefined) return fail(reply, 403, "forbidden", "A warm-up machine reports to /v1/runner/warmups only.");
     const b = req.body as Record<string, unknown> | undefined;
     const int = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null);
     const runId = scope.runId ?? int(b?.runId);
@@ -150,6 +152,7 @@ export async function buildApp(deps: Deps): Promise<App> {
   const runnerBody = <T>(req: FastifyRequest, reply: FastifyReply, parse: (b: unknown) => T): { scope: Scope; body: T } | null => {
     const scope = verifySummaryCredential(cfg.runnerTokens, req.headers.authorization);
     if (!scope) { void fail(reply, 401, "unauthorized", "This machine's summary credential is required."); return null; }
+    if (scope.warmupId !== undefined) { void fail(reply, 403, "forbidden", "A warm-up machine reports to /v1/runner/warmups only."); return null; }
     let body: T;
     try { body = parse(req.body); } catch (e) {
       if (!(e instanceof RecordError)) throw e;
@@ -194,6 +197,43 @@ export async function buildApp(deps: Deps): Promise<App> {
     const r = runnerBody(req, reply, parseExploration);
     if (!r) return reply;
     return handOff(req, reply, { kind: "exploration", repositoryId: r.scope.repositoryId, runnerName: r.scope.runnerName, exploration: r.body });
+  });
+
+  // ---------------------------------------------------------------- warm-up machines report (docs/data-contract.md "Warm-up runs")
+  // Only a warm-up machine's own credential (it names the warm-up, the repository and the runner name): written at once,
+  // no queue (a few small updates, no GitHub call). 202 for a stored, late or repeated report (the machine does not retry
+  // those); 403 for another warm-up's machine; 404 for a warm-up that does not exist.
+  fastify.post("/v1/runner/warmups", { bodyLimit: 4 * 1024 * 1024 }, async (req, reply) => {
+    const scope = verifySummaryCredential(cfg.runnerTokens, req.headers.authorization);
+    if (!scope) return fail(reply, 401, "unauthorized", "This machine's warm-up credential is required.");
+    if (scope.warmupId === undefined) return fail(reply, 403, "forbidden", "Only a warm-up machine reports warm-ups.");
+    let body: RunnerWarmupReport;
+    try { body = parseWarmupReport(req.body); } catch (e) {
+      if (!(e instanceof RecordError)) throw e;
+      return reply.code(400).send({ error: { code: "bad_request", message: e.message, field: e.field } });
+    }
+    if (body.warmupId !== scope.warmupId || (body.repositoryId !== undefined && body.repositoryId !== scope.repositoryId)
+      || (body.runnerName !== undefined && body.runnerName !== scope.runnerName)) {
+      return fail(reply, 403, "forbidden", "This credential is for another warm-up, repository or runner.");
+    }
+    if (body.summary) {
+      try { parseSummary(body.summary); } catch (e) {
+        return fail(reply, 422, "bad_summary", e instanceof SummaryError ? e.message : "The summary could not be read.");
+      }
+    }
+    let res: Awaited<ReturnType<typeof service.warmups.report>>;
+    try {
+      res = await service.warmups.report({ warmupId: scope.warmupId, repositoryId: scope.repositoryId, runnerName: scope.runnerName }, {
+        event: body.event, ...(body.outcome ? { outcome: body.outcome } : {}), ...(body.detail ? { detail: body.detail } : {}),
+        ...(body.summary ? { summary: trimSummary(body.summary) } : {}),
+      });
+    } catch (e) {
+      req.log.error({ err: e instanceof Error ? e.message : String(e), warmup: scope.warmupId }, "warm-up report not stored");
+      return fail(reply, 503, "unavailable", "The report could not be stored. Try again.");
+    }
+    if (res === "unknown") return fail(reply, 404, "not_found", "That warm-up does not exist.");
+    if (res === "forbidden") return fail(reply, 403, "forbidden", "This credential is for another warm-up's machine.");
+    return reply.code(202).send({ ok: true });
   });
 
   // ---------------------------------------------------------------- connecting an installation to an organization
@@ -241,6 +281,7 @@ export async function buildApp(deps: Deps): Promise<App> {
   // work kind "onboard").
 
   let timer: NodeJS.Timeout | null = null;
+  let warmTimer: NodeJS.Timeout | null = null;
   return {
     fastify, service, db, gh,
     startBackground() {
@@ -248,9 +289,14 @@ export async function buildApp(deps: Deps): Promise<App> {
         timer = setInterval(() => service.background("sweep", () => service.sweep()), cfg.sweepSeconds * 1000);
         timer.unref();
       }
+      if (cfg.warmupTickSeconds > 0 && service.warmups.active) {
+        warmTimer = setInterval(() => service.background("warm-up tick", () => service.warmups.tick()), cfg.warmupTickSeconds * 1000);
+        warmTimer.unref();
+      }
     },
     async close() {
       if (timer) clearInterval(timer);
+      if (warmTimer) clearInterval(warmTimer);
       await fastify.close();
       await service.idle();
       await db.close();

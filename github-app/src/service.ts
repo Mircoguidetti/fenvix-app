@@ -9,6 +9,8 @@ import { projectStack, type Stack } from "./results/detect.ts";
 import { parseResults, progressRecord, type RunnerExploration, type RunnerProgress, type RunnerResults } from "./results/runner-records.ts";
 import { signCacheToken, signSummaryCredential } from "./runners/credentials.ts";
 import { type Region, RetryLater, type RunMode, type RunnerLauncher } from "./runners/launcher.ts";
+import { DEFAULT_WARMUP, type WarmupSettings } from "./warmup/policy.ts";
+import { Warmups } from "./warmup/warmups.ts";
 
 export interface ServiceSettings {
   runsOnLabel: string;
@@ -21,6 +23,8 @@ export interface ServiceSettings {
   summaryKey?: string;
   /** Signs each per-job cache token (the shared cache, per-job mode). Absent: jobs get no cache token. */
   cacheSigningKey?: KeyObject | null;
+  /** Warm-up runs (src/warmup/): they need a per-job launcher too. Absent: off. */
+  warmup?: WarmupSettings;
 }
 
 /** How long a per-job machine's credentials live: past the reaper's hard limit and the poster's retries. */
@@ -40,7 +44,7 @@ interface InstallationP {
 }
 interface RepoLite { id: number; full_name: string; private?: boolean }
 interface RepoFull extends RepoLite { default_branch?: string; pushed_at?: number | string | null }
-interface PullP { number: number; state: string; merged?: boolean | null; html_url: string; head: { sha: string; ref: string; repo: { id: number } | null }; base: { ref: string } }
+interface PullP { number: number; state: string; merged?: boolean | null; merge_commit_sha?: string | null; merged_at?: string | null; html_url: string; head: { sha: string; ref: string; repo: { id: number } | null }; base: { ref: string } }
 interface JobP {
   id: number; run_id: number; run_attempt?: number; workflow_name?: string | null; name: string; head_sha: string; head_branch?: string | null;
   labels: string[]; runner_name?: string | null; status: string; conclusion?: string | null; created_at?: string; started_at?: string | null;
@@ -51,7 +55,7 @@ interface JobRow {
   job_id: number; repository_id: number; installation_id: number; run_id: number; run_attempt: number; workflow_name: string; job_name: string;
   head_sha: string; head_branch: string | null; labels: string[]; runner_name: string | null; status: string; conclusion: string | null;
   created_at: Date | null; started_at: Date | null; completed_at: Date | null; check_run_id: number | null; ci_run_id: string | null;
-  published_at: Date | null; publish_attempts: number; region: Region | null;
+  published_at: Date | null; publish_attempts: number; region: Region | null; cache_access: "read" | "write" | null;
 }
 /** The workflow run of a job (GET /repos/{o}/{r}/actions/runs/{id}), the parts the App reads. */
 interface WorkflowRunP {
@@ -90,8 +94,18 @@ export class GitHubService {
   /** "One machine per job" mode: starts a runner machine for each queued fenvix job. Absent: an always-on runner. */
   private readonly launcher: RunnerLauncher | null;
 
+  /** Warm-up runs of onboarded repositories' default branches (src/warmup/warmups.ts). */
+  readonly warmups: Warmups;
+
   constructor(db: Db, gh: GitHubApp, s: ServiceSettings, log: Logger, launcher: RunnerLauncher | null = null) {
     this.db = db; this.gh = gh; this.s = s; this.log = log; this.launcher = launcher;
+    this.warmups = new Warmups(db, gh, s.warmup ?? { ...DEFAULT_WARMUP, enabled: false }, { ...(s.summaryKey ? { summaryKey: s.summaryKey } : {}), cacheSigningKey: s.cacheSigningKey ?? null }, log, launcher);
+  }
+
+  /** Warm-up requests never fail the webhook that caused them: logged, and the next push asks again. */
+  private async warm(what: string, fn: () => Promise<unknown>): Promise<void> {
+    if (!this.warmups.active) return;
+    try { await fn(); } catch (e) { this.log.warn({ what, err: e instanceof Error ? e.message : String(e) }, "warm-up request failed"); }
   }
 
   background(what: string, fn: () => Promise<unknown>): void {
@@ -182,10 +196,16 @@ export class GitHubService {
     if (action === "deleted") {
       await this.db.q("update gh_installations set deleted_at = now(), updated_at = now() where installation_id = $1", [i.id]);
       await this.db.q("update gh_repositories set removed_at = now(), updated_at = now() where installation_id = $1 and removed_at is null", [i.id]);
+      await this.warmups.cancelInstallation(i.id, "the GitHub App was uninstalled");
       this.gh.forget(i.id);
       return;
     }
-    if (action === "suspend") { await this.db.q("update gh_installations set suspended_at = now() where installation_id = $1", [i.id]); this.gh.forget(i.id); return; }
+    if (action === "suspend") {
+      await this.db.q("update gh_installations set suspended_at = now() where installation_id = $1", [i.id]);
+      await this.warmups.cancelInstallation(i.id, "the installation was suspended on GitHub");
+      this.gh.forget(i.id);
+      return;
+    }
     if (action === "unsuspend") { await this.db.q("update gh_installations set suspended_at = null where installation_id = $1", [i.id]); return; }
     if (action === "created") {
       await this.db.q("update gh_installations set deleted_at = null, suspended_at = null where installation_id = $1", [i.id]);
@@ -203,6 +223,7 @@ export class GitHubService {
     await this.upsertRepositories(i.id, added);
     if (removed.length) {
       await this.db.q("update gh_repositories set removed_at = now(), updated_at = now() where repository_id = any($1::bigint[])", [removed.map((r) => r.id)]);
+      await this.warmups.cancelRepositories(removed.map((r) => r.id), "the repository was removed from the installation");
     }
     if (p.action === "added") await this.onboardAdded(added.map((r) => r.id), (p.repository_selection ?? i.repository_selection) === "all");
   }
@@ -240,6 +261,8 @@ export class GitHubService {
     this.log.info({ repository: repo.full_name, state: res.state, pr: res.pr?.number }, "onboarding");
     const fresh = await this.repo(repositoryId);
     if (fresh?.workspace_id) await this.db.tx(fresh.workspace_id, (c) => this.syncProject(c, fresh, null));
+    // Already on runs-on: fenvix: nothing to merge, so the default branch is warmed now.
+    if (res.state === "already_fenvix") await this.warm("onboarded", () => this.warmups.requestHead(repositoryId, "onboarded"));
     return res;
   }
 
@@ -296,8 +319,14 @@ export class GitHubService {
     const repo = p.repository as RepoFull;
     await this.ensureRepository(installationId, repo);
     const pushedAt = typeof repo.pushed_at === "number" ? new Date(repo.pushed_at * 1000) : typeof repo.pushed_at === "string" ? new Date(repo.pushed_at) : new Date();
+    const at = Number.isNaN(pushedAt.getTime()) ? new Date() : pushedAt;
     await this.db.q("insert into gh_pushes (repository_id, sha, ref, pushed_at) values ($1, $2, $3, $4) on conflict do nothing",
-      [repo.id, after, String(p.ref ?? ""), Number.isNaN(pushedAt.getTime()) ? new Date() : pushedAt]);
+      [repo.id, after, String(p.ref ?? ""), at]);
+    // A push to the default branch: its warm-up (after the grace period that lets the customer's own push run cover it).
+    const defaultBranch = repo.default_branch ?? (await this.repo(repo.id))?.default_branch ?? null;
+    if (defaultBranch && p.ref === `refs/heads/${defaultBranch}`) {
+      await this.warm("push", () => this.warmups.request({ repositoryId: repo.id, sha: after, trigger: "push", pushedAt: at }));
+    }
     return true;
   }
 
@@ -328,6 +357,15 @@ export class GitHubService {
         await this.db.tx(row.workspace_id, (c) => c.query(
           `update ci_projects set setup_pr_number = $2, setup_pr_url = $3, setup_pr_state = $4 where id = $1`,
           [row.project_id, pr.number, pr.html_url, state]));
+      }
+      // Merged: the test job is on fenvix from the merge commit on. Warm the cache at it before the first pull request.
+      if (state === "merged" && row?.onboarding_state === "merged" && row.setup_pr_number === pr.number) {
+        const onDefault = !row.default_branch || pr.base.ref === row.default_branch;
+        const sha = onDefault && pr.merge_commit_sha && SHA.test(pr.merge_commit_sha) ? pr.merge_commit_sha : null;
+        // Ordered by GitHub's own clock (merged_at), like the pushes that come after it.
+        const mergedAt = pr.merged_at ? new Date(pr.merged_at) : null;
+        const pushedAt = mergedAt && !Number.isNaN(mergedAt.getTime()) ? { pushedAt: mergedAt } : {};
+        await this.warm("onboarded", () => (sha ? this.warmups.request({ repositoryId: repo.id, sha, trigger: "onboarded", ...pushedAt }) : this.warmups.requestHead(repo.id, "onboarded")));
       }
     }
   }
@@ -431,7 +469,7 @@ export class GitHubService {
    * stranger installing the App cannot start machines; only while the job is still queued.
    */
   private async launchRunner(jobId: number, installationId: number, repo: RepoFull): Promise<void> {
-    const [row] = await this.db.q<{ status: string; run_id: number }>("select status, run_id from gh_jobs where job_id = $1", [jobId]);
+    const [row] = await this.db.q<{ status: string; run_id: number; head_sha: string }>("select status, run_id, head_sha from gh_jobs where job_id = $1", [jobId]);
     if (!row || row.status !== "queued") return;
     const [inst] = await this.db.q<{ workspace_id: string | null; suspended_at: Date | null; deleted_at: Date | null }>(
       "select workspace_id, suspended_at, deleted_at from gh_installations where installation_id = $1", [installationId]);
@@ -455,9 +493,18 @@ export class GitHubService {
     const trusted = !!run && ["push", "schedule", "workflow_dispatch", "merge_group"].includes(run.event ?? "")
       && !!defaultBranch && run.head_branch === defaultBranch && run.head_repository?.id === repo.id;
     if (!this.s.summaryKey) throw new Error("no summary signing key (RUNNER_TOKEN): no machine is started without its own credential");
-    // The fleet at its limit: no just-in-time runner is registered for a job that gets no machine (R-012 F12). The
-    // queue tries again later.
-    if (this.launcher!.hasCapacity && !(await this.launcher!.hasCapacity(org.region))) throw new RetryLater(`the fleet is full; job ${jobId} waits`);
+    await this.db.q("update gh_jobs set cache_access = $2 where job_id = $1", [jobId, trusted ? "write" : "read"]);
+    // A trusted run of a default-branch commit fills the cache itself: its warm-up is not needed.
+    if (trusted) await this.warm("covered", () => this.warmups.onTrustedJob(repo.id, row.head_sha, jobId));
+    // The fleet at its limit: a warm-up gives its machine back first (customers' jobs come before warm-ups); else no
+    // just-in-time runner is registered for a job that gets no machine (R-012 F12) and the queue tries again later.
+    if (this.launcher!.hasCapacity && !(await this.launcher!.hasCapacity(org.region))) {
+      const freed = await this.warmups.preemptOne(org.region).catch((e: unknown) => {
+        this.log.warn({ job: jobId, err: e instanceof Error ? e.message : String(e) }, "no warm-up could be preempted");
+        return false;
+      });
+      if (!freed || !(await this.launcher!.hasCapacity(org.region))) throw new RetryLater(`the fleet is full; job ${jobId} waits`);
+    }
     // A retry after a partial failure finds the first name taken (409): a fresh one; EC2 still starts one machine.
     type Jit = { encoded_jit_config: string; runner?: { id?: number } };
     let runnerName = `fenvix-j${jobId}`;
@@ -493,6 +540,7 @@ export class GitHubService {
       await unregister(e instanceof RetryLater ? "the fleet is full" : "the machine did not start");
       throw e;
     }
+    await this.db.q("update gh_jobs set launched_at = coalesce(launched_at, now()) where job_id = $1", [jobId]);
     // A redelivery after a partial failure: EC2 returned the first machine (same client token), which has the first
     // just-in-time configuration; this one would never be used.
     if (res.already) await unregister("the job's machine already exists");
@@ -749,6 +797,10 @@ export class GitHubService {
         [job.installation_id, job.repository_id, repo.full_name, projectId, ciRunId, job.job_id, job.run_id, job.run_attempt, billable, reason,
           planId, job.conclusion, minutes.ran, minutes.saved, minutes.other, completedAt]);
     });
+    // The cache: warm at this commit when a trusted run published results; a warm-up it covered runs if it did not.
+    // (Also where warm-ups are off, e.g. the sweep: the cache state comes from customers' runs too.)
+    await this.warmups.onJobPublished(job, !!summary, completedAt)
+      .catch((e: unknown) => this.log.warn({ job: job.job_id, err: e instanceof Error ? e.message : String(e) }, "cache state not updated"));
     // The runner's per-test results, receipts, defects and audit reruns that came before the end (staged).
     if (ws && ciRunId && job.runner_name) {
       await this.applyResults(ws, ciRunId, { repositoryId: job.repository_id, runId: job.run_id, runAttempt: job.run_attempt, runnerName: job.runner_name })
@@ -855,6 +907,11 @@ export class GitHubService {
     await this.ensureInstallation(installationId);
     const r = await this.db.q<{ login: string }>("select public.gh_link_installation($1, $2, $3) as login", [installationId, workspaceId, userId]);
     await this.syncInstallation(installationId);
+    // Repositories already on fenvix (their setup pull request merged before the link, or never needed): warm them now.
+    const onboarded = await this.db.q<{ repository_id: number }>(
+      "select repository_id from gh_repositories where installation_id = $1 and removed_at is null and onboarding_state in ('merged', 'already_fenvix') order by repository_id",
+      [installationId]);
+    for (const x of onboarded) await this.warm("linked", () => this.warmups.requestHead(x.repository_id, "linked"));
     return r[0]!.login;
   }
 

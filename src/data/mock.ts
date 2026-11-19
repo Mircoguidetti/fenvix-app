@@ -25,7 +25,7 @@ import { ApiError } from "./api-errors";
 import type { DataClient, RunLive, RunQuery } from "./client";
 import type {
   ActivityItem, AuditRerun, Exploration, Installation, MissKind, RunDetail, RunFile, RunProgress,
-  Baseline, Defect, DefectCause, GitHubRate, GitHubRepository, Language, OnboardingState, Page, Plan, Project, Region, Run, RunTrigger, Settings,
+  Baseline, Defect, DefectCause, GitHubRate, GitHubRepository, Language, OnboardingState, Page, Plan, Project, Region, Run, RunTrigger, Settings, WarmCache,
   SkipReceipt, TestOutcome, TestPage, TestResult, TestRunner,
 } from "./types";
 import { activityFrom, auditFrom, billingFrom, dayStart, familiesOf, familyKeyOf, median, monthOf, overviewFrom, projectRow, setupChange, trialFrom, usageCsv, usageCsvName, usageFrom, type TrialDates, type UsageEvent } from "./ci";
@@ -600,6 +600,7 @@ function buildSample(plan: OrgPlan): Store {
       setupState: "active", setupPullRequest: { number: pr, url: `https://github.com/${nameOf(s)}/pull/${pr}`, state: "merged" },
       connectedAt: trialStart ? trialStart.toISOString() : ago(s.connectedDaysAgo * DAY), baseline: s.baseline,
       settings: { skipWithProof: true, commentOnPullRequests: true, nightlyExploration: plan.addons.includes("nightly") && s.id !== "prj_ledger", testCommand: "" },
+      warmCache: COLD,
     };
   });
 
@@ -745,17 +746,30 @@ function buildSample(plan: OrgPlan): Store {
     });
   }
 
+  // The shared cache of each project's default branch: warm since its latest push run on main (the customer's own run,
+  // or one of fenvix's warm-ups); the first project has a warm-up running for a newer commit.
+  projects.forEach((p, i) => {
+    const latest = runs.filter((x) => x.projectId === p.id && x.branch === "main" && x.status === "passed").sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+    if (!latest) return;
+    const warmAt = latest.finishedAt ?? latest.startedAt;
+    const base = { commitSha: latest.commitSha, warmAt, source: i % 2 ? ("run" as const) : ("warmup" as const) };
+    p.warmCache = i === 0
+      ? { state: "warming", ...base, warmup: { status: "running", commitSha: hex(`${p.id}:warm`, 40), detail: "running the test job", updatedAt: ago(4 * MIN) } }
+      : { state: "warm", ...base, warmup: i % 2 ? { status: "covered", commitSha: latest.commitSha, detail: "the customer's own run of this commit filled the cache", updatedAt: warmAt } : { status: "succeeded", commitSha: latest.commitSha, detail: "the cache holds this commit's proofs", updatedAt: warmAt } };
+  });
   const linked = (days: number) => ago(days * DAY);
   const repos: GitHubRepository[] = [
     ...projects.map((p) => ({
       repositoryId: p.repositoryId!, installationId: p.installationId, fullName: p.fullName, private: true, removed: false, language: p.language, testRunner: p.testRunner,
       onboardingState: "merged" as const, onboardingDetail: DETAILS.merged, workflowPath: ".github/workflows/ci.yml", job: "test", setupPullRequest: p.setupPullRequest, projectId: p.id,
+      warmCache: p.warmCache,
     })),
     ...plan.repos.map((x) => ({
       repositoryId: repoId(x.name), installationId: x.installationId, fullName: x.name, private: x.isPrivate ?? true, removed: x.removed ?? false, language: x.language, testRunner: x.testRunner,
       onboardingState: x.state, onboardingDetail: x.state === "pr_open" ? `Pull request #${x.pr} changes the test job to runs-on: fenvix. Merge it and the next test run goes to fenvix.` : x.detail,
       workflowPath: x.workflowPath ?? null, job: x.job ?? null,
       setupPullRequest: x.pr ? { number: x.pr, url: `https://github.com/${x.name}/pull/${x.pr}`, state: x.state === "closed" ? ("closed" as const) : ("open" as const) } : null, projectId: null,
+      warmCache: COLD,
     })),
   ];
   const installations: Installation[] = plan.installs.map((i) => ({
@@ -777,6 +791,9 @@ function emptyStore(name: string): Store {
     planId: null, addons: [], trial: null, settings: { workspaceName: name, emailNotices: true, region: "us" }, live: null, nextAccount: slug(name),
   };
 }
+
+/** A repository whose cache holds nothing yet, with no warm-up in flight. */
+const COLD: WarmCache = { state: "cold", commitSha: null, warmAt: null, source: null, warmup: null };
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "acme";
 
@@ -802,7 +819,7 @@ function applyInstall(s: Store, a: AddedInstall) {
     { name: "web", language: "node" as const, testRunner: "vitest" as const },
   ].map((x) => ({
     repositoryId: repoId(`${a.account}/${x.name}`), installationId: a.installationId, fullName: `${a.account}/${x.name}`, private: true, removed: false, language: x.language, testRunner: x.testRunner,
-    onboardingState: "pending", onboardingDetail: DETAILS.pending, workflowPath: ".github/workflows/ci.yml", job: "test", setupPullRequest: null, projectId: null,
+    onboardingState: "pending", onboardingDetail: DETAILS.pending, workflowPath: ".github/workflows/ci.yml", job: "test", setupPullRequest: null, projectId: null, warmCache: COLD,
   }));
   s.repos.push(...repos);
   s.installations.push({ installationId: a.installationId, account: a.account, accountType: "Organization", status: "active", repositorySelection: "selected", linkedAt: NOW.toISOString(), repositories: repos.length });

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Warm-up machine, as the job user: runs the warm-up executor of the runner (fenvix-engine-cli, runner/warmup.sh at the
+# image's pinned commit). It reads ~/.fenvix/warmup.json, checks out the commit with ~/.fenvix/checkout-token, runs the
+# test job of the customer's own workflow file there (the same steps, so the engine computes the cache keys of the
+# customer's runs) with the engine writing the shared cache (~/.fenvix/cache-token), and writes into
+# ~/.fenvix/warmup-out/:
+#   outcome.json   {"outcome": "succeeded" | "failed" | "unsupported", "detail": "<why, for a person>"}
+#   summary.json   runner/fenvix-run's summary.json, when the test step ran
+# It never talks to GitHub (no check run, no comment, no status) and never to the App: fenvix-warmup-done reports.
+# An image without the executor reports "unsupported" (docs/data-contract.md "Warm-up runs").
+set -uo pipefail
+out="$HOME/.fenvix/warmup-out"
+exe="$HOME/engine-cli/runner/warmup.sh"
+mkdir -p "$out"
+if [ ! -x "$exe" ]; then
+  printf '{"outcome":"unsupported","detail":"this runner image has no warm-up executor (fenvix-engine-cli runner/warmup.sh)"}\n' >"$out/outcome.json"
+  exit 0
+fi
+"$exe" "$HOME/.fenvix/warmup.json" "$out"
+code=$?
+if [ ! -s "$out/outcome.json" ]; then
+  if [ "$code" -eq 0 ]; then
+    printf '{"outcome":"failed","detail":"the warm-up executor wrote no outcome"}\n' >"$out/outcome.json"
+  else
+    printf '{"outcome":"failed","detail":"the warm-up executor exited with %d"}\n' "$code" >"$out/outcome.json"
+  fi
+fi
+exit 0

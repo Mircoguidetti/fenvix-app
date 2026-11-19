@@ -2,7 +2,7 @@
  * Postgres rows (supabase/migrations/0011_ci_runs.sql, snake_case) to the contract's records (camelCase). Pure, so
  * tests/unit/ci.test.ts covers it without a database.
  */
-import type { AuditRerun, Exploration, Defect, GitHubRate, GitHubRepository, Installation, OnboardingState, Plan, Project, Run, RunProgress, SkipReceipt, TestResult, TestRunner } from "./types";
+import type { AuditRerun, Exploration, Defect, GitHubRate, GitHubRepository, Installation, OnboardingState, Plan, Project, Run, RunProgress, SkipReceipt, TestResult, TestRunner, WarmCache, WarmupStatus } from "./types";
 import { familyKeyOf, type UsageEvent } from "./ci.ts";
 
 export type Row = Record<string, unknown>;
@@ -28,7 +28,31 @@ export function mapRate(r: Row | null | undefined): GitHubRate {
   return { usdPerMinute: num(r?.usd_per_minute, 0.008), runner: str(r?.runner, "GitHub-hosted Linux, 2 cores"), source: str(r?.source, "not set"), checkedOn: str(r?.checked_on) };
 }
 
-/** A ci_projects row; `repository_id` (GitHub's id) when the query joined gh_repositories. */
+const WARMUP_STATUSES = new Set<WarmupStatus>(["pending", "dispatched", "running", "succeeded", "failed", "unsupported", "covered", "superseded", "cancelled"]);
+const WARMING = new Set<WarmupStatus>(["pending", "dispatched", "running"]);
+const SHA40 = /^[0-9a-f]{40}$/;
+
+/**
+ * The repository's shared cache (supabase/migrations/0015_warm_cache.sql): gh_repositories.cache_warm_* and its latest
+ * warm-up, read by the API as warmup_status, warmup_sha, warmup_detail, warmup_updated_at. Warming while a warm-up is
+ * pending or running; else warm once a commit's proofs are in the cache; else cold.
+ */
+export function mapWarmCache(r: Row): WarmCache {
+  const sha = SHA40.test(str(r.cache_warm_sha)) ? str(r.cache_warm_sha) : null;
+  const status = str(r.warmup_status) as WarmupStatus;
+  const warmup = WARMUP_STATUSES.has(status) && SHA40.test(str(r.warmup_sha))
+    ? { status, commitSha: str(r.warmup_sha), detail: str(r.warmup_detail), updatedAt: iso(r.warmup_updated_at) }
+    : null;
+  const source = str(r.cache_warm_source);
+  return {
+    state: warmup && WARMING.has(warmup.status) ? "warming" : sha ? "warm" : "cold",
+    commitSha: sha, warmAt: sha && r.cache_warm_at ? iso(r.cache_warm_at) : null,
+    source: sha && (source === "warmup" || source === "run") ? source : null,
+    warmup,
+  };
+}
+
+/** A ci_projects row; `repository_id` (GitHub's id) when the query joined gh_repositories (and its cache state). */
 export function mapProject(r: Row): Project {
   const ttg = numOrNull(r.baseline_median_ttg_s);
   return {
@@ -38,6 +62,7 @@ export function mapProject(r: Row): Project {
     connectedAt: str(r.connected_at),
     baseline: ttg === null ? null : { medianTimeToGreenS: ttg, medianJobMinutes: num(r.baseline_median_job_minutes), runsSampled: num(r.baseline_runs_sampled), from: str(r.baseline_from), to: str(r.baseline_to) },
     settings: { skipWithProof: r.skip_with_proof !== false, commentOnPullRequests: r.comment_on_pull_requests !== false, nightlyExploration: r.nightly_exploration === true, testCommand: str(r.test_command) },
+    warmCache: mapWarmCache(r),
   };
 }
 
@@ -163,6 +188,7 @@ export function mapGitHubRepository(r: Row): GitHubRepository {
     job: r.onboarding_job ? str(r.onboarding_job) : null,
     setupPullRequest: r.setup_pr_number ? { number: num(r.setup_pr_number), url: str(r.setup_pr_url), state: prState } : null,
     projectId: r.project_id ? str(r.project_id) : null,
+    warmCache: mapWarmCache(r),
   };
 }
 

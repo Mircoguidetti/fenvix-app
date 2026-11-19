@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { client, type ProjectRow, type SetupState } from "../data";
 import { Message, PageHeader, Kicker } from "../components/PageHeader";
 import { RunStatusPill, StatusPill } from "../components/StateBadge";
-import { SkipShare } from "../components/ci";
+import { SkipShare, WarmCacheNote } from "../components/ci";
 import { useAsync } from "../lib/useAsync";
 import { formatCount, formatMinutes, formatRelative } from "../lib/format";
 
@@ -76,7 +76,12 @@ export function ProjectsPage() {
                     </span>
                   </td>
                   <td data-label="Setup">
-                    <SetupStatePill state={p.setupState} />
+                    <span className="setup-cell">
+                      <SetupStatePill state={p.setupState} />
+                      <span className="small">
+                        <WarmCacheNote cache={p.warmCache} now={now} />
+                      </span>
+                    </span>
                   </td>
                   <td data-label="Runs" className="num mono">
                     {formatCount(p.runsThisMonth)}

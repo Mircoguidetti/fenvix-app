@@ -1764,6 +1764,9 @@ table.data.dbs thead th { font-size: 12px; }
 .install-tags { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .repo-name { font-weight: 600; }
 .repo-detail { margin: 0; }
+.repo-cache { margin: 0; }
+.warm-cache { display: inline-flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.setup-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
 .install-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 /* API keys: not offered yet. */
 .coming-soon svg { color: var(--muted); }

@@ -24,6 +24,13 @@ export const RUNNER_FILES: [string, string, string][] = [
   ["fenvix-job.target", "/etc/systemd/system/fenvix-job.target", "0644"],
   ["fenvix-idle-watchdog.service", "/etc/systemd/system/fenvix-idle-watchdog.service", "0644"],
   ["fenvix-idle-watchdog.timer", "/etc/systemd/system/fenvix-idle-watchdog.timer", "0644"],
+  // Warm-up machines (per-job): the test job of one default-branch commit, outside GitHub Actions (github-app/src/warmup/).
+  ["fenvix-warmup-prepare", "/opt/fenvix/bin/fenvix-warmup-prepare", "0755"],
+  ["fenvix-warmup", "/opt/fenvix/bin/fenvix-warmup", "0755"],
+  ["fenvix-warmup-done", "/opt/fenvix/bin/fenvix-warmup-done", "0755"],
+  ["fenvix-warmup-report", "/opt/fenvix/bin/fenvix-warmup-report", "0755"],
+  ["fenvix-warmup.service", "/etc/systemd/system/fenvix-warmup.service", "0644"],
+  ["fenvix-warmup.target", "/etc/systemd/system/fenvix-warmup.target", "0644"],
 ];
 
 export const IMAGE_FILES = RUNNER_FILES;
