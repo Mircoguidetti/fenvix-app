@@ -31,7 +31,9 @@
         "apigateway:PATCH",
         "apigateway:DELETE",
         "apigateway:AddCertificateToDomain",
-        "apigateway:RemoveCertificateFromDomain"
+        "apigateway:RemoveCertificateFromDomain",
+        "apigateway:TagResource",
+        "apigateway:UntagResource"
       ],
       "Resource": [
         "arn:aws:apigateway:eu-west-1::/apis",

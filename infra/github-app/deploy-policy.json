@@ -43,6 +43,17 @@
       ]
     },
     {
+      "Sid": "DiagnoseAFailedDeploy",
+      "Effect": "Allow",
+      "Action": "cloudtrail:LookupEvents",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
       "Sid": "PrintCertificateValidationRecord",
       "Effect": "Allow",
       "Action": [

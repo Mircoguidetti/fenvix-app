@@ -74,6 +74,14 @@ describe("recover-failed-creates (before CDK): what a failed first create left b
     assert.equal(s3.bucket, null);
   });
 
+  it("the second deploy's state: github-app in ROLLBACK_COMPLETE (78 resources rolled back), no dashboard stack or bucket → only the app stack is deleted", async () => {
+    const cfn = new FakeCfn({ [APP]: "ROLLBACK_COMPLETE" });
+    const s3 = new FakeS3(null);
+    assert.deepEqual(await quiet(() => recoverFailedCreates(cfn, s3, opts)), { [APP]: "deleted", [DASH]: "absent", [BUCKET]: "absent" });
+    assert.deepEqual(deletes(cfn).map((c) => c.input.StackName), [`arn:aws:cloudformation:eu-west-1:${ACCOUNT}:stack/${APP}/uuid-1`]);
+    assert.deepEqual(deletes(s3), []);
+  });
+
   it("ROLLBACK_COMPLETE and S3 never created the bucket → the stack is deleted, nothing else", async () => {
     const cfn = new FakeCfn({ [DASH]: "ROLLBACK_COMPLETE", [APP]: "ROLLBACK_COMPLETE" });
     const s3 = new FakeS3(null);
