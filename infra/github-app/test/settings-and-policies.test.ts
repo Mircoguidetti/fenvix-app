@@ -16,8 +16,8 @@ describe("settings", () => {
     const s = readSettings((k) => ctx[k], { SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co", FENVIX_CACHE_SIGNING_PUBLIC_KEY: SAMPLE.cacheSigningPublicKey });
     assert.equal(s.githubConfigured, false);
     assert.equal(s.runnerMode, "per-job", "per-job is the default");
-    assert.equal(s.dashboardUrl, "https://app.fenvix.dev");
-    assert.equal(s.dashboardDomain, "app.fenvix.dev");
+    assert.equal(s.dashboardUrl, "https://console.fenvix.dev");
+    assert.equal(s.dashboardDomain, "console.fenvix.dev");
   });
 
   it("the GitHub App: all three of id, slug and client id, or none; demo mode needs it", async () => {
@@ -35,7 +35,7 @@ describe("settings", () => {
   });
 
   it("refuses values that would break the deploy or the machine", async () => {
-    await assert.rejects(settings({ dashboardUrl: "http://app.fenvix.dev" }), /https/);
+    await assert.rejects(settings({ dashboardUrl: "http://console.fenvix.dev" }), /https/);
     await assert.rejects(settings({ demoRepository: "https://github.com/x/y" }), /owner\/name/);
     await assert.rejects(settings({ runnerMode: "always-on" }), /demo or per-job/);
     await assert.rejects(settings({ cachePrivateIp: "10.42.1.10" }), /cachePrivateIp/);
@@ -100,8 +100,12 @@ describe("IAM policy files", () => {
     }
     // SSM reads: the two database URLs (checked by logging in), the App's two secrets (compared, never printed), the
     // cache key's public half. Never the runner token, the webhook secret, the state key or the cache signing key.
-    const reads = allows.filter((x) => arr(x.Action).includes("ssm:GetParameter")).flatMap((x) => arr(x.Resource)).filter((r) => r.includes(":parameter/fenvix/"));
+    // R-024 F1: by ANY SSM action that returns a value (GetParameterHistory returns every version, decrypted).
+    const valueReads = /^ssm:(GetParameter|GetParameters|GetParametersByPath|GetParameterHistory|GetParameter\*|GetParameters\*|Get\*|\*)$/;
+    for (const a of allows.flatMap((x) => arr(x.Action))) assert.ok(!(a.startsWith("ssm:") && a.includes("*")), `no SSM wildcard action: ${a}`);
+    const reads = allows.filter((x) => arr(x.Action).some((a) => valueReads.test(a))).flatMap((x) => arr(x.Resource)).filter((r) => r.includes(":parameter/fenvix/"));
     for (const r of reads) assert.match(r, /\/fenvix\/prod\/(github-app\/(database-url|api-database-url|private-key|client-secret)|cache\/signing-public-key)$/);
+    for (const st of allows) for (const a of arr(st.Action)) assert.ok(!/^ssm:(GetParameterHistory|GetParameters|GetParametersByPath)$/.test(a), `${st.Sid}: ${a} is not needed by the pipeline`);
     const invoke = p.Statement.find((s) => arr(s.Action).includes("lambda:InvokeFunction"))!;
     assert.deepEqual(arr(invoke.Resource), ["arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-demo"], "only demo-up / demo-down");
     const assume = p.Statement.find((s) => s.Sid === "CdkDeployThroughBootstrapRoles")!;

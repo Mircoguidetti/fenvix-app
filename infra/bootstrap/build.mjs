@@ -142,18 +142,18 @@ export function template() {
         Type: "AWS::IAM::Role",
         Properties: {
           RoleName: NAMES.deployerRole,
-          Description: sub(`fenvix: the deploy pipeline of ${repo} (GitHub Actions, OIDC): its main branch and its production environment only`),
+          Description: sub(`fenvix: the deploy pipeline of ${repo} (GitHub Actions, OIDC): its production environment only (whose branch rule allows main only)`),
           MaxSessionDuration: 7200,
           ManagedPolicyArns: [{ Ref: "DeployerPolicy" }],
           AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{
-            Sid: "GitHubActionsOfThisRepositoryMainAndProductionOnly",
+            Sid: "GitHubActionsProductionEnvironmentOnly",
             Effect: "Allow",
             Principal: { Federated: sub("arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com") },
             Action: "sts:AssumeRoleWithWebIdentity",
             Condition: {
               StringEquals: {
                 "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-                "token.actions.githubusercontent.com:sub": [sub(`repo:${repo}:ref:refs/heads/main`), sub(`repo:${repo}:environment:production`)],
+                "token.actions.githubusercontent.com:sub": [sub(`repo:${repo}:environment:production`)],
               },
             },
           }] },

@@ -1,5 +1,5 @@
 // ACM certificates. The API's (github.<zone>, eu-west-1) is part of the stack and validated while CloudFormation waits
-// for it; the dashboard's (app.<zone>) must be in us-east-1 (CloudFront takes certificates from there only), so the
+// for it; the dashboard's (console.<zone>) must be in us-east-1 (CloudFront takes certificates from there only), so the
 // pipeline requests it itself before the dashboard stack, which then uses it by ARN. Both are validated by a DNS
 // CNAME, which stays in place: ACM renews through it.
 import { DescribeCertificateCommand, ListCertificatesCommand, RequestCertificateCommand } from "@aws-sdk/client-acm";

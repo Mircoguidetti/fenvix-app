@@ -192,7 +192,7 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
   if (s.githubAppId && !/^\d+$/.test(s.githubAppId)) throw new Error('Setting "githubAppId" must be the numeric App ID');
   if (s.githubAppSlug && !/^[a-z0-9][a-z0-9-]{0,33}$/.test(s.githubAppSlug)) throw new Error('Setting "githubAppSlug" must be the App\'s URL name');
   if (s.githubClientId && !/^[A-Za-z0-9._-]{1,100}$/.test(s.githubClientId)) throw new Error('Setting "githubClientId" must be the App\'s Client ID');
-  if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(s.dashboardDomain)) throw new Error('Setting "dashboardDomain" must be a host name like app.fenvix.dev');
+  if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(s.dashboardDomain)) throw new Error('Setting "dashboardDomain" must be a host name like console.fenvix.dev');
   if (s.dashboardCertificateArn && !/^arn:aws:acm:us-east-1:\d{12}:certificate\/[0-9a-f-]{36}$/.test(s.dashboardCertificateArn)) {
     throw new Error('Setting "dashboardCertificateArn" must be an ACM certificate ARN in us-east-1 (CloudFront takes certificates from there only)');
   }

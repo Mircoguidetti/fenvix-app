@@ -229,7 +229,7 @@ describe("role passwords (SCRAM verifier; the connection string in SSM only)", (
       const a = parseAdminUrl(local, { local: true });
       const ssm = new MemorySsm();
       const one = [{ role: "fenvix_deploytest_login", parameter: "database-url", poolerPort: 5432, mode: "session" }];
-      const [r] = await captured(() => ensureRoles(c, a, ssm, { roles: one, verifyAttempts: 1 }));
+      const [r] = await captured(() => ensureRoles(c, a, ssm, { roles: one, verifyAttempts: 1, checkAttempts: 1 }));
       assert.deepEqual(r, { fenvix_deploytest_login: "set" });
       const url = ssm.params.get("/fenvix/prod/github-app/database-url").Value;
       assert.equal(await tryLogin(url), "ok");
@@ -237,7 +237,7 @@ describe("role passwords (SCRAM verifier; the connection string in SSM only)", (
       const bad = new URL(url); bad.password = "B".repeat(43);
       assert.equal(await tryLogin(bad.toString()), "refused");
       await c.query("alter role fenvix_deploytest_login password null");
-      const [r2] = await captured(() => ensureRoles(c, a, ssm, { roles: one, verifyAttempts: 1 }));
+      const [r2] = await captured(() => ensureRoles(c, a, ssm, { roles: one, verifyAttempts: 1, checkAttempts: 1 }));
       assert.deepEqual(r2, { fenvix_deploytest_login: "set" }, "refused → a new password");
       assert.equal(await tryLogin(ssm.params.get("/fenvix/prod/github-app/database-url").Value), "ok");
       await assert.rejects(tryLogin(url.replace(/@127\.0\.0\.1:\d+/, "@127.0.0.1:1")), /could not reach the database/);

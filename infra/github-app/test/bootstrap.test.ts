@@ -36,7 +36,8 @@ describe("the one-click AWS template", () => {
     assert.deepEqual(Object.keys(st[0]!.Condition), ["StringEquals"], "exact matches only: no StringLike wildcard");
     assert.equal(st[0]!.Condition.StringEquals!["token.actions.githubusercontent.com:aud"], "sts.amazonaws.com");
     const subs = (st[0]!.Condition.StringEquals!["token.actions.githubusercontent.com:sub"] as { "Fn::Sub": string }[]).map((x) => x["Fn::Sub"]);
-    assert.deepEqual(subs, ["repo:${GitHubOwner}/${GitHubRepository}:ref:refs/heads/main", "repo:${GitHubOwner}/${GitHubRepository}:environment:production"]);
+    // R-024 F2: the environment only. A job without an environment on main (ref:refs/heads/main) is not trusted.
+    assert.deepEqual(subs, ["repo:${GitHubOwner}/${GitHubRepository}:environment:production"]);
     assert.equal(tpl.Parameters.GitHubOwner!.Default, "Mircoguidetti");
     assert.equal(tpl.Parameters.GitHubRepository!.Default, "fenvix-app");
     assert.match(json(tpl.Rules), /865859654353/);

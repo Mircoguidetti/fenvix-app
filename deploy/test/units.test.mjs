@@ -108,7 +108,7 @@ describe("Cloudflare records", () => {
 
   it("creates, keeps, updates; replaces A/AAAA at that exact name only; DNS only; never another name", async () => {
     const api = fakeApi([
-      { id: "a1", type: "A", name: "app.fenvix.dev", content: "76.76.21.21", proxied: true },
+      { id: "a1", type: "A", name: "console.fenvix.dev", content: "76.76.21.21", proxied: true },
       { id: "o1", type: "CNAME", name: "www.fenvix.dev", content: "elsewhere.example", proxied: true },
     ]);
     const cf = new Cloudflare({ token: "tok", zone: "fenvix.dev", fetch: api.fetch });
@@ -118,9 +118,9 @@ describe("Cloudflare records", () => {
     assert.equal(r2, "kept");
     const [r3] = await captured(() => cf.upsertCname("github.fenvix.dev", "d-new.execute-api.eu-west-1.amazonaws.com"));
     assert.equal(r3, "updated");
-    const [r4] = await captured(() => cf.upsertCname("app.fenvix.dev", "d123.cloudfront.net"));
+    const [r4] = await captured(() => cf.upsertCname("console.fenvix.dev", "d123.cloudfront.net"));
     assert.equal(r4, "created");
-    assert.deepEqual(api.records.filter((r) => r.name === "app.fenvix.dev").map((r) => [r.type, r.content, r.proxied]), [["CNAME", "d123.cloudfront.net", false]]);
+    assert.deepEqual(api.records.filter((r) => r.name === "console.fenvix.dev").map((r) => [r.type, r.content, r.proxied]), [["CNAME", "d123.cloudfront.net", false]]);
     assert.ok(api.records.some((r) => r.name === "www.fenvix.dev"), "another name is never touched");
     await assert.rejects(cf.upsertCname("github.example.com", "x"), /not in the zone/);
   });

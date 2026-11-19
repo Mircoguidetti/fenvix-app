@@ -1193,8 +1193,7 @@
               "Action": [
                 "ssm:PutParameter",
                 "ssm:DeleteParameter",
-                "ssm:DescribeParameters",
-                "ssm:GetParameterHistory"
+                "ssm:DescribeParameters"
               ],
               "Resource": [
                 "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/github-app/*",
@@ -1326,7 +1325,7 @@
       "Properties": {
         "RoleName": "fenvix-github-deployer",
         "Description": {
-          "Fn::Sub": "fenvix: the deploy pipeline of ${GitHubOwner}/${GitHubRepository} (GitHub Actions, OIDC): its main branch and its production environment only"
+          "Fn::Sub": "fenvix: the deploy pipeline of ${GitHubOwner}/${GitHubRepository} (GitHub Actions, OIDC): its production environment only (whose branch rule allows main only)"
         },
         "MaxSessionDuration": 7200,
         "ManagedPolicyArns": [
@@ -1338,7 +1337,7 @@
           "Version": "2012-10-17",
           "Statement": [
             {
-              "Sid": "GitHubActionsOfThisRepositoryMainAndProductionOnly",
+              "Sid": "GitHubActionsProductionEnvironmentOnly",
               "Effect": "Allow",
               "Principal": {
                 "Federated": {
@@ -1350,9 +1349,6 @@
                 "StringEquals": {
                   "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
                   "token.actions.githubusercontent.com:sub": [
-                    {
-                      "Fn::Sub": "repo:${GitHubOwner}/${GitHubRepository}:ref:refs/heads/main"
-                    },
                     {
                       "Fn::Sub": "repo:${GitHubOwner}/${GitHubRepository}:environment:production"
                     }

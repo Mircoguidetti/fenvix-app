@@ -114,7 +114,7 @@ describe("config surfaces", () => {
   const base = {
     GITHUB_APP_DATABASE_URL: "postgresql://fenvix_github_app@localhost/db", GITHUB_APP_ID: "123", GITHUB_APP_SLUG: "fenvix",
     GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(), GITHUB_CLIENT_ID: "Iv1.x",
-    DASHBOARD_URL: "https://app.fenvix.dev", SUPABASE_URL: "https://x.supabase.co", NODE_ENV: "production",
+    DASHBOARD_URL: "https://console.fenvix.dev", SUPABASE_URL: "https://x.supabase.co", NODE_ENV: "production",
   };
 
   it("the worker surface needs no HTTP secret, and holds none", async () => {
@@ -131,7 +131,7 @@ describe("API Gateway (HTTP API, payload 2.0) to Fastify", () => {
   const app = Fastify();
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
   app.post("/echo", async (req) => ({ len: (req.body as Buffer).length, hex: (req.body as Buffer).toString("hex"), q: req.query, cookie: req.headers.cookie ?? null, ip: req.ip }));
-  app.get("/go", async (_req, reply) => reply.header("set-cookie", ["a=1", "b=2"]).redirect("https://app.fenvix.dev/x?y=1", 303));
+  app.get("/go", async (_req, reply) => reply.header("set-cookie", ["a=1", "b=2"]).redirect("https://console.fenvix.dev/x?y=1", 303));
   app.get("/bin", async (_req, reply) => reply.type("application/octet-stream").send(Buffer.from([0, 255, 1])));
   const ev = (method: string, path: string, more: Partial<Parameters<typeof invoke>[1]> = {}) =>
     ({ version: "2.0", rawPath: path, rawQueryString: "", headers: {}, requestContext: { http: { method, sourceIp: "203.0.113.9" } }, ...more });
@@ -152,7 +152,7 @@ describe("API Gateway (HTTP API, payload 2.0) to Fastify", () => {
   it("returns redirects, cookies and binary bodies the way API Gateway expects", async () => {
     const r = await invoke(app, ev("GET", "/go"));
     assert.equal(r.statusCode, 303);
-    assert.equal(r.headers.location, "https://app.fenvix.dev/x?y=1");
+    assert.equal(r.headers.location, "https://console.fenvix.dev/x?y=1");
     assert.deepEqual(r.cookies, ["a=1", "b=2"]);
     const b = await invoke(app, ev("GET", "/bin"));
     assert.equal(b.isBase64Encoded, true);

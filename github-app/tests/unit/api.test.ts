@@ -19,7 +19,7 @@ import { parameterNames } from "../../src/lambda/secrets.ts";
 
 const ENV = {
   NODE_ENV: "test", API_DATABASE_URL: "postgresql://fenvix_api:x@127.0.0.1:6543/postgres", SUPABASE_URL: "https://project.supabase.invalid",
-  STATE_SIGNING_KEY: "s".repeat(40), DASHBOARD_URL: "https://app.fenvix.dev", GITHUB_APP_SLUG: "fenvix", LOG_LEVEL: "silent",
+  STATE_SIGNING_KEY: "s".repeat(40), DASHBOARD_URL: "https://console.fenvix.dev", GITHUB_APP_SLUG: "fenvix", LOG_LEVEL: "silent",
 };
 const WS = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
@@ -190,11 +190,11 @@ describe("the session check (Authorization: Bearer <Supabase access token>)", as
   });
 
   it("CORS: preflight for the dashboard's origin only; unknown routes are a 404 in the contract's shape", async () => {
-    const ok = await api.fastify.inject({ method: "OPTIONS", url: "/v1/organization/members/x", headers: { origin: "https://app.fenvix.dev", "access-control-request-method": "PUT" } });
+    const ok = await api.fastify.inject({ method: "OPTIONS", url: "/v1/organization/members/x", headers: { origin: "https://console.fenvix.dev", "access-control-request-method": "PUT" } });
     assert.equal(ok.statusCode, 204);
     assert.equal(ok.headers["access-control-allow-headers"], CORS.allowHeaders);
     assert.equal(ok.headers["access-control-allow-methods"], CORS.methods);
-    const bad = await api.fastify.inject({ method: "OPTIONS", url: "/v1/me", headers: { origin: "https://app.fenvix.dev.evil.example", "access-control-request-method": "GET" } });
+    const bad = await api.fastify.inject({ method: "OPTIONS", url: "/v1/me", headers: { origin: "https://console.fenvix.dev.evil.example", "access-control-request-method": "GET" } });
     assert.equal(bad.statusCode, 403);
     const nf = await api.fastify.inject({ method: "GET", url: "/v1/nothing-here" });
     assert.deepEqual([nf.statusCode, nf.json().error.code], [404, "not_found"]);
@@ -204,13 +204,13 @@ describe("the session check (Authorization: Bearer <Supabase access token>)", as
 describe("settings and the Lambda entry", () => {
   it("the API's settings: its database URL and the state key are required; CORS origins are origins", () => {
     const c = loadApiConfig(ENV);
-    assert.deepEqual(c.corsOrigins, ["https://app.fenvix.dev"]);
+    assert.deepEqual(c.corsOrigins, ["https://console.fenvix.dev"]);
     assert.equal(c.webUrl, "https://github.com");
     assert.throws(() => loadApiConfig({ ...ENV, API_DATABASE_URL: "" }), /API_DATABASE_URL/);
     assert.throws(() => loadApiConfig({ ...ENV, STATE_SIGNING_KEY: "short" }), /STATE_SIGNING_KEY/);
     assert.throws(() => loadApiConfig({ ...ENV, API_CORS_ORIGINS: "https://a.example/path" }), /origin/);
-    assert.deepEqual(loadApiConfig({ ...ENV, API_CORS_ORIGINS: "https://preview.fenvix.dev, https://app.fenvix.dev" }).corsOrigins, ["https://app.fenvix.dev", "https://preview.fenvix.dev"]);
-    assert.throws(() => loadApiConfig({ ...ENV, NODE_ENV: "production", DASHBOARD_URL: "http://app.fenvix.dev" }), /https/);
+    assert.deepEqual(loadApiConfig({ ...ENV, API_CORS_ORIGINS: "https://preview.fenvix.dev, https://console.fenvix.dev" }).corsOrigins, ["https://console.fenvix.dev", "https://preview.fenvix.dev"]);
+    assert.throws(() => loadApiConfig({ ...ENV, NODE_ENV: "production", DASHBOARD_URL: "http://console.fenvix.dev" }), /https/);
   });
 
   it("the API's SSM parameters: its database URL and the state signing key, nothing of the App's", async () => {
@@ -236,9 +236,9 @@ describe("settings and the Lambda entry", () => {
     const get = cached(async () => { made++; if (made === 1) throw new Error("cold start failed"); return api; }, 1000, () => t);
     await assert.rejects(get(), /cold start failed/);
     const handler = makeApiHandler(get);
-    const res = await handler({ rawPath: "/v1/me", requestContext: { http: { method: "OPTIONS" } }, headers: { origin: "https://app.fenvix.dev", "access-control-request-method": "GET" } });
+    const res = await handler({ rawPath: "/v1/me", requestContext: { http: { method: "OPTIONS" } }, headers: { origin: "https://console.fenvix.dev", "access-control-request-method": "GET" } });
     assert.equal(res.statusCode, 204);
-    assert.equal(res.headers["access-control-allow-origin"], "https://app.fenvix.dev");
+    assert.equal(res.headers["access-control-allow-origin"], "https://console.fenvix.dev");
     await get();
     assert.equal(made, 2);
     t = 5000;

@@ -41,9 +41,9 @@ describe("the dashboard stack (S3 + CloudFront)", async () => {
     assert.match(policy, /AWS:SourceArn/);
   });
 
-  it("app.fenvix.dev with the us-east-1 certificate, TLS 1.2+, HTTPS only, security headers, client routes to index.html", () => {
+  it("console.fenvix.dev with the us-east-1 certificate, TLS 1.2+, HTTPS only, security headers, client routes to index.html", () => {
     t.hasResourceProperties("AWS::CloudFront::Distribution", { DistributionConfig: Match.objectLike({
-      Aliases: ["app.fenvix.dev"],
+      Aliases: ["console.fenvix.dev"],
       ViewerCertificate: Match.objectLike({ AcmCertificateArn: CERT, MinimumProtocolVersion: "TLSv1.2_2021", SslSupportMethod: "sni-only" }),
       DefaultRootObject: "index.html",
       DefaultCacheBehavior: Match.objectLike({ ViewerProtocolPolicy: "redirect-to-https", ResponseHeadersPolicyId: Match.anyValue() }),

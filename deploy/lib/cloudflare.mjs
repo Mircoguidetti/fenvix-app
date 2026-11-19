@@ -1,6 +1,6 @@
 // DNS on Cloudflare (zone fenvix.dev) with the API token of the environment secret CLOUDFLARE_API_TOKEN (permissions:
 // Zone · Zone · Read and Zone · DNS · Edit, on that zone only). The pipeline only ever touches the exact names it owns:
-// github.<zone> and app.<zone> (CNAMEs to AWS) and the two certificate validation CNAMEs. Every record "DNS only":
+// github.<zone> and console.<zone> (CNAMEs to AWS) and the two certificate validation CNAMEs. Every record "DNS only":
 // AWS serves its own certificates. It never deletes any other record.
 import { info } from "./log.mjs";
 

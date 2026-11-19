@@ -43,7 +43,7 @@ creates the App and runs the service.
 Before you start, decide two addresses (they can be changed later on the App's settings page):
 
 - `APP_HOST`: where the service will answer, e.g. `https://github.fenvix.dev` (must be https, reachable by GitHub).
-- `DASHBOARD_URL`: the dashboard, e.g. `https://app.fenvix.dev`.
+- `DASHBOARD_URL`: the dashboard, e.g. `https://console.fenvix.dev`.
 
 Generate the webhook secret on your machine and keep it in your password manager (never in a chat or in git):
 
@@ -169,7 +169,7 @@ the HTTP side checks it (`src/runners/credentials.ts`; review R-012 F1).
 | `GITHUB_WEBHOOK_SECRET` or `_FILE` | required | **yes** | at least 20 characters; the same value as on the App's page |
 | `GITHUB_CLIENT_ID` | required | no | the App's Client ID |
 | `GITHUB_CLIENT_SECRET` or `_FILE` | required | **yes** | the App's client secret |
-| `DASHBOARD_URL` | required | no | e.g. `https://app.fenvix.dev`: links in check runs and comments, redirect after setup |
+| `DASHBOARD_URL` | required | no | e.g. `https://console.fenvix.dev`: links in check runs and comments, redirect after setup |
 | `SUPABASE_URL` | required | no | `https://<ref>.supabase.co`: session tokens of dashboard users are checked against its JWKS |
 | `SUPABASE_JWKS_URL` | `SUPABASE_URL/auth/v1/.well-known/jwks.json` | no | |
 | `STATE_SIGNING_KEY` or `_FILE` | required | **yes** | at least 32 characters |

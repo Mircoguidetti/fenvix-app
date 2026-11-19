@@ -142,7 +142,7 @@ describe("the stack, demo mode (an option)", async () => {
   it("the dashboard API function: its own settings, its two parameters, may only send to the work queue", () => {
     const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-api")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
     assert.deepEqual(Object.keys(vars).sort(), ["DASHBOARD_URL", "DB_POOL_MAX", "GITHUB_APP_SLUG", "LOG_LEVEL", "NODE_ENV", "NODE_OPTIONS", "SSM_PREFIX", "SUPABASE_URL", "WORK_QUEUE_URL"]);
-    assert.equal(vars.DASHBOARD_URL, "https://app.fenvix.dev");
+    assert.equal(vars.DASHBOARD_URL, "https://console.fenvix.dev");
     assert.equal(vars.DB_POOL_MAX, "1");
     const st = statementsOf(fnRole("api"));
     const reads = st.filter((x) => arr(x.Action).some((a) => a.startsWith("ssm:"))).flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]).sort();

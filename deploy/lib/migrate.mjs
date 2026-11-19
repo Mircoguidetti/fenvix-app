@@ -27,37 +27,82 @@ export function readMigrations(dir = MIGRATIONS_DIR) {
   return out;
 }
 
+const pol = (table, name) => `exists (select 1 from pg_policies where schemaname = 'public' and tablename = '${table}' and policyname = '${name}')`;
+const rls = (table) => `coalesce((select relrowsecurity from pg_class where oid = to_regclass('public.${table}')), false)`;
+/** 0014 drops every policy of fenvix_control_plane (the last effects of 0011 and 0012); it creates ci_audit_reruns after that. */
+const AFTER_0014_DROP = `to_regclass('public.ci_audit_reruns') is not null`;
+
 /**
- * How to recognise each migration that may have been applied by hand, from what it leaves behind (objects no later
- * migration removes). 0001 to 0010 (the earlier product) are not probed: 0014 removed their tables, and 0011 needs
- * them, so "0011 applied" implies them. A database with tracked migrations is never probed again.
+ * How to recognise each migration that may have been applied by hand, from what it leaves behind: its FIRST effects
+ * (it started) and its LAST (it finished). First true and last false is a migration that ran only partly (statement by
+ * statement, a cut paste): the deploy stops, as for any half-applied database (R-024 F5). Where a later migration
+ * removes a last effect on purpose, that later migration's own evidence stands in for it. 0001 to 0010 (the earlier
+ * product) are not probed: 0014 removed their tables, and 0011 needs them, so "0011 applied" implies them. A database
+ * with tracked migrations is never probed again.
  */
 export const PROBES = {
-  "0011": `select to_regclass('public.ci_runs') is not null and to_regclass('public.ci_test_results') is not null and to_regclass('public.ci_projects') is not null`,
-  "0012": `select to_regclass('public.ci_explorations') is not null
+  "0011": {
+    first: `to_regclass('public.ci_runs') is not null and to_regclass('public.ci_test_results') is not null and to_regclass('public.ci_projects') is not null`,
+    last: `${rls("ci_test_results")} and (${pol("ci_test_results", "ci_test_results_control_plane")} or ${AFTER_0014_DROP})`,
+  },
+  "0012": {
+    first: `to_regclass('public.ci_explorations') is not null
              and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'ci_runs' and column_name = 'skip_misses')`,
-  "0013": `select to_regclass('public.gh_installations') is not null and to_regclass('public.gh_jobs') is not null
+    last: `${rls("ci_explorations")} and (${pol("ci_explorations", "ci_explorations_control_plane")} or ${AFTER_0014_DROP})`,
+  },
+  "0013": {
+    first: `to_regclass('public.gh_installations') is not null and to_regclass('public.gh_jobs') is not null
              and exists (select 1 from pg_roles where rolname = 'fenvix_github_app')`,
-  "0014": `select to_regclass('public.ci_audit_reruns') is not null and to_regclass('public.databases') is null
+    last: pol("ci_usage_events", "ci_usage_events_github_app"),
+  },
+  "0014": {
+    first: `to_regclass('public.ci_audit_reruns') is not null and to_regclass('public.databases') is null
              and exists (select 1 from pg_roles where rolname = 'fenvix_api')
              and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'ci_runs' and column_name = 'audit_rerun')`,
-  "0015": `select to_regclass('public.gh_install_completions') is not null and to_regclass('public.ci_trial_accounts') is not null
+    // Its last statements re-create gh_link_installation (0013's, grants kept: not distinctive) right after the policy
+    // workspaces_github_app, which only 0014 creates; and execute on that function stays off for anon.
+    last: `${pol("workspaces", "workspaces_github_app")} and case when to_regprocedure('public.gh_link_installation(bigint,uuid,uuid)') is not null
+                   and exists (select 1 from pg_roles where rolname = 'fenvix_github_app') and exists (select 1 from pg_roles where rolname = 'anon')
+             then has_function_privilege('fenvix_github_app', 'public.gh_link_installation(bigint,uuid,uuid)', 'execute')
+                  and not has_function_privilege('anon', 'public.gh_link_installation(bigint,uuid,uuid)', 'execute')
+             else false end`,
+  },
+  "0015": {
+    first: `to_regclass('public.gh_install_completions') is not null and to_regclass('public.ci_trial_accounts') is not null
              and to_regprocedure('public.api_complete_github_link(text)') is not null`,
-  "0016": `select exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'ci_explorations' and column_name = 'received_at')
-             and to_regclass('public.gh_run_summaries_received') is not null`,
-  "0017": `select to_regclass('public.gh_warmups') is not null
+    // 0014 created this policy already; 0015's last statement re-creates it on api_owner_workspace() (new in 0015).
+    last: `exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'workspace_invites' and policyname = 'workspace_invites_api_revoke' and qual like '%api_owner_workspace()%')`,
+  },
+  "0016": {
+    first: `exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'ci_explorations' and column_name = 'received_at')`,
+    last: `to_regclass('public.gh_run_summaries_received') is not null`,
+  },
+  "0017": {
+    first: `to_regclass('public.gh_warmups') is not null
              and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'gh_repositories' and column_name = 'cache_warm_sha')`,
+    last: `${rls("gh_warmups")} and ${pol("gh_warmups", "gh_warmups_api_read")}`,
+  },
 };
 /** The first migration with a probe: a database without it is either empty or not one of ours. */
 const FIRST_PROBED = "0011";
 
 /**
- * What the database already has, from the probes: the highest probed migration found, every probed one below it found
- * too (anything else is a half-applied database, which a person must look at), or null for an empty database.
+ * What the database already has, from the probes: the highest probed migration found (all of it), every probed one
+ * below it found too, none half-applied (anything else is a database a person must look at), or null for an empty
+ * database.
  */
 export async function detectApplied(client, migrations) {
   const results = {};
-  for (const v of Object.keys(PROBES).sort()) results[v] = (await client.query(`${PROBES[v]} as ok`)).rows[0].ok === true;
+  const half = [];
+  for (const v of Object.keys(PROBES).sort()) {
+    const { rows } = await client.query(`select (${PROBES[v].first}) as first, (${PROBES[v].last}) as last`);
+    const first = rows[0].first === true, last = rows[0].last === true;
+    if (first && !last) half.push(v);
+    results[v] = first && last;
+  }
+  if (half.length) {
+    throw new Stop(`Migration ${half.join(", ")} looks half-applied: its first objects exist but its last effects do not (it ran only partly). Nothing was changed; a person must look at it (docs/DEPLOY-AWS.md, "When something fails").`);
+  }
   const found = Object.keys(results).filter((v) => results[v]);
   if (!found.length) {
     const { rows } = await client.query(`select count(*)::int as n from pg_tables where schemaname = 'public'`);

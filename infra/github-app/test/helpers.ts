@@ -12,7 +12,7 @@ export const CACHE_KEY = generateKeyPairSync("rsa", { modulusLength: 2048 });
 
 /** cdk.json's context plus the settings the founder fills in (sample values, no secret). */
 export const SAMPLE: Record<string, string> = {
-  githubAppId: "123456", githubAppSlug: "fenvix", githubClientId: "Iv1.example", dashboardUrl: "https://app.fenvix.dev",
+  githubAppId: "123456", githubAppSlug: "fenvix", githubClientId: "Iv1.example", dashboardUrl: "https://console.fenvix.dev",
   supabaseUrl: "https://example.supabase.co", demoRepository: "Mircoguidetti/fenvix-demo",
   cacheSigningPublicKey: CACHE_KEY.publicKey.export({ type: "spki", format: "der" }).toString("base64"),
 };
