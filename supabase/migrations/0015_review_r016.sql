@@ -92,4 +92,10 @@ begin
   end if;
 end $$;
 
+-- ================================================================ F4: the run's mode is the App's
+
+alter table public.gh_jobs add column if not exists mode text;
+alter table public.gh_jobs drop constraint if exists gh_jobs_mode_check;
+alter table public.gh_jobs add constraint gh_jobs_mode_check check (mode is null or mode in ('enforce', 'shadow'));
+
 notify pgrst, 'reload schema';

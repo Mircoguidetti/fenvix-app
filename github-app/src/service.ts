@@ -52,6 +52,8 @@ interface JobRow {
   head_sha: string; head_branch: string | null; labels: string[]; runner_name: string | null; status: string; conclusion: string | null;
   created_at: Date | null; started_at: Date | null; completed_at: Date | null; check_run_id: number | null; ci_run_id: string | null;
   published_at: Date | null; publish_attempts: number; region: Region | null;
+  /** The run mode the App chose when the job started (its organization's: shadow during the trial), never the job's. */
+  mode: RunMode | null;
 }
 /** The workflow run of a job (GET /repos/{o}/{r}/actions/runs/{id}), the parts the App reads. */
 interface WorkflowRunP {
@@ -411,18 +413,19 @@ export class GitHubService {
     const run = await this.workflowRun(this.gh.installation(job.installation_id), repoPath(repo.full_name), job.run_id);
     const pr = await this.pullRequestOf(job, run);
     const created = await this.db.tx(ws, async (c) => {
-      const lock = (await c.query<{ ci_run_id: string | null; published_at: Date | null; region: Region | null }>(
-        "select ci_run_id, published_at, region from gh_jobs where job_id = $1 for update", [jobId])).rows[0];
+      const lock = (await c.query<{ ci_run_id: string | null; published_at: Date | null; region: Region | null; mode: RunMode | null }>(
+        "select ci_run_id, published_at, region, mode from gh_jobs where job_id = $1 for update", [jobId])).rows[0];
       if (!lock || lock.ci_run_id || lock.published_at) return null;
       const projectId = await this.syncProject(c, repo, null);
       if (!projectId) return null;
       await c.query("select 1 from ci_projects where id = $1 for update", [projectId]);
-      const org = await this.orgContext(c);
+      // The mode the machine was started with (launchRunner), else the organization's now; recorded on the job.
+      const mode = lock.mode ?? (await this.orgContext(c)).mode;
       const id = await this.insertRun(c, projectId, job, null, run, pr?.number ?? null, {
-        startedAt: job.started_at ?? new Date(), completedAt: null, durationMs: 0, otherStepMinutes: 0, mode: org.mode, region: lock.region,
+        startedAt: job.started_at ?? new Date(), completedAt: null, durationMs: 0, otherStepMinutes: 0, mode, region: lock.region,
       });
-      await c.query("update gh_jobs set ci_run_id = $2 where job_id = $1", [jobId, id]);
-      return { id, mode: org.mode };
+      await c.query("update gh_jobs set ci_run_id = $2, mode = coalesce(mode, $3) where job_id = $1", [jobId, id, mode]);
+      return { id, mode };
     });
     if (created) this.log.info({ job: jobId, repository: repo.full_name, run: created.id, mode: created.mode }, "run started");
   }
@@ -443,7 +446,8 @@ export class GitHubService {
     }
     // The machine runs in the organization's region, or not at all: an EU organization's job never runs in the US.
     const org = await this.db.tx(inst.workspace_id, (c) => this.orgContext(c));
-    await this.db.q("update gh_jobs set region = $2 where job_id = $1", [jobId, org.region]);
+    // The mode the machine gets (FENVIX_MODE) is the run's mode, whatever the job later reports (review R-016 F4).
+    await this.db.q("update gh_jobs set region = $2, mode = $3 where job_id = $1", [jobId, org.region, org.mode]);
     if (this.launcher!.canPlace && !this.launcher!.canPlace(org.region)) {
       this.log.error({ job: jobId, installation: installationId, region: org.region }, "no runner machine: no placement for the organization's region (the job stays queued; GitHub times it out)");
       return;
@@ -592,11 +596,11 @@ export class GitHubService {
     try {
       const out = await this.db.tx(ws, async (c) => {
         // One application at a time per run (chunks arriving together).
-        const run = (await c.query<{ id: string; project_id: string; seen_at: Date; language: string }>(
-          `select r.id, r.project_id, coalesce(r.finished_at, r.started_at) as seen_at, p.language
+        const run = (await c.query<{ id: string; project_id: string; seen_at: Date; language: string; duration_ms: number | string | null }>(
+          `select r.id, r.project_id, coalesce(r.finished_at, r.started_at) as seen_at, p.language, r.duration_ms
            from ci_runs r join ci_projects p on p.id = r.project_id where r.id = $1 for update of r`, [ciRunId])).rows[0];
         if (!run) return null;
-        const res = await applyChunks(c, { id: run.id, projectId: run.project_id, language: run.language, seenAt: run.seen_at }, key, chunks);
+        const res = await applyChunks(c, { id: run.id, projectId: run.project_id, language: run.language, seenAt: run.seen_at, maxTestMs: run.duration_ms === null ? null : Number(run.duration_ms) }, key, chunks);
         if (res.applied.length) await c.query("update gh_run_results set applied_at = now(), apply_error = null where id = any($1::bigint[])", [res.applied]);
         for (const p of res.pending) await c.query("update gh_run_results set apply_error = $2 where id = $1", [p.id, p.error]);
         return res;
@@ -724,7 +728,7 @@ export class GitHubService {
       if (ws) {
         planId = (await c.query<{ plan_id: string }>("select plan_id from ci_subscriptions where workspace_id = $1", [ws])).rows[0]?.plan_id ?? null;
         // The run row started at in_progress (startRun), if any: this job's row, locked so that it is finished once.
-        const lock = (await c.query<{ ci_run_id: string | null; region: Region | null }>("select ci_run_id, region from gh_jobs where job_id = $1 for update", [job.job_id])).rows[0];
+        const lock = (await c.query<{ ci_run_id: string | null; region: Region | null; mode: RunMode | null }>("select ci_run_id, region, mode from gh_jobs where job_id = $1 for update", [job.job_id])).rows[0];
         const started = lock?.ci_run_id
           ? (await c.query<{ id: string; project_id: string }>("select id, project_id from ci_runs where id = $1", [lock.ci_run_id])).rows[0] ?? null
           : null;
@@ -732,7 +736,11 @@ export class GitHubService {
         if (projectId) {
           const proj = (await c.query<{ comment_on_pull_requests: boolean }>("select comment_on_pull_requests from ci_projects where id = $1 for update", [projectId])).rows[0]!;
           commentsOn = proj.comment_on_pull_requests;
-          const values: RunValues = { startedAt, completedAt, durationMs, otherStepMinutes, mode: "enforce", region: lock?.region ?? null };
+          // The run's mode: the one the App chose when the job started (gh_jobs.mode), else the organization's now.
+          // Never summary.json's or the results' (review R-016 F4).
+          const mode = lock?.mode ?? (await this.orgContext(c)).mode;
+          if (!lock?.mode) await c.query("update gh_jobs set mode = $2 where job_id = $1 and mode is null", [job.job_id, mode]);
+          const values: RunValues = { startedAt, completedAt, durationMs, otherStepMinutes, mode, region: lock?.region ?? null };
           if (started && billable) {
             await this.finishRun(c, started.id, job, summary, run, pr?.number ?? null, values);
             ciRunId = started.id;
@@ -744,8 +752,7 @@ export class GitHubService {
           } else if (billable) {
             // No run row yet (the job's start was not seen, or the project appeared only now): one row, finished.
             // A job that never ran on our machine (not billable) gets no run row: rows and billable usage events agree.
-            const org = await this.orgContext(c);
-            ciRunId = await this.insertRun(c, projectId, job, summary, run, pr?.number ?? null, { ...values, mode: summary?.mode ?? org.mode });
+            ciRunId = await this.insertRun(c, projectId, job, summary, run, pr?.number ?? null, values);
           }
           if (summary) await c.query("update ci_projects set setup_state = 'active' where id = $1", [projectId]);
         }
@@ -834,15 +841,15 @@ export class GitHubService {
 
   /** The row started at in_progress gets the finished values (the same row: a job is one run). */
   private async finishRun(c: Client, id: string, job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, v: RunValues): Promise<void> {
-    const f = this.runFields(job, s, run, pr);
+    const f = this.runFields(job, s, run, pr, v.durationMs);
     await c.query(
       `update ci_runs set commit_message = case when $2 <> '' then $2 else commit_message end, pull_request = coalesce($3, pull_request), trigger = $4,
          status = $5, started_at = $6, finished_at = $7, duration_ms = $8, tests_total = $9, tests_ran = $10, tests_passed = $11, tests_failed = $12,
          tests_skipped = $13, tests_flaky_defects = $14, test_time_ran_ms = $15, test_time_skipped_ms = $16, other_step_minutes = round($17::numeric, 2),
-         engine_version = $18, skip_misses = $19, mode = coalesce($20, mode)
+         engine_version = $18, skip_misses = $19, mode = $20
        where id = $1`,
       [id, f.commitMessage, pr, f.trigger, f.status, v.startedAt, v.completedAt, v.durationMs, ...f.tests, f.timeRanMs, f.timeSkippedMs, v.otherStepMinutes,
-        s?.engineVersion ?? "", JSON.stringify(s?.notReusedReasons ?? {}), s?.mode ?? null]);
+        s?.engineVersion ?? "", JSON.stringify(s?.notReusedReasons ?? {}), v.mode]);
   }
 
   /** One fenvix comment per pull request: updated in place; found again by its marker if our record of it is lost. */
