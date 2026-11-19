@@ -187,12 +187,12 @@ does make them worse until those fixes land.
 | Command | Result |
 | --- | --- |
 | `cd github-app && npm test` (local Postgres 16 on :54329; local Supabase in Docker from `scripts/local-supabase/up.sh`) | typecheck clean; unit **127/127**; integration **141/141**, 0 skipped (before the review file was added) |
-| `review-r018.test.ts` | **2/2 fail** as intended (F1: the removed commit gets a machine; F2: `covered` instead of `dispatched`) |
+| `review-r018.test.ts` | **2/2 fail** as intended (F1: the removed commit gets a machine; F2: `covered` instead of `dispatched`). With it, `npm run test:integration` is 143 tests: 141 pass, 2 fail (these two) |
 | `npm run test:rls` (fresh scratch database) | API, CI, CI EXPLORE, GH and **WARM RLS OK** |
 | `cd infra/github-app && npm test` | **69/69**; cdk-nag clean, including the warm-up function |
 | `npm run build` | passes |
 | `npm run api:lint` | valid |
 | `npm run test:unit` (dashboard) | **66/66** |
-| `npm run check` | see below |
-| `node scripts/e2e-real-api.mjs` | see below |
-| Secret scan (private keys, AWS keys) | see below |
+| `npm run check` | checks 34/34, organizations 10/10, status colours 18/18, layout checks pass, 140 screenshots |
+| `node scripts/e2e-real-api.mjs` | **163/163** (the screenshots it rewrites were not committed) |
+| Secret scan (private keys, AWS keys) | nothing found |
