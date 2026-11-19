@@ -678,13 +678,39 @@ export interface paths {
         put?: never;
         /**
          * @description Where to send the browser to install the fenvix GitHub App for this organization. The link carries a signed
-         *     state (organization, person, one hour). After the installation GitHub sends the browser to the service's
-         *     /github/setup, which links the installation and redirects to the dashboard's
-         *     `/projects/connect?github=connected&installation=<id>&account=<login>` (or `?github=error&reason=<reason>`,
-         *     reasons expired, incomplete, oauth, not_yours, not_admin, other_organization, github, error; or
-         *     `?github=requested` when an organization owner on GitHub must approve the request first).
+         *     state (organization, person, one hour, usable once). After the installation GitHub sends the browser to the
+         *     service's /github/setup, which checks the state, the GitHub user's OAuth code, that this GitHub user sees the
+         *     installation and administers its account (the account itself, or an active admin of the GitHub organization),
+         *     and redirects to the dashboard's `/projects/connect?github=confirm&installation=<id>&account=<login>#completion=<code>`.
+         *     It does not link: the dashboard completes the link with completeGitHubInstall, as the signed-in person, who must
+         *     be the person the state names. Other answers: `?github=error&reason=<reason>` (reasons expired, incomplete,
+         *     oauth, not_yours, github_not_admin, not_admin, other_organization, removed, used, github, error), or
+         *     `?github=requested` when an organization owner on GitHub must approve the request first.
          */
         post: operations["createInstallLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/github/installations/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Links the GitHub installation of a completed install link to the organization that asked for it
+         * @description The last step of connecting GitHub. `completion` is the one-time code /github/setup put after `#` in its redirect
+         *     (valid 10 minutes, usable once). The installation is linked to the organization named by the install link, only
+         *     if the signed-in person is the one who asked for that link and is still an owner or admin there. Every refusal of
+         *     the code itself (unknown, used, expired, another person's) is the same 404, so a code cannot be probed.
+         */
+        post: operations["completeGitHubInstall"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2720,6 +2746,39 @@ export interface operations {
                     "application/json": {
                         /** Format: uri */
                         url: string;
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    completeGitHubInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    completion: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Linked (or already linked to this organization) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        organizationId: string;
+                        installationId: number;
+                        /** @description The GitHub account's login */
+                        account: string;
                     };
                 };
             };

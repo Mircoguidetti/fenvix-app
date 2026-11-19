@@ -1159,8 +1159,13 @@ export const mockClient: DataClient & { liveCalls(): number } = {
       /* memory only */
     }
     applyInstall(s, added);
-    // Stands in for GitHub: the App's setup step links the installation and sends the browser back here.
-    return wait(`${window.location.origin}/projects/connect?github=connected&installation=${added.installationId}&account=${encodeURIComponent(added.account)}`);
+    // Stands in for GitHub and the App's setup step, which sends the browser back here to complete the link.
+    return wait(`${window.location.origin}/projects/connect?github=confirm&installation=${added.installationId}&account=${encodeURIComponent(added.account)}#completion=mock-${added.installationId}`);
+  },
+  async completeGitHubInstall(completion) {
+    const added = addedInstalls().find((a) => `mock-${a.installationId}` === completion);
+    if (!added) throw mockError("not_found", 404, "This GitHub connection link is not valid for your account: it was started by another fenvix account, has already been used, or has expired. Nothing was connected. Ask for a new link from the Connect page of your own organization.");
+    return wait({ organizationId: added.org, installationId: added.installationId, account: added.account });
   },
   async openSetupPullRequest(repositoryId) {
     assertMockCanManage();

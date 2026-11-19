@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The database's own tests against a SCRATCH Postgres (15 or newer): the Supabase stand-ins, the migrations 0001 to 0013
-# once, then 0014 twice (it must be safe to repeat; 0001 to 0013 are not any more once 0014 has removed the earlier
+# once, then 0014 and 0015 twice each (they must be safe to repeat; 0001 to 0013 are not any more once 0014 has removed the earlier
 # product, which is expected), then the row level security tests:
 #   api-rls.sql         the dashboard API's role fenvix_api: members read their organization only, owners and admins
 #                       change settings, region, project settings, members and invitations; the browser's roles (anon,
@@ -38,13 +38,15 @@ check() {  # file, the line a clean run prints
 }
 
 echo "1/3 local stand-ins for Supabase"; psql_run -f supabase/tests/local-stub.sql >/dev/null
-echo "2/3 migrations: 0001 to 0013 once, then 0014 twice"
+echo "2/3 migrations: 0001 to 0013 once, then 0014 and 0015 twice each"
 for f in 0001_init 0002_control_plane 0003_close_dashboard_write_path 0004_data_explorer 0005_engine_users 0007_database_users \
          0008_organizations 0009_ip_allowlist 0010_public_api_keys 0011_ci_runs 0012_ci_explorations 0013_github_app; do
   migrate "$f"
 done
 migrate 0014_dashboard_api
 migrate 0014_dashboard_api
+migrate 0015_review_r016
+migrate 0015_review_r016
 echo "3/3 row level security"
 check api-rls.sql "API RLS OK"
 check ci-rls.sql "CI RLS OK"

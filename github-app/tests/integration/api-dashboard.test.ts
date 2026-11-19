@@ -2,6 +2,7 @@
 // with the migrations, the API connected as fenvix_api. Every 2xx answer is validated against its response schema in
 // openapi/fenvix-api.yaml (tests/api/helpers.ts `call`), every error against the contract's Error.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import pg from "pg";
 import { verifyState } from "../../src/auth.ts";
@@ -312,7 +313,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     assert.equal((await admin.query("select skip_with_proof from ci_projects where id = $1", [B.projects.shop])).rows[0].skip_with_proof, true, "unchanged");
     const pr = await call(api, "openSetupPullRequest", { ...o, params: { repositoryId: B.repoIds.shop } });
     assert.equal(pr.status, 404);
-    assert.equal(queue.sent.filter((w) => w.repositoryId === B.repoIds.shop).length, 0);
+    assert.equal(queue.sent.filter((w) => w.kind === "onboard" && w.repositoryId === B.repoIds.shop).length, 0);
     // A person of organization B, naming organization A: 404 on every operation that takes the header.
     for (const op of dashboardOperations().filter((x) => x.workspace && x.method === "GET" && !x.route.includes(":"))) {
       const r = await call(api, op.operationId, { token: ownerB.token, ws: ownerA.workspaceId });
@@ -388,7 +389,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       assert.equal((await admin.query("select role from workspace_members where workspace_id = $1 and user_id = $2", [ws, targets[0]!.userId])).rows[0].role, "admin");
       const left = (await admin.query("select user_id from workspace_members where workspace_id = $1", [ws])).rows.map((r) => r.user_id);
       assert.ok(!left.includes(targets[1]!.userId) && !left.includes(targets[2]!.userId) && left.includes(targets[3]!.userId));
-      assert.equal(queue.sent.filter((x) => x.repositoryId === repositoryId).length, 2);
+      assert.equal(queue.sent.filter((x) => x.kind === "onboard" && x.repositoryId === repositoryId).length, 2);
       assert.deepEqual(queue.sent.at(-1), { kind: "onboard", repositoryId });
     });
 
@@ -529,10 +530,55 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     assert.match(String(other.headers.vary), /Origin/);
   });
 
+  it("completing a GitHub link (review R-016 F2): only the person the install link names; once; not after it expired; owner or admin only", async () => {
+    const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
+    // An installation GitHub told us about, linked to no organization yet (as after GitHub's own Install button).
+    const installationId = githubId();
+    const login = `globex-${installationId}`;
+    await admin.query(`insert into public.gh_installations (installation_id, account_id, account_login, account_type, repository_selection)
+                       values ($1, $2, $3, 'Organization', 'selected')`, [installationId, githubId(), login]);
+    // What /github/setup stores once GitHub confirmed the GitHub user administers the account: one completion per
+    // install-link state, for the fenvix person that state names.
+    // The local Supabase keeps rows between runs: codes unique to this run.
+    const C = (name: string) => `${name}-${installationId}`;
+    const completion = async (who: Person, code: string, expires = "10 minutes") => admin.query(
+      `insert into public.gh_install_completions (code_hash, state_hash, installation_id, workspace_id, user_id, github_user_id, github_login, created_at, expires_at)
+       values ($1, $2, $3, $4, $5, 1, 'gh-admin', now() - interval '1 hour', now() + $6::interval)`,
+      [sha256(code), sha256(`state-${code}`), installationId, ownerA.workspaceId, who.userId, expires]);
+    const linkedTo = async () => (await admin.query("select workspace_id from public.gh_installations where installation_id = $1", [installationId])).rows[0].workspace_id;
+    await completion(ownerA, C("code-of-ada"));
+    await completion(ownerA, C("code-expired"), "-1 minute");
+    await completion(memberA, C("code-of-mia"));
+
+    // Another person (the owner of another organization, an admin of this one) presenting ownerA's code: the same 404.
+    const stolen = await call(api, "completeGitHubInstall", { token: ownerB.token, body: { completion: C("code-of-ada") } });
+    const byAdmin = await call(api, "completeGitHubInstall", { token: adminA.token, body: { completion: C("code-of-ada") } });
+    const unknown = await call(api, "completeGitHubInstall", { token: ownerA.token, body: { completion: C("no-such-code") } });
+    const expired = await call(api, "completeGitHubInstall", { token: ownerA.token, body: { completion: C("code-expired") } });
+    for (const r of [stolen, byAdmin, unknown, expired]) assert.equal(r.status, 404);
+    assert.deepEqual(stolen.body, unknown.body, "one answer for every refusal of the code");
+    assert.deepEqual(expired.body, unknown.body);
+    // A member's own completion (they asked for the link while an admin, then lost the role): 403.
+    assert.equal((await call(api, "completeGitHubInstall", { token: memberA.token, body: { completion: C("code-of-mia") } })).status, 403);
+    assert.equal(await linkedTo(), null);
+    assert.equal((await call(api, "completeGitHubInstall", { body: { completion: C("code-of-ada") } })).status, 401);
+    assert.equal((await call(api, "completeGitHubInstall", { token: ownerA.token, body: { completion: "" } })).status, 400);
+
+    // The person the link names: linked; the worker gets the installation's projects to sync, after the commit.
+    const sentBefore = queue.sent.length;
+    const ok = await call(api, "completeGitHubInstall", { token: ownerA.token, body: { completion: C("code-of-ada") } });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(ok.body, { organizationId: ownerA.workspaceId, installationId, account: login });
+    assert.equal(await linkedTo(), ownerA.workspaceId);
+    assert.deepEqual(queue.sent.slice(sentBefore), [{ kind: "installation_linked", installationId }]);
+    // Once only.
+    assert.equal((await call(api, "completeGitHubInstall", { token: ownerA.token, body: { completion: C("code-of-ada") } })).status, 404);
+  });
+
   it("every dashboard operation of the contract was called and answered as the contract says", () => {
     const all = dashboardOperations().map((o) => o.operationId).sort();
     assert.deepEqual(all.filter((x) => !covered.has(x)), []);
-    assert.equal(all.length, 41);
+    assert.equal(all.length, 42);
     void NOW;
   });
 });

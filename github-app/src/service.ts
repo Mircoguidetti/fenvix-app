@@ -3,7 +3,7 @@ import { GitHubError, type GitHubApp, type GitHubHttp, repoPath } from "./github
 import { onboardRepository, type OnboardingResult } from "./onboarding/onboard.ts";
 import { CHECK_NAME, COMMENT_MARKER, checkRunOutput, conclusionOf, prComment, type RenderContext } from "./results/render.ts";
 import { parseSummary, type RunSummary } from "./results/summary.ts";
-import type { KeyObject } from "node:crypto";
+import { createHash, randomBytes, type KeyObject } from "node:crypto";
 import { applyChunks, applyExploration, type JobKey } from "./results/apply.ts";
 import { projectStack, type Stack } from "./results/detect.ts";
 import { parseResults, progressRecord, type RunnerExploration, type RunnerProgress, type RunnerResults } from "./results/runner-records.ts";
@@ -67,6 +67,8 @@ interface RepoRow {
   project_id: string | null; onboarding_state: string; setup_pr_number: number | null; setup_pr_url: string | null;
   detected_language: string | null; detected_test_runner: string | null;
 }
+
+const sha256Hex = (v: string) => createHash("sha256").update(v).digest("hex");
 
 const STATUS_RANK: Record<string, number> = { queued: 1, waiting: 1, in_progress: 2, completed: 3 };
 const TRIGGERS = new Set(["push", "pull_request", "merge_group", "schedule", "workflow_dispatch"]);
@@ -851,6 +853,30 @@ export class GitHubService {
 
   // ---------------------------------------------------------------- linking (called after the setup callback checks)
 
+  /**
+   * /github/setup, once GitHub confirmed that the GitHub user sees and administers the installation (review R-016):
+   * a single-use completion for the fenvix person the state names, valid 10 minutes. Returns its one-time code (only
+   * its hash is stored), or why not: the person is not an owner or admin of the organization (not_admin), the
+   * installation is another organization's (other_organization) or was removed (removed), the state was used (used).
+   */
+  async prepareLink(o: { installationId: number; workspaceId: string; userId: string; stateHash: string; githubUserId: number; githubLogin: string }):
+    Promise<{ refused: null; code: string; account: string } | { refused: string; code?: undefined; account?: undefined }> {
+    await this.ensureInstallation(o.installationId);
+    if (!(await this.isAdmin(o.workspaceId, o.userId))) return { refused: "not_admin" };
+    const [inst] = await this.db.q<{ workspace_id: string | null; account_login: string; deleted_at: Date | null }>(
+      "select workspace_id, account_login, deleted_at from gh_installations where installation_id = $1", [o.installationId]);
+    if (!inst || inst.deleted_at) return { refused: "removed" };
+    if (inst.workspace_id && inst.workspace_id !== o.workspaceId) return { refused: "other_organization" };
+    const code = randomBytes(32).toString("base64url");
+    const stored = await this.db.q(
+      `insert into gh_install_completions (code_hash, state_hash, installation_id, workspace_id, user_id, github_user_id, github_login, expires_at)
+       values ($1, $2, $3, $4, $5, $6, $7, now() + interval '10 minutes') on conflict (state_hash) do nothing returning id`,
+      [sha256Hex(code), o.stateHash, o.installationId, o.workspaceId, o.userId, o.githubUserId, o.githubLogin.slice(0, 100)]);
+    if (!stored.length) return { refused: "used" };
+    return { refused: null, code, account: inst.account_login };
+  }
+
+  /** Tests and the worker (work kind "installation_linked"): links as the given person, then syncs the projects. */
   async linkInstallation(installationId: number, workspaceId: string, userId: string): Promise<string> {
     await this.ensureInstallation(installationId);
     const r = await this.db.q<{ login: string }>("select public.gh_link_installation($1, $2, $3) as login", [installationId, workspaceId, userId]);

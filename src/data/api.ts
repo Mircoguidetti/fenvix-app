@@ -150,6 +150,9 @@ export function createApiDataClient(cfg: ApiConfig): DataClient {
     getGitHubConnection: () => call(api.GET("/github", { params: { header: ws() } })),
     listGitHubRepositories: async () => (await call(api.GET("/github/repositories", { params: { header: ws() } }))).items,
     createInstallLink: async () => (await call(api.POST("/github/install-link", { params: { header: ws() } }))).url,
+    // No organization header: the completion names its organization (the install link's), and the API links only for
+    // the person that link was made for.
+    completeGitHubInstall: (completion) => call(api.POST("/github/installations/complete", { body: { completion } })),
     openSetupPullRequest: (repositoryId) => call(api.POST("/github/repositories/{repositoryId}/setup-pull-request", { params: { header: ws(), path: { repositoryId } } })),
 
     getSettings: () => call(api.GET("/settings", { params: { header: ws() } })),

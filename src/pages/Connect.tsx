@@ -7,6 +7,7 @@ import { InstallationStatusPill, OnboardingPill } from "../components/StateBadge
 import { useToast } from "../components/Toast";
 import { useAsync } from "../lib/useAsync";
 import { useOrg } from "../session/OrgProvider";
+import { activeOrgId, setActiveOrgId } from "../lib/org";
 import { formatDate } from "../lib/format";
 import { languageLabel } from "./Projects";
 
@@ -49,7 +50,10 @@ export const INSTALL_ERRORS: Record<string, string> = {
   incomplete: "GitHub did not finish the installation. Start again, and choose the repositories on GitHub's page.",
   oauth: "GitHub could not confirm who you are. Start again, and approve fenvix when GitHub asks.",
   not_yours: "That install link was made for someone else. Start again from this page, signed in as yourself.",
+  github_not_admin: "Only an admin of the GitHub account can connect its installation: the account itself, or an owner of the GitHub organization. Nothing was connected. Ask one of them to install fenvix from this page.",
   not_admin: "Only an owner or admin of this organization can link a GitHub installation to it.",
+  used: "That install link was already used. Start again with Install the GitHub App.",
+  removed: "That GitHub installation was removed on GitHub. Install the GitHub App again.",
   other_organization: "That GitHub installation is already linked to another fenvix organization. Remove it there first, or install fenvix on another GitHub account.",
   github: "GitHub did not answer while the installation was being linked. Try again in a few minutes.",
   error: "Something went wrong while the installation was being linked. Try again.",
@@ -166,6 +170,10 @@ function InstallationBlock({ installation, repos, queued, onOpen, highlight }: {
  * Onboarding with the fenvix GitHub App: install it on a GitHub account (the API makes the link; GitHub sends the
  * browser back here with ?github=…), then the setup pull request of each repository moves its test job to
  * runs-on: fenvix. An organization can link several installations.
+ *
+ * GitHub's return with ?github=confirm#completion=<code>: the App checked the GitHub side; the link is completed here,
+ * through the API with the signed-in person's own session, and only if this person asked for the install link
+ * (review R-016 F2). The code leaves the address bar at once.
  */
 export function ConnectPage() {
   const org = useOrg();
@@ -180,6 +188,35 @@ export function ConnectPage() {
   const [queued, setQueued] = useState<Set<number>>(new Set());
   const polls = useRef(0);
   const timer = useRef<number | undefined>(undefined);
+  const [completing, setCompleting] = useState(false);
+  const [completeError, setCompleteError] = useState<string | null>(null);
+  const completed = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (github !== "confirm") return;
+    const completion = new URLSearchParams(window.location.hash.slice(1)).get("completion");
+    if (!completion) {
+      if (!completed.current) navigate("/projects/connect?github=error&reason=incomplete", { replace: true });
+      return;
+    }
+    if (completed.current === completion) return;
+    completed.current = completion;
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}`);
+    setCompleting(true);
+    setCompleteError(null);
+    client.completeGitHubInstall(completion).then(
+      (r) => {
+        if (r.organizationId !== activeOrgId()) setActiveOrgId(r.organizationId);
+        navigate(`/projects/connect?github=connected&installation=${r.installationId}&account=${encodeURIComponent(r.account)}`, { replace: true });
+        connection.reload();
+        repos.reload();
+      },
+      (e: unknown) => {
+        setCompleteError(e instanceof Error ? e.message : "The installation could not be linked. Try again.");
+        navigate("/projects/connect", { replace: true });
+      },
+    ).finally(() => setCompleting(false));
+  }, [github]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // After a pull request is queued, ask for the repositories a few times until the App has done it.
   useEffect(() => {
@@ -245,6 +282,17 @@ export function ConnectPage() {
       <PageHeader back={<Kicker>Projects</Kicker>} title="Connect a project" description="Install the fenvix GitHub App, then let it open one pull request per repository. Nothing changes in a repository until you merge that pull request." />
       {!org.canManage && <Message tone="warning">Only an owner or admin can connect repositories.</Message>}
 
+      {(github === "confirm" || completing) && (
+        <Message role="status">Connecting the GitHub installation{params.get("account") ? ` on ${params.get("account")}` : ""}…</Message>
+      )}
+      {completeError && (
+        <div className="install-error">
+          <Message role="alert">{completeError}</Message>
+          <button type="button" className="btn btn-sm" onClick={() => setCompleteError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {github === "connected" && (
         <div className="callout callout-success" role="status">
           <p className="callout-row">

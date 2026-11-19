@@ -21,11 +21,13 @@ export type Work =
     summary: Record<string, unknown>;
   }
   /** POST /v1/runner/results: one chunk of a job's per-test results (checked against RunnerResults). */
-  | { kind: "results"; repositoryId: number; runId: number; runAttempt: number; runnerName: string; results: RunnerResults }
+  | { kind: "results"; repositoryId: number; runId: number; runAttempt: number; runnerName: string; results: RunnerResults; attemptBound?: boolean }
   /** POST /v1/runner/explorations: one night of exploration of the repository (checked against RunnerExploration). */
   | { kind: "exploration"; repositoryId: number; runnerName: string; exploration: RunnerExploration }
   /** The dashboard asked for the setup pull request of one repository (by GitHub's repository id). */
-  | { kind: "onboard"; repositoryId: number };
+  | { kind: "onboard"; repositoryId: number }
+  /** The dashboard API linked an installation (POST /v1/github/installations/complete): its repositories get projects. */
+  | { kind: "installation_linked"; installationId: number };
 
 export interface WorkQueue {
   /** Resolves once the work is accepted (queued durably, or started in this process). Rejects if it was not. */
@@ -39,6 +41,7 @@ export function describeWork(w: Work): string {
     case "results": return `results ${w.repositoryId}/${w.runId}/${w.runAttempt} chunk ${w.results.chunk}`;
     case "exploration": return `exploration ${w.repositoryId} ${w.exploration.startedAt}`;
     case "onboard": return `onboard ${w.repositoryId}`;
+    case "installation_linked": return `installation_linked ${w.installationId}`;
   }
 }
 
@@ -65,6 +68,11 @@ export async function runWork(service: GitHubService, w: Work): Promise<void> {
     await service.onboard(w.repositoryId);
     return;
   }
+  if (w.kind === "installation_linked") {
+    // Only repositories already linked to an organization get projects: a forged message changes nothing else.
+    await service.syncInstallation(w.installationId);
+    return;
+  }
   throw new Error(`unknown work kind ${(w as { kind?: unknown }).kind}`);
 }
 
@@ -86,13 +94,14 @@ export function parseWork(v: unknown): Work {
   if (o?.kind === "results" && posInt(o.repositoryId) && posInt(o.runId) && posInt(o.runAttempt) && typeof o.runnerName === "string" && isObj(o.results)) {
     return {
       kind: "results", repositoryId: o.repositoryId as number, runId: o.runId as number, runAttempt: o.runAttempt as number,
-      runnerName: o.runnerName, results: parseResults(o.results),
+      runnerName: o.runnerName, results: parseResults(o.results), ...(o.attemptBound === true ? { attemptBound: true } : {}),
     };
   }
   if (o?.kind === "exploration" && posInt(o.repositoryId) && typeof o.runnerName === "string" && isObj(o.exploration)) {
     return { kind: "exploration", repositoryId: o.repositoryId as number, runnerName: o.runnerName, exploration: parseExploration(o.exploration) };
   }
   if (o?.kind === "onboard" && posInt(o.repositoryId)) return { kind: "onboard", repositoryId: o.repositoryId as number };
+  if (o?.kind === "installation_linked" && posInt(o.installationId)) return { kind: "installation_linked", installationId: o.installationId as number };
   throw new Error("not a work message");
 }
 

@@ -13,7 +13,7 @@ import { after, before, describe, it } from "node:test";
 import type pg from "pg";
 import { signState } from "../../src/auth.ts";
 import { checkWebhook } from "../helpers/schemas.ts";
-import { ACCOUNT, CI_YAML, DASHBOARD, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, push, REPOS, resetDb, workflowJob } from "../helpers/harness.ts";
+import { ACCOUNT, CI_YAML, completeLink, DASHBOARD, githubSetup, githubUser, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, push, REPOS, resetDb, workflowJob } from "../helpers/harness.ts";
 
 const summary = (name: string) => JSON.parse(readFileSync(new URL(`../fixtures/runner/${name}.summary.json`, import.meta.url), "utf8")) as Record<string, unknown>;
 
@@ -60,11 +60,12 @@ describe("recorded end to end: installation → onboarding pull request → work
   });
 
   it("3. GitHub sends the owner back to the setup URL → the installation is the organization's", async () => {
-    h.gh.oauthCodes.set("e2e-code", "gho_e2eowner");
-    h.gh.userInstallations.set("gho_e2eowner", [INSTALLATION_ID]);
+    githubUser(h, { code: "e2e-code", token: "gho_e2eowner", login: "e2e-owner", id: 6301, installations: [INSTALLATION_ID], adminOf: [ACCOUNT.login] });
     const state = (h as unknown as { state: string }).state;
-    const r = await h.app.fastify.inject({ method: "GET", url: `/github/setup?${new URLSearchParams({ installation_id: String(INSTALLATION_ID), setup_action: "install", state, code: "e2e-code" })}` });
-    assert.equal(new URL(String(r.headers.location)).searchParams.get("github"), "connected");
+    const r = await githubSetup(h, { installation_id: String(INSTALLATION_ID), setup_action: "install", state, code: "e2e-code" });
+    assert.equal(r.url.searchParams.get("github"), "confirm");
+    // The dashboard completes it as the signed-in owner (review R-016 F2).
+    assert.equal((await completeLink(h, r.completion!, org.userId))?.account, ACCOUNT.login);
     const p = (await admin.query("select setup_state, setup_pr_number from ci_projects")).rows[0];
     assert.deepEqual(p, { setup_state: "pr_open", setup_pr_number: 1 });
   });

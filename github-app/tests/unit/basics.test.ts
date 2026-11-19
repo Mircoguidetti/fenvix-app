@@ -49,8 +49,13 @@ describe("install state", () => {
   it("round-trips and expires after an hour", () => {
     const now = Date.now();
     const st = signState(key, ids, now);
-    assert.deepEqual({ ...verifyState(key, st, now), expiresAt: 0 }, { ...ids, expiresAt: 0 });
+    assert.deepEqual({ ...verifyState(key, st, now), expiresAt: 0, hash: "" }, { ...ids, expiresAt: 0, hash: "" });
     assert.equal(verifyState(key, st, now + 3601_000), null);
+    // Each state has its own hash (its nonce): a state completes one link only (review R-016 F2).
+    const h1 = verifyState(key, st, now)!.hash;
+    assert.match(h1, /^[0-9a-f]{64}$/);
+    assert.equal(verifyState(key, st, now)!.hash, h1);
+    assert.notEqual(verifyState(key, signState(key, ids, now), now)!.hash, h1);
   });
   it("refuses a state signed with another key or changed", () => {
     const st = signState(key, ids);

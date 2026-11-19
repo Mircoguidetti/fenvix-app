@@ -12,8 +12,11 @@ export function allowed(op: { admin: boolean }, role: Role): boolean {
   return !op.admin || mayAdminister(role);
 }
 
-/** The work the API hands to the App's worker (github-app/src/work.ts, kind "onboard"). */
-export interface OnboardWork { kind: "onboard"; repositoryId: number }
+/**
+ * The work the API hands to the App's worker (github-app/src/work.ts): "onboard" (a setup pull request) and
+ * "installation_linked" (an installation was just linked: its repositories get their projects).
+ */
+export type OnboardWork = { kind: "onboard"; repositoryId: number } | { kind: "installation_linked"; installationId: number };
 export interface OnboardQueue { enqueue(work: OnboardWork): Promise<void> }
 
 export interface Org { id: string; name: string; nameConfirmed: boolean; region: "us" | "eu"; emailNotices: boolean }
@@ -33,6 +36,8 @@ export interface Ctx {
   query: Record<string, any>;
   body: any;
   headers: Record<string, string | string[] | undefined>;
+  /** Runs once the request's transaction has committed (never if it rolled back); a failure there is logged only. */
+  afterCommit(fn: () => Promise<void>): void;
 }
 
 /** A response other than 200 with a JSON body. */

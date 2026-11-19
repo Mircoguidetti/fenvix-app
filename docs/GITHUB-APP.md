@@ -203,10 +203,23 @@ GitHub → APP_HOST/github/setup?installation_id&setup_action&code&state
    1. state signature and expiry
    2. code → user token (POST github.com/login/oauth/access_token with the client id and secret)
    3. GET /user/installations with that token must list installation_id
-   4. gh_link_installation(installation, organization, person): owner or admin; not another organization's
-   5. the organization's 30-day shadow trial starts (first link only)
-   → 303 to DASHBOARD_URL/projects/connect?github=connected&installation=<id>&account=<login> (or github=error&reason=...)
+   4. GET /user, GET /app/installations/{id}: the GitHub user administers the installation's account
+      (User account: the same user; Organization: GET /user/memberships/orgs/{org} is role admin, state active)
+      (review R-016 F1: seeing an installation only takes read access to one of its repositories)
+   5. early checks: the person is an owner or admin; the installation is not another organization's
+   6. a single-use completion (gh_install_completions, 10 minutes; the state is consumed)
+   → 303 to DASHBOARD_URL/projects/connect?github=confirm&installation=<id>&account=<login>#completion=<code>
+     (or github=error&reason=...)
+dashboard, signed in → POST /v1/github/installations/complete {completion}        (review R-016 F2)
+   7. api_complete_github_link: the completion is this signed-in person's, unexpired, unused
+   8. gh_link_installation(installation, organization, person): owner or admin; not another organization's
+   9. the 30-day shadow trial starts only for an organization's first installation, and only once per GitHub account
+   → the worker syncs the installation's projects (work kind installation_linked); the dashboard shows
+     ?github=connected&installation=<id>&account=<login>
 ```
+
+The link is completed in the signed-in person's own session, never by the setup redirect: someone who installs the App
+from another person's install link connects nothing to that person's organization.
 
 An organization may link several installations (e.g. two GitHub organizations). Each repository's project records
 the installation it came through; runs, usage events and the plan are the organization's; the trial starts at the first
@@ -281,7 +294,7 @@ is changed; the pull request lists other test-like jobs. Not changed, with the r
 | `POST /v1/runner/progress` | our runners (same credential) | the running job's progress, written at once; `202` |
 | `POST /v1/runner/results` | our runners (same credential) | one chunk of per-test results (queued; large bodies through the queue's overflow bucket); `202` |
 | `POST /v1/runner/explorations` | our runners (same credential) | one night of exploration of the credential's repository (queued); `202` |
-| `GET /github/setup` | the person, sent back by GitHub | links the installation (above), then `303` to `DASHBOARD_URL/projects/connect?github=connected&installation=<id>&account=<login>` (or `github=error&reason=expired\|incomplete\|oauth\|not_yours\|not_admin\|other_organization\|github\|error`, or `github=requested`) |
+| `GET /github/setup` | the person, sent back by GitHub | checks the GitHub side and stores a single-use completion (above), then `303` to `DASHBOARD_URL/projects/connect?github=confirm&installation=<id>&account=<login>#completion=<code>` (or `github=error&reason=expired\|incomplete\|oauth\|not_yours\|github_not_admin\|not_admin\|other_organization\|removed\|used\|github\|error`, or `github=requested`); the dashboard completes the link with `POST /v1/github/installations/complete` |
 
 The install link (`POST /v1/github/install-link`) and the setup pull request of one repository
 (`POST /v1/github/repositories/{repositoryId}/setup-pull-request`) are operations of the dashboard API

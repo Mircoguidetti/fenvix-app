@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { createHash, generateKeyPairSync, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type CryptoKey } from "jose";
 import pg from "pg";
@@ -9,7 +9,7 @@ import { type Config, loadConfig } from "../../src/config.ts";
 import { sign } from "../../src/github/signature.ts";
 import { signSummaryCredential } from "../../src/runners/credentials.ts";
 import type { RunnerLauncher } from "../../src/runners/launcher.ts";
-import type { WorkQueue } from "../../src/work.ts";
+import { runWork, type WorkQueue } from "../../src/work.ts";
 import { FakeGitHub } from "./fake-github.ts";
 import { checkWebhook, recordedWebhook } from "./schemas.ts";
 
@@ -40,7 +40,11 @@ export async function resetDb(): Promise<pg.Client> {
     execFileSync("bash", [fileURLToPath(new URL("../../scripts/prepare-test-db.sh", import.meta.url))], { env: { ...process.env, TEST_DATABASE_URL: ADMIN_URL }, stdio: "inherit" });
     return resetDb();
   }
-  await admin.query(`truncate gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_repositories,
+  // A database prepared before migration 0015 (review R-016): only 0015 is missing.
+  if (!(await admin.query("select to_regclass('public.ci_trial_accounts') as t")).rows[0].t) {
+    execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0015_review_r016.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
+  }
+  await admin.query(`truncate gh_install_completions, ci_trial_accounts, gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_repositories,
     gh_installations, ci_test_results, ci_skip_receipts, ci_audit_reruns, ci_defects, ci_explorations, ci_runs, ci_projects, ci_subscriptions cascade`);
   await admin.query("delete from auth.users where email like '%@gh.fenvix.invalid'");
   await admin.query("delete from public.workspaces w where not exists (select 1 from public.workspace_members m where m.workspace_id = w.id)");
@@ -167,6 +171,48 @@ export function push(sha: string, ref = "refs/heads/feature", pushedAt = 1795424
 }
 
 // ---------------------------------------------------------------- the App, the fake GitHub, a Supabase signer
+
+// ---------------------------------------------------------------- connecting GitHub (review R-016 F1, F2)
+
+/** A GitHub user (OAuth code → token → GET /user) who sees the installations and administers `adminOf` (organization logins). */
+export function githubUser(h: Harness, o: { code: string; token: string; login: string; id: number; installations: number[]; adminOf?: string[] }): void {
+  h.gh.oauthCodes.set(o.code, o.token);
+  h.gh.userInstallations.set(o.token, o.installations);
+  h.gh.users.set(o.token, { login: o.login, id: o.id });
+  for (const org of o.adminOf ?? []) h.gh.orgRoles.set(`${org.toLowerCase()}:${o.login.toLowerCase()}`, "admin");
+}
+
+/** GitHub's return to /github/setup; the redirect and, when the setup asks the dashboard to complete, the one-time code. */
+export async function githubSetup(h: Harness, q: Record<string, string>): Promise<{ status: number; url: URL; completion: string | null }> {
+  const r = await h.app.fastify.inject({ method: "GET", url: `/github/setup?${new URLSearchParams(q)}` });
+  const url = new URL(String(r.headers.location));
+  return { status: r.statusCode, url, completion: new URLSearchParams(url.hash.slice(1)).get("completion") };
+}
+
+/**
+ * What the dashboard does with the code (POST /v1/github/installations/complete): the API's database function, as
+ * fenvix_api for the signed-in person; then the worker's "installation_linked" work. Null when the database refused.
+ */
+export async function completeLink(h: Harness, completion: string, userId: string): Promise<{ workspace_id: string; installation_id: number; account: string } | null> {
+  const u = new URL(ADMIN_URL); u.username = "fenvix_api"; u.password = "local-test-only";
+  const api = new pg.Client({ connectionString: u.toString() });
+  await api.connect();
+  let row: { workspace_id: string; installation_id: string | number; account: string } | undefined;
+  try {
+    await api.query("begin");
+    await api.query("select set_config('app.user_id', $1, true)", [userId]);
+    row = (await api.query("select * from public.api_complete_github_link($1)", [createHash("sha256").update(completion).digest("hex")])).rows[0];
+    await api.query("commit");
+  } catch (e) {
+    await api.query("rollback");
+    throw e;
+  } finally {
+    await api.end();
+  }
+  if (!row) return null;
+  await runWork(h.app.service, { kind: "installation_linked", installationId: Number(row.installation_id) });
+  return { workspace_id: row.workspace_id, installation_id: Number(row.installation_id), account: row.account };
+}
 
 export class Harness {
   app!: App;
