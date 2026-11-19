@@ -44,6 +44,10 @@ export async function resetDb(): Promise<pg.Client> {
   if (!(await admin.query("select to_regclass('public.ci_trial_accounts') as t")).rows[0].t) {
     execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0015_review_r016.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
   }
+  // A database prepared before migration 0016 (review R-016b): only 0016 is missing.
+  if (!(await admin.query("select 1 from information_schema.columns where table_name = 'ci_explorations' and column_name = 'received_at'")).rowCount) {
+    execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0016_review_r016b.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
+  }
   await admin.query(`truncate gh_install_completions, ci_trial_accounts, gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_repositories,
     gh_installations, ci_test_results, ci_skip_receipts, ci_audit_reruns, ci_defects, ci_explorations, ci_runs, ci_projects, ci_subscriptions cascade`);
   await admin.query("delete from auth.users where email like '%@gh.fenvix.invalid'");

@@ -345,6 +345,32 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     assert.deepEqual([bad.statusCode, bad.json().error.field], [400, "commitSha"]);
   });
 
+  it("15b. explorations are bounded (review R-016b G2): none from a CI job's credential, one new per project and day, 90 nights kept", async () => {
+    const night = (day: number) => ({
+      startedAt: new Date(Date.UTC(2026, 10, 1 + day, 2)).toISOString(), finishedAt: new Date(Date.UTC(2026, 10, 1 + day, 3)).toISOString(), commitSha: SHA2,
+      branch: "main", seeds: 1, runs: 1, collected: 1, seconds: 1, flakyFailing: [], alwaysFailing: [], notReproduced: [], familiesByPolluter: {},
+      seedsLog: [{ seed: 1, seconds: 1, failing: [] }], defects: [],
+    });
+    const count = async () => (await admin.query("select count(*)::int as n from ci_explorations")).rows[0].n as number;
+    // A CI job's credential (it names the run) is refused.
+    assert.equal((await runner("explorations", "fenvix-j81001", 31001, night(40))).statusCode, 403);
+    // Step 15 stored one today: another one the same day is dropped (202, nothing stored).
+    assert.equal((await runner("explorations", "fenvix-explore", undefined, night(41))).statusCode, 202);
+    assert.equal(await count(), 1);
+    // A project keeps the newest 90 nights (by when the App received them).
+    await admin.query("update ci_explorations set received_at = now() - interval '1 day'");
+    await admin.query(
+      `insert into ci_explorations (workspace_id, project_id, started_at, finished_at, commit_sha, seeds, runs, received_at)
+       select workspace_id, project_id, started_at - make_interval(days => g), finished_at - make_interval(days => g), commit_sha, 1, 1, now() - make_interval(days => 1 + g)
+       from ci_explorations, generate_series(1, 89) g`);
+    assert.equal(await count(), 90);
+    const oldest = (await admin.query("select id from ci_explorations order by received_at limit 1")).rows[0].id;
+    assert.equal((await runner("explorations", "fenvix-explore", undefined, night(42))).statusCode, 202);
+    assert.equal(await count(), 90);
+    assert.equal((await admin.query("select count(*)::int as n from ci_explorations where id = $1", [oldest])).rows[0].n, 0, "the oldest night went");
+    assert.equal((await admin.query("select count(*)::int as n from ci_explorations where started_at = $1", [night(42).startedAt])).rows[0].n, 1);
+  });
+
   it("16. every call the App made matches GitHub's REST description", () => {
     assert.deepEqual(h.gh.validateAll().map((x) => `${x.method} ${x.path} ${x.status}: ${JSON.stringify(x.problems)}`), []);
   });

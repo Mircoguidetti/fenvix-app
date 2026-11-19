@@ -504,6 +504,16 @@ The App writes one Exploration for the repository's project (sent again: the sam
 defects; `newDefectIds` are the defects this exploration found first. An exploration is not a run: it does not count
 as a defect occurrence. A repository without a project keeps nothing (logged).
 
+**Limits** (review R-016b G2, migration 0016), the same kind as the results' limits:
+
+- **Not from a CI job's credential.** A per-job credential (it names a run; the job's own steps can read it) is refused
+  with `403`. Explorations come from a machine whose credential names the repository only.
+- **One new exploration per project and UTC day**, by the App's clock (`ci_explorations.received_at`), so at most 6 MB
+  a night. The same one sent again (same `startedAt` and `commitSha`) is updated; another one that day is dropped
+  (`202`, logged).
+- **90 nights kept per project**: the newest by `received_at`; older ones are deleted when a new one is stored. The
+  defects they found stay.
+
 ### Trial, mode and the 35% gate
 
 Linking an organization's first GitHub installation starts its **30-day shadow trial** (`gh_link_installation`,
@@ -562,6 +572,9 @@ database directly.
 - 2026-11-19 (review R-016b): **whether a job is billable comes from GitHub's data only**: a job that started on our
   machine is billed its held minutes whatever its summary and conclusion (`cancelled_before_tests` now means "never
   started on our machine").
+- 2026-11-19 (review R-016b, migration 0016): **explorations are bounded**: none from a CI job's credential, one new
+  per project and UTC day (`ci_explorations.received_at`), 90 nights kept per project; staged summaries
+  (`gh_run_summaries`) are deleted after 7 days, as staged results are.
 - 2026-11-18 (review R-016, migration 0015): **run units from GitHub's job timings** (`held_minutes`; summary.json no
   longer sets what is billed); the **run's mode is the App's** (`FENVIX_MODE` recorded on the job; the results' and the
   summary's `mode` are ignored); test durations and `wouldSaveMs` bounded by the job's duration and the run's test time;

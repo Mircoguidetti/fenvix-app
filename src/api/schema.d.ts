@@ -832,7 +832,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description One night of exploration (the engine's explore.json, summarised) and the defect bundles it produced. */
+        /** @description One night of exploration (the engine's explore.json, summarised) and the defect bundles it produced. Only from a credential that names the repository alone: a CI job's per-job credential (it names a run) gets 403. At most one new exploration per project and UTC day is stored (the same one sent again is updated), and a project keeps its newest 90 nights. */
         post: operations["postRunnerExploration"];
         delete?: never;
         options?: never;

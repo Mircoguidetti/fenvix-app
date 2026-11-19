@@ -30,6 +30,8 @@ export interface ServiceSettings {
 export const RESULTS_JOB_LIMITS = { chunks: 200, bytes: 256 * 1024 * 1024 } as const;
 /** Staged results are deleted after this many days (the sweep): far past the credentials' lifetime. */
 const RESULTS_KEEP_DAYS = 7;
+/** Explorations a project keeps (review R-016b G2): the newest, by when the App received them. */
+export const EXPLORATION_KEEP_NIGHTS = 90;
 
 /** How long a per-job machine's credentials live: past the reaper's hard limit and the poster's retries. */
 const JOB_CREDENTIAL_SECONDS = 24 * 3600;
@@ -666,8 +668,13 @@ export class GitHubService {
    * POST /v1/runner/explorations (queued): one night of exploration of the credential's repository, written to its
    * project (ci_explorations), with the defects it produced (ci_defects; new_defect_ids: those it found first). A
    * repository without a project (not linked, or its language not known) keeps nothing: logged.
+   *
+   * Limits (review R-016b G2), by the App's clock: a project gets at most one NEW exploration per UTC day (the same
+   * one sent again, same startedAt and commit, is updated), so at most 6 MB a night; it keeps the newest
+   * EXPLORATION_KEEP_NIGHTS. A second exploration the same day is dropped (logged). A CI job's credential is refused at
+   * intake (src/app.ts).
    */
-  async receiveExploration(o: { repositoryId: number; runnerName: string; exploration: RunnerExploration }): Promise<"stored" | "no_project"> {
+  async receiveExploration(o: { repositoryId: number; runnerName: string; exploration: RunnerExploration }): Promise<"stored" | "no_project" | "dropped"> {
     const repo = await this.repo(o.repositoryId);
     if (!repo?.workspace_id) {
       this.log.warn({ repositoryId: o.repositoryId, runner: o.runnerName }, "exploration dropped: the repository is not in a linked installation");
@@ -677,8 +684,21 @@ export class GitHubService {
       const projectId = await this.syncProject(c, repo, null);
       if (!projectId) return null;
       const lang = (await c.query<{ language: string }>("select language from ci_projects where id = $1 for update", [projectId])).rows[0]!.language;
-      return applyExploration(c, projectId, lang, o.exploration);
+      const e = o.exploration;
+      const tonight = (await c.query(
+        `select 1 from ci_explorations where project_id = $1 and received_at >= date_trunc('day', now(), 'UTC')
+           and not (started_at = $2 and commit_sha = $3) limit 1`, [projectId, e.startedAt, e.commitSha])).rowCount;
+      if (tonight) return "dropped" as const;
+      const out = await applyExploration(c, projectId, lang, e);
+      await c.query(
+        `delete from ci_explorations where project_id = $1 and id not in
+           (select id from ci_explorations where project_id = $1 order by received_at desc, started_at desc limit $2)`, [projectId, EXPLORATION_KEEP_NIGHTS]);
+      return out;
     });
+    if (res === "dropped") {
+      this.log.warn({ repository: repo.full_name, runner: o.runnerName, startedAt: o.exploration.startedAt }, "exploration dropped: the project has one for today already");
+      return "dropped";
+    }
     if (!res) {
       this.log.warn({ repository: repo.full_name, runner: o.runnerName }, "exploration dropped: the repository has no project yet");
       return "no_project";
@@ -689,8 +709,9 @@ export class GitHubService {
 
   /** Completed jobs whose summary never came (or whose publication failed) are published after the wait. */
   async sweep(): Promise<number> {
-    // Old staged results and old link completions go (review R-016 F7, F2).
+    // Old staged results and summaries, and old link completions go (review R-016 F7, R-016b G2, R-016 F2).
     await this.db.q("delete from gh_run_results where received_at < now() - make_interval(days => $1)", [RESULTS_KEEP_DAYS]);
+    await this.db.q("delete from gh_run_summaries where received_at < now() - make_interval(days => $1)", [RESULTS_KEEP_DAYS]);
     await this.db.q("delete from gh_install_completions where expires_at < now() - interval '1 day'");
     const due = await this.db.q<{ job_id: number }>(
       `select job_id from gh_jobs where status = 'completed' and published_at is null and publish_attempts < 5

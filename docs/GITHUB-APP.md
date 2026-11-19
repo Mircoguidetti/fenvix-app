@@ -293,10 +293,10 @@ is changed; the pull request lists other test-like jobs. Not changed, with the r
 |---|---|---|
 | `GET /healthz` | anyone | `{"ok": true}` |
 | `POST /webhooks/github` | GitHub (signed) | the webhooks above |
-| `POST /v1/runner/summaries` | our runners (each machine's own summary credential) | a job's run summary (queued) |
+| `POST /v1/runner/summaries` | our runners (each machine's own summary credential) | a job's run summary (queued; staged summaries are deleted after 7 days, review R-016b G2) |
 | `POST /v1/runner/progress` | our runners (same credential) | the running job's progress, written at once; `202` |
 | `POST /v1/runner/results` | our runners (same credential) | one chunk of per-test results (queued; large bodies through the queue's overflow bucket); `202` |
-| `POST /v1/runner/explorations` | our runners (same credential) | one night of exploration of the credential's repository (queued); `202` |
+| `POST /v1/runner/explorations` | our runners (a credential that names the repository only; a CI job's per-job credential gets `403`) | one night of exploration of the credential's repository (queued); `202`. At most one new exploration per project and UTC day, 90 nights kept (review R-016b G2) |
 | `GET /github/setup` | the person, sent back by GitHub | checks the GitHub side and stores a single-use completion (above), then `303` to `DASHBOARD_URL/projects/connect?github=confirm&installation=<id>&account=<login>#completion=<code>` (or `github=error&reason=expired\|incomplete\|oauth\|not_yours\|github_not_admin\|not_admin\|other_organization\|removed\|used\|github\|error`, or `github=requested`); the dashboard completes the link with `POST /v1/github/installations/complete` |
 
 The install link (`POST /v1/github/install-link`) and the setup pull request of one repository
