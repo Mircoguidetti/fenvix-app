@@ -124,14 +124,15 @@ export async function buildApp(deps: Deps): Promise<App> {
     const b = req.body as Record<string, unknown> | undefined;
     const int = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null);
     const runId = scope.runId ?? int(b?.runId);
-    const runAttempt = b?.runAttempt === undefined ? 1 : int(b.runAttempt);
+    const runAttempt = b?.runAttempt === undefined ? (scope.runAttempt ?? 1) : int(b.runAttempt);
     const receiptsUrl = b?.receiptsUrl === undefined || b.receiptsUrl === null ? null
       : typeof b.receiptsUrl === "string" && /^https:\/\/[^\s]{1,2000}$/.test(b.receiptsUrl) ? b.receiptsUrl : undefined;
     if (!runId || !runAttempt || receiptsUrl === undefined) {
       return fail(reply, 400, "bad_request", "runId and runAttempt are required (receiptsUrl, if given, is an https URL).");
     }
     if ((b?.repositoryId !== undefined && b.repositoryId !== scope.repositoryId) || (b?.runnerName !== undefined && b.runnerName !== scope.runnerName)
-      || (scope.runId !== undefined && b?.runId !== undefined && b.runId !== scope.runId)) {
+      || (scope.runId !== undefined && b?.runId !== undefined && b.runId !== scope.runId)
+      || (scope.runAttempt !== undefined && runAttempt !== scope.runAttempt)) {
       req.log.warn({ runner: scope.runnerName, repositoryId: scope.repositoryId }, "a summary for another runner, repository or run was refused");
       return fail(reply, 403, "forbidden", "This credential is for another runner, repository or run.");
     }
@@ -157,8 +158,10 @@ export async function buildApp(deps: Deps): Promise<App> {
       return null;
     }
     const j = body as Partial<RunnerJob>;
+    // A per-job credential names the job's attempt (review R-016 F7): a record for another attempt is refused.
     if ((j.repositoryId !== undefined && j.repositoryId !== scope.repositoryId) || (j.runnerName !== undefined && j.runnerName !== scope.runnerName)
-      || (scope.runId !== undefined && j.runId !== undefined && j.runId !== scope.runId)) {
+      || (scope.runId !== undefined && j.runId !== undefined && j.runId !== scope.runId)
+      || (scope.runAttempt !== undefined && (j.runAttempt ?? 1) !== scope.runAttempt)) {
       req.log.warn({ runner: scope.runnerName, repositoryId: scope.repositoryId, url: req.url.split("?")[0] }, "a record for another runner, repository or run was refused");
       void fail(reply, 403, "forbidden", "This credential is for another runner, repository or run.");
       return null;
@@ -187,7 +190,15 @@ export async function buildApp(deps: Deps): Promise<App> {
     const r = runnerBody(req, reply, parseResults);
     if (!r) return reply;
     const results = { ...r.body, runId: r.scope.runId ?? r.body.runId, repositoryId: r.scope.repositoryId, runnerName: r.scope.runnerName };
-    return handOff(req, reply, { kind: "results", repositoryId: r.scope.repositoryId, runId: results.runId, runAttempt: results.runAttempt, runnerName: r.scope.runnerName, results });
+    // A chunk number at or past the count this chunk declares (chunk 0) is refused here; past the count chunk 0 declared
+    // earlier, and past the per-job limits, by the worker (service.receiveResults).
+    if (results.chunks !== undefined && results.chunk >= results.chunks) {
+      return reply.code(400).send({ error: { code: "bad_request", message: "chunk must be below chunks.", field: "chunk" } });
+    }
+    return handOff(req, reply, {
+      kind: "results", repositoryId: r.scope.repositoryId, runId: results.runId, runAttempt: results.runAttempt, runnerName: r.scope.runnerName, results,
+      ...(r.scope.runAttempt !== undefined ? { attemptBound: true } : {}),
+    });
   });
 
   fastify.post("/v1/runner/explorations", { bodyLimit: 6 * 1024 * 1024 }, async (req, reply) => {

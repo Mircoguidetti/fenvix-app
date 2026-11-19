@@ -57,7 +57,7 @@ export async function runWork(service: GitHubService, w: Work): Promise<void> {
     return;
   }
   if (w.kind === "results") {
-    await service.receiveResults({ repositoryId: w.repositoryId, runId: w.runId, runAttempt: w.runAttempt, runnerName: w.runnerName, results: w.results });
+    await service.receiveResults({ repositoryId: w.repositoryId, runId: w.runId, runAttempt: w.runAttempt, runnerName: w.runnerName, results: w.results, attemptBound: w.attemptBound === true });
     return;
   }
   if (w.kind === "exploration") {

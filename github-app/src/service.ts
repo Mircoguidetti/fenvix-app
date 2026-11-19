@@ -23,6 +23,14 @@ export interface ServiceSettings {
   cacheSigningKey?: KeyObject | null;
 }
 
+/**
+ * What one job (repository, run, attempt, runner) may stage in gh_run_results (review R-016 F7): 200 chunks (one million
+ * tests at 5,000 a chunk) and 256 MB. docs/data-contract.md "Results".
+ */
+export const RESULTS_JOB_LIMITS = { chunks: 200, bytes: 256 * 1024 * 1024 } as const;
+/** Staged results are deleted after this many days (the sweep): far past the credentials' lifetime. */
+const RESULTS_KEEP_DAYS = 7;
+
 /** How long a per-job machine's credentials live: past the reaper's hard limit and the poster's retries. */
 const JOB_CREDENTIAL_SECONDS = 24 * 3600;
 
@@ -436,7 +444,7 @@ export class GitHubService {
    * stranger installing the App cannot start machines; only while the job is still queued.
    */
   private async launchRunner(jobId: number, installationId: number, repo: RepoFull): Promise<void> {
-    const [row] = await this.db.q<{ status: string; run_id: number }>("select status, run_id from gh_jobs where job_id = $1", [jobId]);
+    const [row] = await this.db.q<{ status: string; run_id: number; run_attempt: number }>("select status, run_id, run_attempt from gh_jobs where job_id = $1", [jobId]);
     if (!row || row.status !== "queued") return;
     const [inst] = await this.db.q<{ workspace_id: string | null; suspended_at: Date | null; deleted_at: Date | null }>(
       "select workspace_id, suspended_at, deleted_at from gh_installations where installation_id = $1", [installationId]);
@@ -487,7 +495,7 @@ export class GitHubService {
     // its cache token reaches only this installation's cache organization, and writes only on a trusted ref.
     const exp = Math.floor(Date.now() / 1000) + JOB_CREDENTIAL_SECONDS;
     const cacheAccess = trusted ? "write" as const : "read" as const;
-    const summaryToken = signSummaryCredential(this.s.summaryKey, { runnerName, repositoryId: repo.id, runId: row.run_id, exp });
+    const summaryToken = signSummaryCredential(this.s.summaryKey, { runnerName, repositoryId: repo.id, runId: row.run_id, runAttempt: row.run_attempt, exp });
     const cacheToken = this.s.cacheSigningKey ? signCacheToken(this.s.cacheSigningKey, { installationId, write: trusted, exp, jobId }) : undefined;
     let res: { instanceId: string | null; already: boolean };
     try {
@@ -562,21 +570,62 @@ export class GitHubService {
   }
 
   /**
-   * POST /v1/runner/results (queued): the chunk is stored (gh_run_results; sent again: replaced) and applied to the
-   * run once the run is published. Chunks that come before are applied at publish.
+   * POST /v1/runner/results (queued): the chunk is stored (gh_run_results; sent again before it was applied: replaced)
+   * and applied to the run once the run is published. Chunks that come before are applied at publish.
+   *
+   * What one job may store (review R-016 F7): only for its own job, a chunk number below the count its chunk 0
+   * declared, at most RESULTS_JOB_LIMITS per job. The job is the one GitHub ran on this runner (gh_jobs: repository,
+   * run, attempt, runner name); a per-job credential names the attempt itself (`attemptBound`), so its chunks are kept
+   * even before the job's start is recorded. A chunk for another attempt, past the count or past the limits is dropped
+   * (logged); a chunk whose job is not known yet, from a credential that does not name the attempt, is retried (thrown).
    */
-  async receiveResults(o: { repositoryId: number; runId: number; runAttempt: number; runnerName: string; results: RunnerResults }): Promise<void> {
-    await this.db.q(
-      `insert into gh_run_results (repository_id, run_id, run_attempt, runner_name, chunk, payload) values ($1, $2, $3, $4, $5, $6)
-       on conflict (repository_id, run_id, run_attempt, runner_name, chunk) do update set payload = excluded.payload, received_at = now(),
-         applied_at = null, apply_error = null`,
-      [o.repositoryId, o.runId, o.runAttempt, o.runnerName, o.results.chunk, JSON.stringify(o.results)]);
+  async receiveResults(o: { repositoryId: number; runId: number; runAttempt: number; runnerName: string; results: RunnerResults; attemptBound?: boolean }): Promise<"stored" | "dropped"> {
+    const key = [o.repositoryId, o.runId, o.runAttempt, o.runnerName] as const;
+    const drop = (why: string) => {
+      this.log.warn({ repositoryId: o.repositoryId, runId: o.runId, runAttempt: o.runAttempt, runner: o.runnerName, chunk: o.results.chunk, why }, "runner results dropped");
+      return "dropped" as const;
+    };
+    const known = await this.db.q<{ run_attempt: number }>(
+      "select distinct run_attempt from gh_jobs where repository_id = $1 and run_id = $2 and runner_name = $3", [o.repositoryId, o.runId, o.runnerName]);
+    if (known.length && !known.some((k) => k.run_attempt === o.runAttempt)) return drop("not an attempt this runner ran");
+    if (!known.length && !o.attemptBound) {
+      throw new Error(`results for ${o.repositoryId}/${o.runId}/${o.runAttempt} from ${o.runnerName}: the job's start is not recorded yet (tried again later)`);
+    }
+    if (o.results.chunks !== undefined && o.results.chunk >= o.results.chunks) return drop(`chunk ${o.results.chunk} of ${o.results.chunks}`);
+    const payload = JSON.stringify(o.results);
+    const stored = await this.db.tx(null, async (c) => {
+      // One writer per job at a time: the count and the limits are checked against what is stored.
+      await c.query("select pg_advisory_xact_lock(hashtext('gh_run_results:' || $1::text || '/' || $2::text || '/' || $3::text || '/' || $4))", [...key]);
+      const declared = (await c.query<{ chunks: number | null }>(
+        `select (payload->>'chunks')::int as chunks from gh_run_results
+         where repository_id = $1 and run_id = $2 and run_attempt = $3 and runner_name = $4 and chunk = 0`, [...key])).rows[0]?.chunks ?? null;
+      if (declared !== null && o.results.chunk >= declared) return `chunk ${o.results.chunk} of ${declared}`;
+      const have = (await c.query<{ n: number; bytes: string }>(
+        `select count(*)::int as n, coalesce(sum(octet_length(payload::text)), 0)::bigint as bytes from gh_run_results
+         where repository_id = $1 and run_id = $2 and run_attempt = $3 and runner_name = $4 and chunk <> $5`, [...key, o.results.chunk])).rows[0]!;
+      if (have.n + 1 > RESULTS_JOB_LIMITS.chunks) return `more than ${RESULTS_JOB_LIMITS.chunks} chunks`;
+      if (Number(have.bytes) + Buffer.byteLength(payload) > RESULTS_JOB_LIMITS.bytes) return `more than ${RESULTS_JOB_LIMITS.bytes} bytes`;
+      // A chunk already applied stays as it was applied (sending it again changes nothing).
+      await c.query(
+        `insert into gh_run_results (repository_id, run_id, run_attempt, runner_name, chunk, payload) values ($1, $2, $3, $4, $5, $6)
+         on conflict (repository_id, run_id, run_attempt, runner_name, chunk) do update set payload = excluded.payload, received_at = now(),
+           applied_at = null, apply_error = null
+         where gh_run_results.applied_at is null`,
+        [...key, o.results.chunk, payload]);
+      // Chunk 0 declares the count: chunks stored past it go.
+      if (o.results.chunk === 0 && o.results.chunks !== undefined) {
+        await c.query("delete from gh_run_results where repository_id = $1 and run_id = $2 and run_attempt = $3 and runner_name = $4 and chunk >= $5", [...key, o.results.chunks]);
+      }
+      return null;
+    });
+    if (stored) return drop(stored);
     const jobs = await this.db.q<{ job_id: number; ci_run_id: string; workspace_id: string }>(
       `select j.job_id, j.ci_run_id, i.workspace_id from gh_jobs j join gh_installations i on i.installation_id = j.installation_id
        where j.repository_id = $1 and j.run_id = $2 and j.run_attempt = $3 and j.runner_name = $4
          and j.published_at is not null and j.ci_run_id is not null and i.workspace_id is not null`,
-      [o.repositoryId, o.runId, o.runAttempt, o.runnerName]);
+      [...key]);
     for (const j of jobs) await this.applyResults(j.workspace_id, j.ci_run_id, o);
+    return "stored";
   }
 
   /** Applies the job's chunks not applied yet to its run (src/results/apply.ts). Marks each applied, or why not. */
@@ -640,6 +689,9 @@ export class GitHubService {
 
   /** Completed jobs whose summary never came (or whose publication failed) are published after the wait. */
   async sweep(): Promise<number> {
+    // Old staged results and old link completions go (review R-016 F7, F2).
+    await this.db.q("delete from gh_run_results where received_at < now() - make_interval(days => $1)", [RESULTS_KEEP_DAYS]);
+    await this.db.q("delete from gh_install_completions where expires_at < now() - interval '1 day'");
     const due = await this.db.q<{ job_id: number }>(
       `select job_id from gh_jobs where status = 'completed' and published_at is null and publish_attempts < 5
          and coalesce(completed_at, updated_at) < now() - make_interval(secs => $1) order by job_id limit 50`, [this.s.summaryWaitSeconds]);

@@ -179,4 +179,9 @@ alter table public.gh_jobs add column if not exists mode text;
 alter table public.gh_jobs drop constraint if exists gh_jobs_mode_check;
 alter table public.gh_jobs add constraint gh_jobs_mode_check check (mode is null or mode in ('enforce', 'shadow'));
 
+-- ================================================================ F7: staged results are not kept for good
+
+grant delete on public.gh_run_results to fenvix_github_app;
+create index if not exists gh_run_results_received on public.gh_run_results (received_at);
+
 notify pgrst, 'reload schema';
