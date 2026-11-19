@@ -7,6 +7,8 @@
 //   secrets                generated secrets in SSM; exports FENVIX_CACHE_SIGNING_PUBLIC_KEY (public)
 //   github-app             the GitHub App's values (SSM, typed by the founder): checked; exports the public ones
 //   dashboard-certificate  the us-east-1 certificate of the dashboard's host; exports its ARN once issued
+//   recover-failed-creates before CDK: deletes a stack left in ROLLBACK_COMPLETE by a failed first create, and the
+//                          dashboard bucket it left behind if no stack holds it and it is empty (lib/recover.mjs)
 //   watch-certificate      while the stack deploys: puts the API certificate's validation record in Cloudflare
 //   dns                    github.<zone> and console.<zone> → AWS (Cloudflare), from the stacks' outputs
 //   smoke                  checks the deployed hosts answer
@@ -17,6 +19,8 @@
 // lib/bootstrap.mjs), and masked in the log before any use. GitHub holds no secret: the workflow passes none.
 import { readFileSync } from "node:fs";
 import { ACMClient } from "@aws-sdk/client-acm";
+import { CloudFormationClient } from "@aws-sdk/client-cloudformation";
+import { S3Client } from "@aws-sdk/client-s3";
 import { SSMClient } from "@aws-sdk/client-ssm";
 import pg from "pg";
 import { describe, ensureCertificate, findCertificate, waitIssued } from "./lib/certificates.mjs";
@@ -25,6 +29,7 @@ import { syncGitHubApp } from "./lib/github-app.mjs";
 import { readFounderValue } from "./lib/bootstrap.mjs";
 import { exportEnv, info, mask, notice, Stop, summary, warning } from "./lib/log.mjs";
 import { migrate, readMigrations } from "./lib/migrate.mjs";
+import { recoverFailedCreates } from "./lib/recover.mjs";
 import { ensureRoles } from "./lib/roles.mjs";
 import { ensureGenerated } from "./lib/secrets.mjs";
 import { adminClientConfig, checkAnonKey, parseAdminUrl, parseCaCert } from "./lib/supabase.mjs";
@@ -143,6 +148,17 @@ const steps = {
     } else {
       warning(`The certificate of ${APP_DOMAIN} is ${d.status}: the dashboard is deployed on its cloudfront.net address this time; the next deploy adds ${APP_DOMAIN} once the certificate is issued.`);
     }
+  },
+
+  async "recover-failed-creates"() {
+    const account = CDK.account;
+    const stacks = [`fenvix-${ENV}-github-app`, `fenvix-${ENV}-dashboard`];
+    const r = await recoverFailedCreates(new CloudFormationClient({ region: REGION }), new S3Client({ region: REGION }), {
+      stacks, dashboardStack: stacks[1], bucket: `fenvix-${ENV}-dashboard-${account}`, account,
+    });
+    for (const [what, done] of Object.entries(r)) info(`${what}: ${done}`);
+    const acted = Object.entries(r).filter(([, d]) => d === "deleted").map(([w]) => `\`${w}\``);
+    if (acted.length) summary(`**Failed first create cleared:** deleted ${acted.join(", ")} (left by an earlier deploy's rollback), so CDK creates them again.`);
   },
 
   async "watch-certificate"() {

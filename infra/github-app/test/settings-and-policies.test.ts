@@ -95,9 +95,18 @@ describe("IAM policy files", () => {
   it("the deployer only assumes the deploy roles of the one-click template and reads or writes our own parameters, stack, logs, dashboard files", () => {
     const p = policy("deploy-policy.json");
     const allows = p.Statement.filter((s) => s.Effect === "Allow");
-    for (const a of allows.flatMap((s) => arr(s.Action))) assert.ok(!/^(iam|lambda:(?!InvokeFunction$)|ec2:Run|ec2:Terminate|cloudformation:(Create|Update|Delete|Execute))/.test(a), a);
+    // The one exception: ClearAFailedFirstCreate (deploy/lib/recover.mjs deletes a stack only in ROLLBACK_COMPLETE, and
+    // the dashboard bucket only once no stack holds it and it is empty; deploy/test/recover.test.mjs).
+    const clear = allows.find((s) => s.Sid === "ClearAFailedFirstCreate")!;
+    assert.deepEqual(arr(clear.Action).sort(), ["cloudformation:DeleteStack", "s3:DeleteBucket"]);
+    assert.deepEqual(arr(clear.Resource).sort(), [
+      "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-dashboard/*",
+      "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-github-app/*",
+      "arn:aws:s3:::fenvix-prod-dashboard-865859654353",
+    ]);
+    for (const a of allows.filter((s) => s !== clear).flatMap((s) => arr(s.Action))) assert.ok(!/^(iam|lambda:(?!InvokeFunction$)|ec2:Run|ec2:Terminate|cloudformation:(Create|Update|Delete|Execute)|s3:DeleteBucket)/.test(a), a);
     // S3: only the dashboard's own bucket (aws s3 sync of the build); nothing else, no bucket setting.
-    for (const st of allows.filter((x) => arr(x.Action).some((a) => a.startsWith("s3:")))) {
+    for (const st of allows.filter((x) => x !== clear && arr(x.Action).some((a) => a.startsWith("s3:")))) {
       for (const a of arr(st.Action)) assert.match(a, /^s3:(ListBucket|PutObject|GetObject|DeleteObject)$/);
       for (const r of arr(st.Resource)) assert.match(r, /^arn:aws:s3:::fenvix-prod-dashboard-865859654353(\/\*)?$/);
     }

@@ -117,6 +117,12 @@ jobs:
           echo "cache machine image: $id"
           echo "FENVIX_CACHE_AMI_ID=$id" >> "$GITHUB_ENV"
 
+      # Only what a failed FIRST create left: a stack in ROLLBACK_COMPLETE (CloudFormation cannot update it), and the
+      # dashboard's retained bucket once no stack holds it and only if it is empty (deploy/lib/recover.mjs). Any other
+      # state is left to CDK; a left-over bucket with files stops the deploy, deleting nothing.
+      - name: 7b. Clear a failed first create (a stack in ROLLBACK_COMPLETE, its empty retained bucket)
+        run: node deploy/cli.mjs recover-failed-creates
+
       - name: 8. API, runners and dashboard hosting (CDK)
         working-directory: infra/github-app
         env:

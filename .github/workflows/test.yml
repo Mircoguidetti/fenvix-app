@@ -44,6 +44,14 @@ jobs:
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
       - name: The one-click AWS template matches the policy files
         run: node infra/bootstrap/build.mjs --check
+      # cfn-lint pinned: its IAM action list checks the one-click template's policies, and its CloudFormation
+      # resource-provider schemas are where infra/github-app/test/cfn-handler-permissions.json comes from.
+      - name: cfn-lint (the one-click template; the handler permissions the infrastructure tests check against)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/cfn-lint"
+          "$RUNNER_TEMP/cfn-lint/bin/pip" install --quiet --disable-pip-version-check cfn-lint==1.60.1
+          "$RUNNER_TEMP/cfn-lint/bin/cfn-lint" infra/bootstrap/fenvix-bootstrap.json
+          "$RUNNER_TEMP/cfn-lint/bin/python" -I infra/github-app/scripts/cfn-handler-permissions.py --check
       - name: Databases for the tests (scratch Postgres 16, local Supabase)
         run: |
           docker run -d --name scratch-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:54329:5432 postgres:16

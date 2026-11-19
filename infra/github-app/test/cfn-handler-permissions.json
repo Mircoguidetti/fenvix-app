@@ -1,0 +1,1530 @@
+{
+ "source": "cfn-lint 1.60.1 resource-provider schemas, eu-west-1",
+ "types": {
+  "AWS::ApiGatewayV2::Api": {
+   "create": [
+    "apigateway:POST",
+    "apigateway:PUT",
+    "s3:getObject"
+   ],
+   "update": [
+    "apigateway:DELETE",
+    "apigateway:GET",
+    "apigateway:PATCH",
+    "apigateway:POST",
+    "apigateway:PUT",
+    "s3:getObject"
+   ],
+   "delete": [
+    "apigateway:DELETE",
+    "apigateway:GET",
+    "s3:getObject"
+   ],
+   "read": [
+    "apigateway:GET",
+    "s3:getObject"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "apigateway:DELETE",
+    "apigateway:GET",
+    "apigateway:PATCH",
+    "apigateway:PUT"
+   ],
+   "notIamActions": []
+  },
+  "AWS::ApiGatewayV2::ApiMapping": {
+   "create": [
+    "apigateway:POST"
+   ],
+   "update": [
+    "apigateway:GET",
+    "apigateway:PATCH",
+    "apigateway:PUT"
+   ],
+   "delete": [
+    "apigateway:DELETE"
+   ],
+   "read": [
+    "apigateway:GET"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::ApiGatewayV2::DomainName": {
+   "create": [
+    "apigateway:AddCertificateToDomain",
+    "apigateway:GET",
+    "apigateway:POST",
+    "apigateway:PUT",
+    "s3:GetObject",
+    "s3:GetObjectVersion"
+   ],
+   "update": [
+    "apigateway:AddCertificateToDomain",
+    "apigateway:DELETE",
+    "apigateway:GET",
+    "apigateway:PATCH",
+    "apigateway:POST",
+    "apigateway:PUT",
+    "apigateway:RemoveCertificateFromDomain",
+    "s3:GetObject",
+    "s3:GetObjectVersion"
+   ],
+   "delete": [
+    "apigateway:DELETE",
+    "apigateway:GET",
+    "apigateway:RemoveCertificateFromDomain"
+   ],
+   "read": [
+    "apigateway:GET"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "apigateway:DELETE",
+    "apigateway:GET",
+    "apigateway:PATCH",
+    "apigateway:PUT"
+   ],
+   "notIamActions": []
+  },
+  "AWS::ApiGatewayV2::Integration": {
+   "create": [
+    "apigateway:POST",
+    "iam:PassRole"
+   ],
+   "update": [
+    "apigateway:GET",
+    "apigateway:PATCH",
+    "apigateway:PUT",
+    "iam:PassRole"
+   ],
+   "delete": [
+    "apigateway:DELETE",
+    "apigateway:GET"
+   ],
+   "read": [
+    "apigateway:GET"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::ApiGatewayV2::Route": {
+   "create": [
+    "apigateway:POST"
+   ],
+   "update": [
+    "apigateway:GET",
+    "apigateway:PATCH",
+    "apigateway:PUT"
+   ],
+   "delete": [
+    "apigateway:DELETE",
+    "apigateway:GET"
+   ],
+   "read": [
+    "apigateway:GET"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::ApiGatewayV2::Stage": {
+   "create": [
+    "apigateway:POST",
+    "apigateway:TagResource"
+   ],
+   "update": [
+    "apigateway:DELETE",
+    "apigateway:PATCH",
+    "apigateway:POST",
+    "apigateway:TagResource",
+    "apigateway:UntagResource"
+   ],
+   "delete": [
+    "apigateway:DELETE"
+   ],
+   "read": [
+    "apigateway:GET"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "apigateway:POST",
+    "apigateway:TagResource",
+    "apigateway:UntagResource"
+   ],
+   "notIamActions": [
+    "apigateway:TagResource",
+    "apigateway:UntagResource"
+   ]
+  },
+  "AWS::CertificateManager::Certificate": {
+   "create": [
+    "acm-pca:GetCertificate",
+    "acm-pca:IssueCertificate",
+    "acm:AddTagsToCertificate",
+    "acm:DescribeCertificate",
+    "acm:RequestCertificate",
+    "route53:ChangeResourceRecordSets"
+   ],
+   "update": [
+    "acm:AddTagsToCertificate",
+    "acm:DescribeCertificate",
+    "acm:RemoveTagsFromCertificate",
+    "acm:UpdateCertificateOptions"
+   ],
+   "delete": [
+    "acm:DeleteCertificate",
+    "acm:DescribeCertificate",
+    "acm:RemoveTagsFromCertificate"
+   ],
+   "read": [
+    "acm:DescribeCertificate",
+    "acm:ListTagsForCertificate"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "acm:AddTagsToCertificate",
+    "acm:RemoveTagsFromCertificate"
+   ],
+   "notIamActions": []
+  },
+  "AWS::CloudFront::Distribution": {
+   "create": [
+    "cloudfront:CreateConnectionGroup",
+    "cloudfront:CreateDistribution",
+    "cloudfront:CreateDistributionWithTags",
+    "cloudfront:GetConnectionGroup",
+    "cloudfront:GetDistribution",
+    "cloudfront:GetDistributionConfig",
+    "cloudfront:GetVpcOrigin",
+    "cloudfront:TagResource"
+   ],
+   "update": [
+    "cloudfront:CreateConnectionGroup",
+    "cloudfront:GetConnectionGroup",
+    "cloudfront:GetDistribution",
+    "cloudfront:GetDistributionConfig",
+    "cloudfront:GetVpcOrigin",
+    "cloudfront:ListTagsForResource",
+    "cloudfront:TagResource",
+    "cloudfront:UntagResource",
+    "cloudfront:UpdateDistribution",
+    "cloudfront:UpdateDistributionWithStagingConfig"
+   ],
+   "delete": [
+    "cloudfront:DeleteDistribution",
+    "cloudfront:GetDistribution",
+    "cloudfront:GetDistributionConfig"
+   ],
+   "read": [
+    "cloudfront:GetDistribution",
+    "cloudfront:GetDistributionConfig",
+    "cloudfront:ListTagsForResource"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "cloudfront:ListTagsForResource",
+    "cloudfront:TagResource",
+    "cloudfront:UntagResource"
+   ],
+   "notIamActions": [
+    "cloudfront:CreateDistributionWithTags"
+   ]
+  },
+  "AWS::CloudFront::Function": {
+   "create": [
+    "cloudfront:CreateFunction",
+    "cloudfront:DescribeFunction",
+    "cloudfront:PublishFunction",
+    "cloudfront:TagResource"
+   ],
+   "update": [
+    "cloudfront:DescribeFunction",
+    "cloudfront:PublishFunction",
+    "cloudfront:TagResource",
+    "cloudfront:UntagResource",
+    "cloudfront:UpdateFunction"
+   ],
+   "delete": [
+    "cloudfront:DeleteFunction",
+    "cloudfront:DescribeFunction"
+   ],
+   "read": [
+    "cloudfront:DescribeFunction",
+    "cloudfront:GetFunction",
+    "cloudfront:ListTagsForResource"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "cloudfront:ListTagsForResource",
+    "cloudfront:TagResource",
+    "cloudfront:UntagResource"
+   ],
+   "notIamActions": []
+  },
+  "AWS::CloudFront::OriginAccessControl": {
+   "create": [
+    "cloudfront:CreateOriginAccessControl"
+   ],
+   "update": [
+    "cloudfront:GetOriginAccessControl",
+    "cloudfront:UpdateOriginAccessControl"
+   ],
+   "delete": [
+    "cloudfront:DeleteOriginAccessControl",
+    "cloudfront:GetOriginAccessControl"
+   ],
+   "read": [
+    "cloudfront:GetOriginAccessControl"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::CloudWatch::Alarm": {
+   "create": [
+    "cloudwatch:DescribeAlarms",
+    "cloudwatch:ListTagsForResource",
+    "cloudwatch:PutMetricAlarm",
+    "cloudwatch:TagResource"
+   ],
+   "update": [
+    "cloudwatch:DescribeAlarms",
+    "cloudwatch:ListTagsForResource",
+    "cloudwatch:PutMetricAlarm",
+    "cloudwatch:TagResource",
+    "cloudwatch:UntagResource"
+   ],
+   "delete": [
+    "cloudwatch:DeleteAlarms",
+    "cloudwatch:DescribeAlarms"
+   ],
+   "read": [
+    "cloudwatch:DescribeAlarms",
+    "cloudwatch:ListTagsForResource"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "cloudwatch:ListTagsForResource",
+    "cloudwatch:TagResource",
+    "cloudwatch:UntagResource"
+   ],
+   "notIamActions": []
+  },
+  "AWS::EC2::Instance": {
+   "create": [
+    "ec2:AssociateIamInstanceProfile",
+    "ec2:AttachVolume",
+    "ec2:CreateTags",
+    "ec2:DescribeIamInstanceProfileAssociations",
+    "ec2:DescribeInstanceAttribute",
+    "ec2:DescribeInstanceCreditSpecifications",
+    "ec2:DescribeInstances",
+    "ec2:DescribeKeyPairs",
+    "ec2:DescribeLaunchTemplateVersions",
+    "ec2:DescribeLaunchTemplates",
+    "ec2:DescribeNetworkInterfaces",
+    "ec2:DescribeSecurityGroups",
+    "ec2:DescribeSubnets",
+    "ec2:DescribeVolumes",
+    "ec2:DescribeVpcs",
+    "ec2:DetachVolume",
+    "ec2:DisassociateIamInstanceProfile",
+    "ec2:ModifyInstanceAttribute",
+    "ec2:ModifyInstanceCreditSpecification",
+    "ec2:ModifyInstancePlacement",
+    "ec2:ModifyPrivateDnsNameOptions",
+    "ec2:MonitorInstances",
+    "ec2:ReplaceIamInstanceProfileAssociation",
+    "ec2:RunInstances",
+    "ec2:StartInstances",
+    "iam:PassRole",
+    "ssm:CreateAssociation",
+    "ssm:DescribeAssociation",
+    "ssm:ListAssociations"
+   ],
+   "update": [
+    "ec2:AssociateIamInstanceProfile",
+    "ec2:AttachVolume",
+    "ec2:CreateTags",
+    "ec2:DeleteTags",
+    "ec2:DescribeIamInstanceProfileAssociations",
+    "ec2:DescribeInstanceAttribute",
+    "ec2:DescribeInstanceCreditSpecifications",
+    "ec2:DescribeInstances",
+    "ec2:DescribeKeyPairs",
+    "ec2:DescribeLaunchTemplates",
+    "ec2:DescribeNetworkInterfaces",
+    "ec2:DescribeSecurityGroups",
+    "ec2:DescribeSubnets",
+    "ec2:DescribeVpcs",
+    "ec2:DetachVolume",
+    "ec2:DisassociateIamInstanceProfile",
+    "ec2:ModifyInstanceAttribute",
+    "ec2:ModifyInstanceCreditSpecification",
+    "ec2:ModifyInstanceMaintenanceOptions",
+    "ec2:ModifyInstanceMetadataOptions",
+    "ec2:ModifyInstancePlacement",
+    "ec2:ModifyPrivateDnsNameOptions",
+    "ec2:MonitorInstances",
+    "ec2:ReplaceIamInstanceProfileAssociation",
+    "ec2:StartInstances",
+    "ec2:StopInstances",
+    "ec2:UnmonitorInstances",
+    "ssm:CreateAssociation",
+    "ssm:DeleteAssociation",
+    "ssm:DescribeAssociation",
+    "ssm:ListAssociations"
+   ],
+   "delete": [
+    "ec2:DescribeInstanceAttribute",
+    "ec2:DescribeInstanceCreditSpecifications",
+    "ec2:DescribeInstances",
+    "ec2:DescribeLaunchTemplates",
+    "ec2:DescribeNetworkInterfaces",
+    "ec2:DescribeVolumes",
+    "ec2:TerminateInstances",
+    "ssm:DescribeAssociation",
+    "ssm:ListAssociations"
+   ],
+   "read": [
+    "ec2:DescribeInstanceAttribute",
+    "ec2:DescribeInstanceCreditSpecifications",
+    "ec2:DescribeInstances",
+    "ec2:DescribeLaunchTemplates",
+    "ec2:DescribeNetworkInterfaces",
+    "ec2:DescribeVolumes",
+    "ssm:DescribeAssociation",
+    "ssm:ListAssociations"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "ec2:CreateTags",
+    "ec2:DeleteTags"
+   ],
+   "notIamActions": []
+  },
+  "AWS::EC2::InternetGateway": {
+   "create": [
+    "ec2:CreateInternetGateway",
+    "ec2:CreateTags",
+    "ec2:DescribeInternetGateways"
+   ],
+   "update": [
+    "ec2:CreateTags",
+    "ec2:DeleteTags",
+    "ec2:DescribeInternetGateways"
+   ],
+   "delete": [
+    "ec2:DeleteInternetGateway",
+    "ec2:DescribeInternetGateways"
+   ],
+   "read": [
+    "ec2:DescribeInternetGateways"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "ec2:CreateTags",
+    "ec2:DeleteTags"
+   ],
+   "notIamActions": []
+  },
+  "AWS::EC2::LaunchTemplate": {
+   "create": [
+    "ec2:CreateLaunchTemplate",
+    "ec2:CreateTags"
+   ],
+   "update": [
+    "ec2:CreateLaunchTemplateVersion",
+    "ec2:CreateTags",
+    "ec2:DeleteTags"
+   ],
+   "delete": [
+    "ec2:DeleteLaunchTemplate",
+    "ec2:DeleteTags",
+    "ec2:DescribeLaunchTemplates"
+   ],
+   "read": [
+    "ec2:DescribeLaunchTemplates"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::EC2::Route": {
+   "create": [
+    "ec2:CreateRoute",
+    "ec2:DescribeNetworkInterfaces",
+    "ec2:DescribeRouteTables"
+   ],
+   "update": [
+    "ec2:DescribeNetworkInterfaces",
+    "ec2:DescribeRouteTables",
+    "ec2:ReplaceRoute"
+   ],
+   "delete": [
+    "ec2:DeleteRoute",
+    "ec2:DescribeRouteTables"
+   ],
+   "read": [
+    "ec2:DescribeRouteTables"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::EC2::RouteTable": {
+   "create": [
+    "ec2:CreateRouteTable",
+    "ec2:CreateTags",
+    "ec2:DescribeRouteTables"
+   ],
+   "update": [
+    "ec2:CreateTags",
+    "ec2:DeleteTags",
+    "ec2:DescribeRouteTables"
+   ],
+   "delete": [
+    "ec2:DeleteRouteTable",
+    "ec2:DescribeRouteTables"
+   ],
+   "read": [
+    "ec2:DescribeRouteTables"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "ec2:CreateTags",
+    "ec2:DeleteTags"
+   ],
+   "notIamActions": []
+  },
+  "AWS::EC2::SecurityGroup": {
+   "create": [
+    "ec2:AuthorizeSecurityGroupEgress",
+    "ec2:AuthorizeSecurityGroupIngress",
+    "ec2:CreateSecurityGroup",
+    "ec2:CreateTags",
+    "ec2:DescribeSecurityGroups",
+    "ec2:RevokeSecurityGroupEgress"
+   ],
+   "update": [
+    "ec2:AuthorizeSecurityGroupEgress",
+    "ec2:AuthorizeSecurityGroupIngress",
+    "ec2:CreateTags",
+    "ec2:DeleteTags",
+    "ec2:DescribeSecurityGroups",
+    "ec2:RevokeSecurityGroupEgress",
+    "ec2:RevokeSecurityGroupIngress",
+    "ec2:UpdateSecurityGroupRuleDescriptionsEgress",
+    "ec2:UpdateSecurityGroupRuleDescriptionsIngress"
+   ],
+   "delete": [
+    "ec2:DeleteSecurityGroup",
+    "ec2:DescribeInstances",
+    "ec2:DescribeSecurityGroups"
+   ],
+   "read": [
+    "ec2:DescribeSecurityGroups"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "ec2:CreateTags",
+    "ec2:DeleteTags"
+   ],
+   "notIamActions": []
+  },
+  "AWS::EC2::SecurityGroupEgress": {
+   "create": [
+    "ec2:AuthorizeSecurityGroupEgress",
+    "ec2:DescribeSecurityGroupRules",
+    "ec2:RevokeSecurityGroupEgress"
+   ],
+   "update": [
+    "ec2:UpdateSecurityGroupRuleDescriptionsEgress"
+   ],
+   "delete": [
+    "ec2:DescribeSecurityGroupRules",
+    "ec2:RevokeSecurityGroupEgress"
+   ],
+   "read": [
+    "ec2:DescribeSecurityGroupRules"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::EC2::SecurityGroupIngress": {
+   "create": [
+    "ec2:AuthorizeSecurityGroupIngress",
+    "ec2:DescribeSecurityGroupRules"
+   ],
+   "update": [
+    "ec2:UpdateSecurityGroupRuleDescriptionsIngress"
+   ],
+   "delete": [
+    "ec2:DescribeSecurityGroupRules",
+    "ec2:RevokeSecurityGroupIngress"
+   ],
+   "read": [
+    "ec2:DescribeSecurityGroupRules",
+    "ec2:DescribeSecurityGroups"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::EC2::Subnet": {
+   "create": [
+    "ec2:CreateSubnet",
+    "ec2:CreateTags",
+    "ec2:DescribeSubnets",
+    "ec2:ModifySubnetAttribute"
+   ],
+   "update": [
+    "ec2:AssociateSubnetCidrBlock",
+    "ec2:CreateTags",
+    "ec2:DeleteTags",
+    "ec2:DescribeSubnets",
+    "ec2:DisassociateSubnetCidrBlock",
+    "ec2:ModifySubnetAttribute"
+   ],
+   "delete": [
+    "ec2:DeleteSubnet",
+    "ec2:DescribeSubnets"
+   ],
+   "read": [
+    "ec2:DescribeNetworkAcls",
+    "ec2:DescribeSubnets"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "ec2:CreateTags",
+    "ec2:DeleteTags"
+   ],
+   "notIamActions": []
+  },
+  "AWS::EC2::SubnetRouteTableAssociation": {
+   "create": [
+    "ec2:AssociateRouteTable",
+    "ec2:DescribeRouteTables",
+    "ec2:DescribeSubnets",
+    "ec2:ReplaceRouteTableAssociation"
+   ],
+   "update": [],
+   "delete": [
+    "ec2:DescribeRouteTables",
+    "ec2:DescribeSubnets",
+    "ec2:DisassociateRouteTable"
+   ],
+   "read": [
+    "ec2:DescribeRouteTables"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::EC2::VPC": {
+   "create": [
+    "ec2:CreateTags",
+    "ec2:CreateVpc",
+    "ec2:CreateVpcEncryptionControl",
+    "ec2:DescribeVpcAttribute",
+    "ec2:DescribeVpcs",
+    "ec2:ModifyVpcAttribute"
+   ],
+   "update": [
+    "ec2:CreateTags",
+    "ec2:DeleteTags",
+    "ec2:DescribeVpcAttribute",
+    "ec2:ModifyVpcAttribute",
+    "ec2:ModifyVpcTenancy"
+   ],
+   "delete": [
+    "ec2:DeleteVpc",
+    "ec2:DescribeVpcs"
+   ],
+   "read": [
+    "ec2:DescribeNetworkAcls",
+    "ec2:DescribeSecurityGroups",
+    "ec2:DescribeVpcAttribute",
+    "ec2:DescribeVpcEncryptionControls",
+    "ec2:DescribeVpcs"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "ec2:CreateTags",
+    "ec2:DeleteTags"
+   ],
+   "notIamActions": []
+  },
+  "AWS::EC2::VPCGatewayAttachment": {
+   "create": [
+    "ec2:AttachInternetGateway",
+    "ec2:AttachVpnGateway",
+    "ec2:DescribeInternetGateways",
+    "ec2:DescribeVpnGateways"
+   ],
+   "update": [
+    "ec2:AttachInternetGateway",
+    "ec2:AttachVpnGateway",
+    "ec2:DescribeInternetGateways",
+    "ec2:DescribeVpnGateways",
+    "ec2:DetachInternetGateway",
+    "ec2:DetachVpnGateway"
+   ],
+   "delete": [
+    "ec2:DescribeInternetGateways",
+    "ec2:DescribeVpnGateways",
+    "ec2:DetachInternetGateway",
+    "ec2:DetachVpnGateway"
+   ],
+   "read": [
+    "ec2:DescribeInternetGateways",
+    "ec2:DescribeVpnGateways"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::IAM::InstanceProfile": {
+   "create": [
+    "iam:AddRoleToInstanceProfile",
+    "iam:CreateInstanceProfile",
+    "iam:GetInstanceProfile",
+    "iam:PassRole"
+   ],
+   "update": [
+    "iam:AddRoleToInstanceProfile",
+    "iam:GetInstanceProfile",
+    "iam:PassRole",
+    "iam:RemoveRoleFromInstanceProfile"
+   ],
+   "delete": [
+    "iam:DeleteInstanceProfile",
+    "iam:GetInstanceProfile",
+    "iam:RemoveRoleFromInstanceProfile"
+   ],
+   "read": [
+    "iam:GetInstanceProfile"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::IAM::Policy": {
+   "create": [
+    "iam:GetGroupPolicy",
+    "iam:GetRolePolicy",
+    "iam:GetUserPolicy",
+    "iam:PutGroupPolicy",
+    "iam:PutRolePolicy",
+    "iam:PutUserPolicy"
+   ],
+   "update": [
+    "iam:DeleteGroupPolicy",
+    "iam:DeleteRolePolicy",
+    "iam:DeleteUserPolicy",
+    "iam:PutGroupPolicy",
+    "iam:PutRolePolicy",
+    "iam:PutUserPolicy"
+   ],
+   "delete": [
+    "iam:DeleteGroupPolicy",
+    "iam:DeleteRolePolicy",
+    "iam:DeleteUserPolicy"
+   ],
+   "read": [],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::IAM::Role": {
+   "create": [
+    "iam:AttachRolePolicy",
+    "iam:CreateRole",
+    "iam:GetRole",
+    "iam:GetRolePolicy",
+    "iam:PutRolePolicy",
+    "iam:TagRole",
+    "iam:UntagRole"
+   ],
+   "update": [
+    "iam:AttachRolePolicy",
+    "iam:DeleteRolePermissionsBoundary",
+    "iam:DeleteRolePolicy",
+    "iam:DetachRolePolicy",
+    "iam:PutRolePermissionsBoundary",
+    "iam:PutRolePolicy",
+    "iam:TagRole",
+    "iam:UntagRole",
+    "iam:UpdateAssumeRolePolicy",
+    "iam:UpdateRole",
+    "iam:UpdateRoleDescription"
+   ],
+   "delete": [
+    "iam:DeleteRole",
+    "iam:DeleteRolePolicy",
+    "iam:DetachRolePolicy",
+    "iam:GetRole",
+    "iam:ListAttachedRolePolicies",
+    "iam:ListRolePolicies",
+    "iam:TagRole",
+    "iam:UntagRole"
+   ],
+   "read": [
+    "iam:GetRole",
+    "iam:GetRolePolicy",
+    "iam:ListAttachedRolePolicies",
+    "iam:ListRolePolicies"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "iam:ListRoleTags",
+    "iam:TagRole",
+    "iam:UntagRole"
+   ],
+   "notIamActions": []
+  },
+  "AWS::ImageBuilder::Component": {
+   "create": [
+    "iam:CreateServiceLinkedRole",
+    "iam:GetRole",
+    "imagebuilder:CreateComponent",
+    "imagebuilder:GetComponent",
+    "imagebuilder:TagResource",
+    "kms:Decrypt",
+    "kms:Encrypt",
+    "kms:GenerateDataKey",
+    "kms:GenerateDataKeyPair",
+    "kms:GenerateDataKeyPairWithoutPlaintext",
+    "kms:GenerateDataKeyWithoutPlaintext",
+    "s3:GetBucketLocation",
+    "s3:GetObject",
+    "s3:HeadBucket"
+   ],
+   "update": [
+    "imagebuilder:TagResource",
+    "imagebuilder:UntagResource"
+   ],
+   "delete": [
+    "imagebuilder:DeleteComponent",
+    "imagebuilder:GetComponent",
+    "imagebuilder:UntagResource"
+   ],
+   "read": [
+    "imagebuilder:GetComponent",
+    "kms:Decrypt"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "imagebuilder:TagResource",
+    "imagebuilder:UntagResource"
+   ],
+   "notIamActions": [
+    "s3:HeadBucket"
+   ]
+  },
+  "AWS::ImageBuilder::DistributionConfiguration": {
+   "create": [
+    "ec2:CreateLaunchTemplateVersion",
+    "ec2:DescribeLaunchTemplates",
+    "ec2:ModifyLaunchTemplate",
+    "ecr:DescribeRepositories",
+    "iam:CreateServiceLinkedRole",
+    "iam:GetRole",
+    "imagebuilder:CreateDistributionConfiguration",
+    "imagebuilder:GetDistributionConfiguration",
+    "imagebuilder:TagResource",
+    "ssm:GetParameter"
+   ],
+   "update": [
+    "ec2:CreateLaunchTemplateVersion",
+    "ec2:DescribeLaunchTemplates",
+    "ec2:ModifyLaunchTemplate",
+    "ecr:DescribeRepositories",
+    "imagebuilder:GetDistributionConfiguration",
+    "imagebuilder:TagResource",
+    "imagebuilder:UntagResource",
+    "imagebuilder:UpdateDistributionConfiguration",
+    "ssm:GetParameter"
+   ],
+   "delete": [
+    "imagebuilder:DeleteDistributionConfiguration",
+    "imagebuilder:GetDistributionConfiguration",
+    "imagebuilder:UntagResource"
+   ],
+   "read": [
+    "imagebuilder:GetDistributionConfiguration"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "imagebuilder:TagResource",
+    "imagebuilder:UntagResource"
+   ],
+   "notIamActions": []
+  },
+  "AWS::ImageBuilder::ImagePipeline": {
+   "create": [
+    "ecr:BatchGetRepositoryScanningConfiguration",
+    "iam:CreateServiceLinkedRole",
+    "iam:GetRole",
+    "iam:PassRole",
+    "imagebuilder:CreateImagePipeline",
+    "imagebuilder:GetContainerRecipe",
+    "imagebuilder:GetDistributionConfiguration",
+    "imagebuilder:GetImagePipeline",
+    "imagebuilder:GetImageRecipe",
+    "imagebuilder:GetInfrastructureConfiguration",
+    "imagebuilder:GetWorkflow",
+    "imagebuilder:TagResource",
+    "inspector2:BatchGetAccountStatus"
+   ],
+   "update": [
+    "iam:PassRole",
+    "imagebuilder:GetContainerRecipe",
+    "imagebuilder:GetDistributionConfiguration",
+    "imagebuilder:GetImagePipeline",
+    "imagebuilder:GetImageRecipe",
+    "imagebuilder:GetInfrastructureConfiguration",
+    "imagebuilder:GetWorkflow",
+    "imagebuilder:TagResource",
+    "imagebuilder:UntagResource",
+    "imagebuilder:UpdateImagePipeline"
+   ],
+   "delete": [
+    "imagebuilder:DeleteImagePipeline",
+    "imagebuilder:GetImagePipeline",
+    "imagebuilder:UntagResource"
+   ],
+   "read": [
+    "imagebuilder:GetImagePipeline"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "imagebuilder:TagResource",
+    "imagebuilder:UntagResource"
+   ],
+   "notIamActions": []
+  },
+  "AWS::ImageBuilder::ImageRecipe": {
+   "create": [
+    "ec2:DescribeImages",
+    "iam:CreateServiceLinkedRole",
+    "iam:GetRole",
+    "imagebuilder:CreateImageRecipe",
+    "imagebuilder:GetComponent",
+    "imagebuilder:GetImage",
+    "imagebuilder:GetImageRecipe",
+    "imagebuilder:TagResource"
+   ],
+   "update": [
+    "imagebuilder:TagResource",
+    "imagebuilder:UntagResource"
+   ],
+   "delete": [
+    "imagebuilder:DeleteImageRecipe",
+    "imagebuilder:GetImageRecipe",
+    "imagebuilder:UntagResource"
+   ],
+   "read": [
+    "imagebuilder:GetImageRecipe"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "imagebuilder:TagResource",
+    "imagebuilder:UntagResource"
+   ],
+   "notIamActions": []
+  },
+  "AWS::ImageBuilder::InfrastructureConfiguration": {
+   "create": [
+    "autoscaling:DescribeAutoScalingGroups",
+    "iam:CreateServiceLinkedRole",
+    "iam:GetInstanceProfile",
+    "iam:GetRole",
+    "iam:PassRole",
+    "imagebuilder:CreateInfrastructureConfiguration",
+    "imagebuilder:GetInfrastructureConfiguration",
+    "imagebuilder:TagResource",
+    "sns:Publish"
+   ],
+   "update": [
+    "autoscaling:DescribeAutoScalingGroups",
+    "iam:PassRole",
+    "imagebuilder:GetInfrastructureConfiguration",
+    "imagebuilder:TagResource",
+    "imagebuilder:UntagResource",
+    "imagebuilder:UpdateInfrastructureConfiguration",
+    "sns:Publish"
+   ],
+   "delete": [
+    "imagebuilder:DeleteInfrastructureConfiguration",
+    "imagebuilder:GetInfrastructureConfiguration",
+    "imagebuilder:UntagResource"
+   ],
+   "read": [
+    "imagebuilder:GetInfrastructureConfiguration"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "imagebuilder:TagResource",
+    "imagebuilder:UntagResource"
+   ],
+   "notIamActions": []
+  },
+  "AWS::Lambda::EventSourceMapping": {
+   "create": [
+    "kms:Decrypt",
+    "kms:DescribeKey",
+    "kms:GenerateDataKey",
+    "lambda:CreateEventSourceMapping",
+    "lambda:GetEventSourceMapping",
+    "lambda:TagResource"
+   ],
+   "update": [
+    "kms:Decrypt",
+    "kms:DescribeKey",
+    "kms:GenerateDataKey",
+    "lambda:GetEventSourceMapping",
+    "lambda:TagResource",
+    "lambda:UntagResource",
+    "lambda:UpdateEventSourceMapping"
+   ],
+   "delete": [
+    "kms:Decrypt",
+    "lambda:DeleteEventSourceMapping",
+    "lambda:GetEventSourceMapping"
+   ],
+   "read": [
+    "kms:Decrypt",
+    "lambda:GetEventSourceMapping",
+    "lambda:ListTags"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "lambda:ListTags",
+    "lambda:TagResource",
+    "lambda:UntagResource"
+   ],
+   "notIamActions": []
+  },
+  "AWS::Lambda::Function": {
+   "create": [
+    "ec2:DescribeSecurityGroups",
+    "ec2:DescribeSubnets",
+    "ec2:DescribeVpcs",
+    "elasticfilesystem:DescribeMountTargets",
+    "iam:PassRole",
+    "kms:CreateGrant",
+    "kms:Decrypt",
+    "kms:DescribeKey",
+    "kms:Encrypt",
+    "kms:GenerateDataKey",
+    "lambda:AssociateRuntimeAlias",
+    "lambda:CreateFunction",
+    "lambda:GetCodeSigningConfig",
+    "lambda:GetFunction",
+    "lambda:GetFunctionCodeSigningConfig",
+    "lambda:GetFunctionRecursionConfig",
+    "lambda:GetLayerVersion",
+    "lambda:GetRuntimeManagementConfig",
+    "lambda:PassCapacityProvider",
+    "lambda:PutFunctionConcurrency",
+    "lambda:PutFunctionRecursionConfig",
+    "lambda:PutFunctionScalingConfig",
+    "lambda:PutRuntimeManagementConfig",
+    "lambda:TagResource",
+    "s3:GetObject",
+    "s3:GetObjectVersion",
+    "s3files:ListMountTargets"
+   ],
+   "update": [
+    "ec2:DescribeSecurityGroups",
+    "ec2:DescribeSubnets",
+    "ec2:DescribeVpcs",
+    "elasticfilesystem:DescribeMountTargets",
+    "iam:PassRole",
+    "kms:CreateGrant",
+    "kms:Decrypt",
+    "kms:DescribeKey",
+    "kms:GenerateDataKey",
+    "lambda:AssociateRuntimeAlias",
+    "lambda:DeleteFunctionCodeSigningConfig",
+    "lambda:DeleteFunctionConcurrency",
+    "lambda:GetCodeSigningConfig",
+    "lambda:GetFunction",
+    "lambda:GetFunctionCodeSigningConfig",
+    "lambda:GetFunctionRecursionConfig",
+    "lambda:GetRuntimeManagementConfig",
+    "lambda:PassCapacityProvider",
+    "lambda:PublishVersion",
+    "lambda:PutFunctionCodeSigningConfig",
+    "lambda:PutFunctionConcurrency",
+    "lambda:PutFunctionRecursionConfig",
+    "lambda:PutFunctionScalingConfig",
+    "lambda:PutRuntimeManagementConfig",
+    "lambda:TagResource",
+    "lambda:UntagResource",
+    "lambda:UpdateFunctionCode",
+    "lambda:UpdateFunctionConfiguration",
+    "s3:GetObject",
+    "s3:GetObjectVersion",
+    "s3files:ListMountTargets"
+   ],
+   "delete": [
+    "ec2:DescribeNetworkInterfaces",
+    "lambda:DeleteFunction",
+    "lambda:GetFunction"
+   ],
+   "read": [
+    "kms:Decrypt",
+    "lambda:GetFunction",
+    "lambda:GetFunctionCodeSigningConfig",
+    "lambda:GetFunctionRecursionConfig",
+    "lambda:GetFunctionScalingConfig",
+    "lambda:GetRuntimeManagementConfig"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "lambda:ListTags",
+    "lambda:TagResource",
+    "lambda:UntagResource"
+   ],
+   "notIamActions": [
+    "lambda:AssociateRuntimeAlias"
+   ]
+  },
+  "AWS::Lambda::Permission": {
+   "create": [
+    "lambda:AddPermission"
+   ],
+   "update": [],
+   "delete": [
+    "lambda:RemovePermission"
+   ],
+   "read": [
+    "lambda:GetPolicy"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::Logs::LogGroup": {
+   "create": [
+    "firehose:TagDeliveryStream",
+    "logs:CreateLogDelivery",
+    "logs:CreateLogGroup",
+    "logs:DescribeIndexPolicies",
+    "logs:DescribeLogGroups",
+    "logs:DescribeResourcePolicies",
+    "logs:GetDataProtectionPolicy",
+    "logs:PutBearerTokenAuthentication",
+    "logs:PutDataProtectionPolicy",
+    "logs:PutIndexPolicy",
+    "logs:PutResourcePolicy",
+    "logs:PutRetentionPolicy",
+    "logs:TagResource",
+    "s3:REST.PUT.OBJECT"
+   ],
+   "update": [
+    "firehose:TagDeliveryStream",
+    "logs:AssociateKmsKey",
+    "logs:CreateLogDelivery",
+    "logs:DeleteIndexPolicy",
+    "logs:DeleteResourcePolicy",
+    "logs:DeleteRetentionPolicy",
+    "logs:DescribeLogGroups",
+    "logs:DescribeResourcePolicies",
+    "logs:DisassociateKmsKey",
+    "logs:GetDataProtectionPolicy",
+    "logs:ListTagsForResource",
+    "logs:PutBearerTokenAuthentication",
+    "logs:PutDataProtectionPolicy",
+    "logs:PutIndexPolicy",
+    "logs:PutLogGroupDeletionProtection",
+    "logs:PutResourcePolicy",
+    "logs:PutRetentionPolicy",
+    "logs:TagResource",
+    "logs:UntagResource",
+    "s3:REST.PUT.OBJECT"
+   ],
+   "delete": [
+    "logs:DeleteDataProtectionPolicy",
+    "logs:DeleteLogGroup",
+    "logs:DescribeLogGroups"
+   ],
+   "read": [
+    "logs:DescribeIndexPolicies",
+    "logs:DescribeLogGroups",
+    "logs:DescribeResourcePolicies",
+    "logs:GetDataProtectionPolicy",
+    "logs:ListTagsForResource"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "logs:ListTagsForResource",
+    "logs:TagResource",
+    "logs:UntagResource"
+   ],
+   "notIamActions": [
+    "s3:REST.PUT.OBJECT"
+   ]
+  },
+  "AWS::S3::Bucket": {
+   "create": [
+    "iam:PassRole",
+    "s3:CreateBucket",
+    "s3:CreateBucketMetadataTableConfiguration",
+    "s3:DeleteObject",
+    "s3:GetBucketAcl",
+    "s3:GetBucketMetadataTableConfiguration",
+    "s3:ListBucket",
+    "s3:PutAccelerateConfiguration",
+    "s3:PutAnalyticsConfiguration",
+    "s3:PutBucketAbac",
+    "s3:PutBucketCORS",
+    "s3:PutBucketDefaultStorageClass",
+    "s3:PutBucketLogging",
+    "s3:PutBucketNotification",
+    "s3:PutBucketObjectLockConfiguration",
+    "s3:PutBucketOwnershipControls",
+    "s3:PutBucketPublicAccessBlock",
+    "s3:PutBucketReplication",
+    "s3:PutBucketTagging",
+    "s3:PutBucketVersioning",
+    "s3:PutBucketWebsite",
+    "s3:PutEncryptionConfiguration",
+    "s3:PutIntelligentTieringConfiguration",
+    "s3:PutInventoryConfiguration",
+    "s3:PutLifecycleConfiguration",
+    "s3:PutMetricsConfiguration",
+    "s3:PutObjectAcl",
+    "s3:PutObjectLockConfiguration",
+    "s3:PutReplicationConfiguration",
+    "s3:TagResource",
+    "s3tables:CreateNamespace",
+    "s3tables:CreateTable",
+    "s3tables:CreateTableBucket",
+    "s3tables:GetTable",
+    "s3tables:GetTableMetadataLocation",
+    "s3tables:PutTableBucketPolicy",
+    "s3tables:PutTableEncryption",
+    "s3tables:PutTablePolicy",
+    "s3tables:UpdateTableMetadataLocation"
+   ],
+   "update": [
+    "iam:PassRole",
+    "s3:CreateBucketMetadataTableConfiguration",
+    "s3:DeleteBucketAnalyticsConfiguration",
+    "s3:DeleteBucketCors",
+    "s3:DeleteBucketEncryption",
+    "s3:DeleteBucketLifecycle",
+    "s3:DeleteBucketMetadataTableConfiguration",
+    "s3:DeleteBucketMetricsConfiguration",
+    "s3:DeleteBucketReplication",
+    "s3:DeleteBucketWebsite",
+    "s3:GetBucketMetadataTableConfiguration",
+    "s3:ListBucket",
+    "s3:PutAccelerateConfiguration",
+    "s3:PutAnalyticsConfiguration",
+    "s3:PutBucketAbac",
+    "s3:PutBucketAcl",
+    "s3:PutBucketCORS",
+    "s3:PutBucketDefaultStorageClass",
+    "s3:PutBucketLogging",
+    "s3:PutBucketNotification",
+    "s3:PutBucketObjectLockConfiguration",
+    "s3:PutBucketOwnershipControls",
+    "s3:PutBucketPublicAccessBlock",
+    "s3:PutBucketReplication",
+    "s3:PutBucketTagging",
+    "s3:PutBucketVersioning",
+    "s3:PutBucketWebsite",
+    "s3:PutEncryptionConfiguration",
+    "s3:PutIntelligentTieringConfiguration",
+    "s3:PutInventoryConfiguration",
+    "s3:PutLifecycleConfiguration",
+    "s3:PutMetricsConfiguration",
+    "s3:PutObjectLockConfiguration",
+    "s3:PutReplicationConfiguration",
+    "s3:TagResource",
+    "s3:UntagResource",
+    "s3:UpdateBucketMetadataAnnotationTableConfiguration",
+    "s3:UpdateBucketMetadataInventoryTableConfiguration",
+    "s3:UpdateBucketMetadataJournalTableConfiguration",
+    "s3tables:CreateNamespace",
+    "s3tables:CreateTable",
+    "s3tables:CreateTableBucket",
+    "s3tables:GetTable",
+    "s3tables:GetTableMetadataLocation",
+    "s3tables:PutTableBucketPolicy",
+    "s3tables:PutTableEncryption",
+    "s3tables:PutTablePolicy",
+    "s3tables:UpdateTableMetadataLocation"
+   ],
+   "delete": [
+    "s3:DeleteBucket",
+    "s3:ListBucket"
+   ],
+   "read": [
+    "s3:GetAccelerateConfiguration",
+    "s3:GetAnalyticsConfiguration",
+    "s3:GetBucketAbac",
+    "s3:GetBucketCORS",
+    "s3:GetBucketDefaultStorageClass",
+    "s3:GetBucketLogging",
+    "s3:GetBucketMetadataTableConfiguration",
+    "s3:GetBucketNotification",
+    "s3:GetBucketObjectLockConfiguration",
+    "s3:GetBucketOwnershipControls",
+    "s3:GetBucketPublicAccessBlock",
+    "s3:GetBucketTagging",
+    "s3:GetBucketVersioning",
+    "s3:GetBucketWebsite",
+    "s3:GetEncryptionConfiguration",
+    "s3:GetIntelligentTieringConfiguration",
+    "s3:GetInventoryConfiguration",
+    "s3:GetLifecycleConfiguration",
+    "s3:GetMetricsConfiguration",
+    "s3:GetReplicationConfiguration",
+    "s3:ListBucket",
+    "s3:ListTagsForResource"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "s3:DeleteBucketTagging",
+    "s3:GetBucketTagging",
+    "s3:ListTagsForResource",
+    "s3:PutBucketTagging",
+    "s3:TagResource",
+    "s3:UntagResource"
+   ],
+   "notIamActions": [
+    "s3:DeleteBucketAnalyticsConfiguration",
+    "s3:DeleteBucketCors",
+    "s3:DeleteBucketEncryption",
+    "s3:DeleteBucketLifecycle",
+    "s3:DeleteBucketMetricsConfiguration",
+    "s3:DeleteBucketReplication",
+    "s3:DeleteBucketTagging",
+    "s3:GetBucketDefaultStorageClass",
+    "s3:PutBucketDefaultStorageClass",
+    "s3:PutBucketReplication",
+    "s3:PutObjectLockConfiguration"
+   ]
+  },
+  "AWS::S3::BucketPolicy": {
+   "create": [
+    "s3:GetBucketPolicy",
+    "s3:PutBucketPolicy"
+   ],
+   "update": [
+    "s3:GetBucketPolicy",
+    "s3:PutBucketPolicy"
+   ],
+   "delete": [
+    "s3:DeleteBucketPolicy",
+    "s3:GetBucketPolicy"
+   ],
+   "read": [
+    "s3:GetBucketPolicy"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::SNS::Subscription": {
+   "create": [
+    "iam:GetRole",
+    "iam:PassRole",
+    "sns:Subscribe"
+   ],
+   "update": [
+    "iam:GetRole",
+    "iam:PassRole",
+    "sns:SetSubscriptionAttributes"
+   ],
+   "delete": [
+    "sns:GetSubscriptionAttributes",
+    "sns:Unsubscribe"
+   ],
+   "read": [
+    "sns:GetSubscriptionAttributes"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::SNS::Topic": {
+   "create": [
+    "iam:GetRole",
+    "iam:PassRole",
+    "sns:CreateTopic",
+    "sns:GetTopicAttributes",
+    "sns:PutDataProtectionPolicy",
+    "sns:Subscribe",
+    "sns:TagResource"
+   ],
+   "update": [
+    "iam:GetRole",
+    "iam:PassRole",
+    "sns:GetDataProtectionPolicy",
+    "sns:GetTopicAttributes",
+    "sns:ListSubscriptionsByTopic",
+    "sns:ListTagsForResource",
+    "sns:PutDataProtectionPolicy",
+    "sns:SetTopicAttributes",
+    "sns:Subscribe",
+    "sns:TagResource",
+    "sns:Unsubscribe",
+    "sns:UntagResource"
+   ],
+   "delete": [
+    "sns:DeleteTopic",
+    "sns:GetTopicAttributes"
+   ],
+   "read": [
+    "sns:GetDataProtectionPolicy",
+    "sns:GetTopicAttributes",
+    "sns:ListSubscriptionsByTopic",
+    "sns:ListTagsForResource"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "sns:ListTagsForResource",
+    "sns:TagResource",
+    "sns:UntagResource"
+   ],
+   "notIamActions": []
+  },
+  "AWS::SNS::TopicPolicy": {
+   "create": [
+    "sns:SetTopicAttributes"
+   ],
+   "update": [
+    "sns:SetTopicAttributes"
+   ],
+   "delete": [
+    "sns:SetTopicAttributes"
+   ],
+   "read": [],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::SQS::Queue": {
+   "create": [
+    "sqs:CreateQueue",
+    "sqs:GetQueueAttributes",
+    "sqs:GetQueueUrl",
+    "sqs:ListQueueTags",
+    "sqs:TagQueue"
+   ],
+   "update": [
+    "sqs:GetQueueAttributes",
+    "sqs:ListQueueTags",
+    "sqs:SetQueueAttributes",
+    "sqs:TagQueue",
+    "sqs:UntagQueue"
+   ],
+   "delete": [
+    "sqs:DeleteQueue",
+    "sqs:GetQueueAttributes"
+   ],
+   "read": [
+    "sqs:GetQueueAttributes",
+    "sqs:ListQueueTags"
+   ],
+   "taggable": true,
+   "tagOnCreate": true,
+   "tagging": [
+    "sqs:ListQueueTags",
+    "sqs:TagQueue",
+    "sqs:UntagQueue"
+   ],
+   "notIamActions": []
+  },
+  "AWS::SQS::QueuePolicy": {
+   "create": [
+    "sqs:SetQueueAttributes"
+   ],
+   "update": [
+    "sqs:SetQueueAttributes"
+   ],
+   "delete": [
+    "sqs:SetQueueAttributes"
+   ],
+   "read": [],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
+  "AWS::Scheduler::Schedule": {
+   "create": [
+    "iam:PassRole",
+    "scheduler:CreateSchedule",
+    "scheduler:GetSchedule"
+   ],
+   "update": [
+    "iam:PassRole",
+    "scheduler:GetSchedule",
+    "scheduler:UpdateSchedule"
+   ],
+   "delete": [
+    "scheduler:DeleteSchedule",
+    "scheduler:GetSchedule"
+   ],
+   "read": [
+    "scheduler:GetSchedule"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  }
+ }
+}

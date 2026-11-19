@@ -258,7 +258,11 @@
                 "lambda:GetRuntimeManagementConfig",
                 "lambda:PutRuntimeManagementConfig",
                 "lambda:GetFunctionCodeSigningConfig",
-                "lambda:ListVersionsByFunction"
+                "lambda:ListVersionsByFunction",
+                "lambda:GetFunctionRecursionConfig",
+                "lambda:PutFunctionRecursionConfig",
+                "lambda:GetFunctionScalingConfig",
+                "lambda:GetPolicy"
               ],
               "Resource": "arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-*"
             },
@@ -271,7 +275,8 @@
                 "lambda:DeleteEventSourceMapping",
                 "lambda:GetEventSourceMapping",
                 "lambda:TagResource",
-                "lambda:ListTags"
+                "lambda:ListTags",
+                "lambda:UntagResource"
               ],
               "Resource": "*",
               "Condition": {
@@ -301,7 +306,9 @@
                 "iam:UntagRole",
                 "iam:GetRolePolicy",
                 "iam:ListRolePolicies",
-                "iam:ListAttachedRolePolicies"
+                "iam:ListAttachedRolePolicies",
+                "iam:ListRoleTags",
+                "iam:UpdateRoleDescription"
               ],
               "Resource": "arn:aws:iam::865859654353:role/fenvix-prod-github-app-*"
             },
@@ -402,20 +409,18 @@
                 "s3:CreateBucket",
                 "s3:DeleteBucket",
                 "s3:PutBucketPolicy",
-                "s3:GetBucketPolicy",
                 "s3:DeleteBucketPolicy",
                 "s3:PutBucketPublicAccessBlock",
-                "s3:GetBucketPublicAccessBlock",
                 "s3:PutEncryptionConfiguration",
-                "s3:GetEncryptionConfiguration",
                 "s3:PutLifecycleConfiguration",
-                "s3:GetLifecycleConfiguration",
                 "s3:PutBucketOwnershipControls",
-                "s3:GetBucketOwnershipControls",
                 "s3:PutBucketTagging",
-                "s3:GetBucketTagging",
-                "s3:GetBucketLocation",
-                "s3:ListBucket"
+                "s3:ListBucket",
+                "s3:GetBucket*",
+                "s3:Get*Configuration",
+                "s3:TagResource",
+                "s3:UntagResource",
+                "s3:ListTagsForResource"
               ],
               "Resource": "arn:aws:s3:::fenvix-prod-github-app-*"
             },
@@ -431,7 +436,9 @@
                 "logs:UntagResource",
                 "logs:ListTagsForResource",
                 "logs:TagLogGroup",
-                "logs:DescribeLogGroups"
+                "logs:DescribeLogGroups",
+                "logs:GetDataProtectionPolicy",
+                "logs:DescribeIndexPolicies"
               ],
               "Resource": [
                 "arn:aws:logs:eu-west-1:865859654353:log-group:/aws/lambda/fenvix-prod-github-app-*",
@@ -491,7 +498,8 @@
                 "acm:AddTagsToCertificate",
                 "acm:RemoveTagsFromCertificate",
                 "acm:ListTagsForCertificate",
-                "acm:ListCertificates"
+                "acm:ListCertificates",
+                "acm:UpdateCertificateOptions"
               ],
               "Resource": "*",
               "Condition": {
@@ -508,7 +516,9 @@
                 "apigateway:POST",
                 "apigateway:PUT",
                 "apigateway:PATCH",
-                "apigateway:DELETE"
+                "apigateway:DELETE",
+                "apigateway:AddCertificateToDomain",
+                "apigateway:RemoveCertificateFromDomain"
               ],
               "Resource": [
                 "arn:aws:apigateway:eu-west-1::/apis",
@@ -544,7 +554,10 @@
                 "sns:TagResource",
                 "sns:UntagResource",
                 "sns:ListTagsForResource",
-                "sns:GetSubscriptionAttributes"
+                "sns:GetSubscriptionAttributes",
+                "sns:SetSubscriptionAttributes",
+                "sns:ListSubscriptionsByTopic",
+                "sns:GetDataProtectionPolicy"
               ],
               "Resource": "arn:aws:sns:eu-west-1:865859654353:fenvix-prod-github-app-*"
             },
@@ -553,7 +566,8 @@
               "Effect": "Allow",
               "Action": [
                 "sns:Unsubscribe",
-                "sns:GetSubscriptionAttributes"
+                "sns:GetSubscriptionAttributes",
+                "sns:SetSubscriptionAttributes"
               ],
               "Resource": "*",
               "Condition": {
@@ -626,7 +640,17 @@
                 "ec2:CreateLaunchTemplateVersion",
                 "ec2:DeleteLaunchTemplate",
                 "ec2:ModifyLaunchTemplate",
-                "ec2:GetLaunchTemplateData"
+                "ec2:GetLaunchTemplateData",
+                "ec2:ReplaceRoute",
+                "ec2:ReplaceRouteTableAssociation",
+                "ec2:UpdateSecurityGroupRuleDescriptionsIngress",
+                "ec2:UpdateSecurityGroupRuleDescriptionsEgress",
+                "ec2:MonitorInstances",
+                "ec2:UnmonitorInstances",
+                "ec2:ModifyPrivateDnsNameOptions",
+                "ec2:ModifyInstanceMaintenanceOptions",
+                "ec2:DisassociateIamInstanceProfile",
+                "ec2:ReplaceIamInstanceProfileAssociation"
               ],
               "Resource": "*",
               "Condition": {
@@ -754,18 +778,18 @@
                 "s3:CreateBucket",
                 "s3:DeleteBucket",
                 "s3:PutBucketPolicy",
-                "s3:GetBucketPolicy",
                 "s3:DeleteBucketPolicy",
                 "s3:PutBucketPublicAccessBlock",
-                "s3:GetBucketPublicAccessBlock",
                 "s3:PutEncryptionConfiguration",
-                "s3:GetEncryptionConfiguration",
+                "s3:PutLifecycleConfiguration",
                 "s3:PutBucketOwnershipControls",
-                "s3:GetBucketOwnershipControls",
                 "s3:PutBucketTagging",
-                "s3:GetBucketTagging",
-                "s3:GetBucketLocation",
-                "s3:ListBucket"
+                "s3:ListBucket",
+                "s3:GetBucket*",
+                "s3:Get*Configuration",
+                "s3:TagResource",
+                "s3:UntagResource",
+                "s3:ListTagsForResource"
               ],
               "Resource": "arn:aws:s3:::fenvix-prod-dashboard-865859654353"
             },
@@ -805,7 +829,10 @@
                 "cloudfront:GetFunction",
                 "cloudfront:UpdateFunction",
                 "cloudfront:PublishFunction",
-                "cloudfront:DeleteFunction"
+                "cloudfront:DeleteFunction",
+                "cloudfront:TagResource",
+                "cloudfront:UntagResource",
+                "cloudfront:ListTagsForResource"
               ],
               "Resource": "arn:aws:cloudfront::865859654353:function/fenvix-prod-dashboard-*"
             },
@@ -1158,6 +1185,19 @@
               "Resource": [
                 "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-github-app/*",
                 "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-dashboard/*"
+              ]
+            },
+            {
+              "Sid": "ClearAFailedFirstCreate",
+              "Effect": "Allow",
+              "Action": [
+                "cloudformation:DeleteStack",
+                "s3:DeleteBucket"
+              ],
+              "Resource": [
+                "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-github-app/*",
+                "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-dashboard/*",
+                "arn:aws:s3:::fenvix-prod-dashboard-865859654353"
               ]
             },
             {

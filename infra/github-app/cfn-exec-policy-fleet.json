@@ -42,7 +42,17 @@
         "ec2:CreateLaunchTemplateVersion",
         "ec2:DeleteLaunchTemplate",
         "ec2:ModifyLaunchTemplate",
-        "ec2:GetLaunchTemplateData"
+        "ec2:GetLaunchTemplateData",
+        "ec2:ReplaceRoute",
+        "ec2:ReplaceRouteTableAssociation",
+        "ec2:UpdateSecurityGroupRuleDescriptionsIngress",
+        "ec2:UpdateSecurityGroupRuleDescriptionsEgress",
+        "ec2:MonitorInstances",
+        "ec2:UnmonitorInstances",
+        "ec2:ModifyPrivateDnsNameOptions",
+        "ec2:ModifyInstanceMaintenanceOptions",
+        "ec2:DisassociateIamInstanceProfile",
+        "ec2:ReplaceIamInstanceProfileAssociation"
       ],
       "Resource": "*",
       "Condition": {

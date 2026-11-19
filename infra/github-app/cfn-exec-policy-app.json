@@ -21,7 +21,11 @@
         "lambda:GetRuntimeManagementConfig",
         "lambda:PutRuntimeManagementConfig",
         "lambda:GetFunctionCodeSigningConfig",
-        "lambda:ListVersionsByFunction"
+        "lambda:ListVersionsByFunction",
+        "lambda:GetFunctionRecursionConfig",
+        "lambda:PutFunctionRecursionConfig",
+        "lambda:GetFunctionScalingConfig",
+        "lambda:GetPolicy"
       ],
       "Resource": "arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-*"
     },
@@ -34,7 +38,8 @@
         "lambda:DeleteEventSourceMapping",
         "lambda:GetEventSourceMapping",
         "lambda:TagResource",
-        "lambda:ListTags"
+        "lambda:ListTags",
+        "lambda:UntagResource"
       ],
       "Resource": "*",
       "Condition": {
@@ -64,7 +69,9 @@
         "iam:UntagRole",
         "iam:GetRolePolicy",
         "iam:ListRolePolicies",
-        "iam:ListAttachedRolePolicies"
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRoleTags",
+        "iam:UpdateRoleDescription"
       ],
       "Resource": "arn:aws:iam::865859654353:role/fenvix-prod-github-app-*"
     },
@@ -165,20 +172,18 @@
         "s3:CreateBucket",
         "s3:DeleteBucket",
         "s3:PutBucketPolicy",
-        "s3:GetBucketPolicy",
         "s3:DeleteBucketPolicy",
         "s3:PutBucketPublicAccessBlock",
-        "s3:GetBucketPublicAccessBlock",
         "s3:PutEncryptionConfiguration",
-        "s3:GetEncryptionConfiguration",
         "s3:PutLifecycleConfiguration",
-        "s3:GetLifecycleConfiguration",
         "s3:PutBucketOwnershipControls",
-        "s3:GetBucketOwnershipControls",
         "s3:PutBucketTagging",
-        "s3:GetBucketTagging",
-        "s3:GetBucketLocation",
-        "s3:ListBucket"
+        "s3:ListBucket",
+        "s3:GetBucket*",
+        "s3:Get*Configuration",
+        "s3:TagResource",
+        "s3:UntagResource",
+        "s3:ListTagsForResource"
       ],
       "Resource": "arn:aws:s3:::fenvix-prod-github-app-*"
     },
@@ -194,7 +199,9 @@
         "logs:UntagResource",
         "logs:ListTagsForResource",
         "logs:TagLogGroup",
-        "logs:DescribeLogGroups"
+        "logs:DescribeLogGroups",
+        "logs:GetDataProtectionPolicy",
+        "logs:DescribeIndexPolicies"
       ],
       "Resource": [
         "arn:aws:logs:eu-west-1:865859654353:log-group:/aws/lambda/fenvix-prod-github-app-*",
