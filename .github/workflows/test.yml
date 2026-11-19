@@ -50,7 +50,7 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/cfn-lint"
           "$RUNNER_TEMP/cfn-lint/bin/pip" install --quiet --disable-pip-version-check cfn-lint==1.60.1
-          "$RUNNER_TEMP/cfn-lint/bin/cfn-lint" infra/bootstrap/fenvix-bootstrap.json
+          "$RUNNER_TEMP/cfn-lint/bin/python" -I infra/bootstrap/lint.py
           "$RUNNER_TEMP/cfn-lint/bin/python" -I infra/github-app/scripts/cfn-handler-permissions.py --check
       - name: Databases for the tests (scratch Postgres 16, local Supabase)
         run: |

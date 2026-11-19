@@ -518,7 +518,9 @@
                 "apigateway:PATCH",
                 "apigateway:DELETE",
                 "apigateway:AddCertificateToDomain",
-                "apigateway:RemoveCertificateFromDomain"
+                "apigateway:RemoveCertificateFromDomain",
+                "apigateway:TagResource",
+                "apigateway:UntagResource"
               ],
               "Resource": [
                 "arn:aws:apigateway:eu-west-1::/apis",
@@ -1199,6 +1201,17 @@
                 "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-dashboard/*",
                 "arn:aws:s3:::fenvix-prod-dashboard-865859654353"
               ]
+            },
+            {
+              "Sid": "DiagnoseAFailedDeploy",
+              "Effect": "Allow",
+              "Action": "cloudtrail:LookupEvents",
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1"
+                }
+              }
             },
             {
               "Sid": "PrintCertificateValidationRecord",

@@ -104,6 +104,10 @@ describe("IAM policy files", () => {
       "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-github-app/*",
       "arn:aws:s3:::fenvix-prod-dashboard-865859654353",
     ]);
+    // The CDK CLI reads CloudTrail to explain a failed deploy (no lookup role: it uses the deployer). Read-only, this region.
+    const trail = allows.find((s) => s.Sid === "DiagnoseAFailedDeploy")!;
+    assert.deepEqual([arr(trail.Action), arr(trail.Resource), json(trail.Condition)], [["cloudtrail:LookupEvents"], ["*"], json({ StringEquals: { "aws:RequestedRegion": "eu-west-1" } })]);
+    for (const a of allows.flatMap((s) => arr(s.Action))) assert.ok(!a.startsWith("cloudtrail:") || a === "cloudtrail:LookupEvents", a);
     for (const a of allows.filter((s) => s !== clear).flatMap((s) => arr(s.Action))) assert.ok(!/^(iam|lambda:(?!InvokeFunction$)|ec2:Run|ec2:Terminate|cloudformation:(Create|Update|Delete|Execute)|s3:DeleteBucket)/.test(a), a);
     // S3: only the dashboard's own bucket (aws s3 sync of the build); nothing else, no bucket setting.
     for (const st of allows.filter((x) => x !== clear && arr(x.Action).some((a) => a.startsWith("s3:")))) {
