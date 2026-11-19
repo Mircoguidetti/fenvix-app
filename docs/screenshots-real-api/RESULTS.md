@@ -1,78 +1,78 @@
 # Every page against the real API (local)
 
-Run 2026-11-19T00:03:47.240Z by scripts/e2e-real-api.mjs: local Supabase (Postgres + Supabase Auth in Docker), the API as fenvix_api, the dashboard built with VITE_API_URL, a real Supabase Auth session.
+Run 2026-11-19T01:08:43.274Z by scripts/e2e-real-api.mjs: local Supabase (Postgres + Supabase Auth in Docker), the API as fenvix_api, the dashboard built with VITE_API_URL, a real Supabase Auth session.
 
-163 checks passed, 0 failed.
+170 checks passed, 0 failed.
 
 | Page | Check | Result |
 | --- | --- | --- |
-| overview | called the API (5 requests: GET /me, GET /settings, GET /projects, GET /activity, GET /overview) | ok |
+| overview | called the API (5 requests: GET /me, GET /settings, GET /activity, GET /projects, GET /overview) | ok |
 | overview | every API answer 2xx/304 | ok |
 | overview | signed in, real data (no sign-in page, no sample-data label) | ok |
-| overview | shows "acme-41c5084f" | ok |
+| overview | shows "acme-7b06129c" | ok |
 | overview | shows "trial" | ok |
 | overview | no console errors | ok |
 | overview | axe: no violations | ok |
 | projects | called the API (3 requests: GET /me, GET /projects) | ok |
 | projects | every API answer 2xx/304 | ok |
 | projects | signed in, real data (no sign-in page, no sample-data label) | ok |
-| projects | shows "acme-41c5084f/shop" | ok |
-| projects | shows "acme-41c5084f/web" | ok |
+| projects | shows "acme-7b06129c/shop" | ok |
+| projects | shows "acme-7b06129c/web" | ok |
 | projects | shows "Cache warm since 4a7c2e9" | ok |
 | projects | shows "Warming up b81f0d3" | ok |
 | projects | shows "Cache cold: the first run fills it" | ok |
 | projects | no console errors | ok |
 | projects | axe: no violations | ok |
-| project-runs | called the API (10 requests: GET /me, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa/runs, GET /defects, GET /projects, GET /activity) | ok |
+| project-runs | called the API (10 requests: GET /me, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f, GET /projects, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f/runs, GET /defects, GET /activity) | ok |
 | project-runs | every API answer 2xx/304 | ok |
 | project-runs | signed in, real data (no sign-in page, no sample-data label) | ok |
 | project-runs | shows "Change number" | ok |
 | project-runs | no console errors | ok |
 | project-runs | axe: no violations | ok |
-| project-defects | called the API (8 requests: GET /me, GET /defect-families, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa, GET /projects) | ok |
+| project-defects | called the API (8 requests: GET /me, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f, GET /projects, GET /defect-families) | ok |
 | project-defects | every API answer 2xx/304 | ok |
 | project-defects | signed in, real data (no sign-in page, no sample-data label) | ok |
 | project-defects | shows "test_count" | ok |
 | project-defects | no console errors | ok |
 | project-defects | axe: no violations | ok |
-| project-skip-with-proof | called the API (9 requests: GET /me, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa/skip-share, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa/runs, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa/audit, GET /projects) | ok |
+| project-skip-with-proof | called the API (9 requests: GET /me, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f/runs, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f/skip-share, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f/audit, GET /projects) | ok |
 | project-skip-with-proof | every API answer 2xx/304 | ok |
 | project-skip-with-proof | signed in, real data (no sign-in page, no sample-data label) | ok |
 | project-skip-with-proof | shows "rerun" | ok |
 | project-skip-with-proof | no console errors | ok |
 | project-skip-with-proof | axe: no violations | ok |
-| project-nightly | called the API (9 requests: GET /me, GET /defects, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa/explorations, GET /plans, GET /projects) | ok |
+| project-nightly | called the API (9 requests: GET /me, GET /plans, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f, GET /defects, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f/explorations, GET /projects) | ok |
 | project-nightly | every API answer 2xx/304 | ok |
 | project-nightly | signed in, real data (no sign-in page, no sample-data label) | ok |
 | project-nightly | shows "seed" | ok |
 | project-nightly | no console errors | ok |
 | project-nightly | axe: no violations | ok |
-| project-time-to-green | called the API (7 requests: GET /me, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa/runs, GET /projects) | ok |
+| project-time-to-green | called the API (7 requests: GET /me, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f/runs, GET /projects) | ok |
 | project-time-to-green | every API answer 2xx/304 | ok |
 | project-time-to-green | signed in, real data (no sign-in page, no sample-data label) | ok |
 | project-time-to-green | shows "green" | ok |
 | project-time-to-green | no console errors | ok |
 | project-time-to-green | axe: no violations | ok |
-| project-settings | called the API (7 requests: GET /me, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa, GET /projects, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa/setup-change) | ok |
+| project-settings | called the API (7 requests: GET /me, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f, GET /projects, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f/setup-change) | ok |
 | project-settings | every API answer 2xx/304 | ok |
 | project-settings | signed in, real data (no sign-in page, no sample-data label) | ok |
 | project-settings | shows "Skip with proof" | ok |
 | project-settings | no console errors | ok |
 | project-settings | axe: no violations | ok |
-| run | called the API (10 requests: GET /me, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa, GET /runs/fc7a293f-9d1c-4c1e-8584-31ff4f152796, GET /runs/fc7a293f-9d1c-4c1e-8584-31ff4f152796/tests, GET /runs/fc7a293f-9d1c-4c1e-8584-31ff4f152796/files, GET /projects) | ok |
+| run | called the API (10 requests: GET /me, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f, GET /runs/d033f22a-2d84-45cb-b3fe-52732abecfcd/files, GET /runs/d033f22a-2d84-45cb-b3fe-52732abecfcd, GET /runs/d033f22a-2d84-45cb-b3fe-52732abecfcd/tests, GET /projects) | ok |
 | run | every API answer 2xx/304 | ok |
 | run | signed in, real data (no sign-in page, no sample-data label) | ok |
 | run | shows "test_total" | ok |
 | run | shows "test_empty" | ok |
 | run | no console errors | ok |
 | run | axe: no violations | ok |
-| run-failed | called the API (10 requests: GET /me, GET /runs/33b59f8b-852f-4aa6-80bc-fd8f74abf039, GET /runs/33b59f8b-852f-4aa6-80bc-fd8f74abf039/files, GET /runs/33b59f8b-852f-4aa6-80bc-fd8f74abf039/tests, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa, GET /projects) | ok |
+| run-failed | called the API (10 requests: GET /me, GET /runs/77c9c65d-56ab-4b0e-b9b3-0f7e8e863fb3, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f, GET /runs/77c9c65d-56ab-4b0e-b9b3-0f7e8e863fb3/files, GET /runs/77c9c65d-56ab-4b0e-b9b3-0f7e8e863fb3/tests, GET /projects) | ok |
 | run-failed | every API answer 2xx/304 | ok |
 | run-failed | signed in, real data (no sign-in page, no sample-data label) | ok |
 | run-failed | shows "failed" | ok |
 | run-failed | no console errors | ok |
 | run-failed | axe: no violations | ok |
-| run-shadow | called the API (10 requests: GET /me, GET /runs/1a5d0093-3672-494f-8b52-797cdbe8b79f, GET /projects/1a0a5033-aff1-4a90-9f7a-711fcbc414fa, GET /runs/1a5d0093-3672-494f-8b52-797cdbe8b79f/tests, GET /runs/1a5d0093-3672-494f-8b52-797cdbe8b79f/files, GET /projects) | ok |
+| run-shadow | called the API (10 requests: GET /me, GET /runs/3dabab2a-224a-40a1-adc0-41aa36f404ff, GET /runs/3dabab2a-224a-40a1-adc0-41aa36f404ff/files, GET /projects/ce22377d-9bc6-484f-96ed-336a6e9ded3f, GET /runs/3dabab2a-224a-40a1-adc0-41aa36f404ff/tests, GET /projects) | ok |
 | run-shadow | every API answer 2xx/304 | ok |
 | run-shadow | signed in, real data (no sign-in page, no sample-data label) | ok |
 | run-shadow | shows "hadow" | ok |
@@ -84,7 +84,7 @@ Run 2026-11-19T00:03:47.240Z by scripts/e2e-real-api.mjs: local Supabase (Postgr
 | defects | shows "test_count" | ok |
 | defects | no console errors | ok |
 | defects | axe: no violations | ok |
-| defect | called the API (3 requests: GET /me, GET /projects, GET /defects/0b2ea09d-8bcb-48e3-add4-2d29b9063ccd) | ok |
+| defect | called the API (3 requests: GET /me, GET /defects/b9361e77-2cc5-4b04-8305-c8f930b30acd, GET /projects) | ok |
 | defect | every API answer 2xx/304 | ok |
 | defect | signed in, real data (no sign-in page, no sample-data label) | ok |
 | defect | shows "--det-seed=7" | ok |
@@ -94,11 +94,11 @@ Run 2026-11-19T00:03:47.240Z by scripts/e2e-real-api.mjs: local Supabase (Postgr
 | usage | called the API (4 requests: GET /me, GET /usage/months, GET /projects, GET /usage/2026-11) | ok |
 | usage | every API answer 2xx/304 | ok |
 | usage | signed in, real data (no sign-in page, no sample-data label) | ok |
-| usage | shows "acme-41c5084f/shop" | ok |
+| usage | shows "acme-7b06129c/shop" | ok |
 | usage | shows "unit" | ok |
 | usage | no console errors | ok |
 | usage | axe: no violations | ok |
-| billing | called the API (4 requests: GET /me, GET /projects, GET /plans, GET /billing) | ok |
+| billing | called the API (4 requests: GET /me, GET /plans, GET /projects, GET /billing) | ok |
 | billing | every API answer 2xx/304 | ok |
 | billing | signed in, real data (no sign-in page, no sample-data label) | ok |
 | billing | shows "$129" | ok |
@@ -131,8 +131,8 @@ Run 2026-11-19T00:03:47.240Z by scripts/e2e-real-api.mjs: local Supabase (Postgr
 | connect | called the API (4 requests: GET /me, GET /github, GET /github/repositories, GET /projects) | ok |
 | connect | every API answer 2xx/304 | ok |
 | connect | signed in, real data (no sign-in page, no sample-data label) | ok |
-| connect | shows "acme-41c5084f" | ok |
-| connect | shows "olive-41c5084f" | ok |
+| connect | shows "acme-7b06129c" | ok |
+| connect | shows "olive-7b06129c" | ok |
 | connect | shows "uspended" | ok |
 | connect | shows "Cache warm since 4a7c2e9" | ok |
 | connect | shows "Warming up b81f0d3: running the test job" | ok |
@@ -146,7 +146,7 @@ Run 2026-11-19T00:03:47.240Z by scripts/e2e-real-api.mjs: local Supabase (Postgr
 | connect-connected | called the API (4 requests: GET /me, GET /github/repositories, GET /github, GET /projects) | ok |
 | connect-connected | every API answer 2xx/304 | ok |
 | connect-connected | signed in, real data (no sign-in page, no sample-data label) | ok |
-| connect-connected | shows "acme-41c5084f" | ok |
+| connect-connected | shows "acme-7b06129c" | ok |
 | connect-connected | no console errors | ok |
 | connect-connected | axe: no violations | ok |
 | connect-connected | says the App is installed on the account GitHub sent back | ok |
@@ -159,12 +159,19 @@ Run 2026-11-19T00:03:47.240Z by scripts/e2e-real-api.mjs: local Supabase (Postgr
 | connect | lists the repository in state already_fenvix | ok |
 | connect | lists the repository in state unsupported | ok |
 | connect | lists the repository in state failed | ok |
-| connect-error | called the API (4 requests: GET /me, GET /github, GET /github/repositories, GET /projects) | ok |
+| connect-error | called the API (4 requests: GET /me, GET /github/repositories, GET /github, GET /projects) | ok |
 | connect-error | every API answer 2xx/304 | ok |
 | connect-error | signed in, real data (no sign-in page, no sample-data label) | ok |
 | connect-error | no console errors | ok |
 | connect-error | axe: no violations | ok |
 | connect | install button goes to GitHub with a signed state (https://github.com/apps/fenvix-local/installations/new) | ok |
+| connect-confirm | a code made for another person: refused in words, nothing connected | ok |
+| connect-confirm | another person's code linked nothing | ok |
+| connect-confirm | the code left the address bar | ok |
+| connect-confirm | the person's own code: completed through the API, shown as connected | ok |
+| connect-confirm | the installation is linked to the organization that asked | ok |
+| connect-confirm | the code left the address bar | ok |
+| connect-confirm | axe: no violations | ok |
 | settings-region | the owner sets the region to EU (stored: eu) | ok |
 | settings-region | a member sees the region (European Union) read only, with no control to change it | ok |
 | invite | owner creates an invitation (201) | ok |
