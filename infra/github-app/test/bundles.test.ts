@@ -3,10 +3,10 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
-import { synth } from "./helpers.ts";
+import { DEMO, synth } from "./helpers.ts";
 
 describe("the bundled functions (esbuild, ESM)", async () => {
-  const { stack } = await synth();
+  const { stack } = await synth(DEMO);
   const outdir = (stack.node.root as unknown as { outdir: string }).outdir;
   const assets = readdirSync(outdir).filter((d) => d.startsWith("asset."));
 
@@ -28,12 +28,39 @@ describe("the bundled functions (esbuild, ESM)", async () => {
   });
 
   it("a handler with no settings fails cleanly (and would retry on the next call)", async () => {
-    const http = assets.map((a) => join(outdir, a, "index.mjs")).find((f) => readFileSync(f, "utf8").includes("GITHUB_WEBHOOK_SECRET") && !readFileSync(f, "utf8").includes("openSetupPullRequest"))!;
+    const http = assets.map((a) => join(outdir, a, "index.mjs")).find((f) => readFileSync(f, "utf8").includes("/webhooks/github") && !readFileSync(f, "utf8").includes("openSetupPullRequest"))!;
     const { handler } = (await import(pathToFileURL(http).href)) as { handler: (e: unknown) => Promise<unknown> };
     const saved = process.env.SSM_PREFIX;
+    const savedId = process.env.GITHUB_APP_ID;
     delete process.env.SSM_PREFIX;
-    await assert.rejects(handler({ rawPath: "/healthz", requestContext: { http: { method: "GET" } } }), /SSM_PREFIX is required/);
-    if (saved !== undefined) process.env.SSM_PREFIX = saved;
+    process.env.GITHUB_APP_ID = "123456";
+    try {
+      await assert.rejects(handler({ rawPath: "/healthz", requestContext: { http: { method: "GET" } } }), /SSM_PREFIX is required/);
+    } finally {
+      if (saved !== undefined) process.env.SSM_PREFIX = saved;
+      if (savedId === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedId;
+    }
+  });
+
+  it("the App's HTTP bundle without the GitHub App (GITHUB_APP_ID empty): /healthz ok, webhooks 503 github_not_configured, no SSM read", async () => {
+    const http = assets.map((a) => join(outdir, a, "index.mjs")).find((f) => readFileSync(f, "utf8").includes("/webhooks/github") && !readFileSync(f, "utf8").includes("openSetupPullRequest"))!;
+    // A fresh copy of the module: the handler decides at its first call and keeps its app.
+    const { handler } = (await import(`${pathToFileURL(http).href}?no-app`)) as { handler: (e: unknown) => Promise<{ statusCode: number; body: string }> };
+    const savedId = process.env.GITHUB_APP_ID;
+    const saved = process.env.SSM_PREFIX;
+    delete process.env.GITHUB_APP_ID;
+    delete process.env.SSM_PREFIX;
+    try {
+      const h = await handler({ rawPath: "/healthz", requestContext: { http: { method: "GET" } }, headers: {} });
+      assert.equal(h.statusCode, 200);
+      assert.match(h.body, /not_configured/);
+      const w = await handler({ rawPath: "/webhooks/github", requestContext: { http: { method: "POST" } }, headers: { "content-type": "application/json" }, body: "{}" });
+      assert.equal(w.statusCode, 503);
+      assert.match(w.body, /github_not_configured/);
+    } finally {
+      if (savedId !== undefined) process.env.GITHUB_APP_ID = savedId;
+      if (saved !== undefined) process.env.SSM_PREFIX = saved;
+    }
   });
 
   it("the dashboard API's bundle: the contract compiled in, the dashboard's own calculations bundled, the same clean failure without settings", async () => {

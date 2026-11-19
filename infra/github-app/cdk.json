@@ -20,7 +20,9 @@
     "githubAppId": "",
     "githubAppSlug": "",
     "githubClientId": "",
-    "dashboardUrl": "",
+    "dashboardUrl": "https://console.fenvix.dev",
+    "dashboardDomain": "console.fenvix.dev",
+    "dashboardCertificateArn": "",
     "supabaseUrl": "",
     "runsOnLabel": "fenvix",
     "summaryWaitSeconds": "600",
@@ -33,7 +35,7 @@
     "secondAwsRegion": "",
     "secondLaunchTemplateId": "",
     "secondCacheUrl": "",
-    "runnerMode": "demo",
+    "runnerMode": "per-job",
     "demoRepository": "",
     "demoMaxHours": "12",
     "runnerMaxRunning": "4",
@@ -59,6 +61,7 @@
     "@aws-cdk/aws-iam:minimizePolicies": true,
     "@aws-cdk/core:enablePartitionLiterals": true,
     "@aws-cdk/aws-lambda-nodejs:useLatestRuntimeVersion": true,
-    "@aws-cdk/aws-ec2:restrictDefaultSecurityGroup": false
+    "@aws-cdk/aws-ec2:restrictDefaultSecurityGroup": false,
+    "@aws-cdk/core:bootstrapQualifier": "fenvix"
   }
 }

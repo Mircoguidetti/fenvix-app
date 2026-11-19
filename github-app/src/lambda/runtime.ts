@@ -7,6 +7,7 @@ import { type Config, loadConfig } from "../config.ts";
 import { type BlobPort, s3Port, SqsWorkQueue, sqsPort } from "../queue/sqs.ts";
 import { Ec2Launcher, placementsFromEnv, type RunnerLauncher } from "../runners/launcher.ts";
 import type { Logger } from "../service.ts";
+import { githubAppConfigured, notConfiguredHttp } from "../not-configured.ts";
 import { jsonLogger } from "../work.ts";
 import { loadParameter, loadSecrets, type Surface } from "./secrets.ts";
 
@@ -28,8 +29,12 @@ export function overflowBlobs(env: Env): BlobPort | null {
   return env.OVERFLOW_BUCKET ? s3Port(new S3Client({}), env.OVERFLOW_BUCKET) : null;
 }
 
-/** The HTTP Lambda's app: checked requests go to SQS. */
-export async function httpApp(env: Env): Promise<App> {
+/**
+ * The HTTP Lambda's app: checked requests go to SQS. While the GitHub App is not configured (GITHUB_APP_ID empty),
+ * /healthz answers and every other route answers 503 github_not_configured; no secret is read.
+ */
+export async function httpApp(env: Env): Promise<Pick<App, "fastify" | "close">> {
+  if (!githubAppConfigured(env)) return notConfiguredHttp(env.LOG_LEVEL ?? "info");
   const cfg = await lambdaConfig(env, "all");
   if (!env.WORK_QUEUE_URL) throw new Error("WORK_QUEUE_URL is required");
   const queue = new SqsWorkQueue({ queue: sqsPort(new SQSClient({}), env.WORK_QUEUE_URL), blobs: overflowBlobs(env) });

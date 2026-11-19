@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { Annotations, Match } from "aws-cdk-lib/assertions";
-import { resources, synth } from "./helpers.ts";
+import { resources, synth, DEMO } from "./helpers.ts";
 
 type Stmt = { Effect: string; Action: string | string[]; Resource: unknown; Sid?: string; Condition?: Record<string, Record<string, unknown>> };
 const arr = <T,>(x: T | T[]): T[] => (Array.isArray(x) ? x : [x]);
@@ -34,10 +34,10 @@ describe("R-012 review: IAM", () => {
   });
 
   it("F5 the Image Builder build machine cannot read the App's secrets (AmazonSSMManagedInstanceCore grants ssm:GetParameter on *)", async () => {
-    const { template: t } = await synth();
+    const { template: t } = await synth(DEMO);
     const [, role] = resources(t, "AWS::IAM::Role").find(([id]) => /^FleetBuildRole/.test(id))!;
     const managed = json(role.Properties.ManagedPolicyArns);
-    const st = await statementsOfRole({}, /^FleetBuildRole/);
+    const st = await statementsOfRole(DEMO, /^FleetBuildRole/);
     const denies = st.filter((x) => x.Effect === "Deny" && arr(x.Action).some((a) => /^ssm:(GetParameter|GetParameters|GetParametersByPath|\*)$/.test(a))
       && json(x.Resource).includes("parameter/fenvix/"));
     // The build runs third-party code (engine build: pip/uv, cargo; the GitHub runner) and then, as root, a file the
@@ -47,7 +47,7 @@ describe("R-012 review: IAM", () => {
   });
 
   it("F7 a function that may start machines may start only the launch template's machine (instance type, launch template)", async () => {
-    for (const [mode, role] of [[{}, /^DemoRole/], [PER_JOB, /^WorkerRole/]] as const) {
+    for (const [mode, role] of [[DEMO, /^DemoRole/], [PER_JOB, /^WorkerRole/]] as const) {
       const st = await statementsOfRole(mode, role);
       const onInstances = st.filter((x) => x.Effect === "Allow" && arr(x.Action).includes("ec2:RunInstances") && json(x.Resource).includes(":instance/"));
       assert.ok(onInstances.length > 0);

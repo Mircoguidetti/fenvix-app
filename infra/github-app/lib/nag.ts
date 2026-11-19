@@ -34,3 +34,19 @@ export function applySuppressions(stack: Stack): void {
     },
   ]);
 }
+
+/** cdk-nag findings of the dashboard stack that do not apply, each with its reason. */
+export function applyDashboardSuppressions(stack: Stack, withCertificate: boolean): void {
+  if (!withCertificate) {
+    NagSuppressions.addStackSuppressions(stack, [{
+      id: "AwsSolutions-CFR4",
+      reason: "Only until the dashboard's certificate (us-east-1) is issued: the pipeline then passes its ARN and the distribution enforces TLSv1.2_2021. Meanwhile it answers on its cloudfront.net name only, which is published nowhere (app.<domain> is pointed at it only with the certificate).",
+    }]);
+  }
+  NagSuppressions.addStackSuppressions(stack, [
+    { id: "AwsSolutions-S1", reason: "The site bucket holds the public build of the dashboard (the same files every browser downloads), uploaded by the deploy pipeline; CloudFront serves it. Access logs would record nothing of value." },
+    { id: "AwsSolutions-CFR1", reason: "The dashboard is for customers anywhere; there is no country to block." },
+    { id: "AwsSolutions-CFR2", reason: "Static files only (the build), no server behind CloudFront: the API (github.<domain>) is a separate host with its own throttling. WAF would cost more than it protects here." },
+    { id: "AwsSolutions-CFR3", reason: "Static public files; CloudFront standard logs would add a bucket and cost for no decision we take on them." },
+  ]);
+}

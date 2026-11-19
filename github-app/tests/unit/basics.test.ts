@@ -112,7 +112,7 @@ describe("config", () => {
   const base = {
     GITHUB_APP_DATABASE_URL: "postgresql://fenvix_github_app@localhost/db", GITHUB_APP_ID: "123", GITHUB_APP_SLUG: "fenvix",
     GITHUB_APP_PRIVATE_KEY: pem, GITHUB_WEBHOOK_SECRET: "w".repeat(32), GITHUB_CLIENT_ID: "Iv1.abc", GITHUB_CLIENT_SECRET: "c".repeat(40),
-    DASHBOARD_URL: "https://app.fenvix.dev", SUPABASE_URL: "https://x.supabase.co", STATE_SIGNING_KEY: "s".repeat(40), RUNNER_TOKEN: "r".repeat(40),
+    DASHBOARD_URL: "https://console.fenvix.dev", SUPABASE_URL: "https://x.supabase.co", STATE_SIGNING_KEY: "s".repeat(40), RUNNER_TOKEN: "r".repeat(40),
   };
   it("loads with defaults", () => {
     const c = loadConfig(base);
@@ -133,7 +133,7 @@ describe("config", () => {
     }
     assert.throws(() => loadConfig({ ...base, GITHUB_WEBHOOK_SECRET: "short" }), /at least 20/);
     assert.throws(() => loadConfig({ ...base, GITHUB_APP_PRIVATE_KEY: "nope" }), (e: Error) => /PEM/.test(e.message) && !e.message.includes("nope"));
-    assert.throws(() => loadConfig({ ...base, DASHBOARD_URL: "http://app.fenvix.dev", NODE_ENV: "production" }), /https/);
+    assert.throws(() => loadConfig({ ...base, DASHBOARD_URL: "http://console.fenvix.dev", NODE_ENV: "production" }), /https/);
     assert.throws(() => loadConfig({ ...base, FENVIX_RUNS_ON: "fenvix, linux" }), /one runner label/);
   });
 });

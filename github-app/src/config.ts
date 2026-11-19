@@ -177,7 +177,7 @@ export function loadConfig(env: Env = process.env, opts: { surface?: "all" | "wo
   let cacheSigningKey: KeyObject | null = null;
   if (cachePem) {
     try { cacheSigningKey = createPrivateKey(cachePem.includes("\\n") && !cachePem.includes("\n") ? cachePem.replace(/\\n/g, "\n") : cachePem); } catch {
-      throw new Error("CACHE_SIGNING_KEY is not a PEM private key (scripts/cache-key.sh creates it)");
+      throw new Error("CACHE_SIGNING_KEY is not a PEM private key (the deploy pipeline creates it: deploy/lib/secrets.mjs)");
     }
     if (cacheSigningKey.asymmetricKeyType !== "rsa") throw new Error("CACHE_SIGNING_KEY must be an RSA key");
   }

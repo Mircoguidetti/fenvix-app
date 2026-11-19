@@ -12,9 +12,24 @@ export interface Settings {
   /** The App's public host. API Gateway serves it with an ACM certificate; DNS stays on Cloudflare. */
   domainName: string;
   // ---------------------------------------------------------------- the App (plain settings of src/config.ts)
+  /**
+   * The GitHub App's id, URL name and OAuth client id: all three, or none. None (the default until the App is created:
+   * docs/DEPLOY-AWS.md, "Connecting the GitHub App") deploys everything; the App's routes then answer 503
+   * github_not_configured and its functions do nothing.
+   */
   githubAppId: string;
   githubAppSlug: string;
   githubClientId: string;
+  /** True when githubAppId, githubAppSlug and githubClientId are set. */
+  githubConfigured: boolean;
+  // ---------------------------------------------------------------- the dashboard (S3 + CloudFront, lib/dashboard.ts)
+  /** The dashboard's host (CloudFront; DNS on Cloudflare). dashboardUrl is https://<this>. */
+  dashboardDomain: string;
+  /**
+   * The ACM certificate of dashboardDomain, in us-east-1 (CloudFront takes certificates from there only). The deploy
+   * pipeline requests it and passes its ARN. Empty: the distribution answers on its cloudfront.net name only.
+   */
+  dashboardCertificateArn: string;
   dashboardUrl: string;
   supabaseUrl: string;
   runsOnLabel: string;
@@ -83,7 +98,7 @@ export interface Settings {
   cacheVolumeGb: number;
   cacheAmiId: string;
   /**
-   * per-job: the public half of the cache signing key (base64 DER, scripts/cache-tokens.sh prints it). The worker
+   * per-job: the public half of the cache signing key (base64 DER; the deploy pipeline generates the pair and passes it as FENVIX_CACHE_SIGNING_PUBLIC_KEY). The worker
    * signs one token per job with the private half (SSM); the cache machine verifies with this. Each customer
    * installation is its own cache organization (gh-<installation id>); pull requests get read-only tokens.
    */
@@ -102,7 +117,8 @@ type Ctx = (key: string) => unknown;
 
 const ENV: Record<keyof Settings, string> = {
   account: "FENVIX_ACCOUNT", region: "FENVIX_REGION", env: "FENVIX_ENV", domainName: "FENVIX_GITHUB_APP_DOMAIN",
-  githubAppId: "GITHUB_APP_ID", githubAppSlug: "GITHUB_APP_SLUG", githubClientId: "GITHUB_CLIENT_ID", dashboardUrl: "DASHBOARD_URL",
+  githubAppId: "GITHUB_APP_ID", githubAppSlug: "GITHUB_APP_SLUG", githubClientId: "GITHUB_CLIENT_ID", githubConfigured: "",
+  dashboardDomain: "FENVIX_DASHBOARD_DOMAIN", dashboardCertificateArn: "FENVIX_DASHBOARD_CERTIFICATE_ARN", dashboardUrl: "DASHBOARD_URL",
   supabaseUrl: "SUPABASE_URL", runsOnLabel: "FENVIX_RUNS_ON", summaryWaitSeconds: "SUMMARY_WAIT_SECONDS", sweepMinutes: "FENVIX_SWEEP_MINUTES",
   logRetentionDays: "FENVIX_LOG_RETENTION_DAYS", alarmEmail: "FENVIX_ALARM_EMAIL", apiCorsOrigins: "FENVIX_API_CORS_ORIGINS",
   fenvixRegion: "FENVIX_RUNNER_REGION", secondFenvixRegion: "FENVIX_SECOND_RUNNER_REGION", secondAwsRegion: "FENVIX_SECOND_AWS_REGION",
@@ -121,7 +137,7 @@ const RETENTIONS = [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365];
 
 export function readSettings(ctx: Ctx, env: Record<string, string | undefined> = process.env): Settings {
   const get = (k: keyof Settings): string => {
-    const fromEnv = env[ENV[k]];
+    const fromEnv = ENV[k] ? env[ENV[k]] : undefined;
     if (fromEnv !== undefined && fromEnv !== "") return fromEnv.trim();
     const v = ctx(k);
     return v === undefined || v === null ? "" : String(v).trim();
@@ -146,7 +162,8 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
 
   const s: Settings = {
     account: need("account"), region: need("region"), env: need("env"), domainName: need("domainName"),
-    githubAppId: need("githubAppId"), githubAppSlug: need("githubAppSlug"), githubClientId: need("githubClientId"),
+    githubAppId: get("githubAppId"), githubAppSlug: get("githubAppSlug"), githubClientId: get("githubClientId"), githubConfigured: false,
+    dashboardDomain: need("dashboardDomain"), dashboardCertificateArn: get("dashboardCertificateArn"),
     dashboardUrl: https("dashboardUrl"), supabaseUrl: https("supabaseUrl"), runsOnLabel: need("runsOnLabel"),
     summaryWaitSeconds: int("summaryWaitSeconds", 60, 86_400), sweepMinutes: int("sweepMinutes", 1, 60),
     logRetentionDays: int("logRetentionDays", 1, 365), alarmEmail: get("alarmEmail"),
@@ -166,8 +183,19 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
   if (!/^[a-z]{2}-[a-z]+-\d$/.test(s.region)) throw new Error('Setting "region" is not an AWS region');
   if (!/^[a-z0-9-]{1,12}$/.test(s.env)) throw new Error('Setting "env" must be lowercase letters, digits, dashes');
   if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(s.domainName)) throw new Error('Setting "domainName" must be a host name like github.fenvix.dev');
-  if (!/^\d+$/.test(s.githubAppId)) throw new Error('Setting "githubAppId" must be the numeric App ID');
-  if (!/^[a-z0-9][a-z0-9-]{0,33}$/.test(s.githubAppSlug)) throw new Error('Setting "githubAppSlug" must be the App\'s URL name');
+  const app = [s.githubAppId, s.githubAppSlug, s.githubClientId];
+  if (app.some(Boolean) && !app.every(Boolean)) {
+    const missing = (["githubAppId", "githubAppSlug", "githubClientId"] as const).filter((k) => !s[k]);
+    throw new Error(`Settings "githubAppId", "githubAppSlug" and "githubClientId": all three, or none (missing: ${missing.join(", ")})`);
+  }
+  s.githubConfigured = app.every(Boolean);
+  if (s.githubAppId && !/^\d+$/.test(s.githubAppId)) throw new Error('Setting "githubAppId" must be the numeric App ID');
+  if (s.githubAppSlug && !/^[a-z0-9][a-z0-9-]{0,33}$/.test(s.githubAppSlug)) throw new Error('Setting "githubAppSlug" must be the App\'s URL name');
+  if (s.githubClientId && !/^[A-Za-z0-9._-]{1,100}$/.test(s.githubClientId)) throw new Error('Setting "githubClientId" must be the App\'s Client ID');
+  if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(s.dashboardDomain)) throw new Error('Setting "dashboardDomain" must be a host name like console.fenvix.dev');
+  if (s.dashboardCertificateArn && !/^arn:aws:acm:us-east-1:\d{12}:certificate\/[0-9a-f-]{36}$/.test(s.dashboardCertificateArn)) {
+    throw new Error('Setting "dashboardCertificateArn" must be an ACM certificate ARN in us-east-1 (CloudFront takes certificates from there only)');
+  }
   if (!/^[A-Za-z0-9._-]{1,100}$/.test(s.runsOnLabel)) throw new Error('Setting "runsOnLabel" must be one runner label');
   if (!RETENTIONS.includes(s.logRetentionDays)) throw new Error(`Setting "logRetentionDays" must be one of ${RETENTIONS.join(", ")}`);
   if (s.alarmEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.alarmEmail)) throw new Error('Setting "alarmEmail" is not an email address');
@@ -200,9 +228,12 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
       const k = createPublicKey({ key: Buffer.from(s.cacheSigningPublicKey, "base64"), format: "der", type: "spki" });
       bits = k.asymmetricKeyType === "rsa" ? (k.asymmetricKeyDetails?.modulusLength ?? 0) : 0;
     } catch { bits = 0; }
-    if (bits < 2048) throw new Error('Setting "cacheSigningPublicKey" must be an RSA public key of 2048 bits or more, base64 DER (scripts/cache-tokens.sh prints it)');
+    if (bits < 2048) throw new Error('Setting "cacheSigningPublicKey" must be an RSA public key of 2048 bits or more, base64 DER (the deploy pipeline generates it)');
   } else if (s.runnerMode === "per-job") {
-    throw new Error('Setting "cacheSigningPublicKey" is required in per-job mode (scripts/cache-tokens.sh creates the key pair)');
+    throw new Error('Setting "cacheSigningPublicKey" is required in per-job mode (the deploy pipeline generates the key pair: FENVIX_CACHE_SIGNING_PUBLIC_KEY)');
+  }
+  if (s.runnerMode === "demo" && !s.githubConfigured) {
+    throw new Error('Setting "runnerMode" demo needs the GitHub App (githubAppId, githubAppSlug, githubClientId): demo-up registers its runner through it. Use per-job (the default) until the App is configured');
   }
   if (s.runnerMode === "demo" && !s.demoRepository) {
     throw new Error('Setting "demoRepository" is required in demo mode: the only repository demo-up may register a runner on (your own, private)');

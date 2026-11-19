@@ -13,7 +13,7 @@ const CACHE_DIR = new URL("./cache/", import.meta.url);
 
 /**
  * The public half of the cache signing key (setting cacheSigningPublicKey: base64 DER SubjectPublicKeyInfo, printed by
- * scripts/cache-tokens.sh) as the cache machine reads it: {n: modulus hex, e: exponent}. Public, not a secret.
+ * the deploy pipeline, deploy/lib/secrets.mjs) as the cache machine reads it: {n: modulus hex, e: exponent}. Public, not a secret.
  */
 export function cacheKeyJson(s: Settings): string {
   const jwk = createPublicKey({ key: Buffer.from(s.cacheSigningPublicKey, "base64"), format: "der", type: "spki" }).export({ format: "jwk" });

@@ -7,10 +7,12 @@ import { SSMClient } from "@aws-sdk/client-ssm";
 import { parsePrivateKey } from "../config.ts";
 import { GitHubApp } from "../github/client.ts";
 import { demoDown, demoStatus, demoUp, type DemoDeps } from "../runners/demo.ts";
+import { githubAppConfigured, NOT_CONFIGURED_MESSAGE } from "../not-configured.ts";
 import { loadParameter } from "./secrets.ts";
 import { machineEnv, refreshing } from "./runtime.ts";
 
 export async function demoDeps(env: Record<string, string | undefined>, ssm: Pick<SSMClient, "send"> = new SSMClient({})): Promise<DemoDeps & { close(): Promise<void> }> {
+  if (!githubAppConfigured(env)) throw new Error(`${NOT_CONFIGURED_MESSAGE} Demo mode registers its runner through the App: configure it first (docs/DEPLOY-AWS.md).`);
   for (const k of ["SSM_PREFIX", "GITHUB_APP_ID", "RUNNER_LAUNCH_TEMPLATE_ID", "DEMO_REPOSITORY"]) if (!env[k]) throw new Error(`${k} is required (DEMO_REPOSITORY: setting demoRepository)`);
   const pem = await loadParameter(ssm, `${env.SSM_PREFIX}/private-key`);
   const summaryKey = await loadParameter(ssm, `${env.SSM_PREFIX}/runner-token`);

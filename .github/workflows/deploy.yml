@@ -1,0 +1,176 @@
+# Deploy on merge to main (docs/DEPLOY-AWS.md): every test (test.yml), then the database, the secrets, the API and the
+# runners (CDK, infra/github-app), the dashboard (S3 + CloudFront) and the DNS records. Nobody runs anything by hand.
+#
+# AWS access: OpenID Connect, no stored AWS key. The AWS role trusts exactly the token GitHub issues to a job of this
+# file running on the branch main of this repository (sub = repo:Mircoguidetti@17613795/fenvix-app@1434576189:ref:
+# refs/heads/main, repository_id, job_workflow_ref = .../deploy.yml@refs/heads/main): that is what makes "only main
+# can deploy" true, enforced by AWS, with no GitHub environment (the repository is private on GitHub Free,
+# where environments' secrets and branch rules do not exist). GitHub holds no secret for this workflow: every value the
+# founder provides is in AWS SSM Parameter Store (/fenvix/prod/bootstrap/*), read by the step that needs it.
+#
+# Keep it that way (infra/github-app/test/workflows.test.ts checks every point):
+#   - triggers: push to main and workflow_dispatch only (never pull_request_target, workflow_run, issue_comment, ...);
+#   - no other workflow of the repository has `id-token: write`;
+#   - the deploy job runs only when github.ref is refs/heads/main.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push to main waits for the running one instead of cancelling it half way. A "Run
+# workflow" started on another branch deploys nothing (the deploy job is skipped) and is kept out of the deploy group,
+# so it can never cancel or replace a pending deploy of main (R-024).
+concurrency:
+  group: ${{ github.ref == 'refs/heads/main' && 'deploy-production' || format('not-main-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  NODE_VERSION: "22"
+  AWS_REGION: eu-west-1
+  AWS_ACCOUNT: "865859654353"
+  DEPLOY_ROLE: arn:aws:iam::865859654353:role/fenvix-github-deployer
+
+jobs:
+  test:
+    name: Tests
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
+  deploy:
+    name: Deploy to production
+    needs: test
+    # Only main deploys. AWS enforces it too: the role trusts the token of a job on refs/heads/main only.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    # No GitHub environment: the repository is private on GitHub Free (no environment secrets or branch rules there).
+    permissions:
+      contents: read
+      id-token: write # OpenID Connect token for AWS (main of this file only): no AWS key is stored anywhere
+    env:
+      FENVIX_ENV: prod
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            github-app/package-lock.json
+            infra/github-app/package-lock.json
+            deploy/package-lock.json
+      - name: Install
+        run: |
+          npm ci --no-audit --no-fund
+          (cd github-app && npm ci --no-audit --no-fund)
+          (cd infra/github-app && npm ci --no-audit --no-fund)
+          (cd deploy && npm ci --no-audit --no-fund)
+
+      - name: AWS credentials (OpenID Connect; the role trusts this repository's branch main only)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+          mask-aws-account-id: false
+
+      # Steps 1-3, 5, 6, 8 (the watcher) and 9 read the founder's values they need from SSM Parameter Store
+      # (/fenvix/prod/bootstrap/*) themselves and mask them before any use (deploy/lib/bootstrap.mjs).
+      - name: 1. Check the one-time setup
+        run: |
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          [ "$account" = "$AWS_ACCOUNT" ] || { echo "::error::signed in to AWS account $account, expected $AWS_ACCOUNT"; exit 1; }
+          node deploy/cli.mjs preflight
+
+      - name: 2. Database migrations
+        run: node deploy/cli.mjs migrate
+
+      - name: 3. Database roles (passwords generated here, stored in SSM only)
+        run: node deploy/cli.mjs db-roles
+
+      - name: 4. Generated secrets (SSM, never printed)
+        run: node deploy/cli.mjs secrets
+
+      - name: 5. GitHub App (configured last, in SSM; deployed without it until then)
+        run: node deploy/cli.mjs github-app
+
+      - name: 6. Dashboard certificate (us-east-1, for CloudFront)
+        env:
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+        run: node deploy/cli.mjs dashboard-certificate --wait-minutes 30
+
+      - name: 7. Keep the cache machine's image (a deploy never replaces it because Ubuntu published a newer one)
+        run: |
+          id="$(aws cloudformation describe-stacks --stack-name "fenvix-$FENVIX_ENV-github-app" \
+                --query "Stacks[0].Outputs[?OutputKey=='CacheAmiId'].OutputValue | [0]" --output text 2>/dev/null || true)"
+          if [ -z "$id" ] || [ "$id" = "None" ]; then
+            id="$(aws ssm get-parameter --name /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id --query Parameter.Value --output text)"
+          fi
+          echo "cache machine image: $id"
+          echo "FENVIX_CACHE_AMI_ID=$id" >> "$GITHUB_ENV"
+
+      - name: 8. API, runners and dashboard hosting (CDK)
+        working-directory: infra/github-app
+        env:
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          FENVIX_ALARM_EMAIL: ${{ vars.FENVIX_ALARM_EMAIL }}
+          # Optional, off by default: demo mode (one machine per demo, docs/DEPLOY-AWS.md) instead of per-job.
+          FENVIX_RUNNER_MODE: ${{ vars.FENVIX_RUNNER_MODE }}
+          FENVIX_DEMO_REPOSITORY: ${{ vars.FENVIX_DEMO_REPOSITORY }}
+        run: |
+          # While CloudFormation waits for the API's certificate (first deploy), its validation record is put in
+          # Cloudflare (or listed in the run's summary). The watcher reads the Cloudflare token from SSM itself; no
+          # environment of this step holds it.
+          node ../../deploy/cli.mjs watch-certificate --timeout-minutes 90 &
+          watcher=$!
+          rc=0
+          npx --no-install cdk deploy --all --require-approval never --progress events --outputs-file cdk-outputs.json \
+            -c "githubAppId=$FENVIX_CDK_GITHUB_APP_ID" -c "githubAppSlug=$FENVIX_CDK_GITHUB_APP_SLUG" \
+            -c "githubClientId=$FENVIX_CDK_GITHUB_CLIENT_ID" || rc=$?
+          kill "$watcher" 2>/dev/null || true
+          exit "$rc"
+
+      - name: 9. DNS records (Cloudflare)
+        env:
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+        run: node deploy/cli.mjs dns --outputs infra/github-app/cdk-outputs.json
+
+      - name: 10. Dashboard (build, upload, refresh the cache)
+        env:
+          VITE_API_URL: https://github.fenvix.dev
+        run: |
+          # VITE_SUPABASE_ANON_KEY (public, checked and masked) comes from step 1.
+          export VITE_SUPABASE_URL="$SUPABASE_URL"
+          npm run build
+          out=infra/github-app/cdk-outputs.json
+          bucket="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-dashboard'].DashboardBucket")"
+          dist="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-dashboard'].DistributionId")"
+          # Hashed files are kept for a year; old ones stay, so a page loaded before this deploy keeps working.
+          aws s3 sync dist/assets "s3://$bucket/assets" --cache-control "public,max-age=31536000,immutable" --only-show-errors
+          aws s3 sync dist "s3://$bucket" --exclude "assets/*" --delete --cache-control "no-cache" --only-show-errors
+          aws cloudfront create-invalidation --distribution-id "$dist" --paths "/*" --query Invalidation.Id --output text
+
+      - name: 11. Runner image (built when its recipe changed; does not wait)
+        run: |
+          out=infra/github-app/cdk-outputs.json
+          arn="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-github-app'].ImagePipelineArn")"
+          ver="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-github-app'].RunnerImageVersion")"
+          states="$(aws imagebuilder list-image-pipeline-images --image-pipeline-arn "$arn" \
+                    --query "imageSummaryList[?starts_with(version, '$ver/')].state.status" --output text)"
+          if printf '%s' "$states" | grep -Eq 'AVAILABLE|PENDING|CREATING|BUILDING|TESTING|DISTRIBUTING|INTEGRATING'; then
+            echo "runner image $ver: $states"
+          else
+            aws imagebuilder start-image-pipeline-execution --image-pipeline-arn "$arn" --query imageBuildVersionArn --output text
+            echo "runner image $ver: build started (30-45 minutes; jobs wait for it)" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 12. Check the deployed hosts
+        run: node deploy/cli.mjs smoke --minutes 10

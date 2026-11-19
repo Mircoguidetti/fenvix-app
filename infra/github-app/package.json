@@ -4,12 +4,13 @@
   "private": true,
   "description": "AWS CDK (TypeScript) for the fenvix GitHub App on Lambda and the self-hosted runner on EC2. docs/DEPLOY-AWS.md",
   "type": "module",
-  "engines": { "node": ">=22.18" },
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "synth": "cdk synth --quiet",
-    "test": "npm run typecheck && node --test --test-reporter=spec --test-concurrency=1 test/*.test.ts",
-    "deploy": "bash scripts/deploy.sh"
+    "test": "npm run typecheck && node --test --experimental-test-isolation=none --test-reporter=spec --test-concurrency=1 test/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
@@ -18,6 +19,7 @@
     "cdk-nag": "^2",
     "constructs": "^10",
     "esbuild": "^0.25.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "yaml": "^2.9.1"
   }
 }

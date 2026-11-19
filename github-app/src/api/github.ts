@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import { signState } from "../auth.ts";
 import { type Handler, orgOf, Reply } from "./context.ts";
-import { conflict, forbidden, notFound, unavailable } from "./errors.ts";
+import { conflict, forbidden, githubNotConfigured, notFound, unavailable } from "./errors.ts";
 import { mapGitHubRepository, mapInstallation } from "./shared.js";
 
 /**
@@ -29,6 +29,7 @@ export const getGitHubConnection: Handler = async (ctx) => {
 /** Where to send the browser to install the App for this organization (a signed state: organization, person, 1 hour). */
 export const createInstallLink: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
+  if (!ctx.cfg.githubConfigured) throw githubNotConfigured();
   const state = signState(ctx.cfg.stateSigningKey, { workspaceId: ws, userId: ctx.userId });
   return { url: `${ctx.cfg.webUrl}/apps/${ctx.cfg.appSlug}/installations/new?state=${encodeURIComponent(state)}` };
 };
@@ -44,6 +45,7 @@ export const COMPLETION_NOT_FOUND = "This GitHub connection link is not valid fo
  * admin of the organization and that the installation is not another organization's).
  */
 export const completeGitHubInstall: Handler = async (ctx) => {
+  if (!ctx.cfg.githubConfigured) throw githubNotConfigured();
   const hash = createHash("sha256").update(String(ctx.body.completion)).digest("hex");
   let row: { workspace_id: string; installation_id: number; account: string } | undefined;
   try {
@@ -76,6 +78,7 @@ export const listGitHubRepositories: Handler = async (ctx) => {
 export const openSetupPullRequest: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const repositoryId = Number(ctx.params.repositoryId);
+  if (!ctx.cfg.githubConfigured) throw githubNotConfigured();
   const row = await ctx.t.one(`${REPOSITORIES} and r.repository_id = $2`, [ws, repositoryId]);
   if (!row) throw notFound("That repository is not in this organization's GitHub installations.");
   try {

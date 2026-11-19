@@ -8,11 +8,28 @@ type Stmt = { Sid: string; Effect: string; Action: string | string[]; Resource: 
 const policy = (f: string) => JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url), "utf8")) as { Statement: Stmt[] };
 const arr = <T,>(x: T | T[]) => (Array.isArray(x) ? x : [x]);
 const json = (x: unknown) => JSON.stringify(x);
+// The founder's values in SSM (deploy/lib/bootstrap.mjs FOUNDER_VALUES; deploy/test/bootstrap.test.mjs checks the two agree).
+const FOUNDER = ["supabase-db-url", "supabase-anon-key", "supabase-ca-cert", "cloudflare-api-token", "github-app-id", "github-app-slug", "github-app-client-id"]
+  .map((n) => `arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/${n}`);
 
 describe("settings", () => {
-  it("cdk.json leaves the App's own values empty: synth stops and names the setting", async () => {
+  it("cdk.json leaves the GitHub App and Supabase empty: the pipeline gives Supabase; the App may stay unset", async () => {
     const ctx = await cdkContext();
-    assert.throws(() => readSettings((k) => ctx[k], {}), /Missing setting "githubAppId" .*GITHUB_APP_ID/);
+    assert.throws(() => readSettings((k) => ctx[k], {}), /Missing setting "supabaseUrl" .*SUPABASE_URL/);
+    const s = readSettings((k) => ctx[k], { SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co", FENVIX_CACHE_SIGNING_PUBLIC_KEY: SAMPLE.cacheSigningPublicKey });
+    assert.equal(s.githubConfigured, false);
+    assert.equal(s.runnerMode, "per-job", "per-job is the default");
+    assert.equal(s.dashboardUrl, "https://console.fenvix.dev");
+    assert.equal(s.dashboardDomain, "console.fenvix.dev");
+  });
+
+  it("the GitHub App: all three of id, slug and client id, or none; demo mode needs it", async () => {
+    await assert.rejects(settings({ githubAppId: "", githubAppSlug: "", githubClientId: "Iv1.x" }), /all three, or none \(missing: githubAppId, githubAppSlug\)/);
+    await assert.rejects(settings({ githubAppId: "abc" }), /numeric/);
+    await assert.rejects(settings({ githubAppId: "", githubAppSlug: "", githubClientId: "", runnerMode: "demo" }), /demo needs the GitHub App/);
+    assert.equal((await settings({ githubAppId: "", githubAppSlug: "", githubClientId: "" })).githubConfigured, false);
+    assert.equal((await settings()).githubConfigured, true);
+    await assert.rejects(settings({ dashboardCertificateArn: "arn:aws:acm:eu-west-1:865859654353:certificate/12345678-1234-1234-1234-123456789012" }), /us-east-1/);
   });
 
   it("an environment variable beats cdk.json", async () => {
@@ -21,13 +38,13 @@ describe("settings", () => {
   });
 
   it("refuses values that would break the deploy or the machine", async () => {
-    await assert.rejects(settings({ dashboardUrl: "http://app.fenvix.dev" }), /https/);
+    await assert.rejects(settings({ dashboardUrl: "http://console.fenvix.dev" }), /https/);
     await assert.rejects(settings({ demoRepository: "https://github.com/x/y" }), /owner\/name/);
     await assert.rejects(settings({ runnerMode: "always-on" }), /demo or per-job/);
     await assert.rejects(settings({ cachePrivateIp: "10.42.1.10" }), /cachePrivateIp/);
     await assert.rejects(settings({ cacheSigningPublicKey: "abc" }), /RSA public key/);
     await assert.rejects(settings({ runnerMode: "per-job", cacheSigningPublicKey: "" }), /required in per-job mode/);
-    await assert.rejects(settings({ demoRepository: "" }), /demoRepository" is required in demo mode/);
+    await assert.rejects(settings({ runnerMode: "demo", demoRepository: "" }), /demoRepository" is required in demo mode/);
     await assert.rejects(settings({ engineCliCommit: "main" }), /40-character/);
     await assert.rejects(settings({ logRetentionDays: "10" }), /one of/);
     await assert.rejects(settings({ runnerInstanceType: "t4g.medium" }), /x86_64/);
@@ -42,7 +59,7 @@ describe("settings", () => {
     const s = await settings();
     assert.equal(s.domainName, "github.fenvix.dev");
     assert.equal(s.runnerInstanceType, "c6i.large");
-    assert.equal(s.runnerMode, "demo");
+    assert.equal(s.runnerMode, "per-job");
     assert.equal(s.demoMaxHours, 12);
     assert.equal(s.runnerVolumeGb, 30);
     assert.equal(s.region, "eu-west-1");
@@ -52,7 +69,7 @@ describe("settings", () => {
 });
 
 describe("IAM policy files", () => {
-  const files = ["deploy-policy.json", "cfn-exec-policy-app.json", "cfn-exec-policy-edge.json", "cfn-exec-policy-fleet.json"];
+  const files = ["deploy-policy.json", "cfn-exec-policy-app.json", "cfn-exec-policy-edge.json", "cfn-exec-policy-fleet.json", "cfn-exec-policy-dashboard.json"];
 
   it("each fits in one managed policy (6,144 characters without whitespace) and names this account and region only", async () => {
     const ctx = await cdkContext();
@@ -63,18 +80,53 @@ describe("IAM policy files", () => {
         if (m[1]) assert.ok(m[1] === ctx.region || m[1] === "*", `${f}: region ${m[1]}`);
         if (m[2]) assert.equal(m[2], ctx.account, f);
       }
+      // The only other region: us-east-1, for the dashboard's certificate (CloudFront takes certificates from there only).
+      for (const st of p.Statement) {
+        const regions = JSON.stringify(st.Condition ?? {}).match(/"aws:RequestedRegion":"([a-z0-9-]+)"/)?.[1];
+        if (regions && regions !== ctx.region) {
+          assert.equal(regions, "us-east-1", `${f} ${st.Sid}`);
+          for (const a of arr(st.Action)) assert.match(a, /^acm:(RequestCertificate|DescribeCertificate|ListCertificates|AddTagsToCertificate)$/, `${f} ${st.Sid}`);
+        }
+      }
       for (const st of p.Statement) for (const a of arr(st.Action)) assert.ok(a !== "*" && !/^[a-z0-9-]+:\*$/.test(a), `${f} ${st.Sid}: ${a}`);
     }
   });
 
-  it("the deployer only assumes the CDK bootstrap roles and reads or writes our own parameters, stack, logs", () => {
+  it("the deployer only assumes the deploy roles of the one-click template and reads or writes our own parameters, stack, logs, dashboard files", () => {
     const p = policy("deploy-policy.json");
-    const actions = p.Statement.filter((s) => s.Effect === "Allow").flatMap((s) => arr(s.Action));
-    for (const a of actions) assert.ok(!/^(iam|lambda:(?!InvokeFunction$)|ec2:Run|ec2:Terminate|s3|cloudformation:(Create|Update|Delete|Execute))/.test(a), a);
+    const allows = p.Statement.filter((s) => s.Effect === "Allow");
+    for (const a of allows.flatMap((s) => arr(s.Action))) assert.ok(!/^(iam|lambda:(?!InvokeFunction$)|ec2:Run|ec2:Terminate|cloudformation:(Create|Update|Delete|Execute))/.test(a), a);
+    // S3: only the dashboard's own bucket (aws s3 sync of the build); nothing else, no bucket setting.
+    for (const st of allows.filter((x) => arr(x.Action).some((a) => a.startsWith("s3:")))) {
+      for (const a of arr(st.Action)) assert.match(a, /^s3:(ListBucket|PutObject|GetObject|DeleteObject)$/);
+      for (const r of arr(st.Resource)) assert.match(r, /^arn:aws:s3:::fenvix-prod-dashboard-865859654353(\/\*)?$/);
+    }
+    // SSM reads: the two database URLs (checked by logging in), the App's two secrets (compared, never printed), the
+    // cache key's public half. Never the runner token, the webhook secret, the state key or the cache signing key.
+    // R-024 F1: by ANY SSM action that returns a value (GetParameterHistory returns every version, decrypted).
+    const valueReads = /^ssm:(GetParameter|GetParameters|GetParametersByPath|GetParameterHistory|GetParameter\*|GetParameters\*|Get\*|\*)$/;
+    for (const a of allows.flatMap((x) => arr(x.Action))) assert.ok(!(a.startsWith("ssm:") && a.includes("*")), `no SSM wildcard action: ${a}`);
+    const reads = allows.filter((x) => arr(x.Action).some((a) => valueReads.test(a))).flatMap((x) => arr(x.Resource)).filter((r) => r.includes(":parameter/fenvix/"));
+    for (const r of reads) assert.match(r, /\/fenvix\/prod\/(github-app\/(database-url|api-database-url|private-key|client-secret)|cache\/signing-public-key|bootstrap\/(supabase-db-url|supabase-anon-key|supabase-ca-cert|cloudflare-api-token|github-app-id|github-app-slug|github-app-client-id))$/);
+    // The founder's values (/fenvix/prod/bootstrap/): read by exact name only (deploy/lib/bootstrap.mjs is the list),
+    // never written or deleted by the deployer, never readable by the stacks' roles (the boundary does not cover them).
+    const founder = allows.find((s) => s.Sid === "ReadFounderValues")!;
+    assert.deepEqual(arr(founder.Action), ["ssm:GetParameter"]);
+    assert.deepEqual(arr(founder.Resource).sort(), [...FOUNDER].sort());
+    for (const st of allows) for (const r of arr(st.Resource)) {
+      if (r.includes("/bootstrap/") && r.includes(":parameter/fenvix/")) {
+        assert.ok(!r.includes("*"), `${st.Sid}: no wildcard on the founder's values: ${r}`);
+        assert.equal(st.Sid, "ReadFounderValues", `${st.Sid}: only ReadFounderValues may touch ${r}`);
+      }
+      if (arr(st.Action).some((a) => /^ssm:(Put|Delete|Label|AddTags|Remove)/.test(a))) assert.ok(!/fenvix\/prod\/(bootstrap|\*)/.test(r) && !r.endsWith(":parameter/fenvix/*"), `${st.Sid} may write ${r}`);
+    }
+    const boundary = JSON.stringify(policy("permissions-boundary.json"));
+    assert.ok(!boundary.includes("/bootstrap"), "the stacks' roles never read the founder's values");
+    for (const st of allows) for (const a of arr(st.Action)) assert.ok(!/^ssm:(GetParameterHistory|GetParameters|GetParametersByPath)$/.test(a), `${st.Sid}: ${a} is not needed by the pipeline`);
     const invoke = p.Statement.find((s) => arr(s.Action).includes("lambda:InvokeFunction"))!;
     assert.deepEqual(arr(invoke.Resource), ["arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-demo"], "only demo-up / demo-down");
     const assume = p.Statement.find((s) => s.Sid === "CdkDeployThroughBootstrapRoles")!;
-    for (const r of arr(assume.Resource)) assert.match(r, /:role\/cdk-hnb659fds-(deploy|file-publishing|lookup)-role-/);
+    for (const r of arr(assume.Resource)) assert.match(r, /:role\/cdk-fenvix-(deploy|file-publishing)-role-/);
     const put = p.Statement.find((s) => arr(s.Action).includes("ssm:PutParameter"))!;
     for (const r of arr(put.Resource)) assert.match(r, /parameter\/fenvix\/prod\/(github-app|runner|cache)\/\*$/);
   });
@@ -93,7 +145,7 @@ describe("IAM policy files", () => {
   });
 
   it("CloudFormation may create every resource type of both modes (execution policies); inbound only from a security group", async () => {
-    const execs = ["cfn-exec-policy-app.json", "cfn-exec-policy-edge.json", "cfn-exec-policy-fleet.json"].flatMap((f) => policy(f).Statement);
+    const execs = ["cfn-exec-policy-app.json", "cfn-exec-policy-edge.json", "cfn-exec-policy-fleet.json", "cfn-exec-policy-dashboard.json"].flatMap((f) => policy(f).Statement);
     const prefix: Record<string, string> = {
       Lambda: "lambda", IAM: "iam", SQS: "sqs", S3: "s3", Logs: "logs", Scheduler: "scheduler", CertificateManager: "acm",
       ApiGatewayV2: "apigateway", CloudWatch: "cloudwatch", SNS: "sns", EC2: "ec2", ImageBuilder: "imagebuilder",

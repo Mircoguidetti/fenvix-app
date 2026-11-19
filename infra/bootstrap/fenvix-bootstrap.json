@@ -1,0 +1,1416 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "fenvix: what the deploy pipeline (.github/workflows/deploy.yml) needs in AWS, created once: GitHub's OIDC provider, the deploy role trusted only for the branch main of one repository (no GitHub environment), the permissions boundary of every role the stacks create, and the CDK deploy resources (assets bucket, deploy, publishing and CloudFormation roles). No access key. docs/DEPLOY-AWS.md",
+  "Parameters": {
+    "GitHubOwner": {
+      "Type": "String",
+      "Default": "Mircoguidetti",
+      "AllowedPattern": "^[A-Za-z0-9-]{1,39}$",
+      "Description": "The GitHub account that owns the repository (as it appears in the repository's URL)"
+    },
+    "GitHubRepository": {
+      "Type": "String",
+      "Default": "fenvix-app",
+      "AllowedPattern": "^[A-Za-z0-9._-]{1,100}$"
+    },
+    "GitHubOwnerId": {
+      "Type": "String",
+      "Default": "17613795",
+      "AllowedPattern": "^[0-9]{1,20}$",
+      "Description": "The numeric id of the GitHub account that owns the repository (GitHub's immutable OIDC subject)"
+    },
+    "GitHubRepositoryId": {
+      "Type": "String",
+      "Default": "1434576189",
+      "AllowedPattern": "^[0-9]{1,20}$",
+      "Description": "The numeric id of the repository (GitHub's immutable OIDC subject, and the repository_id claim)"
+    },
+    "CreateOidcProvider": {
+      "Type": "String",
+      "Default": "true",
+      "AllowedValues": [
+        "true",
+        "false"
+      ],
+      "Description": "false only if this account already has the provider token.actions.githubusercontent.com (IAM > Identity providers)"
+    }
+  },
+  "Rules": {
+    "ThisAccountAndRegion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "AWS::AccountId"
+              },
+              "865859654353"
+            ]
+          },
+          "AssertDescription": "Create this stack in account 865859654353"
+        },
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "AWS::Region"
+              },
+              "eu-west-1"
+            ]
+          },
+          "AssertDescription": "Create this stack in eu-west-1 (Europe, Ireland)"
+        }
+      ]
+    }
+  },
+  "Conditions": {
+    "MakeOidcProvider": {
+      "Fn::Equals": [
+        {
+          "Ref": "CreateOidcProvider"
+        },
+        "true"
+      ]
+    }
+  },
+  "Resources": {
+    "GitHubOidcProvider": {
+      "Type": "AWS::IAM::OIDCProvider",
+      "Condition": "MakeOidcProvider",
+      "Properties": {
+        "Url": "https://token.actions.githubusercontent.com",
+        "ClientIdList": [
+          "sts.amazonaws.com"
+        ],
+        "ThumbprintList": [
+          "6938fd4d98bab03faadb97b34396831e3780aea1",
+          "1c58a3a8518e8759bf075b76b750d4f2df264fcd"
+        ]
+      }
+    },
+    "Boundary": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "ManagedPolicyName": "fenvix-prod-github-app-boundary",
+        "Description": "fenvix: the most any role of the fenvix stacks may ever do (infra/github-app/permissions-boundary.json)",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "FunctionsLogs",
+              "Effect": "Allow",
+              "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "logs:DescribeLogStreams"
+              ],
+              "Resource": [
+                "arn:aws:logs:eu-west-1:865859654353:log-group:/aws/lambda/fenvix-prod-github-app-*",
+                "arn:aws:logs:eu-west-1:865859654353:log-group:/aws/imagebuilder/*"
+              ]
+            },
+            {
+              "Sid": "OwnParametersAndUbuntuImages",
+              "Effect": "Allow",
+              "Action": [
+                "ssm:GetParameter",
+                "ssm:GetParameters"
+              ],
+              "Resource": [
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/github-app/*",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/cache/*",
+                "arn:aws:ssm:eu-west-1::parameter/aws/service/canonical/*"
+              ]
+            },
+            {
+              "Sid": "ImageBuildMachineAgent",
+              "Effect": "Allow",
+              "Action": [
+                "ssm:DescribeAssociation",
+                "ssm:GetDeployablePatchSnapshotForInstance",
+                "ssm:GetDocument",
+                "ssm:DescribeDocument",
+                "ssm:GetManifest",
+                "ssm:ListAssociations",
+                "ssm:ListInstanceAssociations",
+                "ssm:PutInventory",
+                "ssm:PutComplianceItems",
+                "ssm:PutConfigurePackageResult",
+                "ssm:UpdateAssociationStatus",
+                "ssm:UpdateInstanceAssociationStatus",
+                "ssm:UpdateInstanceInformation",
+                "ssmmessages:CreateControlChannel",
+                "ssmmessages:CreateDataChannel",
+                "ssmmessages:OpenControlChannel",
+                "ssmmessages:OpenDataChannel",
+                "ec2messages:AcknowledgeMessage",
+                "ec2messages:DeleteMessage",
+                "ec2messages:FailMessage",
+                "ec2messages:GetEndpoint",
+                "ec2messages:GetMessages",
+                "ec2messages:SendReply",
+                "imagebuilder:GetComponent",
+                "imagebuilder:GetContainerRecipe"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Sid": "ImageBuilderComponentFiles",
+              "Effect": "Allow",
+              "Action": "s3:GetObject",
+              "Resource": "arn:aws:s3:::ec2imagebuilder*"
+            },
+            {
+              "Sid": "WorkQueue",
+              "Effect": "Allow",
+              "Action": [
+                "sqs:SendMessage",
+                "sqs:ReceiveMessage",
+                "sqs:DeleteMessage",
+                "sqs:ChangeMessageVisibility",
+                "sqs:GetQueueAttributes",
+                "sqs:GetQueueUrl"
+              ],
+              "Resource": "arn:aws:sqs:eu-west-1:865859654353:fenvix-prod-github-app-*"
+            },
+            {
+              "Sid": "OverflowObjects",
+              "Effect": "Allow",
+              "Action": [
+                "s3:PutObject",
+                "s3:GetObject",
+                "s3:DeleteObject"
+              ],
+              "Resource": "arn:aws:s3:::fenvix-prod-github-app-*/work/*"
+            },
+            {
+              "Sid": "RunnerMachines",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:RunInstances",
+                "ec2:CreateTags",
+                "ec2:TerminateInstances",
+                "ec2:DescribeInstances",
+                "ec2:DescribeImages"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1"
+                }
+              }
+            },
+            {
+              "Sid": "PassOnlyBoundedRolesToEc2",
+              "Effect": "Allow",
+              "Action": "iam:PassRole",
+              "Resource": "arn:aws:iam::865859654353:role/fenvix-prod-github-app-*",
+              "Condition": {
+                "StringEquals": {
+                  "iam:PassedToService": "ec2.amazonaws.com"
+                }
+              }
+            },
+            {
+              "Sid": "SchedulesInvokeOwnFunctions",
+              "Effect": "Allow",
+              "Action": "lambda:InvokeFunction",
+              "Resource": "arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-*"
+            },
+            {
+              "Sid": "NoIamChanges",
+              "Effect": "Deny",
+              "NotAction": [
+                "iam:PassRole"
+              ],
+              "Resource": "arn:aws:iam::*:*"
+            }
+          ]
+        }
+      }
+    },
+    "CfnExecApp": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "ManagedPolicyName": "fenvix-github-app-cfn-exec-app",
+        "Description": "fenvix: what CloudFormation may do for the fenvix stacks (infra/github-app/cfn-exec-policy-app.json)",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "Lambda",
+              "Effect": "Allow",
+              "Action": [
+                "lambda:CreateFunction",
+                "lambda:UpdateFunctionCode",
+                "lambda:UpdateFunctionConfiguration",
+                "lambda:DeleteFunction",
+                "lambda:GetFunction",
+                "lambda:GetFunctionConfiguration",
+                "lambda:TagResource",
+                "lambda:UntagResource",
+                "lambda:ListTags",
+                "lambda:AddPermission",
+                "lambda:RemovePermission",
+                "lambda:PutFunctionConcurrency",
+                "lambda:DeleteFunctionConcurrency",
+                "lambda:GetRuntimeManagementConfig",
+                "lambda:PutRuntimeManagementConfig",
+                "lambda:GetFunctionCodeSigningConfig",
+                "lambda:ListVersionsByFunction"
+              ],
+              "Resource": "arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-*"
+            },
+            {
+              "Sid": "LambdaEventSourceMapping",
+              "Effect": "Allow",
+              "Action": [
+                "lambda:CreateEventSourceMapping",
+                "lambda:UpdateEventSourceMapping",
+                "lambda:DeleteEventSourceMapping",
+                "lambda:GetEventSourceMapping",
+                "lambda:TagResource",
+                "lambda:ListTags"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1"
+                }
+              }
+            },
+            {
+              "Sid": "FunctionCodeFromTheCdkAssetsBucket",
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetObject",
+                "s3:GetObjectVersion"
+              ],
+              "Resource": "arn:aws:s3:::cdk-fenvix-assets-865859654353-eu-west-1/*"
+            },
+            {
+              "Sid": "IamRolesOfThisStack",
+              "Effect": "Allow",
+              "Action": [
+                "iam:DeleteRole",
+                "iam:GetRole",
+                "iam:UpdateRole",
+                "iam:UpdateAssumeRolePolicy",
+                "iam:TagRole",
+                "iam:UntagRole",
+                "iam:GetRolePolicy",
+                "iam:ListRolePolicies",
+                "iam:ListAttachedRolePolicies"
+              ],
+              "Resource": "arn:aws:iam::865859654353:role/fenvix-prod-github-app-*"
+            },
+            {
+              "Sid": "WriteRolesOnlyWithTheBoundary",
+              "Effect": "Allow",
+              "Action": [
+                "iam:CreateRole",
+                "iam:PutRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:AttachRolePolicy",
+                "iam:DetachRolePolicy"
+              ],
+              "Resource": "arn:aws:iam::865859654353:role/fenvix-prod-github-app-*",
+              "Condition": {
+                "StringEquals": {
+                  "iam:PermissionsBoundary": "arn:aws:iam::865859654353:policy/fenvix-prod-github-app-boundary"
+                }
+              }
+            },
+            {
+              "Sid": "NeverRemoveTheBoundary",
+              "Effect": "Deny",
+              "Action": [
+                "iam:DeleteRolePermissionsBoundary",
+                "iam:PutRolePermissionsBoundary",
+                "iam:CreatePolicyVersion",
+                "iam:SetDefaultPolicyVersion",
+                "iam:DeletePolicy",
+                "iam:DeletePolicyVersion"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Sid": "OnlyTheseManagedPolicies",
+              "Effect": "Deny",
+              "Action": [
+                "iam:AttachRolePolicy"
+              ],
+              "Resource": "arn:aws:iam::865859654353:role/fenvix-prod-github-app-*",
+              "Condition": {
+                "ArnNotEquals": {
+                  "iam:PolicyARN": [
+                    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+                    "arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder"
+                  ]
+                }
+              }
+            },
+            {
+              "Sid": "InstanceProfileOfThisStack",
+              "Effect": "Allow",
+              "Action": [
+                "iam:CreateInstanceProfile",
+                "iam:DeleteInstanceProfile",
+                "iam:GetInstanceProfile",
+                "iam:AddRoleToInstanceProfile",
+                "iam:RemoveRoleFromInstanceProfile",
+                "iam:TagInstanceProfile"
+              ],
+              "Resource": "arn:aws:iam::865859654353:instance-profile/fenvix-prod-github-app-*"
+            },
+            {
+              "Sid": "PassRolesOfThisStackToTheirServices",
+              "Effect": "Allow",
+              "Action": "iam:PassRole",
+              "Resource": "arn:aws:iam::865859654353:role/fenvix-prod-github-app-*",
+              "Condition": {
+                "StringEquals": {
+                  "iam:PassedToService": [
+                    "lambda.amazonaws.com",
+                    "ec2.amazonaws.com",
+                    "scheduler.amazonaws.com",
+                    "imagebuilder.amazonaws.com"
+                  ]
+                }
+              }
+            },
+            {
+              "Sid": "Sqs",
+              "Effect": "Allow",
+              "Action": [
+                "sqs:CreateQueue",
+                "sqs:DeleteQueue",
+                "sqs:GetQueueAttributes",
+                "sqs:SetQueueAttributes",
+                "sqs:GetQueueUrl",
+                "sqs:TagQueue",
+                "sqs:UntagQueue",
+                "sqs:ListQueueTags"
+              ],
+              "Resource": "arn:aws:sqs:eu-west-1:865859654353:fenvix-prod-github-app-*"
+            },
+            {
+              "Sid": "OverflowBucket",
+              "Effect": "Allow",
+              "Action": [
+                "s3:CreateBucket",
+                "s3:DeleteBucket",
+                "s3:PutBucketPolicy",
+                "s3:GetBucketPolicy",
+                "s3:DeleteBucketPolicy",
+                "s3:PutBucketPublicAccessBlock",
+                "s3:GetBucketPublicAccessBlock",
+                "s3:PutEncryptionConfiguration",
+                "s3:GetEncryptionConfiguration",
+                "s3:PutLifecycleConfiguration",
+                "s3:GetLifecycleConfiguration",
+                "s3:PutBucketOwnershipControls",
+                "s3:GetBucketOwnershipControls",
+                "s3:PutBucketTagging",
+                "s3:GetBucketTagging",
+                "s3:GetBucketLocation",
+                "s3:ListBucket"
+              ],
+              "Resource": "arn:aws:s3:::fenvix-prod-github-app-*"
+            },
+            {
+              "Sid": "Logs",
+              "Effect": "Allow",
+              "Action": [
+                "logs:CreateLogGroup",
+                "logs:DeleteLogGroup",
+                "logs:PutRetentionPolicy",
+                "logs:DeleteRetentionPolicy",
+                "logs:TagResource",
+                "logs:UntagResource",
+                "logs:ListTagsForResource",
+                "logs:TagLogGroup",
+                "logs:DescribeLogGroups"
+              ],
+              "Resource": [
+                "arn:aws:logs:eu-west-1:865859654353:log-group:/aws/lambda/fenvix-prod-github-app-*",
+                "arn:aws:logs:eu-west-1:865859654353:log-group:/aws/apigateway/fenvix-prod-github-app-*"
+              ]
+            },
+            {
+              "Sid": "LogsDescribe",
+              "Effect": "Allow",
+              "Action": [
+                "logs:DescribeLogGroups",
+                "logs:CreateLogDelivery",
+                "logs:GetLogDelivery",
+                "logs:UpdateLogDelivery",
+                "logs:DeleteLogDelivery",
+                "logs:ListLogDeliveries",
+                "logs:PutResourcePolicy",
+                "logs:DescribeResourcePolicies"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1"
+                }
+              }
+            },
+            {
+              "Sid": "Scheduler",
+              "Effect": "Allow",
+              "Action": [
+                "scheduler:CreateSchedule",
+                "scheduler:UpdateSchedule",
+                "scheduler:DeleteSchedule",
+                "scheduler:GetSchedule"
+              ],
+              "Resource": "arn:aws:scheduler:eu-west-1:865859654353:schedule/default/fenvix-prod-github-app-*"
+            }
+          ]
+        }
+      }
+    },
+    "CfnExecEdge": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "ManagedPolicyName": "fenvix-github-app-cfn-exec-edge",
+        "Description": "fenvix: what CloudFormation may do for the fenvix stacks (infra/github-app/cfn-exec-policy-edge.json)",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "Certificate",
+              "Effect": "Allow",
+              "Action": [
+                "acm:RequestCertificate",
+                "acm:DescribeCertificate",
+                "acm:DeleteCertificate",
+                "acm:AddTagsToCertificate",
+                "acm:RemoveTagsFromCertificate",
+                "acm:ListTagsForCertificate",
+                "acm:ListCertificates"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1"
+                }
+              }
+            },
+            {
+              "Sid": "ApiGatewayHttpApi",
+              "Effect": "Allow",
+              "Action": [
+                "apigateway:GET",
+                "apigateway:POST",
+                "apigateway:PUT",
+                "apigateway:PATCH",
+                "apigateway:DELETE"
+              ],
+              "Resource": [
+                "arn:aws:apigateway:eu-west-1::/apis",
+                "arn:aws:apigateway:eu-west-1::/apis/*",
+                "arn:aws:apigateway:eu-west-1::/domainnames",
+                "arn:aws:apigateway:eu-west-1::/domainnames/*",
+                "arn:aws:apigateway:eu-west-1::/tags/*"
+              ]
+            },
+            {
+              "Sid": "Alarm",
+              "Effect": "Allow",
+              "Action": [
+                "cloudwatch:PutMetricAlarm",
+                "cloudwatch:DeleteAlarms",
+                "cloudwatch:DescribeAlarms",
+                "cloudwatch:TagResource",
+                "cloudwatch:UntagResource",
+                "cloudwatch:ListTagsForResource"
+              ],
+              "Resource": "arn:aws:cloudwatch:eu-west-1:865859654353:alarm:fenvix-prod-github-app-*"
+            },
+            {
+              "Sid": "AlertsTopic",
+              "Effect": "Allow",
+              "Action": [
+                "sns:CreateTopic",
+                "sns:DeleteTopic",
+                "sns:GetTopicAttributes",
+                "sns:SetTopicAttributes",
+                "sns:Subscribe",
+                "sns:Unsubscribe",
+                "sns:TagResource",
+                "sns:UntagResource",
+                "sns:ListTagsForResource",
+                "sns:GetSubscriptionAttributes"
+              ],
+              "Resource": "arn:aws:sns:eu-west-1:865859654353:fenvix-prod-github-app-*"
+            },
+            {
+              "Sid": "AlertsUnsubscribe",
+              "Effect": "Allow",
+              "Action": [
+                "sns:Unsubscribe",
+                "sns:GetSubscriptionAttributes"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1"
+                }
+              }
+            },
+            {
+              "Sid": "ApiGatewayServiceLinkedRoleForAccessLogs",
+              "Effect": "Allow",
+              "Action": "iam:CreateServiceLinkedRole",
+              "Resource": "arn:aws:iam::865859654353:role/aws-service-role/ops.apigateway.amazonaws.com/*",
+              "Condition": {
+                "StringEquals": {
+                  "iam:AWSServiceName": "ops.apigateway.amazonaws.com"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "CfnExecFleet": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "ManagedPolicyName": "fenvix-github-app-cfn-exec-fleet",
+        "Description": "fenvix: what CloudFormation may do for the fenvix stacks (infra/github-app/cfn-exec-policy-fleet.json)",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "Ec2RunnerNetworkAndInstance",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:CreateVpc",
+                "ec2:DeleteVpc",
+                "ec2:ModifyVpcAttribute",
+                "ec2:CreateSubnet",
+                "ec2:DeleteSubnet",
+                "ec2:ModifySubnetAttribute",
+                "ec2:CreateRouteTable",
+                "ec2:DeleteRouteTable",
+                "ec2:AssociateRouteTable",
+                "ec2:DisassociateRouteTable",
+                "ec2:CreateRoute",
+                "ec2:DeleteRoute",
+                "ec2:CreateInternetGateway",
+                "ec2:DeleteInternetGateway",
+                "ec2:AttachInternetGateway",
+                "ec2:DetachInternetGateway",
+                "ec2:CreateSecurityGroup",
+                "ec2:DeleteSecurityGroup",
+                "ec2:AuthorizeSecurityGroupEgress",
+                "ec2:RevokeSecurityGroupEgress",
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:RevokeSecurityGroupIngress",
+                "ec2:RunInstances",
+                "ec2:TerminateInstances",
+                "ec2:StopInstances",
+                "ec2:StartInstances",
+                "ec2:ModifyInstanceAttribute",
+                "ec2:ModifyInstanceMetadataOptions",
+                "ec2:ModifyInstanceCreditSpecification",
+                "ec2:AssociateIamInstanceProfile",
+                "ec2:CreateTags",
+                "ec2:DeleteTags",
+                "ec2:Describe*",
+                "ec2:CreateLaunchTemplate",
+                "ec2:CreateLaunchTemplateVersion",
+                "ec2:DeleteLaunchTemplate",
+                "ec2:ModifyLaunchTemplate",
+                "ec2:GetLaunchTemplateData"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1"
+                }
+              }
+            },
+            {
+              "Sid": "Ec2OnlyTheseSizes",
+              "Effect": "Deny",
+              "Action": "ec2:RunInstances",
+              "Resource": "arn:aws:ec2:eu-west-1:865859654353:instance/*",
+              "Condition": {
+                "StringNotEquals": {
+                  "ec2:InstanceType": [
+                    "t3.medium",
+                    "t3.large",
+                    "t3.xlarge",
+                    "c6i.large",
+                    "c6i.xlarge",
+                    "m6i.large",
+                    "m6i.xlarge",
+                    "t4g.nano",
+                    "t4g.micro",
+                    "t4g.small"
+                  ]
+                }
+              }
+            },
+            {
+              "Sid": "ResolveUbuntuAmi",
+              "Effect": "Allow",
+              "Action": [
+                "ssm:GetParameter",
+                "ssm:GetParameters"
+              ],
+              "Resource": [
+                "arn:aws:ssm:eu-west-1::parameter/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id",
+                "arn:aws:ssm:eu-west-1::parameter/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
+              ]
+            },
+            {
+              "Sid": "ImageBuilderPipeline",
+              "Effect": "Allow",
+              "Action": [
+                "imagebuilder:CreateComponent",
+                "imagebuilder:DeleteComponent",
+                "imagebuilder:GetComponent",
+                "imagebuilder:CreateImageRecipe",
+                "imagebuilder:DeleteImageRecipe",
+                "imagebuilder:GetImageRecipe",
+                "imagebuilder:CreateInfrastructureConfiguration",
+                "imagebuilder:UpdateInfrastructureConfiguration",
+                "imagebuilder:DeleteInfrastructureConfiguration",
+                "imagebuilder:GetInfrastructureConfiguration",
+                "imagebuilder:CreateDistributionConfiguration",
+                "imagebuilder:UpdateDistributionConfiguration",
+                "imagebuilder:DeleteDistributionConfiguration",
+                "imagebuilder:GetDistributionConfiguration",
+                "imagebuilder:CreateImagePipeline",
+                "imagebuilder:UpdateImagePipeline",
+                "imagebuilder:DeleteImagePipeline",
+                "imagebuilder:GetImagePipeline",
+                "imagebuilder:TagResource",
+                "imagebuilder:UntagResource"
+              ],
+              "Resource": [
+                "arn:aws:imagebuilder:eu-west-1:865859654353:component/fenvix-prod-runner/*",
+                "arn:aws:imagebuilder:eu-west-1:865859654353:image-recipe/fenvix-prod-runner/*",
+                "arn:aws:imagebuilder:eu-west-1:865859654353:infrastructure-configuration/fenvix-prod-runner-build",
+                "arn:aws:imagebuilder:eu-west-1:865859654353:distribution-configuration/fenvix-prod-runner",
+                "arn:aws:imagebuilder:eu-west-1:865859654353:image-pipeline/fenvix-prod-runner"
+              ]
+            },
+            {
+              "Sid": "ImageBuilderParentImage",
+              "Effect": "Allow",
+              "Action": [
+                "imagebuilder:GetImage"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1"
+                }
+              }
+            },
+            {
+              "Sid": "ImageBuilderParentImageParameter",
+              "Effect": "Allow",
+              "Action": [
+                "ssm:GetParameter",
+                "ssm:GetParameters"
+              ],
+              "Resource": "arn:aws:ssm:eu-west-1::parameter/aws/service/canonical/*"
+            },
+            {
+              "Sid": "ImageBuilderServiceLinkedRole",
+              "Effect": "Allow",
+              "Action": "iam:CreateServiceLinkedRole",
+              "Resource": "arn:aws:iam::865859654353:role/aws-service-role/imagebuilder.amazonaws.com/*",
+              "Condition": {
+                "StringEquals": {
+                  "iam:AWSServiceName": "imagebuilder.amazonaws.com"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "CfnExecDashboard": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "ManagedPolicyName": "fenvix-github-app-cfn-exec-dashboard",
+        "Description": "fenvix: what CloudFormation may do for the fenvix stacks (infra/github-app/cfn-exec-policy-dashboard.json)",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "SiteBucket",
+              "Effect": "Allow",
+              "Action": [
+                "s3:CreateBucket",
+                "s3:DeleteBucket",
+                "s3:PutBucketPolicy",
+                "s3:GetBucketPolicy",
+                "s3:DeleteBucketPolicy",
+                "s3:PutBucketPublicAccessBlock",
+                "s3:GetBucketPublicAccessBlock",
+                "s3:PutEncryptionConfiguration",
+                "s3:GetEncryptionConfiguration",
+                "s3:PutBucketOwnershipControls",
+                "s3:GetBucketOwnershipControls",
+                "s3:PutBucketTagging",
+                "s3:GetBucketTagging",
+                "s3:GetBucketLocation",
+                "s3:ListBucket"
+              ],
+              "Resource": "arn:aws:s3:::fenvix-prod-dashboard-865859654353"
+            },
+            {
+              "Sid": "Distribution",
+              "Effect": "Allow",
+              "Action": [
+                "cloudfront:CreateDistribution",
+                "cloudfront:UpdateDistribution",
+                "cloudfront:GetDistribution",
+                "cloudfront:GetDistributionConfig",
+                "cloudfront:DeleteDistribution",
+                "cloudfront:TagResource",
+                "cloudfront:UntagResource",
+                "cloudfront:ListTagsForResource"
+              ],
+              "Resource": "arn:aws:cloudfront::865859654353:distribution/*"
+            },
+            {
+              "Sid": "OriginAccessControl",
+              "Effect": "Allow",
+              "Action": [
+                "cloudfront:CreateOriginAccessControl",
+                "cloudfront:GetOriginAccessControl",
+                "cloudfront:GetOriginAccessControlConfig",
+                "cloudfront:UpdateOriginAccessControl",
+                "cloudfront:DeleteOriginAccessControl"
+              ],
+              "Resource": "arn:aws:cloudfront::865859654353:origin-access-control/*"
+            },
+            {
+              "Sid": "RewriteFunction",
+              "Effect": "Allow",
+              "Action": [
+                "cloudfront:CreateFunction",
+                "cloudfront:DescribeFunction",
+                "cloudfront:GetFunction",
+                "cloudfront:UpdateFunction",
+                "cloudfront:PublishFunction",
+                "cloudfront:DeleteFunction"
+              ],
+              "Resource": "arn:aws:cloudfront::865859654353:function/fenvix-prod-dashboard-*"
+            },
+            {
+              "Sid": "ManagedPolicies",
+              "Effect": "Allow",
+              "Action": [
+                "cloudfront:GetCachePolicy",
+                "cloudfront:GetResponseHeadersPolicy",
+                "cloudfront:ListCachePolicies",
+                "cloudfront:ListResponseHeadersPolicies"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Sid": "DashboardCertificateInUsEast1",
+              "Effect": "Allow",
+              "Action": [
+                "acm:DescribeCertificate",
+                "acm:ListCertificates"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "us-east-1"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "AssetsBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BucketName": "cdk-fenvix-assets-865859654353-eu-west-1",
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "abort-uploads",
+              "Status": "Enabled",
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 1
+              }
+            }
+          ]
+        }
+      }
+    },
+    "AssetsBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "AssetsBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "TlsOnly",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::Sub": "arn:aws:s3:::${AssetsBucket}"
+                },
+                {
+                  "Fn::Sub": "arn:aws:s3:::${AssetsBucket}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "VersionParameter": {
+      "Type": "AWS::SSM::Parameter",
+      "Properties": {
+        "Name": "/cdk-bootstrap/fenvix/version",
+        "Type": "String",
+        "Value": "30",
+        "Description": "fenvix: CDK deploy resources made by the one-click template (infra/bootstrap)"
+      }
+    },
+    "CfnExecRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "cdk-fenvix-cfn-exec-role-865859654353-eu-west-1",
+        "Description": "fenvix: the role CloudFormation creates and changes the fenvix stacks with",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudformation.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Ref": "CfnExecApp"
+          },
+          {
+            "Ref": "CfnExecEdge"
+          },
+          {
+            "Ref": "CfnExecFleet"
+          },
+          {
+            "Ref": "CfnExecDashboard"
+          }
+        ]
+      }
+    },
+    "CdkDeployRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "cdk-fenvix-deploy-role-865859654353-eu-west-1",
+        "Description": "fenvix: the CDK CLI submits the fenvix stacks to CloudFormation with this role (assumed by the GitHub deployer only)",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::GetAtt": [
+                    "DeployerRole",
+                    "Arn"
+                  ]
+                }
+              },
+              "Action": [
+                "sts:AssumeRole",
+                "sts:TagSession"
+              ]
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "deploy",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "OwnStacks",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:CreateChangeSet",
+                    "cloudformation:DeleteChangeSet",
+                    "cloudformation:DescribeChangeSet",
+                    "cloudformation:ExecuteChangeSet",
+                    "cloudformation:DescribeStacks",
+                    "cloudformation:DescribeStackEvents",
+                    "cloudformation:DescribeStackResources",
+                    "cloudformation:GetTemplate",
+                    "cloudformation:GetTemplateSummary",
+                    "cloudformation:CreateStack",
+                    "cloudformation:UpdateStack",
+                    "cloudformation:RollbackStack",
+                    "cloudformation:ContinueUpdateRollback",
+                    "cloudformation:ListStackResources"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/fenvix-prod-github-app/*"
+                    },
+                    {
+                      "Fn::Sub": "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/fenvix-prod-dashboard/*"
+                    }
+                  ]
+                },
+                {
+                  "Sid": "ValidateTemplates",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:ValidateTemplate"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "PassTheExecutionRoleToCloudFormation",
+                  "Effect": "Allow",
+                  "Action": "iam:PassRole",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CfnExecRole",
+                      "Arn"
+                    ]
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "cloudformation.amazonaws.com"
+                    }
+                  }
+                },
+                {
+                  "Sid": "ReadTemplatesAndAssets",
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:GetBucketLocation",
+                    "s3:ListBucket"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:aws:s3:::${AssetsBucket}"
+                    },
+                    {
+                      "Fn::Sub": "arn:aws:s3:::${AssetsBucket}/*"
+                    }
+                  ]
+                },
+                {
+                  "Sid": "Version",
+                  "Effect": "Allow",
+                  "Action": "ssm:GetParameter",
+                  "Resource": {
+                    "Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cdk-bootstrap/fenvix/version"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "CdkPublishRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "cdk-fenvix-file-publishing-role-865859654353-eu-west-1",
+        "Description": "fenvix: the CDK CLI uploads the functions' code and the templates with this role (assumed by the GitHub deployer only)",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::GetAtt": [
+                    "DeployerRole",
+                    "Arn"
+                  ]
+                }
+              },
+              "Action": [
+                "sts:AssumeRole",
+                "sts:TagSession"
+              ]
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "publish",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "Assets",
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject*",
+                    "s3:PutObject*",
+                    "s3:AbortMultipartUpload",
+                    "s3:GetBucketLocation",
+                    "s3:GetEncryptionConfiguration",
+                    "s3:ListBucket"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:aws:s3:::${AssetsBucket}"
+                    },
+                    {
+                      "Fn::Sub": "arn:aws:s3:::${AssetsBucket}/*"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "DeployerPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "ManagedPolicyName": "fenvix-github-deployer",
+        "Description": "fenvix: what the deploy pipeline does itself (infra/github-app/deploy-policy.json)",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "CdkDeployThroughBootstrapRoles",
+              "Effect": "Allow",
+              "Action": "sts:AssumeRole",
+              "Resource": [
+                "arn:aws:iam::865859654353:role/cdk-fenvix-deploy-role-865859654353-eu-west-1",
+                "arn:aws:iam::865859654353:role/cdk-fenvix-file-publishing-role-865859654353-eu-west-1"
+              ]
+            },
+            {
+              "Sid": "CdkBootstrapVersionCheck",
+              "Effect": "Allow",
+              "Action": "ssm:GetParameter",
+              "Resource": "arn:aws:ssm:eu-west-1:865859654353:parameter/cdk-bootstrap/fenvix/version"
+            },
+            {
+              "Sid": "ReadOwnStack",
+              "Effect": "Allow",
+              "Action": [
+                "cloudformation:DescribeStacks",
+                "cloudformation:DescribeStackEvents",
+                "cloudformation:DescribeStackResources"
+              ],
+              "Resource": [
+                "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-github-app/*",
+                "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-dashboard/*"
+              ]
+            },
+            {
+              "Sid": "PrintCertificateValidationRecord",
+              "Effect": "Allow",
+              "Action": [
+                "acm:ListCertificates",
+                "acm:DescribeCertificate"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1"
+                }
+              }
+            },
+            {
+              "Sid": "DashboardCertificateInUsEast1",
+              "Effect": "Allow",
+              "Action": [
+                "acm:RequestCertificate",
+                "acm:DescribeCertificate",
+                "acm:ListCertificates",
+                "acm:AddTagsToCertificate"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "us-east-1"
+                }
+              }
+            },
+            {
+              "Sid": "ResolveUbuntuAmi",
+              "Effect": "Allow",
+              "Action": "ssm:GetParameter",
+              "Resource": [
+                "arn:aws:ssm:eu-west-1::parameter/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id",
+                "arn:aws:ssm:eu-west-1::parameter/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
+              ]
+            },
+            {
+              "Sid": "ManageOwnSecrets",
+              "Effect": "Allow",
+              "Action": [
+                "ssm:PutParameter",
+                "ssm:DeleteParameter",
+                "ssm:DescribeParameters"
+              ],
+              "Resource": [
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/github-app/*",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/cache/*"
+              ]
+            },
+            {
+              "Sid": "ReadWhatThePipelineChecks",
+              "Effect": "Allow",
+              "Action": "ssm:GetParameter",
+              "Resource": [
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/github-app/database-url",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/github-app/api-database-url",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/github-app/private-key",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/github-app/client-secret",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/cache/signing-public-key"
+              ]
+            },
+            {
+              "Sid": "ReadFounderValues",
+              "Effect": "Allow",
+              "Action": "ssm:GetParameter",
+              "Resource": [
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/supabase-db-url",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/supabase-anon-key",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/supabase-ca-cert",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/cloudflare-api-token",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/github-app-id",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/github-app-slug",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/github-app-client-id"
+              ]
+            },
+            {
+              "Sid": "ListParameterNames",
+              "Effect": "Allow",
+              "Action": "ssm:DescribeParameters",
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1"
+                }
+              }
+            },
+            {
+              "Sid": "ReadOwnLogs",
+              "Effect": "Allow",
+              "Action": [
+                "logs:FilterLogEvents",
+                "logs:GetLogEvents",
+                "logs:DescribeLogStreams",
+                "logs:StartLiveTail"
+              ],
+              "Resource": [
+                "arn:aws:logs:eu-west-1:865859654353:log-group:/aws/lambda/fenvix-prod-github-app-*",
+                "arn:aws:logs:eu-west-1:865859654353:log-group:/aws/apigateway/fenvix-prod-github-app-*"
+              ]
+            },
+            {
+              "Sid": "DescribeLogGroups",
+              "Effect": "Allow",
+              "Action": "logs:DescribeLogGroups",
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1"
+                }
+              }
+            },
+            {
+              "Sid": "LookAtQueuesAndMachines",
+              "Effect": "Allow",
+              "Action": [
+                "sqs:GetQueueAttributes",
+                "ec2:DescribeInstances",
+                "ec2:DescribeInstanceStatus",
+                "ec2:GetConsoleOutput",
+                "ec2:DescribeImages"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1"
+                }
+              }
+            },
+            {
+              "Sid": "BuildTheRunnerImage",
+              "Effect": "Allow",
+              "Action": [
+                "imagebuilder:StartImagePipelineExecution",
+                "imagebuilder:GetImagePipeline",
+                "imagebuilder:ListImagePipelineImages"
+              ],
+              "Resource": "arn:aws:imagebuilder:eu-west-1:865859654353:image-pipeline/fenvix-prod-runner"
+            },
+            {
+              "Sid": "WatchTheImageBuild",
+              "Effect": "Allow",
+              "Action": [
+                "imagebuilder:GetImage"
+              ],
+              "Resource": "arn:aws:imagebuilder:eu-west-1:865859654353:image/fenvix-prod-runner/*"
+            },
+            {
+              "Sid": "UploadTheDashboard",
+              "Effect": "Allow",
+              "Action": [
+                "s3:ListBucket"
+              ],
+              "Resource": "arn:aws:s3:::fenvix-prod-dashboard-865859654353"
+            },
+            {
+              "Sid": "UploadTheDashboardFiles",
+              "Effect": "Allow",
+              "Action": [
+                "s3:PutObject",
+                "s3:GetObject",
+                "s3:DeleteObject"
+              ],
+              "Resource": "arn:aws:s3:::fenvix-prod-dashboard-865859654353/*"
+            },
+            {
+              "Sid": "RefreshTheDashboardCache",
+              "Effect": "Allow",
+              "Action": [
+                "cloudfront:CreateInvalidation",
+                "cloudfront:GetInvalidation"
+              ],
+              "Resource": "arn:aws:cloudfront::865859654353:distribution/*"
+            },
+            {
+              "Sid": "RunDemoUpAndDown",
+              "Effect": "Allow",
+              "Action": "lambda:InvokeFunction",
+              "Resource": "arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-demo"
+            }
+          ]
+        }
+      }
+    },
+    "DeployerRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "fenvix-github-deployer",
+        "Description": {
+          "Fn::Sub": "fenvix: the deploy pipeline of ${GitHubOwner}/${GitHubRepository} (GitHub Actions, OIDC): jobs of deploy.yml on its branch main only"
+        },
+        "MaxSessionDuration": 7200,
+        "ManagedPolicyArns": [
+          {
+            "Ref": "DeployerPolicy"
+          }
+        ],
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "GitHubActionsMainBranchOnly",
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+                }
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": [
+                    {
+                      "Fn::Sub": "repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepository}@${GitHubRepositoryId}:ref:refs/heads/main"
+                    }
+                  ],
+                  "token.actions.githubusercontent.com:repository_id": [
+                    {
+                      "Fn::Sub": "${GitHubRepositoryId}"
+                    }
+                  ],
+                  "token.actions.githubusercontent.com:job_workflow_ref": [
+                    {
+                      "Fn::Sub": "${GitHubOwner}/${GitHubRepository}/.github/workflows/deploy.yml@refs/heads/main"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "DeployRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "DeployerRole",
+          "Arn"
+        ]
+      },
+      "Description": "The role the deploy workflow assumes (already written in .github/workflows/deploy.yml)"
+    },
+    "AssetsBucket": {
+      "Value": {
+        "Ref": "AssetsBucket"
+      }
+    }
+  }
+}

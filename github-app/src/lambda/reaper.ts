@@ -9,6 +9,7 @@ import { GitHubApp } from "../github/client.ts";
 import { deregisterGoneDemoRunners } from "../runners/demo.ts";
 import { reap } from "../runners/launcher.ts";
 import { jsonLogger } from "../work.ts";
+import { githubAppConfigured } from "../not-configured.ts";
 import { refreshing } from "./runtime.ts";
 import { loadParameter } from "./secrets.ts";
 
@@ -40,7 +41,8 @@ export const handler = async (): Promise<{ terminated: string[]; deregistered: s
     terminated.push(...t);
   }
   let deregistered: string[] = [];
-  if (process.env.DEREGISTER_DEMO_RUNNERS === "1") {
+  // Deregistering needs the App (its key); without it no runner was ever registered.
+  if (process.env.DEREGISTER_DEMO_RUNNERS === "1" && githubAppConfigured(process.env)) {
     const { gh } = await github();
     deregistered = await deregisterGoneDemoRunners({ gh, ec2, launchTemplateId: "", machineEnv: {} });
     if (deregistered.length) log.warn({ deregistered }, "reaper: runners of demo machines that are gone deregistered");

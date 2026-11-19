@@ -21,7 +21,10 @@ export interface ApiConfig {
   dashboardUrl: string;
   /** Origins the browser may call the API from: the dashboard's, plus API_CORS_ORIGINS (comma separated). */
   corsOrigins: string[];
+  /** The App's URL name; empty while the GitHub App is not configured (the GitHub operations then answer 503). */
   appSlug: string;
+  /** False while the GitHub App is not configured (GITHUB_APP_SLUG empty). */
+  githubConfigured: boolean;
   webUrl: string;
 }
 
@@ -62,7 +65,7 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
   const supabaseUrl = url(env, "SUPABASE_URL", undefined, nodeEnv);
   const dashboardUrl = url(env, "DASHBOARD_URL", undefined, nodeEnv);
   const appSlug = (env.GITHUB_APP_SLUG ?? "").trim();
-  if (!/^[a-z0-9][a-z0-9-]{0,33}$/.test(appSlug)) throw new Error("GITHUB_APP_SLUG must be the App's URL name (lowercase letters, digits, dashes)");
+  if (appSlug && !/^[a-z0-9][a-z0-9-]{0,33}$/.test(appSlug)) throw new Error("GITHUB_APP_SLUG must be the App's URL name (lowercase letters, digits, dashes)");
   const extra = (env.API_CORS_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean);
   const corsOrigins = [...new Set([new URL(dashboardUrl).origin, ...extra.map((o) => {
     let u: URL;
@@ -84,6 +87,7 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     dashboardUrl,
     corsOrigins,
     appSlug,
+    githubConfigured: appSlug !== "",
     webUrl: url(env, "GITHUB_WEB_URL", "https://github.com", nodeEnv),
   };
 }

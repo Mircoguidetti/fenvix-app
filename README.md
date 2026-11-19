@@ -63,7 +63,7 @@ Vite bakes these in when it builds, so change them and build again. If one of `V
    and must run after all the others.
 2. **Auth URLs.** Authentication → URL Configuration. Set *Site URL* to the production address and add
    every address the app is served from to *Redirect URLs*, each with a trailing slash: for example
-   `https://app.fenvix.dev/`, `http://localhost:5173/`, and for Vercel previews a wildcard such as
+   `https://console.fenvix.dev/`, `http://localhost:5173/`, and for Vercel previews a wildcard such as
    `https://*-<your-team>.vercel.app/`. The app asks the provider to return to the root of the site.
 3. **Providers.** Authentication → Sign In / Providers:
    - **Google**: create an OAuth client (type *Web application*) in Google Cloud Console, add
