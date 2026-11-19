@@ -151,6 +151,6 @@ There is no High or Medium defect. The Low items are below.
 | `npm run build` | passes |
 | `npm run api:lint` | valid |
 | `npm run test:unit` (dashboard) | **66/66** |
-| `npm run check` | still running when this version was committed; result follows in the next commit |
-| `node scripts/e2e-real-api.mjs` | still running when this version was committed; result follows in the next commit |
+| `npm run check` | status colours **18/18**, layout and screenshot checks pass, 140 screenshots (the tracked screenshots it rewrote were not committed) |
+| `node scripts/e2e-real-api.mjs` | **170/170** (the screenshots it rewrites were not committed) |
 | Secret scan (private keys, AWS access keys) | nothing found |
