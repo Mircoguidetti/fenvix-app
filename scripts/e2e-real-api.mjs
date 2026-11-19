@@ -67,7 +67,7 @@ for (const [i, st] of STATES.entries()) {
       ["pr_open", "merged", "closed"].includes(st) ? `https://github.com/olive-${run}/repo-${st}/pull/${10 + i}` : null, i % 2 ? "node" : "python", i % 2 ? "jest" : "pytest"]);
 }
 
-// The shared cache (warm-ups, migration 0015): shop warm since a commit with a warm-up running for the next one; one
+// The shared cache (warm-ups, migration 0016): shop warm since a commit with a warm-up running for the next one; one
 // onboarded repository whose last warm-up could not run the job.
 const WARM_SHA = "4a7c2e9" + "0".repeat(33);
 const NEXT_SHA = "b81f0d3" + "0".repeat(33);
@@ -204,6 +204,33 @@ await phone.context().close();
     check("connect", !!installUrl && installUrl.startsWith("https://github.com/apps/fenvix-local/installations/new?state="), `install button goes to GitHub with a signed state (${installUrl ? installUrl.split("?")[0] : "no navigation"})`);
   } else check("connect", false, "no install button found");
   await page.unroute("https://github.com/**");
+
+  // GitHub's return after the App checked the GitHub side (review R-016 F2): ?github=confirm#completion=<code>. The page
+  // completes the link through the API with the signed-in person's session; another person's code links nothing.
+  const pending = 990_000_000 + Math.floor(Math.random() * 1_000_000);
+  const pendingLogin = `globex-${pending}`;
+  await db.query(`insert into public.gh_installations (installation_id, account_id, account_login, account_type, repository_selection) values ($1, $2, $3, 'Organization', 'selected')`, [pending, pending, pendingLogin]);
+  const completion = async (userId, code) => db.query(
+    `insert into public.gh_install_completions (code_hash, state_hash, installation_id, workspace_id, user_id, github_user_id, github_login, expires_at)
+     values (encode(sha256($1::bytea), 'hex'), encode(sha256(('state-' || $1)::bytea), 'hex'), $2, $3, $4, 1, 'gh-admin', now() + interval '10 minutes')`,
+    [code, pending, owner.workspaceId, userId]);
+  const linked = async () => (await db.query("select workspace_id from public.gh_installations where installation_id = $1", [pending])).rows[0].workspace_id;
+  const memberCode = `member-${randomUUID()}`;
+  await completion(member.userId, memberCode);
+  await page.goto(`${WEB}/projects/connect?github=confirm&installation=${pending}&account=${pendingLogin}#completion=${memberCode}`, { waitUntil: "networkidle" });
+  await page.waitForFunction(() => /not valid for your account/.test(document.body.innerText), null, { timeout: 10000 }).then(
+    () => check("connect-confirm", true, "a code made for another person: refused in words, nothing connected"), () => check("connect-confirm", false, "no refusal shown for another person's code"));
+  check("connect-confirm", (await linked()) === null, "another person's code linked nothing");
+  check("connect-confirm", !page.url().includes("completion="), "the code left the address bar");
+  const ownCode = `owner-${randomUUID()}`;
+  await completion(owner.userId, ownCode);
+  await page.goto(`${WEB}/projects/connect?github=confirm&installation=${pending}&account=${pendingLogin}#completion=${ownCode}`, { waitUntil: "networkidle" });
+  await page.waitForFunction((a) => document.body.innerText.includes(`The fenvix GitHub App is installed on ${a}`), pendingLogin, { timeout: 10000 }).then(
+    () => check("connect-confirm", true, "the person's own code: completed through the API, shown as connected"), () => check("connect-confirm", false, "the own code was not completed"));
+  check("connect-confirm", (await linked()) === owner.workspaceId, "the installation is linked to the organization that asked");
+  check("connect-confirm", !page.url().includes("completion="), "the code left the address bar");
+  const res = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
+  check("connect-confirm", res.violations.length === 0, `axe: no violations${res.violations.length ? ` (${res.violations.map((v) => v.id).join(", ")})` : ""}`);
 }
 
 // ---------------------------------------------------------------- region: the owner changes it, a member cannot

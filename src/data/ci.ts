@@ -9,7 +9,8 @@ import type {
 
 /**
  * One usage event (ci_usage_events): one GitHub job that asked for a fenvix machine. Only billable events count.
- * baselineMinutes = tests run + tests skipped with proof + other steps: the job's minutes without fenvix.
+ * baselineMinutes = the minutes the job held a fenvix machine, by GitHub's own job timings (started_at to
+ * completed_at), never by anything the job writes (review R-016 F3; docs/data-contract.md "Run units").
  */
 export interface UsageEvent {
   projectId: string | null;
@@ -24,7 +25,7 @@ export interface TrialDates {
   endsAt: string;
 }
 
-/** 1 run unit = 10 baseline minutes. */
+/** 1 run unit = 10 baseline minutes (minutes a job held a fenvix machine, by GitHub's timings). */
 export const MINUTES_PER_UNIT = 10;
 /** The trial's gate: fenvix would have skipped at least this share of test time. */
 export const TRIAL_GATE = 0.35;
@@ -308,8 +309,10 @@ export function trialFrom(dates: TrialDates | null, runs: Run[], events: UsageEv
   const end = new Date(dates.endsAt);
   const shadow = runs.filter((r) => r.mode === "shadow" && finished(r) && r.startedAt >= start.toISOString() && r.startedAt < end.toISOString());
   const total = shadow.reduce((a, r) => a + r.testTimeMs.ran + r.testTimeMs.skipped, 0);
-  const would = shadow.reduce((a, r) => a + r.wouldSaveMs, 0);
-  const share = shadow.length && total > 0 ? round(would / total, 4) : shadow.length ? 0 : null;
+  // Each run's would-have-saved time is at most its own test time (the App bounds it too: review R-016 F4), so the
+  // share stays within 0 to 1 whatever a run reports.
+  const would = shadow.reduce((a, r) => a + Math.min(Math.max(0, r.wouldSaveMs), r.testTimeMs.ran + r.testTimeMs.skipped), 0);
+  const share = shadow.length && total > 0 ? Math.min(1, Math.max(0, round(would / total, 4))) : shadow.length ? 0 : null;
   return {
     status: now < end ? "active" : "ended",
     startedAt: start.toISOString(),

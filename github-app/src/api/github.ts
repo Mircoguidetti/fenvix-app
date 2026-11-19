@@ -2,13 +2,14 @@
  * The organization's GitHub side: its installations of the fenvix GitHub App, their repositories with their
  * onboarding state, the link that installs the App for this organization, and asking for a setup pull request.
  */
+import { createHash } from "node:crypto";
 import { signState } from "../auth.ts";
 import { type Handler, orgOf, Reply } from "./context.ts";
-import { notFound, unavailable } from "./errors.ts";
+import { conflict, forbidden, notFound, unavailable } from "./errors.ts";
 import { mapGitHubRepository, mapInstallation } from "./shared.js";
 
 /**
- * The latest warm-up of a repository `r` (supabase/migrations/0015_warm_cache.sql), the one in flight first: its
+ * The latest warm-up of a repository `r` (supabase/migrations/0016_warm_cache.sql), the one in flight first: its
  * columns as mapWarmCache (src/data/ci-rows.ts) reads them. Row level security shows the organization's warm-ups only.
  */
 export const LATEST_WARMUP = `left join lateral (select w.status as warmup_status, w.commit_sha as warmup_sha, w.detail as warmup_detail, w.updated_at as warmup_updated_at
@@ -30,6 +31,36 @@ export const createInstallLink: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const state = signState(ctx.cfg.stateSigningKey, { workspaceId: ws, userId: ctx.userId });
   return { url: `${ctx.cfg.webUrl}/apps/${ctx.cfg.appSlug}/installations/new?state=${encodeURIComponent(state)}` };
+};
+
+/** Every refusal of a completion code itself: one answer, so a code cannot be probed. */
+export const COMPLETION_NOT_FOUND = "This GitHub connection link is not valid for your account: it was started by another fenvix account, " +
+  "has already been used, or has expired. Nothing was connected. Ask for a new link from the Connect page of your own organization.";
+
+/**
+ * The last step of connecting GitHub (review R-016 F2): /github/setup checked the GitHub side and stored a single-use
+ * completion for the fenvix person its state names; the link is made here, for the signed-in person only
+ * (api_complete_github_link checks it is theirs, unexpired and unused; gh_link_installation that they are an owner or
+ * admin of the organization and that the installation is not another organization's).
+ */
+export const completeGitHubInstall: Handler = async (ctx) => {
+  const hash = createHash("sha256").update(String(ctx.body.completion)).digest("hex");
+  let row: { workspace_id: string; installation_id: number; account: string } | undefined;
+  try {
+    row = await ctx.t.one("select * from public.api_complete_github_link($1)", [hash]);
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code === "42501") throw forbidden("Only an owner or admin of the organization can connect a GitHub installation.");
+    if (code === "23505") throw conflict("This GitHub installation is connected to another fenvix organization.");
+    if (code === "55000") throw conflict("This GitHub installation was removed on GitHub. Install the App again.");
+    if (code === "P0002") throw notFound(COMPLETION_NOT_FOUND);
+    throw e;
+  }
+  if (!row) throw notFound(COMPLETION_NOT_FOUND);
+  const installationId = Number(row.installation_id);
+  // Its repositories get their projects (the App's worker); after the commit, so that the worker sees the link.
+  ctx.afterCommit(() => ctx.queue.enqueue({ kind: "installation_linked", installationId }));
+  return { organizationId: row.workspace_id, installationId, account: row.account };
 };
 
 export const listGitHubRepositories: Handler = async (ctx) => {

@@ -48,7 +48,9 @@ describe("the contract inside the bundle", () => {
       assert.doesNotMatch(JSON.stringify([o.params, o.querystring, o.headers, o.body, o.responses]), /\$ref/, o.operationId);
     }
     const noOrg = dashboardOperations().filter((o) => !o.workspace).map((o) => o.operationId).sort();
-    assert.deepEqual(noOrg, ["acceptInvitation", "createOrganization", "getMe", "listOrganizations"]);
+    // completeGitHubInstall: the organization comes from the completion (the install link's signed state), and the
+    // database links only for the person that state names (review R-016 F2).
+    assert.deepEqual(noOrg, ["acceptInvitation", "completeGitHubInstall", "createOrganization", "getMe", "listOrganizations"]);
   });
 });
 

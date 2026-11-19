@@ -23,7 +23,7 @@ the billing rule, and how to run the tests.
 | `src/warmup/` | warm-up runs (warm cache at install): requests from webhooks and the link, the scheduler (`tick`: lowest priority, per-organization concurrency, daily cap per repository, region placement, supersede, preempt), the machine's reports, the repository's cache state, non-billable usage (`docs/data-contract.md` "Warm-up runs") |
 | `src/work.ts` | the hand-off after a checked request (webhook, summary, results, exploration, onboard by repository id): in this process (node server) or a queue (Lambda) |
 | `src/lambda/`, `src/queue/sqs.ts` | AWS Lambda entry points (http, worker, sweep, warmup), the API Gateway adapter, secrets from SSM, the SQS hand-off with S3 overflow; deployed by `../infra/github-app` (`../docs/DEPLOY-AWS.md`) |
-| `../supabase/migrations/0013_github_app.sql`, `0014_dashboard_api.sql`, `0015_warm_cache.sql` | tables, the role `fenvix_github_app`, row level security (0014: trial, region, run progress, audit reruns, results staging); tested by `../supabase/tests/gh-rls.sql` |
+| `../supabase/migrations/0013_github_app.sql`, `0014_dashboard_api.sql`, `0015_review_r016.sql`, `0016_warm_cache.sql` | tables, the role `fenvix_github_app`, row level security (0014: trial, region, run progress, audit reruns, results staging); tested by `../supabase/tests/gh-rls.sql` |
 | `tests/` | unit and integration tests; fake GitHub checked against GitHub's OpenAPI and webhook schemas |
 | `tests/fixtures/runner/` | real `summary.json` files written by `runner/fenvix-run` |
 | `recordings/` | the recorded end to end (`npm run e2e:record`) |

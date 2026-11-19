@@ -8,7 +8,11 @@ import {
  * Writes what the runner sent (src/results/runner-records.ts) into the dashboard's tables, as fenvix_github_app in a
  * transaction that names the run's organization (row level security keeps every other organization out):
  * ci_test_results, ci_skip_receipts, ci_defects, ci_audit_reruns, ci_explorations and the run's own columns
- * (engine run id, seed, miss details, mode, shadow-mode and audit totals).
+ * (engine run id, seed, miss details, shadow-mode and audit totals). Not the run's mode: the App decides it when the
+ * job starts (review R-016 F4); a `mode` in the results is ignored.
+ *
+ * Bounds (review R-016 F4): a test's duration is at most the job's own duration (GitHub's timings), and the run's
+ * would-have-saved time is at most its own test time (run + skipped), so a share computed from it stays within 0 to 1.
  *
  * Idempotent: every row is an upsert on its natural key, totals are recomputed from what is stored, and a defect's
  * occurrences grow once per run (not once per application). Applying the same chunk twice changes nothing.
@@ -22,6 +26,8 @@ export interface RunTarget {
   language: string;
   /** When the run's defects were seen (the run's end, else its start). */
   seenAt: Date;
+  /** The job's duration in ms (GitHub's timings), once finished: no test lasts longer. Null or 0: no bound known. */
+  maxTestMs?: number | null;
 }
 
 /** The job the chunks came from (gh_run_results' key). */
@@ -152,13 +158,13 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
   const first = <K extends keyof RunnerResults>(k: K): RunnerResults[K] | undefined => sorted.find((ch) => ch.payload[k] !== undefined)?.payload[k];
   const engineRunId = first("engineRunId");
   const seed = first("seed");
-  const mode = first("mode");
   const missDetails = first("missDetails");
   await c.query(
     `update ci_runs set engine_run_id = coalesce($2, engine_run_id), seed = case when $3::boolean then $4::bigint else seed end,
-       mode = coalesce($5, mode), miss_details = coalesce($6::jsonb, miss_details)
+       miss_details = coalesce($5::jsonb, miss_details)
      where id = $1`,
-    [run.id, engineRunId ?? null, seed !== undefined, seed ?? null, mode ?? null, missDetails ? JSON.stringify(missDetails) : null]);
+    [run.id, engineRunId ?? null, seed !== undefined, seed ?? null, missDetails ? JSON.stringify(missDetails) : null]);
+  const cap = run.maxTestMs && run.maxTestMs > 0 ? Math.round(run.maxTestMs) : null;
 
   // Defects (the per-test outcomes point at them by fingerprint).
   await upsertDefects(c, run.projectId, all<RunnerDefect>("defects").map((d) => defectRow(d, run.language)), { runId: run.id, seenAt: run.seenAt });
@@ -183,7 +189,8 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
 
   // Per-test outcomes. A test skipped with proof needs its receipt (ci_test_results' check): one whose receipt has not
   // come yet is left out, and its chunk is applied again when more chunks arrive.
-  const tests = lastBy(all<RunnerTestOutcome>("tests").map(testRow), (t) => t.test_id);
+  const tests = lastBy(all<RunnerTestOutcome>("tests").map(testRow), (t) => t.test_id)
+    .map((t) => (cap !== null && t.duration_ms > cap ? { ...t, duration_ms: cap } : t));
   const skipped = tests.filter((t) => t.outcome === "skipped_with_proof").map((t) => t.test_id);
   const withReceipt = new Set(skipped.length
     ? (await c.query<{ test_id: string }>("select test_id from ci_skip_receipts where run_id = $1 and test_id = any($2::text[])", [run.id, skipped])).rows.map((r) => r.test_id)
@@ -226,20 +233,22 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
       [run.id, JSON.stringify(audits)]);
   }
 
-  // Totals, from everything stored: audit reruns of the run; shadow mode's "would have skipped" from every chunk of the job.
+  // Totals, from everything stored: audit reruns of the run; shadow mode's "would have skipped" from every chunk of the
+  // job, each test's time at most the job's duration ($6), the sum at most the run's own test time.
   await c.query(
     `update ci_runs set
        audit_rerun = (select count(*) from ci_audit_reruns a where a.run_id = $1),
        audit_wrong_skips = (select count(*) from ci_audit_reruns a where a.run_id = $1 and a.outcome = 'wrong_skip'),
        (would_skip_tests, would_save_ms) = (
-         select count(*), coalesce(sum(greatest(0, (t->>'durationMs')::bigint)), 0)
+         select count(*), least(coalesce(sum(least(greatest(0, (t->>'durationMs')::bigint), coalesce($6::bigint, 9223372036854775807))), 0),
+                                greatest(0, ci_runs.test_time_ran_ms + ci_runs.test_time_skipped_ms))
          from (select distinct on (t->>'testId') t
                from gh_run_results g
                cross join lateral jsonb_array_elements(case when jsonb_typeof(g.payload->'tests') = 'array' then g.payload->'tests' else '[]'::jsonb end) t
                where g.repository_id = $2 and g.run_id = $3 and g.run_attempt = $4 and g.runner_name = $5) w
          where (w.t->>'wouldSkip')::boolean is true)
      where id = $1`,
-    [run.id, job.repositoryId, job.runId, job.runAttempt, job.runnerName]);
+    [run.id, job.repositoryId, job.runId, job.runAttempt, job.runnerName, cap]);
 
   // Which chunks are done.
   const waiting = new Set(skipped.filter((id) => !withReceipt.has(id)));

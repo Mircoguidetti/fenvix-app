@@ -51,10 +51,11 @@ describe("one machine per job: workflow_job.queued starts a runner machine", () 
     const l = launcher.launches[0]!;
     // In the organization's region; shadow mode: linking the installation started the 30-day trial.
     assert.deepEqual({ ...l, jitConfig: "", summaryToken: "" }, { jobId: 901, runId: 9301, repositoryId: REPOS.shop.id, repositoryFullName: "acme/shop", installationId: INSTALLATION_ID, runnerName: "fenvix-j901", jitConfig: "", cacheAccess: "write", summaryToken: "", region: "us", mode: "shadow" });
-    assert.equal((await admin.query("select region from gh_jobs where job_id = 901")).rows[0].region, "us");
-    // The machine's own summary credential: this runner, this repository, this run (R-012 F1).
+    // The region and the mode the machine gets are recorded on the job: the run's mode is this one (review R-016 F4).
+    assert.deepEqual((await admin.query("select region, mode from gh_jobs where job_id = 901")).rows[0], { region: "us", mode: "shadow" });
+    // The machine's own summary credential: this runner, this repository, this run (R-012 F1), this attempt (R-016 F7).
     const scope = verifySummaryCredential([RUNNER_TOKEN], `Bearer ${l.summaryToken}`)!;
-    assert.deepEqual({ ...scope, exp: 0 }, { runnerName: "fenvix-j901", repositoryId: REPOS.shop.id, runId: 9301, exp: 0 });
+    assert.deepEqual({ ...scope, exp: 0 }, { runnerName: "fenvix-j901", repositoryId: REPOS.shop.id, runId: 9301, runAttempt: 1, exp: 0 });
     const jit = h.gh.repos.get("acme/shop")!.jitRunners;
     assert.equal(jit.length, 1);
     assert.deepEqual({ name: jit[0]!.name, labels: jit[0]!.labels, group: jit[0]!.runnerGroupId }, { name: "fenvix-j901", labels: ["fenvix"], group: 1 });

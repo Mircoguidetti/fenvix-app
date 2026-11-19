@@ -215,7 +215,14 @@ test("the shadow trial: the would-have-skipped share against the 35% gate, days 
   assert.equal(ended.status, "ended");
   assert.equal(ended.daysLeft, 0);
   assert.equal(ended.gate.met, true);
+  // A run that reports more would-have-saved time than its own test time counts its test time at most: the share
+  // stays within 0 to 1 (review R-016 F4).
+  const inflated = trialFrom(dates, [shadow("2026-11-01T10:00:00Z", 1_000_000_000), shadow("2026-11-02T10:00:00Z", 0)], [], NOW)!;
+  assert.equal(inflated.wouldSkipShare, 0.5);
+  assert.equal(inflated.wouldSaveMinutes, round1(100_000 / 60_000));
+  assert.ok(trialFrom(dates, [shadow("2026-11-01T10:00:00Z", 1e12)], [], NOW)!.wouldSkipShare! <= 1);
 });
+const round1 = (n: number) => Math.round(n * 10) / 10;
 
 test("audit reruns: totals from the runs, the rule-of-three bound, no bound once a skip was wrong", () => {
   const from = new Date("2026-10-18T12:00:00Z");

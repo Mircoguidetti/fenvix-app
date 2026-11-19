@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
 import type pg from "pg";
+import { signState } from "../../src/auth.ts";
 import { verifySummaryCredential } from "../../src/runners/credentials.ts";
 import { type Region, RetryLater, type RunnerLaunch, type RunnerLauncher, type WarmupLaunch } from "../../src/runners/launcher.ts";
 import {
-  ACCOUNT, CI_YAML, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, push, REPOS, resetDb, RUNNER_TOKEN, runnerCredential, workflowJob,
+  ACCOUNT, CI_YAML, completeLink, githubSetup, githubUser, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, push, REPOS, resetDb,
+  RUNNER_TOKEN, runnerCredential, workflowJob,
 } from "../helpers/harness.ts";
 
 const SUMMARY = JSON.parse(readFileSync(new URL("../fixtures/runner/job3-warm-pass.summary.json", import.meta.url), "utf8")) as Record<string, unknown>;
@@ -390,6 +392,53 @@ describe("the usual path: the installation is linked, then the setup pull reques
     // A pull request on the merge commit's branch is not a default-branch push.
     await h.send("push", push("8".repeat(40), "refs/heads/feature", Date.parse("2026-11-18T10:05:00Z") / 1000));
     assert.equal((await admin.query("select count(*)::int as n from gh_warmups")).rows[0].n, 1);
+  });
+});
+
+describe("linked through the dashboard (review R-016: /github/setup, then POST /v1/github/installations/complete) with the setup pull request already merged", () => {
+  const h = new Harness();
+  const fleet = new FakeFleet();
+  let admin: pg.Client;
+  let owner: { workspaceId: string; userId: string };
+  let mallory: { workspaceId: string; userId: string };
+  const warmups = async () => (await admin.query("select commit_sha, trigger, status, workspace_id from gh_warmups order by id")).rows;
+  before(async () => {
+    admin = await resetDb();
+    await h.start({}, { launcher: fleet });
+    owner = await makeOrg(admin, "warm-link-owner");
+    mallory = await makeOrg(admin, "warm-link-mallory");
+    h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });
+    h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": CI_YAML } });
+    await h.send("installation", installationCreated([REPOS.shop]));
+    const pr = (await admin.query("select setup_pr_number from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].setup_pr_number as number;
+    await h.send("pull_request", pullRequest("closed", { number: pr, headRef: "fenvix/runs-on", headSha: "1".repeat(40), merged: true, mergeSha: "a".repeat(40) }));
+  });
+  after(async () => { await h.stop(); await admin.end(); });
+
+  it("not linked yet: the merge requests no warm-up", async () => {
+    assert.equal((await admin.query("select onboarding_state from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].onboarding_state, "merged");
+    assert.deepEqual(await warmups(), []);
+  });
+
+  it("someone who only sees the installation (not an admin of the account) gets no link, so no machine runs the repository's code", async () => {
+    githubUser(h, { code: "warm-mallory", token: "gho_warm_mallory", login: "warm-mallory", id: 7701, installations: [INSTALLATION_ID] });
+    const state = signState(h.cfg.stateSigningKey, { workspaceId: mallory.workspaceId, userId: mallory.userId });
+    const r = await githubSetup(h, { installation_id: String(INSTALLATION_ID), setup_action: "install", state, code: "warm-mallory" });
+    assert.equal(r.completion, null);
+    assert.deepEqual(await warmups(), []);
+    assert.equal((await h.app.service.warmups.tick()).dispatched, 0);
+  });
+
+  it("the account's admin completes the link: the worker warms the default branch's head (trigger linked), in the owner's organization", async () => {
+    githubUser(h, { code: "warm-owner", token: "gho_warm_owner", login: "warm-link-owner", id: 7702, installations: [INSTALLATION_ID], adminOf: [ACCOUNT.login] });
+    const state = signState(h.cfg.stateSigningKey, { workspaceId: owner.workspaceId, userId: owner.userId });
+    const r = await githubSetup(h, { installation_id: String(INSTALLATION_ID), setup_action: "install", state, code: "warm-owner" });
+    assert.ok(r.completion);
+    assert.equal((await completeLink(h, r.completion!, owner.userId))?.workspace_id, owner.workspaceId);
+    const head = h.gh.repos.get("acme/shop")!.branches.get("main")!.sha;
+    assert.deepEqual(await warmups(), [{ commit_sha: head, trigger: "linked", status: "pending", workspace_id: owner.workspaceId }]);
+    assert.equal((await h.app.service.warmups.tick()).dispatched, 1);
+    assert.equal(fleet.warmups.at(-1)!.commitSha, head);
   });
 });
 

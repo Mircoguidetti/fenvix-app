@@ -14,7 +14,7 @@ import { signState } from "../../src/auth.ts";
 import type { Region, RunnerLaunch, RunnerLauncher } from "../../src/runners/launcher.ts";
 import { InProcessQueue } from "../../src/work.ts";
 import {
-  ACCOUNT, APP_ID, CI_YAML, DASHBOARD, Harness, hook, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, push, repoLite, REPOS, resetDb,
+  ACCOUNT, APP_ID, CI_YAML, completeLink, DASHBOARD, githubSetup, githubUser, Harness, hook, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, push, repoLite, REPOS, resetDb,
   runnerCredential, WEB_YAML, workflowJob,
 } from "../helpers/harness.ts";
 
@@ -89,15 +89,16 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     assert.equal(h.gh.repos.get("acme/shop")!.pulls.length, 0);
   });
 
-  it("2. /github/setup with the OAuth code: linked, back to the dashboard's connect page; the 30-day shadow trial starts", async () => {
+  it("2. /github/setup with the OAuth code, then the signed-in person completes it: linked; the 30-day shadow trial starts", async () => {
     assert.equal((await admin.query("select trial_started_at from ci_subscriptions where workspace_id = $1", [org.workspaceId])).rows[0].trial_started_at, null);
-    h.gh.oauthCodes.set("flow-code", "gho_flow");
-    h.gh.userInstallations.set("gho_flow", [INSTALLATION_ID]);
-    const r = await h.app.fastify.inject({ method: "GET", url: `/github/setup?${new URLSearchParams({ installation_id: String(INSTALLATION_ID), setup_action: "install", state, code: "flow-code" })}` });
-    assert.equal(r.statusCode, 303);
-    const u = new URL(String(r.headers.location));
+    githubUser(h, { code: "flow-code", token: "gho_flow", login: "flow-owner", id: 6201, installations: [INSTALLATION_ID], adminOf: [ACCOUNT.login] });
+    const r = await githubSetup(h, { installation_id: String(INSTALLATION_ID), setup_action: "install", state, code: "flow-code" });
+    assert.equal(r.status, 303);
+    const u = r.url;
     assert.equal(`${u.origin}${u.pathname}`, `${DASHBOARD}/projects/connect`);
-    assert.deepEqual(Object.fromEntries(u.searchParams), { github: "connected", installation: String(INSTALLATION_ID), account: ACCOUNT.login });
+    assert.deepEqual(Object.fromEntries(u.searchParams), { github: "confirm", installation: String(INSTALLATION_ID), account: ACCOUNT.login });
+    // The dashboard completes the link with the person's own token (POST /v1/github/installations/complete).
+    assert.deepEqual(await completeLink(h, r.completion!, org.userId), { workspace_id: org.workspaceId, installation_id: INSTALLATION_ID, account: ACCOUNT.login });
     const sub = (await admin.query("select extract(epoch from trial_ends_at - trial_started_at) / 86400 as days, trial_ends_at > now() as active from ci_subscriptions where workspace_id = $1", [org.workspaceId])).rows[0];
     assert.deepEqual({ days: Number(sub.days), active: sub.active }, { days: 30, active: true });
   });
@@ -266,7 +267,8 @@ describe("connect flow: link (trial) → setup pull request by repository id →
       config: { digest: H("2"), runner: "pytest 8.3.3", engine: "detpy 0.1.0", inifile: "pyproject.toml", options: "-q" }, changedFilesProven: 2,
     };
     await runner("results", "fenvix-j81001", 31001, {
-      runId: 31001, chunk: 0, chunks: 1, engineRunId: "20261118T101005-5001", seed: null, mode: "enforce",
+      // Three chunks in all: 1 and 2 come after the run is published (step 13).
+      runId: 31001, chunk: 0, chunks: 3, engineRunId: "20261118T101005-5001", seed: null, mode: "enforce",
       tests: [
         { testId: TOTAL, outcome: "skipped_with_proof", durationMs: 8, cacheKey: H("b") },
         { testId: EUR, outcome: "failed", durationMs: 3, failure: { kind: "flaky_defect", defectFingerprint: H("a") } },
@@ -303,6 +305,10 @@ describe("connect flow: link (trial) → setup pull request by repository id →
       [{ chunk: 0, applied: true }, { chunk: 1, applied: true }, { chunk: 2, applied: true }]);
     assert.equal((await admin.query("select reused_run_id from ci_skip_receipts where test_id = 'tests/test_late.py::test_b'")).rows[0].reused_run_id, null);
     assert.equal((await admin.query("select occurrences from ci_defects")).rows[0].occurrences, 2, "other chunks of the same run do not count the defect again");
+    // A chunk past the count chunk 0 declared is not stored (review R-016 F7).
+    assert.equal((await runner("results", "fenvix-j81001", 31001, { runId: 31001, chunk: 3, tests: [{ testId: "tests/test_late.py::test_c", outcome: "passed", durationMs: 1 }] })).statusCode, 202);
+    assert.equal((await admin.query("select count(*)::int as n from gh_run_results where run_id = 31001")).rows[0].n, 3);
+    assert.equal(await n(), 4);
   });
 
   it("14. a job that started on our machine but was cancelled before its tests: the row is marked cancelled; not billable", async () => {

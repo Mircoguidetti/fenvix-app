@@ -126,14 +126,15 @@ export async function buildApp(deps: Deps): Promise<App> {
     const b = req.body as Record<string, unknown> | undefined;
     const int = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null);
     const runId = scope.runId ?? int(b?.runId);
-    const runAttempt = b?.runAttempt === undefined ? 1 : int(b.runAttempt);
+    const runAttempt = b?.runAttempt === undefined ? (scope.runAttempt ?? 1) : int(b.runAttempt);
     const receiptsUrl = b?.receiptsUrl === undefined || b.receiptsUrl === null ? null
       : typeof b.receiptsUrl === "string" && /^https:\/\/[^\s]{1,2000}$/.test(b.receiptsUrl) ? b.receiptsUrl : undefined;
     if (!runId || !runAttempt || receiptsUrl === undefined) {
       return fail(reply, 400, "bad_request", "runId and runAttempt are required (receiptsUrl, if given, is an https URL).");
     }
     if ((b?.repositoryId !== undefined && b.repositoryId !== scope.repositoryId) || (b?.runnerName !== undefined && b.runnerName !== scope.runnerName)
-      || (scope.runId !== undefined && b?.runId !== undefined && b.runId !== scope.runId)) {
+      || (scope.runId !== undefined && b?.runId !== undefined && b.runId !== scope.runId)
+      || (scope.runAttempt !== undefined && runAttempt !== scope.runAttempt)) {
       req.log.warn({ runner: scope.runnerName, repositoryId: scope.repositoryId }, "a summary for another runner, repository or run was refused");
       return fail(reply, 403, "forbidden", "This credential is for another runner, repository or run.");
     }
@@ -160,8 +161,10 @@ export async function buildApp(deps: Deps): Promise<App> {
       return null;
     }
     const j = body as Partial<RunnerJob>;
+    // A per-job credential names the job's attempt (review R-016 F7): a record for another attempt is refused.
     if ((j.repositoryId !== undefined && j.repositoryId !== scope.repositoryId) || (j.runnerName !== undefined && j.runnerName !== scope.runnerName)
-      || (scope.runId !== undefined && j.runId !== undefined && j.runId !== scope.runId)) {
+      || (scope.runId !== undefined && j.runId !== undefined && j.runId !== scope.runId)
+      || (scope.runAttempt !== undefined && (j.runAttempt ?? 1) !== scope.runAttempt)) {
       req.log.warn({ runner: scope.runnerName, repositoryId: scope.repositoryId, url: req.url.split("?")[0] }, "a record for another runner, repository or run was refused");
       void fail(reply, 403, "forbidden", "This credential is for another runner, repository or run.");
       return null;
@@ -190,7 +193,15 @@ export async function buildApp(deps: Deps): Promise<App> {
     const r = runnerBody(req, reply, parseResults);
     if (!r) return reply;
     const results = { ...r.body, runId: r.scope.runId ?? r.body.runId, repositoryId: r.scope.repositoryId, runnerName: r.scope.runnerName };
-    return handOff(req, reply, { kind: "results", repositoryId: r.scope.repositoryId, runId: results.runId, runAttempt: results.runAttempt, runnerName: r.scope.runnerName, results });
+    // A chunk number at or past the count this chunk declares (chunk 0) is refused here; past the count chunk 0 declared
+    // earlier, and past the per-job limits, by the worker (service.receiveResults).
+    if (results.chunks !== undefined && results.chunk >= results.chunks) {
+      return reply.code(400).send({ error: { code: "bad_request", message: "chunk must be below chunks.", field: "chunk" } });
+    }
+    return handOff(req, reply, {
+      kind: "results", repositoryId: r.scope.repositoryId, runId: results.runId, runAttempt: results.runAttempt, runnerName: r.scope.runnerName, results,
+      ...(r.scope.runAttempt !== undefined ? { attemptBound: true } : {}),
+    });
   });
 
   fastify.post("/v1/runner/explorations", { bodyLimit: 6 * 1024 * 1024 }, async (req, reply) => {
@@ -238,13 +249,26 @@ export async function buildApp(deps: Deps): Promise<App> {
 
   // ---------------------------------------------------------------- connecting an installation to an organization
   // The dashboard asks the dashboard API for the link (POST /v1/github/install-link, src/api/github.ts: a state signed
-  // with the same key).
-  // GitHub sends the person here after the installation ("Setup URL", with "Request user authorization (OAuth) during
-  // installation" on). Three checks before the link: the signed state, the OAuth code, and that GitHub lists the
-  // installation among those the same person can see.
+  // with the same key, naming the organization and the fenvix person who asked).
+  // GitHub sends the browser here after the installation ("Setup URL", with "Request user authorization (OAuth) during
+  // installation" on). This route does NOT link (review R-016 F1, F2). It checks:
+  //   1. the signed state (organization, person, one hour), not used before;
+  //   2. the OAuth code, exchanged for the GitHub user's token;
+  //   3. that GitHub lists the installation among those this GitHub user can see;
+  //   4. that this GitHub user ADMINISTERS the installation's account: the account itself for a User account, an
+  //      active organization admin for an Organization (seeing an installation only takes read access to one of its
+  //      repositories; F1);
+  //   5. (early, for a clear answer) that the fenvix person is an owner or admin of the organization and that the
+  //      installation is not another organization's.
+  // It then stores a single-use completion (gh_install_completions, 10 minutes, the state consumed) and sends the
+  // browser to the dashboard with the completion's one-time code after `#`. The dashboard completes the link through
+  // the API with the signed-in person's own token (POST /v1/github/installations/complete), and the database links only
+  // if that person is the one the state names (F2): someone who installs the App from another person's link connects
+  // nothing to that person's organization.
   fastify.get("/github/setup", async (req: FastifyRequest<{ Querystring: Record<string, string | undefined> }>, reply) => {
     const q = req.query;
-    const back = (params: Record<string, string>) => reply.redirect(`${cfg.dashboardUrl}/projects/connect?${new URLSearchParams(params)}`, 303);
+    const back = (params: Record<string, string>, fragment?: Record<string, string>) =>
+      reply.redirect(`${cfg.dashboardUrl}/projects/connect?${new URLSearchParams(params)}${fragment ? `#${new URLSearchParams(fragment)}` : ""}`, 303);
     if (q.setup_action === "request") return back({ github: "requested" });
     const state = verifyState(cfg.stateSigningKey, q.state);
     if (!state) return back({ github: "error", reason: "expired" });
@@ -267,11 +291,26 @@ export async function buildApp(deps: Deps): Promise<App> {
         if (r.data.installations.length < 100) break;
       }
       if (!seen) return back({ github: "error", reason: "not_yours" });
-      const login = await service.linkInstallation(installationId, state.workspaceId, state.userId);
-      return back({ github: "connected", installation: String(installationId), account: login });
+      // Who the GitHub user is, and the installation's account as GitHub says it now.
+      const me = (await user.request<{ id: number; login: string }>("GET", "/user")).data;
+      const inst = (await gh.app.request<{ account: { id: number; login: string; type: string } | null }>("GET", `/app/installations/${installationId}`)).data;
+      const account = inst.account;
+      let administers = false;
+      if (account?.type === "User") {
+        administers = account.id === me.id;
+      } else if (account?.type === "Organization") {
+        const m = await user.request<{ role?: string; state?: string }>("GET", `/user/memberships/orgs/${encodeURIComponent(account.login)}`, { allow: [403, 404] });
+        administers = m.status === 200 && m.data.role === "admin" && m.data.state === "active";
+      }
+      if (!administers) {
+        req.log.warn({ installationId, account: account?.login ?? null, githubUser: me.login }, "setup refused: the GitHub user does not administer the installation's account");
+        return back({ github: "error", reason: "github_not_admin" });
+      }
+      const pending = await service.prepareLink({ installationId, workspaceId: state.workspaceId, userId: state.userId, stateHash: state.hash, githubUserId: me.id, githubLogin: me.login });
+      if (pending.refused !== null) return back({ github: "error", reason: pending.refused });
+      return back({ github: "confirm", installation: String(installationId), account: pending.account }, { completion: pending.code });
     } catch (e) {
-      const code = (e as { code?: string }).code;
-      const reason = code === "42501" ? "not_admin" : code === "23505" ? "other_organization" : e instanceof GitHubError ? "github" : "error";
+      const reason = e instanceof GitHubError ? "github" : "error";
       req.log.warn({ err: e instanceof Error ? e.message : String(e), installationId }, "setup failed");
       return back({ github: "error", reason });
     }

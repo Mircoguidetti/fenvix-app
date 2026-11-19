@@ -229,5 +229,63 @@ begin
   assert (select workspace_id from public.gh_repositories where repository_id = 303) = r.w, 'linking did not give the repository its organization';
 end $$;
 
+-- Review R-016 F5, F6: one trial per GitHub account; an organization that already had an installation gets none.
+do $$
+declare r gh_ids%rowtype; v_new uuid; v_started timestamptz;
+begin
+  select * into r from gh_ids;
+  v_started := (select trial_started_at from public.ci_subscriptions where workspace_id = r.w);
+  -- Installation 3 (a second account of W): W's trial is not restarted.
+  assert (select trial_started_at from public.ci_subscriptions where workspace_id = r.w) = v_started, 'a second installation restarted the trial';
+  -- The account of installation 1 (northwind) installs again and links to a new organization: no new trial.
+  insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) values ('2eeeeeee-0000-4000-8000-000000000005', 'gh.again@fenvix.invalid', '{}', now());
+  v_new := (select workspace_id from public.workspace_members where user_id = '2eeeeeee-0000-4000-8000-000000000005');
+  insert into public.gh_installations (installation_id, account_id, account_login, account_type) values (4, 11, 'northwind', 'Organization');
+  perform public.gh_link_installation(4, v_new, '2eeeeeee-0000-4000-8000-000000000005');
+  assert (select trial_started_at is null and trial_ends_at is null from public.ci_subscriptions where workspace_id = v_new), 'TRIAL AGAIN: the same GitHub account got a second trial';
+  -- An organization whose installation was linked without a trial (before 0014) links another account: no trial.
+  insert into public.gh_installations (installation_id, account_id, account_login, account_type, workspace_id, linked_at) values (5, 55, 'old-customer', 'Organization', v_new, now() - interval '90 days');
+  insert into public.gh_installations (installation_id, account_id, account_login, account_type) values (6, 66, 'old-customer-labs', 'Organization');
+  update public.ci_subscriptions set trial_started_at = null, trial_ends_at = null where workspace_id = v_new;
+  perform public.gh_link_installation(6, v_new, '2eeeeeee-0000-4000-8000-000000000005');
+  assert (select trial_started_at is null from public.ci_subscriptions where workspace_id = v_new), 'an existing customer was put into a trial';
+end $$;
+
+-- Review R-016 F2: the API completes a link only for the person the completion names, once, before it expires.
+set local role fenvix_api;
+do $$
+declare r gh_ids%rowtype; v_row record;
+begin
+  select * into r from gh_ids;
+  begin
+    insert into public.gh_install_completions (code_hash, state_hash, installation_id, workspace_id, user_id, github_user_id, github_login, expires_at)
+      values (repeat('a', 64), repeat('b', 64), 1, r.w, '2aaaaaaa-0000-4000-8000-000000000001', 1, 'x', now() + interval '1 minute');
+    assert false, 'the API wrote a completion directly';
+  exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+insert into public.gh_installations (installation_id, account_id, account_login, account_type) values (7, 77, 'later-co', 'Organization');
+insert into public.gh_install_completions (code_hash, state_hash, installation_id, workspace_id, user_id, github_user_id, github_login, created_at, expires_at)
+select encode(sha256('c-owner'), 'hex'), encode(sha256('s-owner'), 'hex'), 7, w, '2aaaaaaa-0000-4000-8000-000000000001'::uuid, 1, 'later-admin', now() - interval '1 minute', now() + interval '9 minutes' from gh_ids
+union all
+select encode(sha256('c-old'), 'hex'), encode(sha256('s-old'), 'hex'), 7, w, '2aaaaaaa-0000-4000-8000-000000000001'::uuid, 1, 'later-admin', now() - interval '1 hour', now() - interval '1 minute' from gh_ids;
+set local role fenvix_api;
+do $$
+declare r gh_ids%rowtype; v_row record;
+begin
+  select * into r from gh_ids;
+  perform set_config('app.user_id', '2ddddddd-0000-4000-8000-000000000004', true), set_config('app.workspace_id', '', true);
+  assert (select count(*) from public.api_complete_github_link(encode(sha256('c-owner'), 'hex'))) = 0, 'ANOTHER PERSON completed a link';
+  perform set_config('app.user_id', '2aaaaaaa-0000-4000-8000-000000000001', true);
+  assert (select count(*) from public.api_complete_github_link(encode(sha256('c-old'), 'hex'))) = 0, 'an expired completion linked';
+  select * into v_row from public.api_complete_github_link(encode(sha256('c-owner'), 'hex'));
+  assert v_row.workspace_id = r.w and v_row.installation_id = 7 and v_row.account = 'later-co', 'the owner could not complete the link';
+  assert (select count(*) from public.api_complete_github_link(encode(sha256('c-owner'), 'hex'))) = 0, 'a completion was used twice';
+end $$;
+reset role;
+do $$ begin
+  assert (select workspace_id from public.gh_installations where installation_id = 7) = (select w from gh_ids), 'the completed link is not stored';
+end $$;
+
 select 'GH RLS OK' as result;
 rollback;

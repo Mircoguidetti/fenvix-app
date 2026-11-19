@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 
 /** Verifies Supabase session tokens against the project's published keys (JWKS), like the control plane does. */
@@ -24,7 +24,11 @@ export class SessionVerifier {
   }
 }
 
-export interface InstallState { workspaceId: string; userId: string; expiresAt: number }
+export interface InstallState {
+  workspaceId: string; userId: string; expiresAt: number;
+  /** sha256 (hex) of the state: a state completes at most one link (gh_install_completions.state_hash). */
+  hash: string;
+}
 
 /**
  * The `state` the installation link carries through GitHub and back to /github/setup: which organization and which
@@ -47,7 +51,7 @@ export function verifyState(key: string, state: string | undefined, now = Date.n
     const o = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as { w?: unknown; u?: unknown; e?: unknown };
     if (typeof o.w !== "string" || typeof o.u !== "string" || typeof o.e !== "number") return null;
     if (o.e * 1000 < now) return null;
-    return { workspaceId: o.w, userId: o.u, expiresAt: o.e };
+    return { workspaceId: o.w, userId: o.u, expiresAt: o.e, hash: createHash("sha256").update(body).digest("hex") };
   } catch {
     return null;
   }

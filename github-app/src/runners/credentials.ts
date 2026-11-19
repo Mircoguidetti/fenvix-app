@@ -23,6 +23,8 @@ export interface SummaryScope {
    * POST /v1/runner/warmups, never for a job's summary, progress, results or exploration.
    */
   warmupId?: number;
+  /** Per-job machines: the run attempt of the job (review R-016 F7). Credentials made before it have none. */
+  runAttempt?: number;
   /** Unix seconds. */
   exp: number;
 }
@@ -36,10 +38,11 @@ const mac = (key: string, data: string) => createHmac("sha256", key).update(SUMM
 export function signSummaryCredential(key: string, s: SummaryScope): string {
   if (!key) throw new Error("no summary signing key (RUNNER_TOKEN)");
   if (!RUNNER.test(s.runnerName) || !posInt(s.repositoryId) || (s.runId !== undefined && !posInt(s.runId)) || !posInt(s.exp)
-    || (s.warmupId !== undefined && (!posInt(s.warmupId) || s.runId !== undefined))) {
+    || (s.warmupId !== undefined && (!posInt(s.warmupId) || s.runId !== undefined))
+    || (s.runAttempt !== undefined && (!posInt(s.runAttempt) || s.runId === undefined))) {
     throw new Error("bad summary credential scope");
   }
-  const body = Buffer.from(JSON.stringify({ n: s.runnerName, r: s.repositoryId, ...(s.runId ? { u: s.runId } : {}), ...(s.warmupId ? { w: s.warmupId } : {}), e: s.exp })).toString("base64url");
+  const body = Buffer.from(JSON.stringify({ n: s.runnerName, r: s.repositoryId, ...(s.runId ? { u: s.runId } : {}), ...(s.runAttempt ? { a: s.runAttempt } : {}), ...(s.warmupId ? { w: s.warmupId } : {}), e: s.exp })).toString("base64url");
   return `${SUMMARY_PREFIX}${body}.${mac(key, body).toString("base64url")}`;
 }
 
@@ -59,11 +62,12 @@ export function verifySummaryCredential(keys: string[], authorization: string | 
   }
   if (!ok) return null;
   try {
-    const p = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as { n?: unknown; r?: unknown; u?: unknown; w?: unknown; e?: unknown };
+    const p = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as { n?: unknown; r?: unknown; u?: unknown; a?: unknown; w?: unknown; e?: unknown };
     if (typeof p.n !== "string" || !RUNNER.test(p.n) || !posInt(p.r) || !posInt(p.e) || (p.u !== undefined && !posInt(p.u))) return null;
+    if (p.a !== undefined && (!posInt(p.a) || p.u === undefined)) return null;
     if (p.w !== undefined && (!posInt(p.w) || p.u !== undefined)) return null;
     if (p.e * 1000 < now) return null;
-    return { runnerName: p.n, repositoryId: p.r, ...(p.u !== undefined ? { runId: p.u as number } : {}), ...(p.w !== undefined ? { warmupId: p.w as number } : {}), exp: p.e };
+    return { runnerName: p.n, repositoryId: p.r, ...(p.u !== undefined ? { runId: p.u as number } : {}), ...(p.a !== undefined ? { runAttempt: p.a as number } : {}), ...(p.w !== undefined ? { warmupId: p.w as number } : {}), exp: p.e };
   } catch {
     return null;
   }

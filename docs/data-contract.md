@@ -4,7 +4,7 @@ Written 2026-11-17, runner part rewritten 2026-11-18. This is **our** contract b
 behind `runs-on: fenvix`, which run the engine) and the customer dashboard. It is not the engine's internal file
 format: the runner reads the engine's files and sends these records to the fenvix GitHub App (`github-app/`), which
 writes them to Postgres; the dashboard reads them through the fenvix API (`openapi/fenvix-api.yaml`), never from the
-database directly. The tables (`supabase/migrations/0011` to `0015`), the API's schemas, the mock (`src/data/mock.ts`)
+database directly. The tables (`supabase/migrations/0011` to `0016`), the API's schemas, the mock (`src/data/mock.ts`)
 and the TypeScript types (`src/data/types.ts`) all follow it. **What the runner must send, and when, is the section
 "What the runner sends" below.**
 
@@ -291,6 +291,20 @@ Written by the GitHub App (`github-app/`, `docs/GITHUB-APP.md`) as the restricte
 `permissions`, `events`, `suspendedAt`, `deletedAt`, `linkedBy`, `linkedAt`; `workspaceId` is null until an owner or
 admin links it. Members read their organization's installations.
 
+**Linking an installation** (review R-016 F1, F2; migration 0015). GitHub's return to the App's `/github/setup` only
+prepares a link: the App checks the install link's signed state (organization, person, one hour, usable once), the
+GitHub user's OAuth code, that GitHub lists the installation for that GitHub user, **and that the GitHub user
+administers the installation's account** (the account itself for a `User` account; an active `admin` of the
+organization for an `Organization`; seeing an installation takes only read access to one of its repositories). It then
+stores a **completion** (`gh_install_completions`: the sha256 of a one-time code, the state's hash, the installation,
+the organization and the fenvix person the state names, the GitHub user; valid 10 minutes, used once) and redirects to
+`/projects/connect?github=confirm&installation=<id>&account=<login>#completion=<code>`. The dashboard completes the link
+with the signed-in person's own session (`POST /v1/github/installations/complete`); the database
+(`api_complete_github_link`) links only if that person is the one the state names and is still an owner or admin of
+the organization. Someone who installs the App from another person's link connects nothing to that person's
+organization. Error reasons of the redirect: `expired`, `incomplete`, `oauth`, `not_yours`, `github_not_admin`,
+`not_admin`, `other_organization`, `removed`, `used`, `github`, `error`.
+
 **Repository** (`gh_repositories`): a repository an installation gives access to. `repositoryId` (GitHub's id),
 `fullName`, `defaultBranch`, `removedAt`, `projectId` (the Project once created), `onboardingState`
 (`pending` | `pr_open` | `merged` | `closed` | `no_workflow` | `no_test_job` | `already_fenvix` | `unsupported` |
@@ -302,10 +316,10 @@ vitest or jest named by the summary), else not yet (a Node repository is never l
 `setupPullRequest` follow the onboarding pull request. A repository renamed or moved to another installation of the
 same organization keeps its project.
 
-**Job** (`gh_jobs`): one GitHub job that asked for `runs-on: fenvix`; `region` is where its machine was placed,
-`ciRunId` its run row.
+**Job** (`gh_jobs`): one GitHub job that asked for `runs-on: fenvix`; `region` is where its machine was placed, `mode`
+the run mode the App chose for it (`FENVIX_MODE`, migration 0015), `ciRunId` its run row.
 
-**Warm-up** (`gh_warmups`, migration 0015): one warm-up run of a repository's default branch at one commit (unique
+**Warm-up** (`gh_warmups`, migration 0016): one warm-up run of a repository's default branch at one commit (unique
 per repository and commit; at most one pending or running per repository). `commitSha`, `ref`, `trigger`
 (`onboarded` | `push` | `linked`), `status` (`pending` | `dispatched` | `running` | `succeeded` | `failed` |
 `unsupported` | `covered` | `superseded` | `cancelled`), `detail` (why it waits or how it ended, for a person),
@@ -314,7 +328,7 @@ per repository and commit; at most one pending or running per repository). `comm
 API; the App writes them.
 
 **Repository cache state** (`gh_repositories.cache_warm_sha`, `cache_warm_at`, `cache_warm_source` = `warmup` | `run`,
-`cache_warm_pushed_at`, migration 0015): the newest default-branch commit (by push time) whose proofs are in the shared
+`cache_warm_pushed_at`, migration 0016): the newest default-branch commit (by push time) whose proofs are in the shared
 cache. The API shows it as `warmCache` on every Project and GitHub repository:
 
 | Field | Type | Notes |
@@ -329,7 +343,7 @@ cache. The API shows it as `warmCache` on every Project and GitHub repository:
 chunk (sent again: replaced), with `appliedAt` once applied to the run and `applyError` when not (yet).
 
 **Usage event** (`ci_usage_events`, per-run billing): one per GitHub job that asked for `runs-on: fenvix`, and one per
-warm-up run that used one of our machines (migration 0015, never billable: see "Warm-up runs").
+warm-up run that used one of our machines (migration 0016, never billable: see "Warm-up runs").
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -347,7 +361,9 @@ warm-up run that used one of our machines (migration 0015, never billable: see "
 | `reason` | `"completed"` \| `"failed"` \| `"cancelled_after_start"` \| `"no_summary"` \| `"cancelled_before_tests"` \| `"warm-up"` | `cancelled_before_tests` and `warm-up` are not billable; a `warm-up` event is never billable (database check) |
 | `planId` | string \| null | the organization's plan when the run ended |
 | `conclusion` | string \| null | GitHub's conclusion of the job; for a warm-up, how it ended (its status) |
-| `testMinutesRan`, `minutesSaved`, `otherStepMinutes` | number | as in the Run summary |
+| `testMinutesRan`, `minutesSaved`, `otherStepMinutes` | number | as in the Run summary (from `summary.json`, bounded by the job's duration): shown, not billed |
+| `heldMinutes` | number | the minutes the job held the fenvix machine, by GitHub's timings (`completed_at − started_at`): what run units count (migration 0015). For a warm-up, the minutes its machine ran by the App's own clock (dispatch to report or termination); never billed |
+| `baselineMinutes`, `units` | number | generated: `heldMinutes`, and `heldMinutes / 10` (see Run units) |
 | `occurredAt` | time | when the job completed |
 | `month` | date | first day of the month of `occurredAt` (UTC), generated |
 
@@ -362,7 +378,8 @@ the request schemas there are the contract and the App checks every body against
 
 **Credential.** Every call carries the machine's own credential, `Authorization: Bearer fxr1....`, minted by the App for
 that machine (file `/etc/fenvix/summary-token`, root only): it names the runner, the repository and, on a per-job
-machine, the run. A body that names another runner, repository or run is refused (`403`); no credential or a bad one
+machine, the run and (since review R-016) the run attempt. A body that names another runner, repository, run or attempt
+is refused (`403`); no credential or a bad one
 is `401`; a body that does not match the schema is `400` with `error.field` naming the field. Accepted records are
 answered `202 {"ok": true}`. On `5xx` or a network error the runner retries with backoff (the records are idempotent);
 it never retries a `4xx`.
@@ -378,7 +395,7 @@ values the runner reads:
 
 | Variable | Value |
 | --- | --- |
-| `FENVIX_MODE` | `shadow` while the organization's 30-day trial runs, else `enforce` (see Trial). The runner runs the engine in that mode and reports it back (`mode`) |
+| `FENVIX_MODE` | `shadow` while the organization's 30-day trial runs, else `enforce` (see Trial). The runner runs the engine in that mode. It is the run's mode: the App records it on the job when it starts the machine, and a `mode` the runner reports back is ignored (review R-016 F4) |
 | `FENVIX_REGION` | `us` or `eu`: the organization's region; the machine runs there (the App never starts an EU organization's job anywhere else; with no machine available in the region the job stays queued and GitHub times it out) |
 | `FENVIX_MACHINE` | `per-job` (a demo machine: `demo`, with `FENVIX_MODE=enforce`) |
 | `FENVIX_RUNNER_NAME`, `FENVIX_JOB_ID` | the just-in-time runner's name and the GitHub job id |
@@ -408,9 +425,23 @@ repository has no project yet, or after the run finished is accepted and not sto
 
 The job's per-test outcomes, skip receipts, defect bundles and audit reruns, in numbered chunks: at most 5,000 tests,
 2,000 receipts, 500 defects and 5,000 audit reruns per chunk, 6 MB per request. Chunk numbers start at 0; chunk 0
-carries `chunks`, the total. Send them when the test step ends, **before the summary**; a chunk sent again replaces
-the stored one. The App stores each chunk and applies them to the run when the job is published (after the summary
-and GitHub's `completed`); a chunk that arrives later is applied when it arrives. Applying is idempotent.
+carries `chunks`, the total. Send them when the test step ends, **before the summary**; a chunk sent again before it was
+applied replaces the stored one (once applied it stays as applied). The App stores each chunk and applies them to the
+run when the job is published (after the summary and GitHub's `completed`); a chunk that arrives later is applied when
+it arrives. Applying is idempotent.
+
+**What one job may store** (review R-016 F7). The records of a job are kept only for that job:
+
+- the attempt: a per-job credential names it, and a record for another attempt is `403`. For a credential that does not
+  name it (a demo machine, or a credential minted before this change), the attempt must be one GitHub ran on that
+  runner (`gh_jobs`: repository, run, attempt, runner name); until the job's start is recorded the App retries the
+  chunk, and a chunk for an attempt that runner did not run is dropped;
+- the chunk number: below `chunks`. A chunk 0 whose `chunk` is not below its own `chunks` is `400`; a later chunk at or
+  past the count chunk 0 declared is dropped, and chunks stored past that count go when chunk 0 arrives;
+- at most **200 chunks and 256 MB per job** (one million tests at 5,000 a chunk); a chunk past either is dropped;
+- staged chunks are deleted **7 days** after they arrived (the credentials live 24 hours).
+
+A dropped chunk is still answered `202` (it is checked after the queue) and logged.
 
 ```json
 {"runId": 31000, "chunk": 0, "chunks": 2, "engineRunId": "20261118T094005-4412", "seed": 3, "mode": "enforce",
@@ -435,10 +466,10 @@ and GitHub's `completed`); a chunk that arrives later is applied when it arrives
 | --- | --- | --- |
 | `engineRunId` | the engine's run id (`proof-cache.json` → `Entry.run` of this run) | the run's `engineRunId`; later receipts that reuse this run point at it |
 | `seed` | `--det-seed`, null for collection order | the run's `seed` |
-| `mode` | the mode the engine ran in (`FENVIX_MODE`) | the run's `mode` |
+| `mode` | the mode the engine ran in (`FENVIX_MODE`) | ignored: the run's `mode` is the App's (`FENVIX_MODE` it gave the machine) |
 | `missDetails` | the top 5 reasons tests were not reused (summed `why` of `receipts.jsonl`) | the run's `missDetails` |
-| `tests[]` | one per test of the run (`passed`, `failed`, `skipped_with_proof`; a test the framework skipped is not sent); `durationMs` (for a skipped test: the recorded one); `failure` for a failed test: `kind` `flaky_defect` when the engine reproduced it as a defect (with the bundle's `defectFingerprint`), else `real`; `cacheKey` of a skipped test | Per-test outcome (`ci_test_results`); `failure.defectId` is found by the defect's test and fingerprint, `receiptId` by the receipt's test |
-| `tests[].wouldSkip` | **shadow mode**: true when the engine would have skipped the test with proof (it ran anyway) | the run's `wouldSkipTests` (count) and `wouldSaveMs` (their `durationMs`) |
+| `tests[]` | one per test of the run (`passed`, `failed`, `skipped_with_proof`; a test the framework skipped is not sent); `durationMs` (for a skipped test: the recorded one; stored at most the job's own duration, GitHub's timings); `failure` for a failed test: `kind` `flaky_defect` when the engine reproduced it as a defect (with the bundle's `defectFingerprint`), else `real`; `cacheKey` of a skipped test | Per-test outcome (`ci_test_results`); `failure.defectId` is found by the defect's test and fingerprint, `receiptId` by the receipt's test |
+| `tests[].wouldSkip` | **shadow mode**: true when the engine would have skipped the test with proof (it ran anyway) | the run's `wouldSkipTests` (count) and `wouldSaveMs` (their `durationMs`, each at most the job's duration; the sum at most the run's own test time, `testTimeMs.ran + testTimeMs.skipped`, so a share computed from it is within 0 to 1) |
 | `receipts[]` | one per test skipped with proof: the `receipts.jsonl` line joined with the test's `proof-cache.json` entry (the lists: `code` = `Entry.units`, `modules` = content/skeleton/hooks, `filesRead` = `Entry.data`, `envRead` = `Entry.env`, `runtime`, `config`) | Skip receipt (`ci_skip_receipts`); `reusedRunId` = the project's run whose `engineRunId` is `reusedEngineRunId`. A skipped test and its receipt go in the same chunk (a skipped test whose receipt has not arrived waits for it) |
 | `defects[]` | each defect bundle the engine wrote this run (`bundle.json` + `order.txt`) with the engine's replay command (`command`, `replayCommand`) | Defect (`ci_defects`), by project, test and fingerprint: new, or seen again (`occurrences` + 1 once per run, `lastSeenAt`, `lastRunId`, reopened if it was fixed). `cause` from `kind`: `order` → polluter, `brittle` → state_setter, `fails-alone` → fails_alone; `causeTests` = `polluters` / `setters` / none; `familyKey` = them joined by `" + "`, or `"<none>"` |
 | `audit[]` | the audit reruns (5% of the tests skipped with proof, run anyway): `confirmed` or `wrong_skip`, `untrusted` when the engine stopped trusting the key | Audit rerun (`ci_audit_reruns`); the run's `audit.rerun` and `audit.wrongSkips` |
@@ -454,7 +485,8 @@ and GitHub's `completed`); a chunk that arrives later is applied when it arrives
 Two optional additions to `summary.json`: `language` (`python` | `node` | `go`) and `test_runner` (`pytest` | `vitest` |
 `jest` | `go test`), so the App knows a repository's stack when its workflow did not tell (without them it reads the
 runtime: a `detpy==` distribution is Python and pytest; `detjs` is Node, with vitest or jest from the summary's
-`runner` or `config.runner` when present); and `mode` (`shadow` | `enforce`). The App publishes the run once both the
+`runner` or `config.runner` when present); and `mode` (`shadow` | `enforce`), which the App ignores (the run's mode is
+its own, see Trial). The App publishes the run once both the
 summary and GitHub's `completed` are in (or `SUMMARY_WAIT_SECONDS` after `completed` without a summary, or at once
 when the job was cancelled before it started). The per-test maps (`outcomes`, `reused_outcomes`) and the runtime's
 distribution list are dropped before the summary is stored.
@@ -470,11 +502,11 @@ From the summary (and the job) to the Run summary:
 | `tests.total`, `tests.ran`, `tests.skippedWithProof` | `tests`, `ran`, `reused_with_proof` |
 | `tests.failed`, `tests.flakyDefects` | `len(failed) + len(flaky)`, `len(flaky)` (the runner's `failed` holds only real failures; `flaky` = failed in the suite, passed alone) |
 | `tests.passed` | `outcome_counts.passed − reused_with_proof` (tests that ran and passed) |
-| `testTimeMs.ran`, `testTimeMs.skipped` | `test_seconds_run`, `test_seconds_saved` × 1000 |
-| `otherStepMinutes` | (job wall time − `wall_seconds` of the test command) / 60 |
+| `testTimeMs.ran`, `testTimeMs.skipped` | `test_seconds_run` × 1000, at most the job's duration (`durationMs`); `test_seconds_saved` × 1000 |
+| `otherStepMinutes` | (job duration − `wall_seconds` of the test command, at most the job's duration) / 60 |
 | `engineVersion` | the `detpy==X` (or `detjs@X`) entry of `runtime.dist_list` |
 | `skipMisses` | `not_reused_reasons` |
-| `mode` | the results' or the summary's `mode`, else the organization's at the job's start |
+| `mode` | the App's: the `FENVIX_MODE` it started the machine with (`gh_jobs.mode`), else the organization's when the job started (`shadow` during the trial). Never the results' or the summary's (review R-016 F4) |
 | `region` | where the App placed the machine |
 | `engineRunId`, `seed`, `missDetails`, `wouldSkipTests`, `wouldSaveMs`, `audit` | the results chunks |
 
@@ -595,19 +627,36 @@ the summary, the rest of the machine time as other steps).
 ### Trial, mode and the 35% gate
 
 Linking an organization's first GitHub installation starts its **30-day shadow trial** (`gh_link_installation`,
-migration 0014; linking more installations does not restart it). While it runs, the App starts machines with
+migrations 0014 and 0015; linking more installations does not restart it). Since review R-016 (migration 0015) a link
+starts the trial only when the organization never had one, has no other installation linked (now or before: an
+existing customer adding a GitHub account is not put into shadow mode), and the installation's GitHub account
+(`account_id`) never had one through any organization (`ci_trial_accounts`: reinstalling the App and linking it to a
+new organization does not start another). Organizations linked before 0014 get trial dates in the past. While it runs, the App starts machines with
 `FENVIX_MODE=shadow` and the run rows get `mode: "shadow"`: every test runs, and the engine records, per test, whether
 it would have skipped it with proof (`wouldSkip`). The trial's would-have-saved share is the shadow runs' `wouldSaveMs`
-over their test time (run + skipped), time-weighted over the trial's finished runs; the **gate is met at 35%**
+(each at most the run's own test time) over their test time (run + skipped), time-weighted over the trial's finished
+runs, between 0 and 1; the **gate is met at 35%**
 (`TRIAL_GATE` in `src/data/ci.ts`). After the trial, jobs run in `enforce` mode: unchanged tests are skipped with proof,
 and 5% of the skipped ones are rerun as an audit.
 
 ### Run units
 
-Billing is by **run units**: 1 unit = 10 **baseline minutes**, the job's minutes without fenvix = tests run + tests
-skipped with proof + other steps (`test_minutes_ran + minutes_saved + other_step_minutes` of the usage event, i.e. the
-run's `githubEquivalentMinutes`). Units are counted on **billable usage events only** (`ci_usage_events.units`,
-generated; a month's units are the exact sum rounded up to a whole unit). A job cancelled before it started on our
+Billing is by **run units**: 1 unit = 10 **baseline minutes**. Since review R-016 (F3, migration 0015) the baseline
+minutes of a job are **the minutes it held a fenvix machine, by GitHub's own timings of the job**: `completed_at −
+started_at` of the `workflow_job` (delivered in webhooks GitHub signs with the App's secret), stored as
+`ci_usage_events.held_minutes`; `baseline_minutes` and `units` are generated from it. Nothing the job writes changes
+them: `summary.json` is a file the customer's own workflow can write (and the spool directory the poster sends from is
+writable by the job user), so its `test_seconds_run`, `test_seconds_saved` and `wall_seconds` are shown (bounded by the
+job's duration) but never billed. A job with no summary is billed the same minutes as one with a forged summary.
+
+The time a job saved by skipping tests with proof is therefore **not** part of the units today. It can become billable
+only from a measurement the job cannot write: either a measurement the runner signs with a key the job user cannot
+read (a root-only process on the machine, outside the job's reach; the runner repository would have to add it), or a
+value the App derives from GitHub's own timings (for example the same job's duration in shadow runs, where nothing is
+skipped). Until one of those exists, `minutes_saved` on the usage event is a claim, kept for the dashboard only.
+
+Units are counted on **billable usage events only** (`ci_usage_events.units`, generated; a month's units are the exact
+sum rounded up to a whole unit). A job cancelled before it started on our
 machine is not billable and has no run row; a job that started on our machine and was cancelled before its tests (no
 summary) is not billable either, and its run row (created at the start for the live view) is kept, marked `cancelled`.
 
@@ -627,11 +676,20 @@ database directly.
 
 ## Changes
 
-- 2026-11-18: Warm-up runs (migration 0015, `github-app/src/warmup/`): `gh_warmups`, the repository's cache state
+- 2026-11-18 (review R-016, migration 0015): **run units from GitHub's job timings** (`held_minutes`; summary.json no
+  longer sets what is billed); the **run's mode is the App's** (`FENVIX_MODE` recorded on the job; the results' and the
+  summary's `mode` are ignored); test durations and `wouldSaveMs` bounded by the job's duration and the run's test time;
+  **one trial per GitHub account**, none for an organization that already had an installation; the per-job credential
+  names the **run attempt**; results limited to the job's own attempt, chunk numbers below `chunks`, 200 chunks and
+  256 MB per job, deleted after 7 days; connecting GitHub is completed by the signed-in person through
+  `POST /v1/github/installations/complete` (see "GitHub App records").
+- 2026-11-18: Warm-up runs (migration 0016, `github-app/src/warmup/`): `gh_warmups`, the repository's cache state
   (`cache_warm_*`), `warmCache` on Project and GitHub repository in the API, `POST /v1/runner/warmups` with the
   warm-up machine's own credential (refused on every other runner route), what a warm-up machine receives and what the
   runner's warm-up executor must do; usage events of kind `warmup`, reason `warm-up`, never billable (`githubJobId` and
   `githubRunId` null for them, `warmupId` set); `gh_jobs.cache_access` and `launched_at`.
+- 2026-11-19 (merge with review R-016): a warm-up's `heldMinutes` is its machine time by the App's clock and bounds its
+  `testMinutesRan`.
 
 - 2026-11-18: "What the runner sends" (replaces the planned direct posting): live progress (`POST /v1/runner/progress`),
   per-test results in chunks with receipts, defect bundles with the engine's replay command, audit reruns and shadow

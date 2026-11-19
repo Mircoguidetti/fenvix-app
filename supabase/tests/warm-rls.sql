@@ -1,4 +1,4 @@
--- Row level security of the warm-ups and the repositories' cache state (0015_warm_cache.sql). Run AFTER 0001 to 0015.
+-- Row level security of the warm-ups and the repositories' cache state (0016_warm_cache.sql). Run AFTER 0001 to 0016.
 -- One transaction, rolled back; a failed assertion stops the script naming the check; a clean run ends with
 -- "WARM RLS OK".
 --

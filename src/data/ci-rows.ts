@@ -33,7 +33,7 @@ const WARMING = new Set<WarmupStatus>(["pending", "dispatched", "running"]);
 const SHA40 = /^[0-9a-f]{40}$/;
 
 /**
- * The repository's shared cache (supabase/migrations/0015_warm_cache.sql): gh_repositories.cache_warm_* and its latest
+ * The repository's shared cache (supabase/migrations/0016_warm_cache.sql): gh_repositories.cache_warm_* and its latest
  * warm-up, read by the API as warmup_status, warmup_sha, warmup_detail, warmup_updated_at. Warming while a warm-up is
  * pending or running; else warm once a commit's proofs are in the cache; else cold.
  */

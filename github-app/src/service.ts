@@ -3,7 +3,7 @@ import { GitHubError, type GitHubApp, type GitHubHttp, repoPath } from "./github
 import { onboardRepository, type OnboardingResult } from "./onboarding/onboard.ts";
 import { CHECK_NAME, COMMENT_MARKER, checkRunOutput, conclusionOf, prComment, type RenderContext } from "./results/render.ts";
 import { parseSummary, type RunSummary } from "./results/summary.ts";
-import type { KeyObject } from "node:crypto";
+import { createHash, randomBytes, type KeyObject } from "node:crypto";
 import { applyChunks, applyExploration, type JobKey } from "./results/apply.ts";
 import { projectStack, type Stack } from "./results/detect.ts";
 import { parseResults, progressRecord, type RunnerExploration, type RunnerProgress, type RunnerResults } from "./results/runner-records.ts";
@@ -26,6 +26,14 @@ export interface ServiceSettings {
   /** Warm-up runs (src/warmup/): they need a per-job launcher too. Absent: off. */
   warmup?: WarmupSettings;
 }
+
+/**
+ * What one job (repository, run, attempt, runner) may stage in gh_run_results (review R-016 F7): 200 chunks (one million
+ * tests at 5,000 a chunk) and 256 MB. docs/data-contract.md "Results".
+ */
+export const RESULTS_JOB_LIMITS = { chunks: 200, bytes: 256 * 1024 * 1024 } as const;
+/** Staged results are deleted after this many days (the sweep): far past the credentials' lifetime. */
+const RESULTS_KEEP_DAYS = 7;
 
 /** How long a per-job machine's credentials live: past the reaper's hard limit and the poster's retries. */
 const JOB_CREDENTIAL_SECONDS = 24 * 3600;
@@ -56,6 +64,8 @@ interface JobRow {
   head_sha: string; head_branch: string | null; labels: string[]; runner_name: string | null; status: string; conclusion: string | null;
   created_at: Date | null; started_at: Date | null; completed_at: Date | null; check_run_id: number | null; ci_run_id: string | null;
   published_at: Date | null; publish_attempts: number; region: Region | null; cache_access: "read" | "write" | null;
+  /** The run mode the App chose when the job started (its organization's: shadow during the trial), never the job's. */
+  mode: RunMode | null;
 }
 /** The workflow run of a job (GET /repos/{o}/{r}/actions/runs/{id}), the parts the App reads. */
 interface WorkflowRunP {
@@ -71,6 +81,8 @@ interface RepoRow {
   project_id: string | null; onboarding_state: string; setup_pr_number: number | null; setup_pr_url: string | null;
   detected_language: string | null; detected_test_runner: string | null;
 }
+
+const sha256Hex = (v: string) => createHash("sha256").update(v).digest("hex");
 
 const STATUS_RANK: Record<string, number> = { queued: 1, waiting: 1, in_progress: 2, completed: 3 };
 const TRIGGERS = new Set(["push", "pull_request", "merge_group", "schedule", "workflow_dispatch"]);
@@ -447,18 +459,19 @@ export class GitHubService {
     const run = await this.workflowRun(this.gh.installation(job.installation_id), repoPath(repo.full_name), job.run_id);
     const pr = await this.pullRequestOf(job, run);
     const created = await this.db.tx(ws, async (c) => {
-      const lock = (await c.query<{ ci_run_id: string | null; published_at: Date | null; region: Region | null }>(
-        "select ci_run_id, published_at, region from gh_jobs where job_id = $1 for update", [jobId])).rows[0];
+      const lock = (await c.query<{ ci_run_id: string | null; published_at: Date | null; region: Region | null; mode: RunMode | null }>(
+        "select ci_run_id, published_at, region, mode from gh_jobs where job_id = $1 for update", [jobId])).rows[0];
       if (!lock || lock.ci_run_id || lock.published_at) return null;
       const projectId = await this.syncProject(c, repo, null);
       if (!projectId) return null;
       await c.query("select 1 from ci_projects where id = $1 for update", [projectId]);
-      const org = await this.orgContext(c);
+      // The mode the machine was started with (launchRunner), else the organization's now; recorded on the job.
+      const mode = lock.mode ?? (await this.orgContext(c)).mode;
       const id = await this.insertRun(c, projectId, job, null, run, pr?.number ?? null, {
-        startedAt: job.started_at ?? new Date(), completedAt: null, durationMs: 0, otherStepMinutes: 0, mode: org.mode, region: lock.region,
+        startedAt: job.started_at ?? new Date(), completedAt: null, durationMs: 0, otherStepMinutes: 0, mode, region: lock.region,
       });
-      await c.query("update gh_jobs set ci_run_id = $2 where job_id = $1", [jobId, id]);
-      return { id, mode: org.mode };
+      await c.query("update gh_jobs set ci_run_id = $2, mode = coalesce(mode, $3) where job_id = $1", [jobId, id, mode]);
+      return { id, mode };
     });
     if (created) this.log.info({ job: jobId, repository: repo.full_name, run: created.id, mode: created.mode }, "run started");
   }
@@ -469,7 +482,7 @@ export class GitHubService {
    * stranger installing the App cannot start machines; only while the job is still queued.
    */
   private async launchRunner(jobId: number, installationId: number, repo: RepoFull): Promise<void> {
-    const [row] = await this.db.q<{ status: string; run_id: number; head_sha: string }>("select status, run_id, head_sha from gh_jobs where job_id = $1", [jobId]);
+    const [row] = await this.db.q<{ status: string; run_id: number; run_attempt: number; head_sha: string }>("select status, run_id, run_attempt, head_sha from gh_jobs where job_id = $1", [jobId]);
     if (!row || row.status !== "queued") return;
     const [inst] = await this.db.q<{ workspace_id: string | null; suspended_at: Date | null; deleted_at: Date | null }>(
       "select workspace_id, suspended_at, deleted_at from gh_installations where installation_id = $1", [installationId]);
@@ -479,7 +492,8 @@ export class GitHubService {
     }
     // The machine runs in the organization's region, or not at all: an EU organization's job never runs in the US.
     const org = await this.db.tx(inst.workspace_id, (c) => this.orgContext(c));
-    await this.db.q("update gh_jobs set region = $2 where job_id = $1", [jobId, org.region]);
+    // The mode the machine gets (FENVIX_MODE) is the run's mode, whatever the job later reports (review R-016 F4).
+    await this.db.q("update gh_jobs set region = $2, mode = $3 where job_id = $1", [jobId, org.region, org.mode]);
     if (this.launcher!.canPlace && !this.launcher!.canPlace(org.region)) {
       this.log.error({ job: jobId, installation: installationId, region: org.region }, "no runner machine: no placement for the organization's region (the job stays queued; GitHub times it out)");
       return;
@@ -528,7 +542,7 @@ export class GitHubService {
     // its cache token reaches only this installation's cache organization, and writes only on a trusted ref.
     const exp = Math.floor(Date.now() / 1000) + JOB_CREDENTIAL_SECONDS;
     const cacheAccess = trusted ? "write" as const : "read" as const;
-    const summaryToken = signSummaryCredential(this.s.summaryKey, { runnerName, repositoryId: repo.id, runId: row.run_id, exp });
+    const summaryToken = signSummaryCredential(this.s.summaryKey, { runnerName, repositoryId: repo.id, runId: row.run_id, runAttempt: row.run_attempt, exp });
     const cacheToken = this.s.cacheSigningKey ? signCacheToken(this.s.cacheSigningKey, { installationId, write: trusted, exp, jobId }) : undefined;
     let res: { instanceId: string | null; already: boolean };
     try {
@@ -604,21 +618,62 @@ export class GitHubService {
   }
 
   /**
-   * POST /v1/runner/results (queued): the chunk is stored (gh_run_results; sent again: replaced) and applied to the
-   * run once the run is published. Chunks that come before are applied at publish.
+   * POST /v1/runner/results (queued): the chunk is stored (gh_run_results; sent again before it was applied: replaced)
+   * and applied to the run once the run is published. Chunks that come before are applied at publish.
+   *
+   * What one job may store (review R-016 F7): only for its own job, a chunk number below the count its chunk 0
+   * declared, at most RESULTS_JOB_LIMITS per job. The job is the one GitHub ran on this runner (gh_jobs: repository,
+   * run, attempt, runner name); a per-job credential names the attempt itself (`attemptBound`), so its chunks are kept
+   * even before the job's start is recorded. A chunk for another attempt, past the count or past the limits is dropped
+   * (logged); a chunk whose job is not known yet, from a credential that does not name the attempt, is retried (thrown).
    */
-  async receiveResults(o: { repositoryId: number; runId: number; runAttempt: number; runnerName: string; results: RunnerResults }): Promise<void> {
-    await this.db.q(
-      `insert into gh_run_results (repository_id, run_id, run_attempt, runner_name, chunk, payload) values ($1, $2, $3, $4, $5, $6)
-       on conflict (repository_id, run_id, run_attempt, runner_name, chunk) do update set payload = excluded.payload, received_at = now(),
-         applied_at = null, apply_error = null`,
-      [o.repositoryId, o.runId, o.runAttempt, o.runnerName, o.results.chunk, JSON.stringify(o.results)]);
+  async receiveResults(o: { repositoryId: number; runId: number; runAttempt: number; runnerName: string; results: RunnerResults; attemptBound?: boolean }): Promise<"stored" | "dropped"> {
+    const key = [o.repositoryId, o.runId, o.runAttempt, o.runnerName] as const;
+    const drop = (why: string) => {
+      this.log.warn({ repositoryId: o.repositoryId, runId: o.runId, runAttempt: o.runAttempt, runner: o.runnerName, chunk: o.results.chunk, why }, "runner results dropped");
+      return "dropped" as const;
+    };
+    const known = await this.db.q<{ run_attempt: number }>(
+      "select distinct run_attempt from gh_jobs where repository_id = $1 and run_id = $2 and runner_name = $3", [o.repositoryId, o.runId, o.runnerName]);
+    if (known.length && !known.some((k) => k.run_attempt === o.runAttempt)) return drop("not an attempt this runner ran");
+    if (!known.length && !o.attemptBound) {
+      throw new Error(`results for ${o.repositoryId}/${o.runId}/${o.runAttempt} from ${o.runnerName}: the job's start is not recorded yet (tried again later)`);
+    }
+    if (o.results.chunks !== undefined && o.results.chunk >= o.results.chunks) return drop(`chunk ${o.results.chunk} of ${o.results.chunks}`);
+    const payload = JSON.stringify(o.results);
+    const stored = await this.db.tx(null, async (c) => {
+      // One writer per job at a time: the count and the limits are checked against what is stored.
+      await c.query("select pg_advisory_xact_lock(hashtext('gh_run_results:' || $1::text || '/' || $2::text || '/' || $3::text || '/' || $4))", [...key]);
+      const declared = (await c.query<{ chunks: number | null }>(
+        `select (payload->>'chunks')::int as chunks from gh_run_results
+         where repository_id = $1 and run_id = $2 and run_attempt = $3 and runner_name = $4 and chunk = 0`, [...key])).rows[0]?.chunks ?? null;
+      if (declared !== null && o.results.chunk >= declared) return `chunk ${o.results.chunk} of ${declared}`;
+      const have = (await c.query<{ n: number; bytes: string }>(
+        `select count(*)::int as n, coalesce(sum(octet_length(payload::text)), 0)::bigint as bytes from gh_run_results
+         where repository_id = $1 and run_id = $2 and run_attempt = $3 and runner_name = $4 and chunk <> $5`, [...key, o.results.chunk])).rows[0]!;
+      if (have.n + 1 > RESULTS_JOB_LIMITS.chunks) return `more than ${RESULTS_JOB_LIMITS.chunks} chunks`;
+      if (Number(have.bytes) + Buffer.byteLength(payload) > RESULTS_JOB_LIMITS.bytes) return `more than ${RESULTS_JOB_LIMITS.bytes} bytes`;
+      // A chunk already applied stays as it was applied (sending it again changes nothing).
+      await c.query(
+        `insert into gh_run_results (repository_id, run_id, run_attempt, runner_name, chunk, payload) values ($1, $2, $3, $4, $5, $6)
+         on conflict (repository_id, run_id, run_attempt, runner_name, chunk) do update set payload = excluded.payload, received_at = now(),
+           applied_at = null, apply_error = null
+         where gh_run_results.applied_at is null`,
+        [...key, o.results.chunk, payload]);
+      // Chunk 0 declares the count: chunks stored past it go.
+      if (o.results.chunk === 0 && o.results.chunks !== undefined) {
+        await c.query("delete from gh_run_results where repository_id = $1 and run_id = $2 and run_attempt = $3 and runner_name = $4 and chunk >= $5", [...key, o.results.chunks]);
+      }
+      return null;
+    });
+    if (stored) return drop(stored);
     const jobs = await this.db.q<{ job_id: number; ci_run_id: string; workspace_id: string }>(
       `select j.job_id, j.ci_run_id, i.workspace_id from gh_jobs j join gh_installations i on i.installation_id = j.installation_id
        where j.repository_id = $1 and j.run_id = $2 and j.run_attempt = $3 and j.runner_name = $4
          and j.published_at is not null and j.ci_run_id is not null and i.workspace_id is not null`,
-      [o.repositoryId, o.runId, o.runAttempt, o.runnerName]);
+      [...key]);
     for (const j of jobs) await this.applyResults(j.workspace_id, j.ci_run_id, o);
+    return "stored";
   }
 
   /** Applies the job's chunks not applied yet to its run (src/results/apply.ts). Marks each applied, or why not. */
@@ -638,11 +693,11 @@ export class GitHubService {
     try {
       const out = await this.db.tx(ws, async (c) => {
         // One application at a time per run (chunks arriving together).
-        const run = (await c.query<{ id: string; project_id: string; seen_at: Date; language: string }>(
-          `select r.id, r.project_id, coalesce(r.finished_at, r.started_at) as seen_at, p.language
+        const run = (await c.query<{ id: string; project_id: string; seen_at: Date; language: string; duration_ms: number | string | null }>(
+          `select r.id, r.project_id, coalesce(r.finished_at, r.started_at) as seen_at, p.language, r.duration_ms
            from ci_runs r join ci_projects p on p.id = r.project_id where r.id = $1 for update of r`, [ciRunId])).rows[0];
         if (!run) return null;
-        const res = await applyChunks(c, { id: run.id, projectId: run.project_id, language: run.language, seenAt: run.seen_at }, key, chunks);
+        const res = await applyChunks(c, { id: run.id, projectId: run.project_id, language: run.language, seenAt: run.seen_at, maxTestMs: run.duration_ms === null ? null : Number(run.duration_ms) }, key, chunks);
         if (res.applied.length) await c.query("update gh_run_results set applied_at = now(), apply_error = null where id = any($1::bigint[])", [res.applied]);
         for (const p of res.pending) await c.query("update gh_run_results set apply_error = $2 where id = $1", [p.id, p.error]);
         return res;
@@ -682,6 +737,9 @@ export class GitHubService {
 
   /** Completed jobs whose summary never came (or whose publication failed) are published after the wait. */
   async sweep(): Promise<number> {
+    // Old staged results and old link completions go (review R-016 F7, F2).
+    await this.db.q("delete from gh_run_results where received_at < now() - make_interval(days => $1)", [RESULTS_KEEP_DAYS]);
+    await this.db.q("delete from gh_install_completions where expires_at < now() - interval '1 day'");
     const due = await this.db.q<{ job_id: number }>(
       `select job_id from gh_jobs where status = 'completed' and published_at is null and publish_attempts < 5
          and coalesce(completed_at, updated_at) < now() - make_interval(secs => $1) order by job_id limit 50`, [this.s.summaryWaitSeconds]);
@@ -742,14 +800,22 @@ export class GitHubService {
     else if (job.conclusion === "cancelled" || job.conclusion === "skipped" || !startedOnFenvix) { billable = false; reason = "cancelled_before_tests"; }
     else { billable = true; reason = "no_summary"; }
 
+    // GitHub's timings of the job (workflow_job started_at and completed_at, in webhooks signed by GitHub): how long the
+    // job held our machine. The job cannot change them. Billing counts these minutes only (review R-016 F3).
     const startedAt = job.started_at ?? job.created_at ?? new Date();
     const completedAt = job.completed_at ?? new Date();
     const durationMs = Math.max(0, completedAt.getTime() - startedAt.getTime());
-    const otherStepMinutes = summary ? Math.max(0, durationMs / 1000 - summary.wallSeconds) / 60 : durationMs / 60_000;
+    const heldMinutes = durationMs / 60_000;
+    // What the job's summary.json says, bounded by the job's own duration: shown, never billed. A job cannot report
+    // more test time or wall time than it held the machine; its time "saved" is a claim (not a part of the units).
+    const ranMinutes = summary ? Math.min(summary.testSecondsRun / 60, heldMinutes) : 0;
+    const wallMinutes = summary ? Math.min(summary.wallSeconds / 60, heldMinutes) : 0;
+    const otherStepMinutes = summary ? Math.max(0, heldMinutes - wallMinutes) : heldMinutes;
     const minutes = {
-      ran: summary ? summary.testSecondsRun / 60 : 0,
+      ran: ranMinutes,
       saved: summary ? summary.testSecondsSaved / 60 : 0,
       other: otherStepMinutes,
+      held: heldMinutes,
     };
 
     const [inst] = await this.db.q<{ workspace_id: string | null }>("select workspace_id from gh_installations where installation_id = $1", [job.installation_id]);
@@ -762,7 +828,7 @@ export class GitHubService {
       if (ws) {
         planId = (await c.query<{ plan_id: string }>("select plan_id from ci_subscriptions where workspace_id = $1", [ws])).rows[0]?.plan_id ?? null;
         // The run row started at in_progress (startRun), if any: this job's row, locked so that it is finished once.
-        const lock = (await c.query<{ ci_run_id: string | null; region: Region | null }>("select ci_run_id, region from gh_jobs where job_id = $1 for update", [job.job_id])).rows[0];
+        const lock = (await c.query<{ ci_run_id: string | null; region: Region | null; mode: RunMode | null }>("select ci_run_id, region, mode from gh_jobs where job_id = $1 for update", [job.job_id])).rows[0];
         const started = lock?.ci_run_id
           ? (await c.query<{ id: string; project_id: string }>("select id, project_id from ci_runs where id = $1", [lock.ci_run_id])).rows[0] ?? null
           : null;
@@ -770,7 +836,11 @@ export class GitHubService {
         if (projectId) {
           const proj = (await c.query<{ comment_on_pull_requests: boolean }>("select comment_on_pull_requests from ci_projects where id = $1 for update", [projectId])).rows[0]!;
           commentsOn = proj.comment_on_pull_requests;
-          const values: RunValues = { startedAt, completedAt, durationMs, otherStepMinutes, mode: "enforce", region: lock?.region ?? null };
+          // The run's mode: the one the App chose when the job started (gh_jobs.mode), else the organization's now.
+          // Never summary.json's or the results' (review R-016 F4).
+          const mode = lock?.mode ?? (await this.orgContext(c)).mode;
+          if (!lock?.mode) await c.query("update gh_jobs set mode = $2 where job_id = $1 and mode is null", [job.job_id, mode]);
+          const values: RunValues = { startedAt, completedAt, durationMs, otherStepMinutes, mode, region: lock?.region ?? null };
           if (started && billable) {
             await this.finishRun(c, started.id, job, summary, run, pr?.number ?? null, values);
             ciRunId = started.id;
@@ -782,8 +852,7 @@ export class GitHubService {
           } else if (billable) {
             // No run row yet (the job's start was not seen, or the project appeared only now): one row, finished.
             // A job that never ran on our machine (not billable) gets no run row: rows and billable usage events agree.
-            const org = await this.orgContext(c);
-            ciRunId = await this.insertRun(c, projectId, job, summary, run, pr?.number ?? null, { ...values, mode: summary?.mode ?? org.mode });
+            ciRunId = await this.insertRun(c, projectId, job, summary, run, pr?.number ?? null, values);
           }
           if (summary) await c.query("update ci_projects set setup_state = 'active' where id = $1", [projectId]);
         }
@@ -791,11 +860,12 @@ export class GitHubService {
       }
       await c.query(
         `insert into ci_usage_events (installation_id, repository_id, repository_full_name, project_id, ci_run_id, github_job_id, github_run_id,
-           github_run_attempt, billable, reason, plan_id, conclusion, test_minutes_ran, minutes_saved, other_step_minutes, occurred_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, round($13::numeric, 2), round($14::numeric, 2), round($15::numeric, 2), $16)
+           github_run_attempt, billable, reason, plan_id, conclusion, test_minutes_ran, minutes_saved, other_step_minutes, held_minutes, occurred_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, round($13::numeric, 2), round($14::numeric, 2), round($15::numeric, 2),
+           round($16::numeric, 2), $17)
          on conflict (github_job_id) do nothing`,
         [job.installation_id, job.repository_id, repo.full_name, projectId, ciRunId, job.job_id, job.run_id, job.run_attempt, billable, reason,
-          planId, job.conclusion, minutes.ran, minutes.saved, minutes.other, completedAt]);
+          planId, job.conclusion, minutes.ran, minutes.saved, minutes.other, minutes.held, completedAt]);
     });
     // The cache: warm at this commit when a trusted run published results; a warm-up it covered runs if it did not.
     // (Also where warm-ups are off, e.g. the sweep: the cache state comes from customers' runs too.)
@@ -840,7 +910,7 @@ export class GitHubService {
   }
 
   /** The trigger, the status and the counts of a run from the job, its workflow run and the runner's summary. */
-  private runFields(job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null) {
+  private runFields(job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, durationMs: number | null = null) {
     const event = run?.event ?? (pr ? "pull_request" : "push");
     const trigger = TRIGGERS.has(event) ? event : event === "pull_request_target" ? "pull_request" : "workflow_dispatch";
     const fails = s ? s.failed.length + s.flaky.length : 0;
@@ -849,7 +919,8 @@ export class GitHubService {
     return {
       trigger, status, commitMessage: (run?.head_commit?.message ?? "").split("\n")[0]!.slice(0, 500),
       tests: [s?.tests ?? 0, s?.ran ?? 0, passedRan, fails, s?.reusedWithProof ?? 0, s?.flaky.length ?? 0] as const,
-      timeRanMs: Math.round((s?.testSecondsRun ?? 0) * 1000), timeSkippedMs: Math.round((s?.testSecondsSaved ?? 0) * 1000),
+      // Test time run: at most the job's own duration (GitHub's timings), whatever the summary says.
+      timeRanMs: Math.round(Math.min((s?.testSecondsRun ?? 0) * 1000, durationMs ?? Infinity)), timeSkippedMs: Math.round((s?.testSecondsSaved ?? 0) * 1000),
     };
   }
 
@@ -857,7 +928,7 @@ export class GitHubService {
   private async insertRun(c: Client, projectId: string, job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, v: RunValues): Promise<string> {
     const [push] = (await c.query<{ pushed_at: Date }>("select pushed_at from gh_pushes where repository_id = $1 and sha = $2", [job.repository_id, job.head_sha])).rows;
     const pushedAt = push?.pushed_at ?? (run?.created_at ? new Date(run.created_at) : job.created_at ?? v.startedAt);
-    const f = this.runFields(job, s, run, pr);
+    const f = this.runFields(job, s, run, pr, v.completedAt ? v.durationMs : null);
     const status = v.completedAt ? f.status : "running";
     const r = await c.query<{ id: string }>(
       `insert into ci_runs (workspace_id, project_id, number, commit_sha, commit_message, branch, pull_request, trigger, status, pushed_at, started_at,
@@ -874,15 +945,15 @@ export class GitHubService {
 
   /** The row started at in_progress gets the finished values (the same row: a job is one run). */
   private async finishRun(c: Client, id: string, job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, v: RunValues): Promise<void> {
-    const f = this.runFields(job, s, run, pr);
+    const f = this.runFields(job, s, run, pr, v.durationMs);
     await c.query(
       `update ci_runs set commit_message = case when $2 <> '' then $2 else commit_message end, pull_request = coalesce($3, pull_request), trigger = $4,
          status = $5, started_at = $6, finished_at = $7, duration_ms = $8, tests_total = $9, tests_ran = $10, tests_passed = $11, tests_failed = $12,
          tests_skipped = $13, tests_flaky_defects = $14, test_time_ran_ms = $15, test_time_skipped_ms = $16, other_step_minutes = round($17::numeric, 2),
-         engine_version = $18, skip_misses = $19, mode = coalesce($20, mode)
+         engine_version = $18, skip_misses = $19, mode = $20
        where id = $1`,
       [id, f.commitMessage, pr, f.trigger, f.status, v.startedAt, v.completedAt, v.durationMs, ...f.tests, f.timeRanMs, f.timeSkippedMs, v.otherStepMinutes,
-        s?.engineVersion ?? "", JSON.stringify(s?.notReusedReasons ?? {}), s?.mode ?? null]);
+        s?.engineVersion ?? "", JSON.stringify(s?.notReusedReasons ?? {}), v.mode]);
   }
 
   /** One fenvix comment per pull request: updated in place; found again by its marker if our record of it is lost. */
@@ -903,16 +974,49 @@ export class GitHubService {
 
   // ---------------------------------------------------------------- linking (called after the setup callback checks)
 
+  /**
+   * /github/setup, once GitHub confirmed that the GitHub user sees and administers the installation (review R-016):
+   * a single-use completion for the fenvix person the state names, valid 10 minutes. Returns its one-time code (only
+   * its hash is stored), or why not: the person is not an owner or admin of the organization (not_admin), the
+   * installation is another organization's (other_organization) or was removed (removed), the state was used (used).
+   */
+  async prepareLink(o: { installationId: number; workspaceId: string; userId: string; stateHash: string; githubUserId: number; githubLogin: string }):
+    Promise<{ refused: null; code: string; account: string } | { refused: string; code?: undefined; account?: undefined }> {
+    await this.ensureInstallation(o.installationId);
+    if (!(await this.isAdmin(o.workspaceId, o.userId))) return { refused: "not_admin" };
+    const [inst] = await this.db.q<{ workspace_id: string | null; account_login: string; deleted_at: Date | null }>(
+      "select workspace_id, account_login, deleted_at from gh_installations where installation_id = $1", [o.installationId]);
+    if (!inst || inst.deleted_at) return { refused: "removed" };
+    if (inst.workspace_id && inst.workspace_id !== o.workspaceId) return { refused: "other_organization" };
+    const code = randomBytes(32).toString("base64url");
+    const stored = await this.db.q(
+      `insert into gh_install_completions (code_hash, state_hash, installation_id, workspace_id, user_id, github_user_id, github_login, expires_at)
+       values ($1, $2, $3, $4, $5, $6, $7, now() + interval '10 minutes') on conflict (state_hash) do nothing returning id`,
+      [sha256Hex(code), o.stateHash, o.installationId, o.workspaceId, o.userId, o.githubUserId, o.githubLogin.slice(0, 100)]);
+    if (!stored.length) return { refused: "used" };
+    return { refused: null, code, account: inst.account_login };
+  }
+
+  /** Tests: links as the given person (what api_complete_github_link does for the dashboard), then as the worker. */
   async linkInstallation(installationId: number, workspaceId: string, userId: string): Promise<string> {
     await this.ensureInstallation(installationId);
     const r = await this.db.q<{ login: string }>("select public.gh_link_installation($1, $2, $3) as login", [installationId, workspaceId, userId]);
+    await this.onInstallationLinked(installationId);
+    return r[0]!.login;
+  }
+
+  /**
+   * The worker (work kind "installation_linked", after POST /v1/github/installations/complete): the projects, then a
+   * warm-up of every repository already on fenvix (setup pull request merged before the link, or never needed).
+   * A forged message changes nothing for an installation that is not linked: syncInstallation and the warm-ups both
+   * refuse it (Warmups.refuse requires a linked, unsuspended installation).
+   */
+  async onInstallationLinked(installationId: number): Promise<void> {
     await this.syncInstallation(installationId);
-    // Repositories already on fenvix (their setup pull request merged before the link, or never needed): warm them now.
     const onboarded = await this.db.q<{ repository_id: number }>(
       "select repository_id from gh_repositories where installation_id = $1 and removed_at is null and onboarding_state in ('merged', 'already_fenvix') order by repository_id",
       [installationId]);
     for (const x of onboarded) await this.warm("linked", () => this.warmups.requestHead(x.repository_id, "linked"));
-    return r[0]!.login;
   }
 
   async isAdmin(workspaceId: string, userId: string): Promise<boolean> {

@@ -73,6 +73,11 @@ export interface DataClient {
   listGitHubRepositories(): Promise<GitHubRepository[]>;
   /** Where to send the browser to install the App for this organization (owner or admin). */
   createInstallLink(): Promise<string>;
+  /**
+   * Completes the link after GitHub's return (`?github=confirm#completion=<code>`): the installation is linked to the
+   * organization that asked for the link, only if the signed-in person is the one who asked (review R-016 F2).
+   */
+  completeGitHubInstall(completion: string): Promise<{ organizationId: string; installationId: number; account: string }>;
   /** Queues the setup pull request of a repository, by GitHub's repository id. The answer is the repository as it is now. */
   openSetupPullRequest(repositoryId: number): Promise<GitHubRepository>;
 

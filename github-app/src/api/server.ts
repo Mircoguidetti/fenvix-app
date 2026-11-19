@@ -32,7 +32,7 @@ export const HANDLERS: Record<string, Handler> = {
   listRunFiles: data.listRunFiles, getSkipReceipt: data.getSkipReceipt, listDefects: data.listDefects, listDefectFamilies: data.listDefectFamilies,
   getDefect: data.getDefect, listUsageMonths: data.listUsageMonths, getUsage: data.getUsage, exportUsage: data.exportUsage,
   listPlans: data.listPlans, getBilling: data.getBilling,
-  getGitHubConnection: github.getGitHubConnection, createInstallLink: github.createInstallLink,
+  getGitHubConnection: github.getGitHubConnection, createInstallLink: github.createInstallLink, completeGitHubInstall: github.completeGitHubInstall,
   listGitHubRepositories: github.listGitHubRepositories, openSetupPullRequest: github.openSetupPullRequest,
 };
 
@@ -213,6 +213,7 @@ export function buildApi(deps: ApiDeps): Api {
       handler: async (req, reply) => {
         const userId = req.apiUserId!;
         const ws = op.workspace ? String(req.headers["x-fenvix-workspace"]).toLowerCase() : null;
+        const committed: (() => Promise<void>)[] = [];
         const out = await db.tx(userId, ws, async (t) => {
           let org: Org | null = null;
           let role: Role | null = null;
@@ -229,9 +230,13 @@ export function buildApi(deps: ApiDeps): Api {
           const ctx: Ctx = {
             userId, org, role, t, cfg, queue: deps.queue, now: now(),
             params: (req.params ?? {}) as Record<string, unknown>, query: (req.query ?? {}) as Record<string, unknown>, body: req.body ?? {}, headers: req.headers,
+            afterCommit: (fn) => { committed.push(fn); },
           };
           return handler(ctx);
         });
+        for (const fn of committed) {
+          await fn().catch((e: unknown) => req.log.error({ err: e instanceof Error ? e.message : String(e), op: op.operationId }, "work after the commit failed"));
+        }
         if (out instanceof Reply) {
           for (const [k, v] of Object.entries(out.headers)) reply.header(k, v);
           reply.code(out.status);

@@ -289,17 +289,21 @@ export class Warmups {
     if (!repo?.workspace_id) return;
     let s: RunSummary | null = null;
     if (row.summary) { try { s = parseSummary(row.summary); } catch { s = null; } }
-    const ran = s ? s.testSecondsRun / 60 : 0;
+    // The minutes our machine was held, by the App's own clock (dispatch to report or termination), never the
+    // summary's: the summary is written by the job user (review R-016 F3). It is bounded by them, shown, never billed.
+    const held = Math.max(0, Number(row.machine_seconds) / 60);
+    const ran = s ? Math.min(s.testSecondsRun / 60, held) : 0;
     const saved = s ? s.testSecondsSaved / 60 : 0;
-    const other = Math.max(0, Number(row.machine_seconds) / 60 - ran);
+    const other = Math.max(0, held - ran);
     await this.db.tx(repo.workspace_id, async (c) => {
       const plan = (await c.query<{ plan_id: string }>("select plan_id from ci_subscriptions where workspace_id = $1", [repo.workspace_id])).rows[0]?.plan_id ?? null;
       await c.query(
         `insert into ci_usage_events (installation_id, repository_id, repository_full_name, project_id, warmup_id, kind, billable, reason, plan_id,
-           conclusion, test_minutes_ran, minutes_saved, other_step_minutes, occurred_at)
-         values ($1, $2, $3, $4, $5, 'warmup', false, 'warm-up', $6, $7, round($8::numeric, 2), round($9::numeric, 2), round($10::numeric, 2), $11)
+           conclusion, test_minutes_ran, minutes_saved, other_step_minutes, held_minutes, occurred_at)
+         values ($1, $2, $3, $4, $5, 'warmup', false, 'warm-up', $6, $7, round($8::numeric, 2), round($9::numeric, 2), round($10::numeric, 2),
+           round($11::numeric, 2), $12)
          on conflict (warmup_id) do nothing`,
-        [row.installation_id, row.repository_id, repo.full_name, repo.project_id, row.id, plan, row.status, ran, saved, other, row.finished_at ?? this.now()]);
+        [row.installation_id, row.repository_id, repo.full_name, repo.project_id, row.id, plan, row.status, ran, saved, other, held, row.finished_at ?? this.now()]);
       await c.query("update gh_warmups set usage_recorded_at = now() where id = $1", [row.id]);
     });
   }

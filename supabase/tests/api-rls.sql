@@ -89,9 +89,13 @@ begin
     values (v_p, 't::d', 'reproduced', 'fails_alone', array['t::d'], repeat('c', 32), '<none>', now(), now(), 'python'),
            (v_xp, 't::xd', 'reproduced', 'fails_alone', array['t::xd'], repeat('d', 32), '<none>', now(), now(), 'python');
   insert into public.ci_explorations (project_id, started_at, finished_at, commit_sha, seeds, runs) values (v_p, now(), now(), repeat('a', 40), 5, 5), (v_xp, now(), now(), repeat('b', 40), 5, 5);
-  insert into public.ci_usage_events (installation_id, repository_id, repository_full_name, github_job_id, github_run_id, billable, reason, occurred_at, test_minutes_ran, minutes_saved, other_step_minutes)
-    values (31, 3101, 'northwind/app', 31001, 1, true, 'completed', now(), 2, 7, 1), (32, 3201, 'outsider/secret', 32001, 1, true, 'completed', now(), 1, 1, 1);
+  insert into public.ci_usage_events (installation_id, repository_id, repository_full_name, github_job_id, github_run_id, billable, reason, occurred_at, test_minutes_ran, minutes_saved, other_step_minutes, held_minutes)
+    values (31, 3101, 'northwind/app', 31001, 1, true, 'completed', now(), 2, 7, 1, 10), (32, 3201, 'outsider/secret', 32001, 1, true, 'completed', now(), 1, 1, 1, 3),
+           (31, 3101, 'northwind/app', 31002, 2, true, 'completed', now(), 0, 0, 0, 60);
   assert (select units from public.ci_usage_events where github_job_id = 31001) = 1.00, 'units: 10 baseline minutes are 1 unit';
+  -- Units come from the minutes the job held the machine (GitHub's timings), never from what its summary claims
+  -- (review R-016 F3): a 60-minute job whose summary says nothing ran is 60 baseline minutes, 6 units.
+  assert (select (baseline_minutes, units) from public.ci_usage_events where github_job_id = 31002) = (60.00::numeric, 6.00::numeric), 'units: from the held minutes';
   insert into public.workspace_invites (workspace_id, email, role, token_hash, expires_at) values
     (r.w, 'api.invited@fenvix.invalid', 'member', encode(sha256('w-token'), 'hex'), now() + interval '7 days'),
     (r.xw, 'someone@fenvix.invalid', 'admin', encode(sha256('xw-token'), 'hex'), now() + interval '7 days');
@@ -228,9 +232,29 @@ begin
     update public.workspaces set created_at = now() where id = r.w;
     assert false, 'the admin changed an organization column outside its settings';
   exception when insufficient_privilege then null; end;
-  update public.workspace_members set role = 'admin' where workspace_id = r.w and user_id = '3ccccccc-0000-4000-8000-000000000003';
+  update public.workspace_members set role = 'member' where workspace_id = r.w and user_id = '3ccccccc-0000-4000-8000-000000000003';
   get diagnostics n = row_count;
-  assert n = 1, 'the admin cannot change a role';
+  assert n = 1, 'the admin cannot change a member''s role';
+  -- Owner-only rules, held by row level security too (review R-016 F8): an admin never makes anyone admin or owner,
+  -- never changes an admin or owner (themselves included), never removes an owner, never invites an admin.
+  begin
+    update public.workspace_members set role = 'admin' where workspace_id = r.w and user_id = '3ccccccc-0000-4000-8000-000000000003';
+    assert false, 'OWNER ONLY: the admin made a member an admin';
+  exception when insufficient_privilege then null; end;
+  update public.workspace_members set role = 'owner' where workspace_id = r.w and user_id = '3bbbbbbb-0000-4000-8000-000000000002';
+  get diagnostics n = row_count;
+  assert n = 0, 'OWNER ONLY: the admin made themselves owner';
+  update public.workspace_members set role = 'member' where workspace_id = r.w and user_id = '3aaaaaaa-0000-4000-8000-000000000001';
+  get diagnostics n = row_count;
+  assert n = 0, 'OWNER ONLY: the admin demoted the owner';
+  delete from public.workspace_members where workspace_id = r.w and user_id = '3aaaaaaa-0000-4000-8000-000000000001';
+  get diagnostics n = row_count;
+  assert n = 0, 'OWNER ONLY: the admin removed the owner';
+  begin
+    insert into public.workspace_invites (workspace_id, email, role, token_hash, invited_by, expires_at)
+      values (r.w, 'new-admin@fenvix.invalid', 'admin', repeat('3', 64), '3bbbbbbb-0000-4000-8000-000000000002', now() + interval '7 days');
+    assert false, 'OWNER ONLY: the admin invited an admin';
+  exception when insufficient_privilege then null; end;
   insert into public.workspace_invites (workspace_id, email, role, token_hash, invited_by, expires_at)
     values (r.w, 'new@fenvix.invalid', 'member', repeat('1', 64), '3bbbbbbb-0000-4000-8000-000000000002', now() + interval '7 days');
   assert (select count(*) from public.workspace_invites) = 2, 'the admin does not read exactly W''s invitations';
