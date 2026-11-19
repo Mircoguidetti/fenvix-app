@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { TLSSocket } from "node:tls";
 import { after, before, describe, it } from "node:test";
 import pg from "pg";
-import { checkBranchRule } from "../lib/github-environment.mjs";
 import { migrate, MIGRATIONS_DIR, readMigrations } from "../lib/migrate.mjs";
 import { ensureRoles } from "../lib/roles.mjs";
 import { adminClientConfig, checkAnonKey, parseAdminUrl, parseCaCert } from "../lib/supabase.mjs";
@@ -50,62 +49,29 @@ describe("F4: SUPABASE_ANON_KEY", () => {
   });
 });
 
-describe("the environment's deployment branch rule (read back with the job's token)", () => {
-  const fake = (env, policies, status = 200) => async (url) => {
-    const body = url.includes("/deployment-branch-policies") ? { total_count: policies.length, branch_policies: policies } : env;
-    return { status, json: async () => body };
-  };
-  const run = (f) => captured(() => checkBranchRule({ repository: "Mircoguidetti/fenvix-app", token: "t", fetchImpl: f }));
-  it("main only: passes", async () => {
-    const [r] = await run(fake({ deployment_branch_policy: { protected_branches: false, custom_branch_policies: true } }, [{ name: "main", type: "branch" }]));
-    assert.equal(r, "main only");
-  });
-  it("no rule, protected branches, or more than main: stops the deploy", async () => {
-    for (const [env, pols, re] of [
-      [{ deployment_branch_policy: null }, [], /no deployment branch rule/],
-      [{ deployment_branch_policy: { protected_branches: true, custom_branch_policies: false } }, [], /every protected branch/],
-      [{ deployment_branch_policy: { protected_branches: false, custom_branch_policies: true } }, [{ name: "main", type: "branch" }, { name: "dev", type: "branch" }], /main only/],
-      [{ deployment_branch_policy: { protected_branches: false, custom_branch_policies: true } }, [{ name: "*", type: "branch" }], /main only/],
-      [{ deployment_branch_policy: { protected_branches: false, custom_branch_policies: true } }, [{ name: "main", type: "tag" }], /main only/],
-    ]) await assert.rejects(run(fake(env, pols)), re);
-  });
-  it("a token that may not read it: a warning, the deploy goes on (the summary says it was not checked)", async () => {
-    const [r, out] = await run(fake(null, [], 403));
-    assert.equal(r, "unverified");
-    assert.match(out, /not checked/);
-  });
-  it("the workflow gives the token actions: read and passes it to the preflight step only", () => {
-    const wf = readFileSync(join(ROOT, ".github/workflows/deploy.yml"), "utf8");
-    assert.match(wf, /permissions:\n\s+contents: read\n\s+actions: read[^\n]*\n\s+id-token: write/);
-    assert.equal((wf.match(/GITHUB_TOKEN: \$\{\{ github\.token \}\}/g) ?? []).length, 1);
-    const step1 = wf.slice(wf.indexOf("- name: 1. Check the one-time setup"), wf.indexOf("- name: 2."));
-    assert.match(step1, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
-  });
-});
-
 describe("the workflow: concurrency, the Cloudflare token, the dashboard's host", () => {
   const wf = readFileSync(join(ROOT, ".github/workflows/deploy.yml"), "utf8");
   it("only a run that deploys (push or dispatch on main) joins the deploy group; nothing cancels it", () => {
-    assert.match(wf, /group: \$\{\{ github\.ref == 'refs\/heads\/main' && github\.event_name != 'pull_request' && 'deploy-production' \|\| format\('test-\{0\}-\{1\}', github\.event_name, github\.ref\) \}\}/);
+    // REPORT-deploy-pipeline-4: deploy.yml has no pull_request trigger any more (test.yml runs the pull requests), so
+    // the event no longer needs to be in the expression: a run on main is a deploy, any other ref is a dispatch elsewhere.
+    assert.match(wf, /group: \$\{\{ github\.ref == 'refs\/heads\/main' && 'deploy-production' \|\| format\('not-main-\{0\}', github\.ref\) \}\}/);
     assert.match(wf, /cancel-in-progress: \$\{\{ github\.ref != 'refs\/heads\/main' \}\}/);
   });
-  it("CLOUDFLARE_API_TOKEN: in the steps that call Cloudflare, and inside the CDK step only for the watcher's command", () => {
-    const steps = wf.split(/\n      - name: /).slice(1);
-    const withToken = steps.filter((s) => s.includes("${{ secrets.CLOUDFLARE_API_TOKEN }}")).map((s) => s.split("\n")[0]);
-    assert.deepEqual(withToken.map((n) => n.slice(0, 3)), ["6. ", "8. ", "9. "]);
-    // Steps 1 and 12 only learn whether it is set.
-    for (const n of ["1. ", "12."]) assert.match(steps.find((s) => s.startsWith(n)), /FENVIX_CLOUDFLARE_MANAGED: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN != '' \}\}/);
-    const cdk = steps.find((s) => s.startsWith("8. "));
-    const envBlock = cdk.slice(cdk.indexOf("env:"), cdk.indexOf("run:"));
-    assert.ok(!/^\s+CLOUDFLARE_API_TOKEN:/m.test(envBlock), "the token must not be in the environment of cdk deploy");
-    assert.match(cdk, /CLOUDFLARE_API_TOKEN="\$FENVIX_CF_TOKEN" node \.\.\/\.\.\/deploy\/cli\.mjs watch-certificate/);
-    assert.match(cdk, /unset FENVIX_CF_TOKEN/);
+  it("the Cloudflare token is in no step's environment: the steps that call Cloudflare read it from SSM themselves", () => {
+    // REPORT-deploy-pipeline-4: was "CLOUDFLARE_API_TOKEN only in steps 6, 8 (watcher) and 9". Now no GitHub secret
+    // exists; cli.mjs reads /fenvix/prod/bootstrap/cloudflare-api-token in dashboard-certificate, watch-certificate and
+    // dns only, and preflight exports only whether it is set.
+    assert.doesNotMatch(wf, /CLOUDFLARE_API_TOKEN|FENVIX_CF_TOKEN|secrets\./);
+    const cdk = wf.split(/\n      - name: /).slice(1).find((s) => s.startsWith("8. "));
+    assert.match(cdk, /node \.\.\/\.\.\/deploy\/cli\.mjs watch-certificate --timeout-minutes 90 &/);
+    const cli = readFileSync(join(ROOT, "deploy/cli.mjs"), "utf8");
+    const users = cli.split(/\n  (?:async )?(?="?[a-z-]+"?\(\))/).filter((x) => /await cloudflare\(\)/.test(x)).map((x) => /^"?([a-z-]+)/.exec(x)[1]);
+    assert.deepEqual(users, ["dashboard-certificate", "watch-certificate", "dns"]);
   });
   it("the dashboard is console.fenvix.dev everywhere (app.fenvix.dev nowhere)", () => {
     const cdk = JSON.parse(readFileSync(join(ROOT, "infra/github-app/cdk.json"), "utf8")).context;
     assert.equal(cdk.dashboardDomain, "console.fenvix.dev");
     assert.equal(cdk.dashboardUrl, "https://console.fenvix.dev");
-    assert.match(wf, /url: https:\/\/console\.fenvix\.dev/);
     const r = spawnSync("git", ["grep", "-l", "--untracked", "app\\.fenvix\\.dev", "--", ".", ":!docs/REPORT-*", ":!docs/REVIEW-*", ":!deploy/test/pipeline-2.test.mjs"], { cwd: ROOT, encoding: "utf8" });
     assert.equal(r.status, 1, `app.fenvix.dev still in: ${r.stdout}`);
   });

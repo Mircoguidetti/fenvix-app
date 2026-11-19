@@ -30,7 +30,7 @@ export function template() {
   const repo = "${GitHubOwner}/${GitHubRepository}";
   return {
     AWSTemplateFormatVersion: "2010-09-09",
-    Description: "fenvix: what the deploy pipeline (.github/workflows/deploy.yml) needs in AWS, created once: GitHub's OIDC provider, the deploy role trusted only for the main branch and the production environment of one repository, the permissions boundary of every role the stacks create, and the CDK deploy resources (assets bucket, deploy, publishing and CloudFormation roles). No access key. docs/DEPLOY-AWS.md",
+    Description: "fenvix: what the deploy pipeline (.github/workflows/deploy.yml) needs in AWS, created once: GitHub's OIDC provider, the deploy role trusted only for the branch main of one repository (no GitHub environment), the permissions boundary of every role the stacks create, and the CDK deploy resources (assets bucket, deploy, publishing and CloudFormation roles). No access key. docs/DEPLOY-AWS.md",
     Parameters: {
       GitHubOwner: { Type: "String", Default: "Mircoguidetti", AllowedPattern: "^[A-Za-z0-9-]{1,39}$", Description: "The GitHub account that owns the repository (as it appears in the repository's URL)" },
       GitHubRepository: { Type: "String", Default: "fenvix-app", AllowedPattern: "^[A-Za-z0-9._-]{1,100}$" },
@@ -142,18 +142,20 @@ export function template() {
         Type: "AWS::IAM::Role",
         Properties: {
           RoleName: NAMES.deployerRole,
-          Description: sub(`fenvix: the deploy pipeline of ${repo} (GitHub Actions, OIDC): its production environment only (whose branch rule allows main only)`),
+          Description: sub(`fenvix: the deploy pipeline of ${repo} (GitHub Actions, OIDC): jobs on its branch main only`),
           MaxSessionDuration: 7200,
           ManagedPolicyArns: [{ Ref: "DeployerPolicy" }],
           AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{
-            Sid: "GitHubActionsProductionEnvironmentOnly",
+            Sid: "GitHubActionsMainBranchOnly",
             Effect: "Allow",
             Principal: { Federated: sub("arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com") },
             Action: "sts:AssumeRoleWithWebIdentity",
             Condition: {
               StringEquals: {
                 "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-                "token.actions.githubusercontent.com:sub": [sub(`repo:${repo}:environment:production`)],
+                // Exactly the token of a job running on refs/heads/main (a push to main, or "Run workflow" on main).
+                // Never an environment, a pull request, a tag or another branch.
+                "token.actions.githubusercontent.com:sub": [sub(`repo:${repo}:ref:refs/heads/main`)],
               },
             },
           }] },

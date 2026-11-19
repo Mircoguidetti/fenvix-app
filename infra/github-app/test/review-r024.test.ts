@@ -19,6 +19,11 @@ describe("review R-024", () => {
       "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/github-app/private-key",
       "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/github-app/client-secret",
       "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/cache/signing-public-key",
+      // REPORT-deploy-pipeline-4 (founder decision: GitHub Free, no GitHub secrets): the founder's own values now live in
+      // SSM under /fenvix/prod/bootstrap/, and the deployer reads exactly these seven by name (none generated, none
+      // readable by the stacks' roles). Before, the same values were GitHub environment secrets/variables.
+      ...["supabase-db-url", "supabase-anon-key", "supabase-ca-cert", "cloudflare-api-token", "github-app-id", "github-app-slug", "github-app-client-id"]
+        .map((n) => `arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/${n}`),
     ]);
     const reads = /^ssm:(GetParameter|GetParameters|GetParametersByPath|GetParameterHistory|Get\*|\*)$/;
     const bad: string[] = [];
@@ -30,19 +35,26 @@ describe("review R-024", () => {
     assert.deepEqual(bad, []);
   });
 
-  // F2. The deploy job runs in the environment "production", so its token's sub is ...:environment:production and the
-  // ...:ref:refs/heads/main entry is never used by it. That entry is what a job WITHOUT an environment gets when it runs
-  // on main: any job without an environment in a workflow run by push to main, schedule, workflow_dispatch on main,
-  // issue_comment or workflow_run (both run on the default branch; workflow_run is the classic way untrusted fork code
-  // reaches a privileged run), none of which the environment's branch rule or reviewers can stop.
-  it("F2: the deploy role trusts the production environment only (the one sub the deploy job presents)", () => {
+  // F2, as REPORT-deploy-pipeline-4 replaced it. The original assertion was "the trust is exactly
+  // ...:environment:production, and every job with id-token: write names environment production". The founder chose
+  // GitHub Free for a private repository, where environment secrets and deployment branch rules do not exist, so the
+  // environment can no longer be what limits the role. The equivalent for the new design: the trust is exactly
+  // ...:ref:refs/heads/main (one sub, no wildcard, no environment), and every job with id-token: write is one that runs
+  // only on refs/heads/main (its `if`), in no environment. R-024's concern (a job without an environment on main getting
+  // the role through workflow_run / issue_comment / schedule / another workflow) is held off by test/workflows.test.ts
+  // (no other workflow may ask for id-token: write; deploy.yml's triggers are push to main and workflow_dispatch only).
+  it("F2: the deploy role trusts the main branch only (the one sub the deploy job presents)", () => {
     const tpl = JSON.parse(readFileSync(new URL("../../bootstrap/fenvix-bootstrap.json", import.meta.url), "utf8"));
     const cond = tpl.Resources.DeployerRole.Properties.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals;
     const subs = arr(cond["token.actions.githubusercontent.com:sub"]).map((x: { "Fn::Sub": string }) => x["Fn::Sub"]);
-    assert.deepEqual(subs, ["repo:${GitHubOwner}/${GitHubRepository}:environment:production"]);
+    assert.deepEqual(subs, ["repo:${GitHubOwner}/${GitHubRepository}:ref:refs/heads/main"]);
     const workflow = readFileSync(new URL("../../../.github/workflows/deploy.yml", import.meta.url), "utf8");
-    // Every job that may request the token is in the environment.
     const jobs = workflow.split(/\n  (?=[a-z-]+:\n)/).slice(1);
-    for (const j of jobs.filter((x) => /id-token:\s*write/.test(x))) assert.match(j, /environment:\n\s+name: production/);
+    const withToken = jobs.filter((x) => /id-token:\s*write/.test(x));
+    assert.equal(withToken.length, 1);
+    for (const j of withToken) {
+      assert.match(j, /\n    if: github\.ref == 'refs\/heads\/main'\n/);
+      assert.doesNotMatch(j, /\n    environment:/);
+    }
   });
 });

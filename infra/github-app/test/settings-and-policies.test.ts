@@ -8,6 +8,9 @@ type Stmt = { Sid: string; Effect: string; Action: string | string[]; Resource: 
 const policy = (f: string) => JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url), "utf8")) as { Statement: Stmt[] };
 const arr = <T,>(x: T | T[]) => (Array.isArray(x) ? x : [x]);
 const json = (x: unknown) => JSON.stringify(x);
+// The founder's values in SSM (deploy/lib/bootstrap.mjs FOUNDER_VALUES; deploy/test/bootstrap.test.mjs checks the two agree).
+const FOUNDER = ["supabase-db-url", "supabase-anon-key", "supabase-ca-cert", "cloudflare-api-token", "github-app-id", "github-app-slug", "github-app-client-id"]
+  .map((n) => `arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/${n}`);
 
 describe("settings", () => {
   it("cdk.json leaves the GitHub App and Supabase empty: the pipeline gives Supabase; the App may stay unset", async () => {
@@ -104,7 +107,21 @@ describe("IAM policy files", () => {
     const valueReads = /^ssm:(GetParameter|GetParameters|GetParametersByPath|GetParameterHistory|GetParameter\*|GetParameters\*|Get\*|\*)$/;
     for (const a of allows.flatMap((x) => arr(x.Action))) assert.ok(!(a.startsWith("ssm:") && a.includes("*")), `no SSM wildcard action: ${a}`);
     const reads = allows.filter((x) => arr(x.Action).some((a) => valueReads.test(a))).flatMap((x) => arr(x.Resource)).filter((r) => r.includes(":parameter/fenvix/"));
-    for (const r of reads) assert.match(r, /\/fenvix\/prod\/(github-app\/(database-url|api-database-url|private-key|client-secret)|cache\/signing-public-key)$/);
+    for (const r of reads) assert.match(r, /\/fenvix\/prod\/(github-app\/(database-url|api-database-url|private-key|client-secret)|cache\/signing-public-key|bootstrap\/(supabase-db-url|supabase-anon-key|supabase-ca-cert|cloudflare-api-token|github-app-id|github-app-slug|github-app-client-id))$/);
+    // The founder's values (/fenvix/prod/bootstrap/): read by exact name only (deploy/lib/bootstrap.mjs is the list),
+    // never written or deleted by the deployer, never readable by the stacks' roles (the boundary does not cover them).
+    const founder = allows.find((s) => s.Sid === "ReadFounderValues")!;
+    assert.deepEqual(arr(founder.Action), ["ssm:GetParameter"]);
+    assert.deepEqual(arr(founder.Resource).sort(), [...FOUNDER].sort());
+    for (const st of allows) for (const r of arr(st.Resource)) {
+      if (r.includes("/bootstrap/") && r.includes(":parameter/fenvix/")) {
+        assert.ok(!r.includes("*"), `${st.Sid}: no wildcard on the founder's values: ${r}`);
+        assert.equal(st.Sid, "ReadFounderValues", `${st.Sid}: only ReadFounderValues may touch ${r}`);
+      }
+      if (arr(st.Action).some((a) => /^ssm:(Put|Delete|Label|AddTags|Remove)/.test(a))) assert.ok(!/fenvix\/prod\/(bootstrap|\*)/.test(r) && !r.endsWith(":parameter/fenvix/*"), `${st.Sid} may write ${r}`);
+    }
+    const boundary = JSON.stringify(policy("permissions-boundary.json"));
+    assert.ok(!boundary.includes("/bootstrap"), "the stacks' roles never read the founder's values");
     for (const st of allows) for (const a of arr(st.Action)) assert.ok(!/^ssm:(GetParameterHistory|GetParameters|GetParametersByPath)$/.test(a), `${st.Sid}: ${a} is not needed by the pipeline`);
     const invoke = p.Statement.find((s) => arr(s.Action).includes("lambda:InvokeFunction"))!;
     assert.deepEqual(arr(invoke.Resource), ["arn:aws:lambda:eu-west-1:865859654353:function:fenvix-prod-github-app-demo"], "only demo-up / demo-down");

@@ -94,6 +94,20 @@
       ]
     },
     {
+      "Sid": "ReadFounderValues",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": [
+        "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/supabase-db-url",
+        "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/supabase-anon-key",
+        "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/supabase-ca-cert",
+        "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/cloudflare-api-token",
+        "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/github-app-id",
+        "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/github-app-slug",
+        "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/github-app-client-id"
+      ]
+    },
+    {
       "Sid": "ListParameterNames",
       "Effect": "Allow",
       "Action": "ssm:DescribeParameters",

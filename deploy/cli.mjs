@@ -1,16 +1,20 @@
 #!/usr/bin/env node
 // The deploy pipeline's own steps (.github/workflows/deploy.yml). One subcommand per step:
-//   preflight              checks the one-time setup (names only; the anon key is public; the environment's branch
-//                          rule is main only), exports SUPABASE_URL
-//   migrate                database migrations (SUPABASE_DB_URL)
+//   preflight              checks the one-time setup (the founder's SSM parameters; the anon key is public), exports
+//                          SUPABASE_URL, VITE_SUPABASE_ANON_KEY (public) and FENVIX_CLOUDFLARE_MANAGED (true/false)
+//   migrate                database migrations (the Supabase admin connection string)
 //   db-roles               passwords of fenvix_github_app and fenvix_api, their connection strings in SSM
 //   secrets                generated secrets in SSM; exports FENVIX_CACHE_SIGNING_PUBLIC_KEY (public)
-//   github-app             the GitHub App's values (environment variables and secrets) → SSM; exports the public ones
+//   github-app             the GitHub App's values (SSM, typed by the founder): checked; exports the public ones
 //   dashboard-certificate  the us-east-1 certificate of the dashboard's host; exports its ARN once issued
 //   watch-certificate      while the stack deploys: puts the API certificate's validation record in Cloudflare
 //   dns                    github.<zone> and console.<zone> → AWS (Cloudflare), from the stacks' outputs
 //   smoke                  checks the deployed hosts answer
 // Nothing secret is printed by any of them. Exit code 1 with a "STOP:" line names what to do.
+//
+// The founder's values (the Supabase admin connection string, the Cloudflare token, the anon key, the GitHub App's
+// values) are read by each step that needs them, straight from SSM Parameter Store (/fenvix/<env>/bootstrap/*,
+// lib/bootstrap.mjs), and masked in the log before any use. GitHub holds no secret: the workflow passes none.
 import { readFileSync } from "node:fs";
 import { ACMClient } from "@aws-sdk/client-acm";
 import { SSMClient } from "@aws-sdk/client-ssm";
@@ -18,11 +22,11 @@ import pg from "pg";
 import { describe, ensureCertificate, findCertificate, waitIssued } from "./lib/certificates.mjs";
 import { Cloudflare } from "./lib/cloudflare.mjs";
 import { syncGitHubApp } from "./lib/github-app.mjs";
+import { readFounderValue } from "./lib/bootstrap.mjs";
 import { exportEnv, info, mask, notice, Stop, summary, warning } from "./lib/log.mjs";
 import { migrate, readMigrations } from "./lib/migrate.mjs";
 import { ensureRoles } from "./lib/roles.mjs";
 import { ensureGenerated } from "./lib/secrets.mjs";
-import { checkBranchRule } from "./lib/github-environment.mjs";
 import { adminClientConfig, checkAnonKey, parseAdminUrl, parseCaCert } from "./lib/supabase.mjs";
 
 const CDK = JSON.parse(readFileSync(new URL("../infra/github-app/cdk.json", import.meta.url), "utf8")).context;
@@ -36,24 +40,30 @@ const local = process.env.FENVIX_DEPLOY_LOCAL_DB === "1";
 const args = process.argv.slice(3);
 const arg = (name, fallback) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : fallback; };
 
-const ssm = () => new SSMClient({ region: REGION });
-const cloudflare = () => process.env.CLOUDFLARE_API_TOKEN
-  ? (mask(process.env.CLOUDFLARE_API_TOKEN), new Cloudflare({ token: process.env.CLOUDFLARE_API_TOKEN, zone: ZONE, zoneId: process.env.CLOUDFLARE_ZONE_ID }))
-  : null;
+let ssmClient;
+const ssm = () => (ssmClient ??= new SSMClient({ region: REGION }));
+/** One founder value (SSM /fenvix/<env>/bootstrap/..., or the same-named environment variable outside the workflow). */
+const founder = (key) => readFounderValue(ssm(), key, { env: ENV });
 
-/** Whether the Cloudflare token is set, told to steps that do not need the token itself (FENVIX_CLOUDFLARE_MANAGED). */
-const cloudflareManaged = () => !!process.env.CLOUDFLARE_API_TOKEN || process.env.FENVIX_CLOUDFLARE_MANAGED === "true";
+/** Cloudflare with the founder's token, read from SSM by this step itself; null when there is none. */
+async function cloudflare() {
+  const token = await founder("cloudflareToken");
+  return token ? new Cloudflare({ token, zone: ZONE, zoneId: process.env.CLOUDFLARE_ZONE_ID }) : null;
+}
+
+/** Whether the Cloudflare token is set, as preflight exported it for the steps that never read the token. */
+const cloudflareManaged = () => process.env.FENVIX_CLOUDFLARE_MANAGED === "true";
 
 async function admin() {
-  const a = parseAdminUrl(process.env.SUPABASE_DB_URL ?? "", { local });
+  const a = parseAdminUrl(await founder("dbUrl"), { local });
   mask(a.password);
-  const ca = parseCaCert(process.env.SUPABASE_CA_CERT);
+  const ca = parseCaCert(await founder("caCert"));
   const client = new pg.Client(adminClientConfig(a, { ca }));
   try { await client.connect(); } catch (e) {
     const code = /** @type {{ code?: string }} */ (e).code;
-    if (ca && /certificate|self[- ]signed|altnames|UNABLE_TO|CERT_/i.test(`${code ?? ""} ${/** @type {Error} */ (e).message}`)) throw new Stop(`The Supabase pooler's TLS certificate did not verify against SUPABASE_CA_CERT (${code ?? /** @type {Error} */ (e).name}). Nothing was changed. Download the current certificate again (Supabase → Project Settings → Database → SSL Configuration), or remove the variable to fall back to encrypted-only TLS.`);
-    if (code === "28P01" || /password authentication failed/i.test(String(e))) throw new Stop("Supabase refused the password in SUPABASE_DB_URL (the database password: Supabase → Project Settings → Database).");
-    throw new Stop(`Could not connect to Supabase with SUPABASE_DB_URL (${code ?? /** @type {Error} */ (e).name}). Check that it is the Session pooler string.`);
+    if (ca && /certificate|self[- ]signed|altnames|UNABLE_TO|CERT_/i.test(`${code ?? ""} ${/** @type {Error} */ (e).message}`)) throw new Stop(`The Supabase pooler's TLS certificate did not verify against SUPABASE_CA_CERT (${code ?? /** @type {Error} */ (e).name}). Nothing was changed. Download the current certificate again (Supabase → Project Settings → Database → SSL Configuration), or delete the parameter /fenvix/${ENV}/bootstrap/supabase-ca-cert to fall back to encrypted-only TLS.`);
+    if (code === "28P01" || /password authentication failed/i.test(String(e))) throw new Stop(`Supabase refused the password in the SSM parameter /fenvix/${ENV}/bootstrap/supabase-db-url (the database password: Supabase → Project Settings → Database).`);
+    throw new Stop(`Could not connect to Supabase with the SSM parameter /fenvix/${ENV}/bootstrap/supabase-db-url (${code ?? /** @type {Error} */ (e).name}). Check that it is the Session pooler string.`);
   }
   return { a, client };
 }
@@ -69,20 +79,19 @@ function manualRecord(why, name, value) {
 
 const steps = {
   async preflight() {
-    const a = parseAdminUrl(process.env.SUPABASE_DB_URL ?? "", { local });
+    const a = parseAdminUrl(await founder("dbUrl"), { local });
     mask(a.password);
     if (a.supabaseUrl) exportEnv("SUPABASE_URL", a.supabaseUrl);
     info(`Supabase project: ${a.ref ?? "(local)"} via ${a.host}`);
-    info(parseCaCert(process.env.SUPABASE_CA_CERT) ? "TLS to the pooler (admin connection): verified against SUPABASE_CA_CERT (verify-full)" : "TLS to the pooler (admin connection): encrypted, certificate not verified (no SUPABASE_CA_CERT; docs/DEPLOY-AWS.md, section D)");
-    if (!process.env.SUPABASE_ANON_KEY) warning("SUPABASE_ANON_KEY is not set: the dashboard is deployed but its sign-in page says what is missing (docs/DEPLOY-AWS.md, section A step 1).");
-    else info(`SUPABASE_ANON_KEY: a public key (${checkAnonKey(process.env.SUPABASE_ANON_KEY, a.ref)}) of this project`);
-    // In the workflow only: the environment's deployment branch rule is read back (GITHUB_TOKEN, actions: read).
-    if (process.env.GITHUB_ACTIONS === "true") {
-      if (!process.env.GITHUB_TOKEN) throw new Stop("GITHUB_TOKEN is not passed to this step: the environment's branch rule cannot be checked.");
-      const rule = await checkBranchRule({ repository: process.env.GITHUB_REPOSITORY ?? "", environment: process.env.FENVIX_GITHUB_ENVIRONMENT || "production", token: process.env.GITHUB_TOKEN });
-      summary(`**Environment branch rule:** ${rule === "main only" ? "main only (checked)" : "NOT checked (the token could not read it)"}.`);
-    }
-    info(cloudflareManaged() ? "Cloudflare: the pipeline manages the DNS records" : "Cloudflare: no CLOUDFLARE_API_TOKEN: the records to add by hand are listed in the run's summary");
+    info(parseCaCert(await founder("caCert")) ? "TLS to the pooler (admin connection): verified against SUPABASE_CA_CERT (verify-full)" : "TLS to the pooler (admin connection): encrypted, certificate not verified (no supabase-ca-cert parameter; docs/DEPLOY-AWS.md, section D)");
+    const anon = await founder("anonKey");
+    if (!anon) warning(`SUPABASE_ANON_KEY is not set (SSM /fenvix/${ENV}/bootstrap/supabase-anon-key): the dashboard is deployed but its sign-in page says what is missing (docs/DEPLOY-AWS.md, section A step 2).`);
+    else info(`SUPABASE_ANON_KEY: a public key (${checkAnonKey(anon, a.ref)}) of this project`);
+    // Public (every browser gets it in the bundle) and checked above; masked all the same, so it is never printed.
+    exportEnv("VITE_SUPABASE_ANON_KEY", anon);
+    const managed = !!(await founder("cloudflareToken"));
+    exportEnv("FENVIX_CLOUDFLARE_MANAGED", String(managed));
+    info(managed ? "Cloudflare: the pipeline manages the DNS records" : `Cloudflare: no token (SSM /fenvix/${ENV}/bootstrap/cloudflare-api-token): the records to add by hand are listed in the run's summary`);
     readMigrations();
   },
 
@@ -108,7 +117,9 @@ const steps = {
   },
 
   async "github-app"() {
-    const r = await syncGitHubApp(ssm(), process.env, ENV);
+    const vars = { ...process.env };
+    for (const [key, name] of [["appId", "FENVIX_GITHUB_APP_ID"], ["appSlug", "FENVIX_GITHUB_APP_SLUG"], ["appClientId", "FENVIX_GITHUB_APP_CLIENT_ID"]]) vars[name] = await founder(key);
+    const r = await syncGitHubApp(ssm(), vars, ENV);
     exportEnv("FENVIX_CDK_GITHUB_APP_ID", r.id);
     exportEnv("FENVIX_CDK_GITHUB_APP_SLUG", r.slug);
     exportEnv("FENVIX_CDK_GITHUB_CLIENT_ID", r.clientId);
@@ -117,7 +128,7 @@ const steps = {
 
   async "dashboard-certificate"() {
     const acm = new ACMClient({ region: "us-east-1" });
-    const cf = cloudflare();
+    const cf = await cloudflare();
     let d = await ensureCertificate(acm, APP_DOMAIN);
     if (d.status !== "ISSUED" && d.record) {
       if (cf) await cf.upsertCname(d.record.name, d.record.value);
@@ -137,7 +148,7 @@ const steps = {
   async "watch-certificate"() {
     const domain = arg("domain", API_DOMAIN);
     const acm = new ACMClient({ region: arg("region", REGION) });
-    const cf = cloudflare();
+    const cf = await cloudflare();
     const end = Date.now() + Number(arg("timeout-minutes", "90")) * 60_000;
     let placed = false;
     while (Date.now() < end) {
@@ -160,7 +171,7 @@ const steps = {
     const outputs = JSON.parse(readFileSync(arg("outputs", "../infra/github-app/cdk-outputs.json"), "utf8"));
     const api = outputs[`fenvix-${ENV}-github-app`]?.DnsTarget;
     const dash = outputs[`fenvix-${ENV}-dashboard`]?.DashboardDnsTarget;
-    const cf = cloudflare();
+    const cf = await cloudflare();
     const records = [[API_DOMAIN, api, "the API"]];
     // console.<zone> only once CloudFront serves it with its certificate (else browsers would get a certificate error).
     if (process.env.FENVIX_DASHBOARD_CERTIFICATE_ARN) records.push([APP_DOMAIN, dash, "the dashboard"]);

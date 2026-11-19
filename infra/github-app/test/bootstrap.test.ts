@@ -1,6 +1,6 @@
 // The one-click CloudFormation template (infra/bootstrap/fenvix-bootstrap.json): it holds the policy files as they
 // are, its roles are the ones the CDK synthesizer and the workflow use, and its deploy role trusts nothing but this
-// repository's main branch and production environment.
+// repository's main branch (no GitHub environment: REPORT-deploy-pipeline-4).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
@@ -26,7 +26,7 @@ describe("the one-click AWS template", () => {
     assert.deepEqual(byName("fenvix-github-deployer").Properties.PolicyDocument, pol("deploy-policy.json"));
   });
 
-  it("the deploy role: GitHub OIDC only, audience sts, this repository's main branch and production environment only", () => {
+  it("the deploy role: GitHub OIDC only, audience sts, this repository's main branch only", () => {
     const role = tpl.Resources.DeployerRole!.Properties;
     assert.equal(role.RoleName, "fenvix-github-deployer");
     const st = (role.AssumeRolePolicyDocument as { Statement: { Action: string; Principal: unknown; Condition: Record<string, Record<string, unknown>> }[] }).Statement;
@@ -36,8 +36,9 @@ describe("the one-click AWS template", () => {
     assert.deepEqual(Object.keys(st[0]!.Condition), ["StringEquals"], "exact matches only: no StringLike wildcard");
     assert.equal(st[0]!.Condition.StringEquals!["token.actions.githubusercontent.com:aud"], "sts.amazonaws.com");
     const subs = (st[0]!.Condition.StringEquals!["token.actions.githubusercontent.com:sub"] as { "Fn::Sub": string }[]).map((x) => x["Fn::Sub"]);
-    // R-024 F2: the environment only. A job without an environment on main (ref:refs/heads/main) is not trusted.
-    assert.deepEqual(subs, ["repo:${GitHubOwner}/${GitHubRepository}:environment:production"]);
+    // REPORT-deploy-pipeline-4: main only, enforced by AWS (no environment exists on GitHub Free for a private repository).
+    assert.deepEqual(subs, ["repo:${GitHubOwner}/${GitHubRepository}:ref:refs/heads/main"]);
+    assert.ok(!json(st).includes("environment:"), "no environment sub");
     assert.equal(tpl.Parameters.GitHubOwner!.Default, "Mircoguidetti");
     assert.equal(tpl.Parameters.GitHubRepository!.Default, "fenvix-app");
     assert.match(json(tpl.Rules), /865859654353/);
@@ -72,6 +73,6 @@ describe("the one-click AWS template", () => {
     assert.ok(names.some((n) => n.includes(`"RoleName":"${dest.assumeRoleArn.split("/").at(-1)}"`)));
     const workflow = readFileSync(new URL("../../../.github/workflows/deploy.yml", import.meta.url), "utf8");
     assert.match(workflow, /DEPLOY_ROLE: arn:aws:iam::865859654353:role\/fenvix-github-deployer/);
-    assert.match(workflow, /environment:\n\s+name: production/);
+    assert.doesNotMatch(workflow, /^\s+environment:/m);
   });
 });

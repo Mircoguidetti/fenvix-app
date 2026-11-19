@@ -1,4 +1,4 @@
-// DNS on Cloudflare (zone fenvix.dev) with the API token of the environment secret CLOUDFLARE_API_TOKEN (permissions:
+// DNS on Cloudflare (zone fenvix.dev) with the API token the founder put in SSM (/fenvix/prod/bootstrap/cloudflare-api-token) (permissions:
 // Zone · Zone · Read and Zone · DNS · Edit, on that zone only). The pipeline only ever touches the exact names it owns:
 // github.<zone> and console.<zone> (CNAMEs to AWS) and the two certificate validation CNAMEs. Every record "DNS only":
 // AWS serves its own certificates. It never deletes any other record.

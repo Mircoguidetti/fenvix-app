@@ -57,7 +57,7 @@ describe("the GitHub App's values (configured last)", () => {
     assert.equal(ssm.params.size, 0);
   });
 
-  it("all set as GitHub variables and secrets: the secrets go to SSM once (compared, never printed)", async () => {
+  it("secrets given as environment variables (a local run): they go to SSM once (compared, never printed)", async () => {
     const ssm = new MemorySsm();
     process.env.GITHUB_ACTIONS = "true";
     const [r, out] = await captured(() => syncGitHubApp(ssm, { ...vars, FENVIX_GITHUB_APP_PRIVATE_KEY: pem, FENVIX_GITHUB_APP_CLIENT_SECRET: secret }));
@@ -73,14 +73,14 @@ describe("the GitHub App's values (configured last)", () => {
     delete process.env.GITHUB_ACTIONS;
   });
 
-  it("secrets typed into SSM in the console instead: the variables are enough", async () => {
+  it("the workflow's way: secrets typed into SSM in the console, read back only to check their shape (masked first)", async () => {
     const ssm = new MemorySsm({ "/fenvix/prod/github-app/private-key": pem, "/fenvix/prod/github-app/client-secret": secret });
     const [r] = await captured(() => syncGitHubApp(ssm, vars));
     assert.equal(r.configured, true);
   });
 
   it("half configured stops the deploy, naming what is missing; a malformed secret is refused without echo", async () => {
-    await assert.rejects(captured(() => syncGitHubApp(new MemorySsm(), { FENVIX_GITHUB_APP_ID: "1" })), /half configured: missing the variable FENVIX_GITHUB_APP_SLUG, the variable FENVIX_GITHUB_APP_CLIENT_ID, the secret FENVIX_GITHUB_APP_PRIVATE_KEY/);
+    await assert.rejects(captured(() => syncGitHubApp(new MemorySsm(), { FENVIX_GITHUB_APP_ID: "1" })), /half configured: missing the SSM parameter \/fenvix\/prod\/bootstrap\/github-app-slug \(FENVIX_GITHUB_APP_SLUG\), the SSM parameter \/fenvix\/prod\/bootstrap\/github-app-client-id \(FENVIX_GITHUB_APP_CLIENT_ID\), the SSM parameter \/fenvix\/prod\/github-app\/private-key/);
     await assert.rejects(captured(() => syncGitHubApp(new MemorySsm(), { ...vars, FENVIX_GITHUB_APP_PRIVATE_KEY: "not-a-key-zzz" })), (e) => /not a PEM private key/.test(e.message) && !e.message.includes("zzz"));
   });
 });

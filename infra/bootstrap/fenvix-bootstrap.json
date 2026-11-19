@@ -1,6 +1,6 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "fenvix: what the deploy pipeline (.github/workflows/deploy.yml) needs in AWS, created once: GitHub's OIDC provider, the deploy role trusted only for the main branch and the production environment of one repository, the permissions boundary of every role the stacks create, and the CDK deploy resources (assets bucket, deploy, publishing and CloudFormation roles). No access key. docs/DEPLOY-AWS.md",
+  "Description": "fenvix: what the deploy pipeline (.github/workflows/deploy.yml) needs in AWS, created once: GitHub's OIDC provider, the deploy role trusted only for the branch main of one repository (no GitHub environment), the permissions boundary of every role the stacks create, and the CDK deploy resources (assets bucket, deploy, publishing and CloudFormation roles). No access key. docs/DEPLOY-AWS.md",
   "Parameters": {
     "GitHubOwner": {
       "Type": "String",
@@ -1213,6 +1213,20 @@
               ]
             },
             {
+              "Sid": "ReadFounderValues",
+              "Effect": "Allow",
+              "Action": "ssm:GetParameter",
+              "Resource": [
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/supabase-db-url",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/supabase-anon-key",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/supabase-ca-cert",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/cloudflare-api-token",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/github-app-id",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/github-app-slug",
+                "arn:aws:ssm:eu-west-1:865859654353:parameter/fenvix/prod/bootstrap/github-app-client-id"
+              ]
+            },
+            {
               "Sid": "ListParameterNames",
               "Effect": "Allow",
               "Action": "ssm:DescribeParameters",
@@ -1325,7 +1339,7 @@
       "Properties": {
         "RoleName": "fenvix-github-deployer",
         "Description": {
-          "Fn::Sub": "fenvix: the deploy pipeline of ${GitHubOwner}/${GitHubRepository} (GitHub Actions, OIDC): its production environment only (whose branch rule allows main only)"
+          "Fn::Sub": "fenvix: the deploy pipeline of ${GitHubOwner}/${GitHubRepository} (GitHub Actions, OIDC): jobs on its branch main only"
         },
         "MaxSessionDuration": 7200,
         "ManagedPolicyArns": [
@@ -1337,7 +1351,7 @@
           "Version": "2012-10-17",
           "Statement": [
             {
-              "Sid": "GitHubActionsProductionEnvironmentOnly",
+              "Sid": "GitHubActionsMainBranchOnly",
               "Effect": "Allow",
               "Principal": {
                 "Federated": {
@@ -1350,7 +1364,7 @@
                   "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
                   "token.actions.githubusercontent.com:sub": [
                     {
-                      "Fn::Sub": "repo:${GitHubOwner}/${GitHubRepository}:environment:production"
+                      "Fn::Sub": "repo:${GitHubOwner}/${GitHubRepository}:ref:refs/heads/main"
                     }
                   ]
                 }

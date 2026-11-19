@@ -1,4 +1,4 @@
-// The founder's Supabase connection string (the environment secret SUPABASE_DB_URL) and the connection strings of
+// The founder's Supabase connection string (SUPABASE_DB_URL: the SSM parameter /fenvix/prod/bootstrap/supabase-db-url) and the connection strings of
 // the two restricted roles built from it. Lambda and GitHub's runners reach the internet over IPv4 only, and the
 // database host db.<ref>.supabase.co answers on IPv6 only: every connection goes through the Supabase pooler.
 import { Stop } from "./log.mjs";
@@ -21,7 +21,7 @@ export const ROLES = [
  * tests) is accepted when `local` is true: plain role names, the same host and port, no TLS.
  */
 export function parseAdminUrl(raw, { local = false } = {}) {
-  if (!raw || !raw.trim()) throw new Stop("The environment secret SUPABASE_DB_URL is missing (GitHub → Settings → Environments → production → Environment secrets). docs/DEPLOY-AWS.md, section A step 1.");
+  if (!raw || !raw.trim()) throw new Stop("SUPABASE_DB_URL is missing: the SSM parameter /fenvix/prod/bootstrap/supabase-db-url (AWS console → Systems Manager → Parameter Store). docs/DEPLOY-AWS.md, section A step 2.");
   let u;
   try { u = new URL(raw.trim().replace(/^postgres:/, "postgresql:")); } catch { throw new Stop("SUPABASE_DB_URL is not a connection string (postgresql://...). Copy it from Supabase → Connect → Session pooler."); }
   if (u.protocol !== "postgresql:") throw new Stop("SUPABASE_DB_URL must start with postgresql://");
@@ -41,13 +41,13 @@ export function parseAdminUrl(raw, { local = false } = {}) {
 }
 
 /**
- * The optional environment variable SUPABASE_CA_CERT: Supabase's CA certificate (public; Project Settings → Database →
+ * The optional SUPABASE_CA_CERT (SSM /fenvix/prod/bootstrap/supabase-ca-cert): Supabase's CA certificate (public; Project Settings → Database →
  * SSL Configuration → Download certificate), PEM. Returns it, or null when unset; refuses anything else.
  */
 export function parseCaCert(raw) {
   const pem = (raw ?? "").trim();
   if (!pem) return null;
-  if (!/^-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----$/.test(pem)) throw new Stop("SUPABASE_CA_CERT is set but is not a PEM certificate (-----BEGIN CERTIFICATE----- ... -----END CERTIFICATE-----). Paste the whole downloaded file, or remove the variable.");
+  if (!/^-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----$/.test(pem)) throw new Stop("SUPABASE_CA_CERT is set but is not a PEM certificate (-----BEGIN CERTIFICATE----- ... -----END CERTIFICATE-----). Paste the whole downloaded file, or delete the parameter.");
   return pem;
 }
 

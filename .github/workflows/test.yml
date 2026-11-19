@@ -1,0 +1,68 @@
+# The tests (docs/DEPLOY-AWS.md, section B): every pull request, and every deploy before it deploys (deploy.yml calls
+# this workflow). It never gets an OpenID Connect token or any credential: no AWS role trusts a pull request, and this
+# file must never ask for `id-token: write` (infra/github-app/test/workflows.test.ts fails if it does).
+name: Tests
+
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # A newer push to the same pull request replaces the older run. Inside a deploy (workflow_call) nothing is cancelled.
+    concurrency:
+      group: tests-${{ github.event_name }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            github-app/package-lock.json
+            infra/github-app/package-lock.json
+            deploy/package-lock.json
+      - name: Install
+        run: |
+          npm ci --no-audit --no-fund
+          (cd github-app && npm ci --no-audit --no-fund)
+          (cd infra/github-app && npm ci --no-audit --no-fund)
+          (cd deploy && npm ci --no-audit --no-fund)
+      - name: Lint this workflow (actionlint)
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+      - name: The one-click AWS template matches the policy files
+        run: node infra/bootstrap/build.mjs --check
+      - name: Databases for the tests (scratch Postgres 16, local Supabase)
+        run: |
+          docker run -d --name scratch-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:54329:5432 postgres:16
+          for _ in $(seq 1 60); do psql postgresql://postgres@localhost:54329/postgres -Atc "select 1" >/dev/null 2>&1 && break; sleep 1; done
+          psql postgresql://postgres@localhost:54329/postgres -qc "create database gh_test" -qc "create database rls_scratch"
+          bash scripts/local-supabase/up.sh
+      - name: GitHub App and dashboard API (typecheck, unit, integration)
+        working-directory: github-app
+        run: npm test
+      - name: Row level security
+        run: TEST_DATABASE_URL=postgresql://postgres@localhost:54329/rls_scratch npm run test:rls
+      - name: Infrastructure (CDK synth, cdk-nag, policies)
+        working-directory: infra/github-app
+        run: npm test
+      - name: Deploy steps (migrations, secrets, DNS)
+        working-directory: deploy
+        run: npm test
+      - name: Dashboard (contract check, typecheck, build, unit)
+        run: |
+          npm run api:lint
+          npm run build
+          npm run test:unit
