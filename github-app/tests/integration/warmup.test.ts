@@ -114,7 +114,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     assert.equal((await report(cred, { warmupId: l.warmupId, event: "started" })).statusCode, 202);
     assert.equal((await one(l.commitSha)).status, "running");
     // Never a run: summaries, progress and results refuse a warm-up machine's credential.
-    for (const url of ["/v1/runner/summaries", "/v1/runner/progress", "/v1/runner/results"]) {
+    for (const url of ["/v1/runner/summaries", "/v1/runner/progress", "/v1/runner/results", "/v1/runner/explorations"]) {
       const res = await h.app.fastify.inject({ method: "POST", url, headers: { authorization: `Bearer ${cred}`, "content-type": "application/json" }, payload: { runId: 1, summary: SUMMARY, seq: 1, phase: "testing", testsDone: 0, passed: 0, failed: 0, skippedWithProof: 0, elapsedMs: 0, chunk: 0 } });
       assert.equal(res.statusCode, 403, url);
     }
@@ -438,6 +438,39 @@ describe("review R-018 follow-ups: only the default branch's head runs; a reset 
     await due();
     assert.equal((await h.app.service.warmups.tick()).dispatched, 1);
     assert.equal(fleet.warmups.at(-1)!.commitSha, x);
+  });
+  // Merge with review R-016b (G1): a covering push run that started on our machine and cancelled itself without a
+  // summary is billed by GitHub's data; its warm-up is re-armed (R-018 F2) and, once its machine ran, recorded never
+  // billable, by the App's clock, whatever its summary says.
+  it("merge R-016b: a covering run that cancels itself without results is billed (GitHub's data); its re-armed warm-up runs and is never billed", async () => {
+    await admin.query("update gh_warmups set status = 'cancelled', finished_at = now() where status in ('pending', 'dispatched', 'running')");
+    const c = sha("7");
+    await pushTo(c, 1_795_800_200);
+    h.gh.addRun("acme/shop", 9201, { event: "push", headSha: c, headBranch: "main", message: "main" });
+    await h.send("workflow_job", workflowJob("queued", { id: 9201, runId: 9201, sha: c, branch: "main" }));
+    assert.equal((await one(c))?.status, "covered");
+    await h.send("workflow_job", workflowJob("in_progress", { id: 9201, runId: 9201, sha: c, branch: "main", runner: "fenvix-j9201", startedAt: "2026-11-19T10:00:00Z" }));
+    await h.send("workflow_job", workflowJob("completed", { id: 9201, runId: 9201, sha: c, branch: "main", runner: "fenvix-j9201", conclusion: "cancelled", startedAt: "2026-11-19T10:00:00Z", completedAt: "2026-11-19T10:30:00Z" }));
+    await h.app.service.tryPublish(9201, true);
+    const job = (await admin.query("select billable, reason, held_minutes from ci_usage_events where github_job_id = 9201")).rows[0];
+    assert.deepEqual({ billable: job.billable, reason: job.reason, held: Number(job.held_minutes) }, { billable: true, reason: "cancelled_after_start", held: 30 });
+    assert.equal((await one(c))?.status, "pending", "no results: the warm-up is re-armed");
+    await due();
+    assert.equal((await h.app.service.warmups.tick()).dispatched, 1);
+    const l = fleet.warmups.at(-1)!;
+    assert.equal(l.commitSha, c);
+    await admin.query("update gh_warmups set dispatched_at = now() - interval '3 minutes' where id = $1", [l.warmupId]);
+    // Its credential cannot send an exploration (only warm-up reports), and its summary cannot make it billable.
+    const ex = await h.app.fastify.inject({ method: "POST", url: "/v1/runner/explorations", headers: { authorization: `Bearer ${l.summaryToken}`, "content-type": "application/json" }, payload: {} });
+    assert.equal(ex.statusCode, 403);
+    assert.equal((await report(l.summaryToken, { warmupId: l.warmupId, event: "finished", outcome: "failed", summary: { ...SUMMARY, test_seconds_run: 7200 } })).statusCode, 202);
+    fleet.done(l.warmupId);
+    const ev = (await admin.query("select billable, reason, held_minutes, test_minutes_ran from ci_usage_events where warmup_id = $1", [l.warmupId])).rows[0];
+    assert.equal(ev.billable, false);
+    assert.equal(ev.reason, "warm-up");
+    const held = Number(ev.held_minutes);
+    assert.ok(held >= 2.9 && held <= 3.5, `about three minutes held by the App's clock, got ${held}`);
+    assert.ok(Number(ev.test_minutes_ran) <= held);
   });
 });
 
