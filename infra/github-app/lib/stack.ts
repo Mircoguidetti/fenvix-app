@@ -310,7 +310,7 @@ export class FenvixGitHubAppStack extends Stack {
     // ---------------------------------------------------------------- HTTPS on the custom domain
     const certificate = new acm.Certificate(this, "Certificate", {
       domainName: s.domainName,
-      // DNS stays on Cloudflare: the deploy waits until the founder adds the CNAME that scripts/deploy.sh prints.
+      // DNS stays on Cloudflare: while CloudFormation waits, the deploy pipeline puts the validation CNAME there.
       validation: acm.CertificateValidation.fromDns(),
     });
     const domain = new apigw.DomainName(this, "Domain", { domainName: s.domainName, certificate, securityPolicy: apigw.SecurityPolicy.TLS_1_2 });
@@ -366,6 +366,8 @@ export class FenvixGitHubAppStack extends Stack {
     new CfnOutput(this, "SweepLogGroup", { value: `/aws/lambda/${name("sweep")}` });
     new CfnOutput(this, "RunnerMode", { value: s.runnerMode });
     new CfnOutput(this, "ImagePipelineArn", { value: fleet.pipeline.attrArn, description: "scripts/build-image.sh builds the runner image with it" });
+    new CfnOutput(this, "RunnerImageVersion", { value: fleet.imageVersion, description: "The runner image recipe's version; the deploy pipeline starts a build when no image of it exists" });
+    new CfnOutput(this, "GitHubApp", { value: s.githubConfigured ? `configured (App ${s.githubAppId}, ${s.githubAppSlug})` : "not configured: the App's routes answer 503 github_not_configured" });
     new CfnOutput(this, "LaunchTemplateId", { value: fleet.launchTemplate.ref });
     new CfnOutput(this, "ReaperLogGroup", { value: `/aws/lambda/${name("reaper")}` });
     if (warmup) new CfnOutput(this, "WarmupLogGroup", { value: `/aws/lambda/${name("warmup")}` });
@@ -375,7 +377,7 @@ export class FenvixGitHubAppStack extends Stack {
     }
     if (cache) {
       new CfnOutput(this, "CacheInstanceId", { value: cache.instance.instanceId });
-      new CfnOutput(this, "CacheAmiId", { value: (cache.instance.node.defaultChild as unknown as { imageId: string }).imageId, description: "Kept on later deploys by scripts/deploy.sh" });
+      new CfnOutput(this, "CacheAmiId", { value: (cache.instance.node.defaultChild as unknown as { imageId: string }).imageId, description: "Kept on later deploys by the deploy pipeline (FENVIX_CACHE_AMI_ID)" });
       new CfnOutput(this, "CacheUrl", { value: `http://${s.cachePrivateIp}:8787`, description: "Inside the VPC only; one organization per installation (gh-<installation id>), per-job tokens" });
     }
   }

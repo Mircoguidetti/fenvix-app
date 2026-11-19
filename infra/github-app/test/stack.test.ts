@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { appParameters } from "../lib/parameters.ts";
-import { resources, synth } from "./helpers.ts";
+import { DEMO, resources, synth } from "./helpers.ts";
 
 type Stmt = { Effect: string; Action: string | string[]; Resource: unknown; Sid?: string; Condition?: unknown };
 const arr = <T,>(x: T | T[]): T[] => (Array.isArray(x) ? x : [x]);
 const json = (x: unknown) => JSON.stringify(x);
 
-describe("the stack, demo mode (the default)", async () => {
-  const { template: t, s, nagErrors } = await synth();
+describe("the stack, demo mode (an option)", async () => {
+  const { template: t, s, nagErrors } = await synth(DEMO);
   const fns = resources(t, "AWS::Lambda::Function");
   const roles = Object.fromEntries(resources(t, "AWS::IAM::Role").map(([id, r]) => [id, r]));
   const policies = resources(t, "AWS::IAM::Policy");

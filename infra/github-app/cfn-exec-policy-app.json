@@ -50,7 +50,7 @@
         "s3:GetObject",
         "s3:GetObjectVersion"
       ],
-      "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-865859654353-eu-west-1/*"
+      "Resource": "arn:aws:s3:::cdk-fenvix-assets-865859654353-eu-west-1/*"
     },
     {
       "Sid": "IamRolesOfThisStack",

@@ -1,46 +1,39 @@
-# Deploying the GitHub App and the runners on AWS
+# Deploying fenvix on AWS
 
-This page is for the founder. It puts the fenvix GitHub App on `https://github.fenvix.dev` (Lambda, SQS, API Gateway,
-Supabase), always up. The runners come in three modes:
+This page is for the founder. **Deploying is: open a pull request, merge it on `main`. That is the whole deploy.**
+The GitHub Actions workflow `.github/workflows/deploy.yml` runs every test, then deploys the database, the secrets, the
+API, the runners, the dashboard and the DNS records. Nobody runs a command, a migration or a clone from a laptop.
 
-- **Demo mode (default, built):** `demo-up` starts one fresh c6i.large for a demo and registers it as a runner on
-  your demo repository (the only repository it accepts); `demo-down` terminates it, then deregisters it. Each demo
-  gets a new machine, so no data is shared between demos.
-- **Per-job mode (option, built):** each queued job gets its own EC2 machine, deleted after the job, with a shared
-  cache in which each customer installation is its own organization.
-- **Customer mode (design and spike, not built):** one c7i.xlarge host runs each customer job in its own Firecracker
-  microVM (Nitro Sandboxes) and destroys it after the job. See "Customer mode" below.
+Before the first deploy there are four one-time setups, all in a web browser (section A). The GitHub App comes last
+(section C): until it exists, everything else is deployed and works, and the App's routes answer "not configured".
 
-The steps are in order, with one action per step. **Nothing here has been deployed yet.** The code was synthesized
-and tested without an AWS account (see `docs/REPORT-aws-deploy.md`, and `docs/REPORT-aws-deploy-2.md` for the fixes
-of review R-012).
+Account `865859654353`, region `eu-west-1` (Ireland). The dashboard's certificate is the only thing in `us-east-1`
+(CloudFront takes certificates from there only).
 
-Account `865859654353`, region `eu-west-1` (Ireland). Both come from `infra/github-app/cdk.json`.
+**Nothing here has been deployed yet.** Everything was built and tested without the real AWS account, Supabase project
+or Cloudflare zone: `docs/REPORT-deploy-pipeline.md` says what was tested and what was not.
 
-## What gets created (demo mode)
+## What gets created
 
 ```
-GitHub ──HTTPS──▶ github.fenvix.dev  (API Gateway HTTP API, ACM certificate, DNS on Cloudflare)
-                    └▶ Lambda "http": checks the signature or the machine's summary credential, puts the work on SQS,
-                       answers 202 (routes /webhooks/github, /github/setup, /healthz and /v1/runner/*)
-dashboard ──HTTPS──▶ github.fenvix.dev/v1/*  (every other /v1 route)
+GitHub (push to main) ──▶ GitHub Actions "Deploy": tests, then OpenID Connect → AWS role fenvix-github-deployer
+                          (no AWS key stored anywhere), Supabase (migrations, role passwords), Cloudflare (DNS)
+
+browser ──HTTPS──▶ app.fenvix.dev   (CloudFront, certificate in us-east-1) ──▶ private S3 bucket: the dashboard build
+browser ──HTTPS──▶ github.fenvix.dev/v1/*  (API Gateway HTTP API, ACM certificate)
                     └▶ Lambda "api": the dashboard API (openapi/fenvix-api.yaml): checks the Supabase session, the
-                       membership and the role, reads and writes Postgres as fenvix_api (pooler, transaction mode);
-                       queues "open the setup pull request" on SQS
+                       membership and the role, reads and writes Postgres as fenvix_api (pooler, transaction mode)
+GitHub ──HTTPS──▶ github.fenvix.dev  (webhooks, /github/setup, /healthz, /v1/runner/*)
+                    └▶ Lambda "http": checks the signature or the machine's summary credential, puts the work on SQS,
+                       answers 202. Without the GitHub App: /healthz answers, everything else 503 github_not_configured
                  SQS "work" queue  (failed 5 times → "dead-letters" queue + alarm; payloads over 200 KB go via S3)
                     └▶ Lambda "worker": stores the event, opens the onboarding PR, publishes the check run, the PR
-                       comment, ci_runs, usage events
-                 EventBridge Scheduler: "sweep" every minute (jobs whose summary never came), "reaper" every
-                       10 minutes (a demo machine older than 12 hours is terminated; the runner of a demo machine
-                       that is gone is deregistered)
-                 Lambda "demo" (invoked only by scripts/demo-up.sh and demo-down.sh): holds the App key and the
-                       summary signing key; works only on demoRepository; registers a runner there and starts one
-                       machine with its own summary credential; terminates, then deregisters
-Runner image: EC2 Image Builder (Ubuntu 24.04 + strace, build tools, uv, Python, Rust, the engine wheel built by
-   runner/bootstrap.sh install, the GitHub runner, the hooks); built by hand with scripts/build-image.sh
-Demo machine (c6i.large, 30 GB gp3, from the image, no inbound port, an IAM role with no permission): registered
-   runner, labels self-hosted, fenvix; after each job ──▶ POST https://github.fenvix.dev/v1/runner/summaries with its
-   own credential; local engine cache on its own disk
+                       comment, ci_runs, usage events; starts one runner machine per queued fenvix job
+                 EventBridge Scheduler: "sweep" every minute, "warmup" every minute, "reaper" every 10 minutes
+Runner image: EC2 Image Builder (Ubuntu 24.04 + build tools, uv, Python, Rust, the engine, the GitHub runner, the
+   hooks); built by the pipeline when its recipe changes
+Job machines (c6i.large, one per job, deleted after it; no inbound port, an IAM role with no permission) and the
+   shared cache machine (t4g.nano, private address only, one cache organization per customer installation)
 Supabase (yours): the role fenvix_github_app writes gh_*, ci_projects, ci_runs, ci_usage_events; the role fenvix_api
    (the dashboard API) reads its organization's rows and changes settings, members and invitations; the browser
    reaches no table (row level security checks the API's membership and role again)
@@ -48,57 +41,165 @@ Supabase (yours): the role fenvix_github_app writes gh_*, ci_projects, ci_runs, 
 
 | Piece | Detail |
 |---|---|
-| Secrets | SSM Parameter Store, type SecureString, under `/fenvix/prod/github-app/` (and `/fenvix/prod/cache/` in per-job mode). You create them; the stack never sees their values. Each Lambda reads only its own, by exact name, and reloads them every 5 minutes. **No machine reads any of them**: the machines' IAM role has no permission, and the image build machine is denied every `/fenvix/*` parameter. |
-| Machine credentials | Each machine gets its own, in its user data (root only): a summary credential signed for its runner name and repository (per job: also its run), and per job a cache token for its customer's cache organization only. The App takes the runner's identity from the credential, never from the request. Stealing one lets an attacker publish only that one job's summary. |
-| Machines | Two users. `fenvix` runs the runner and the job. `fenvix-post` alone holds the machine's summary credential and sends the summary. Neither user can reach the instance metadata service (it serves the user data). `strace -f` works on a job's own children. Outbound traffic is HTTPS and HTTP only. There is no SSH. A machine can only be started through our launch template, of the configured type, from our own images, tagged with its role; the demo function and the reaper may terminate only machines with that tag. |
-| IAM | Every role of the stack carries the permissions boundary `fenvix-prod-github-app-boundary` (`permissions-boundary.json`), and CloudFormation may create or change a role only with it. |
-| Logs | CloudWatch log groups `/aws/lambda/fenvix-prod-github-app-{http,api,worker,sweep,reaper,demo}` (per-job mode: `warmup` instead of `demo`) and `/aws/apigateway/fenvix-prod-github-app-api`, kept **14 days**. |
-| Dashboard API | Lambda `api`, its own role: reads only `/fenvix/prod/github-app/api-database-url` and `state-signing-key`, may only send to the work queue. It never holds the App's private key, the webhook secret, the OAuth client secret or a runner token. See "The dashboard API" below. |
+| Deploy access | GitHub's OpenID Connect token is exchanged for a short-lived AWS session of the role `fenvix-github-deployer`, which trusts **only** `repo:Mircoguidetti/fenvix-app:ref:refs/heads/main` and `repo:Mircoguidetti/fenvix-app:environment:production`. There is no AWS access key anywhere. The role's policy is `infra/github-app/deploy-policy.json`: it can submit the stacks through CloudFormation (whose own role carries the policies `cfn-exec-policy-*.json`), write our SSM parameters, upload the dashboard and start the image build. It is not an administrator. It deploys the App's code, which reads the App's secrets, so treat it as able to read them. |
+| Secrets | SSM Parameter Store, type SecureString, under `/fenvix/prod/github-app/` and `/fenvix/prod/cache/`. The pipeline **generates** the webhook secret, the state signing key, the runner token, the cache signing key and both database passwords; it copies the GitHub App's private key and client secret from GitHub environment secrets. No value is ever printed, logged, written to a file or put in git. Each Lambda reads only its own, by exact name, and reloads them every 5 minutes. **No machine reads any of them.** |
+| Database passwords | Generated by the pipeline (256 bits). Supabase receives only the SCRAM verifier (`alter role ... password 'SCRAM-SHA-256$...'`), never the password. The whole connection string is stored in SSM only. |
+| IAM | Every role the stacks create carries the permissions boundary `fenvix-prod-github-app-boundary` (`permissions-boundary.json`), and CloudFormation may create or change a role only with it. The dashboard stack creates no role and no Lambda. |
+| Logs | CloudWatch log groups `/aws/lambda/fenvix-prod-github-app-{http,api,worker,sweep,reaper,warmup}` and `/aws/apigateway/fenvix-prod-github-app-api`, kept **14 days**. The deploy's own log is the workflow run on GitHub (Actions tab). |
+| Runner modes | **Per-job (default):** each queued fenvix job gets its own machine, deleted after the job. **Demo (an option, off):** one machine per demo, started and stopped by hand (section E). **Customer mode:** a design, not built (below). |
 
-## The steps
+## A. The one-time setup (browser only)
 
-You need a laptop with **Node.js 22.18 or newer**, **AWS CLI v2**, `git` and `openssl`. You also need an AWS admin
-login for steps 9 to 11 only.
+Four things, once. Do them in this order, then merge the pull request that brought this page.
 
-### A. Secrets and the test repository (your laptop and GitHub)
+### Step 1. AWS: create the stack `fenvix-bootstrap` (CloudFormation)
 
-**Step 1.** Generate four random values and store them in your password manager. Never put them in git, a chat or a
-ticket.
+It creates, in one go: GitHub's OpenID Connect provider, the deploy role `fenvix-github-deployer` (trusted only by this
+repository's `main` branch and `production` environment), the permissions boundary, the CloudFormation execution role
+with its four policies, and what CDK needs to deploy (an assets bucket, a deploy role, a publishing role, a version
+parameter). No access key, no user.
 
-```
-openssl rand -hex 32      # WEBHOOK_SECRET
-openssl rand -hex 32      # STATE_SIGNING_KEY
-openssl rand -hex 32      # RUNNER_TOKEN (signs each machine's own summary credential; never on a machine)
-openssl rand -base64 36   # DB_PASSWORD (the role fenvix_github_app)
-```
+1. Open <https://github.com/Mircoguidetti/fenvix-app/blob/main/infra/bootstrap/fenvix-bootstrap.json> (before the
+   merge: the same path on the branch `claude/deploy-pipeline`) and click **Download raw file** (the download icon
+   above the file, on the right).
+2. Sign in to the AWS console as an administrator of account 865859654353 and open
+   <https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/create>.
+3. **Prerequisite - Prepare template:** "Choose an existing template". **Specify template:** "Upload a template file"
+   → **Choose file** → the downloaded `fenvix-bootstrap.json` → **Next**.
+4. **Stack name:** `fenvix-bootstrap`. Leave the parameters as they are (`GitHubOwner` Mircoguidetti,
+   `GitHubRepository` fenvix-app, `CreateOidcProvider` true) → **Next**.
+5. **Configure stack options:** change nothing → **Next**.
+6. **Review:** at the bottom, tick **"I acknowledge that AWS CloudFormation might create IAM resources with custom
+   names."** → **Submit**.
+7. Wait for **CREATE_COMPLETE** (about 2 minutes; the page refreshes by itself).
 
-**Step 2.** Create a **private** test repository of your own, for example `Mircoguidetti/fenvix-demo`. It is the
-only repository a demo runner is ever registered on (setting `demoRepository`, step 15). Give it a small pytest
-project and this file, `.github/workflows/ci.yml`:
+If it fails with "Provider with url https://token.actions.githubusercontent.com already exists": the account has
+GitHub's provider already. Delete the failed stack (Delete button), then repeat with `CreateOidcProvider` **false**.
 
-```yaml
-name: CI
-on:
-  push: { branches: [main] }
-  pull_request:
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.13" }
-      - run: pip install -e . pytest
-      - run: python -m pytest -q
-```
+Why not a single link: CloudFormation's one-click ("quick create") links only load templates from an S3 bucket, and
+the account has none before this stack exists. Uploading the file is the same thing in two more clicks.
 
-**Step 3.** Create the GitHub App: **github.com → Settings → Developer settings → GitHub Apps → New GitHub App**. Use
-the organization's settings for a company-owned App. Enter these values:
+### Step 2. Cloudflare: an API token for the DNS records
+
+The pipeline creates and keeps four DNS records in the zone `fenvix.dev`: `github` and `app` (CNAMEs to AWS) and the
+two certificate validation CNAMEs. It touches no other record.
+
+1. <https://dash.cloudflare.com/profile/api-tokens> → **Create Token** → template **Edit zone DNS** → **Use template**.
+2. **Permissions:** the first row is already `Zone` · `DNS` · `Edit`. Click **+ Add more** and set `Zone` · `Zone` ·
+   `Read`.
+3. **Zone Resources:** `Include` · `Specific zone` · `fenvix.dev`.
+4. **Continue to summary** → **Create Token** → **Copy** the token (it is shown once). Keep the page open for step 3.
+
+(Without a token the pipeline still deploys, and lists the records to add by hand in the summary of each workflow run.
+The token is what makes it hands-off.)
+
+### Step 3. GitHub: the environment `production` with its secrets
+
+1. Open <https://github.com/Mircoguidetti/fenvix-app/settings/environments> → **New environment** → Name
+   `production` → **Configure environment**.
+2. **Deployment branches and tags:** choose **Selected branches and tags** → **Add deployment branch or tag rule** →
+   `main` → **Add rule**. (This is what keeps a branch other than `main` from ever using this environment and its
+   secrets.)
+3. **Required reviewers:** leave unticked. Deploys then start on merge without an extra click. To require an approval
+   before each deploy later, tick it and add yourself (the run then waits on "Review deployments").
+4. **Environment secrets → Add environment secret**, twice:
+
+   | Name | Value |
+   |---|---|
+   | `SUPABASE_DB_URL` | Supabase → your project → **Connect** (top bar) → **Session pooler** → copy the URI (`postgresql://postgres.<ref>:[YOUR-PASSWORD]@aws-0-eu-west-1.pooler.supabase.com:5432/postgres`) and replace `[YOUR-PASSWORD]` with the database password (Project Settings → Database → Database password; reset it there if you do not have it). Not the "Direct connection": it is IPv6 only, and GitHub's machines cannot reach it. |
+   | `CLOUDFLARE_API_TOKEN` | the token from step 2 |
+
+5. **Environment variables → Add environment variable**, once:
+
+   | Name | Value |
+   |---|---|
+   | `SUPABASE_ANON_KEY` | Supabase → Project Settings → **API Keys** → the `anon` `public` key (or the publishable key). It is public (every browser receives it); the dashboard uses it to sign people in. |
+
+Why these and nothing more: the database connection string is the only way into your Supabase project (the pipeline
+runs the migrations and sets the two roles' passwords with it); the Cloudflare token is the only way into your DNS;
+the anon key cannot be read from the database, and fetching it would need a Supabase management token, which can do
+far more than a public key. The branch rule is a security setting, not a value.
+
+### Step 4. Supabase: the dashboard's address for sign-in links
+
+Supabase sends people back to the dashboard after signing in (email links, providers) only to addresses it knows.
+
+1. Supabase → your project → **Authentication** → **URL Configuration**.
+2. **Site URL:** `https://app.fenvix.dev` → **Save**.
+3. **Redirect URLs → Add URL:** `https://app.fenvix.dev/**` → **Save URLs**.
+
+(If the dashboard already ran on `app.fenvix.dev` elsewhere, these are already set: check and move on.) The pipeline
+cannot set this itself without a Supabase management token, which would give it control of the whole Supabase account.
+
+### Then: merge
+
+Merge the pull request. The workflow **Deploy** starts (GitHub → **Actions**). The first run takes longer (about
+30 to 60 minutes: certificates, CloudFront). Its summary page lists what it did.
+
+If you merged before steps 1 to 4, the first run stops at "AWS credentials" or "Check the one-time setup". Do the steps,
+then **Actions → Deploy → Run workflow → Run workflow** (or merge the next pull request).
+
+## B. What one push to `main` does
+
+The job **Tests** runs on every pull request and every push; the job **Deploy to production** only on `main`, after
+the tests pass. In order:
+
+1. **Tests:** actionlint on the workflow; the one-click template matches the policy files; the GitHub App and the
+   dashboard API (typecheck, unit, integration against a local Supabase); the row level security tests; the
+   infrastructure (CDK synth, cdk-nag, policies); the deploy steps (migrations, secrets, DNS); the dashboard (contract
+   check, typecheck, build, unit tests). Any failure stops everything: nothing is deployed.
+2. **AWS credentials** by OpenID Connect (a session of at most 2 hours for `fenvix-github-deployer`). The account is
+   checked to be 865859654353.
+3. **Check the one-time setup:** the Supabase connection string's form (session pooler), the Supabase URL derived from
+   it, whether Cloudflare and the anon key are set (names only, never values).
+4. **Database migrations** (`deploy/lib/migrate.mjs`): `supabase/migrations/NNNN_*.sql`, each once, in order, each in
+   its own transaction with its record in `fenvix_deploy.schema_migrations` (version, file, SHA-256, when, how). A
+   failing migration is rolled back whole and stops the deploy. **The first run** finds what was applied by hand: your
+   project has 0001 to 0010 (the earlier product) and 0011 to 0017 (pasted in the SQL editor on 2026-11-19). It checks
+   the objects each of 0011 to 0017 creates, records 0001 to 0017 as already applied ("found") and runs none of them
+   again. A database where a later migration's objects exist but an earlier one's do not stops the deploy, changing
+   nothing. An applied migration whose file changes stops the deploy too: a change goes in a new migration file.
+5. **Database roles** (`deploy/lib/roles.mjs`): logs in as `fenvix_github_app` (pooler, session mode, port 5432) and
+   `fenvix_api` (pooler, transaction mode, port 6543) with the connection strings stored in SSM. The first time (none
+   stored), or if the database refuses the password: a new 256-bit password, its SCRAM verifier set on the role, the
+   connection string stored in SSM (`database-url`, `api-database-url`), the login checked. A network error never
+   changes a password.
+6. **Generated secrets** (`deploy/lib/secrets.mjs`): `webhook-secret`, `state-signing-key`, `runner-token` and the
+   cache signing key pair, created in SSM if missing, never overwritten, never printed.
+7. **GitHub App:** if its variables and secrets are set (section C), the private key and client secret are copied to
+   SSM (compared first; a new version only when they change) and the stack is built with the App; if none is set,
+   without it; half set stops the deploy, naming what is missing.
+8. **Dashboard certificate:** requested in us-east-1 for `app.fenvix.dev` (once), its validation record put in
+   Cloudflare, waited for (first run only).
+9. **CDK deploy** of both stacks: `fenvix-prod-github-app` (API Gateway, Lambdas, SQS, schedules, runner image
+   pipeline, launch template, cache machine) and `fenvix-prod-dashboard` (S3, CloudFront). On the first run
+   CloudFormation waits for the API's certificate while the pipeline puts its validation record in Cloudflare.
+10. **DNS:** `github.fenvix.dev` → API Gateway, `app.fenvix.dev` → CloudFront (CNAMEs, DNS only).
+11. **Dashboard:** built with `VITE_API_URL=https://github.fenvix.dev`, the Supabase URL and the anon key, uploaded
+    to the bucket (hashed files cached a year, `index.html` never), CloudFront's cache refreshed.
+12. **Runner image:** if no image of the current recipe exists, its build is started (30 to 45 minutes; the deploy
+    does not wait; jobs queued meanwhile wait for it).
+13. **Check:** `https://github.fenvix.dev/healthz` answers 200, `/v1/me` answers 401, `https://app.fenvix.dev/`
+    answers 200.
+
+Runs never overlap: a push during a deploy waits for it.
+
+## C. Connecting the GitHub App (last; browser only)
+
+Until this is done the API and the dashboard work; "Connect GitHub" in the dashboard says that GitHub is not connected
+yet, and `github.fenvix.dev`'s GitHub routes answer 503 `github_not_configured`.
+
+**C1.** Copy the webhook secret the pipeline generated: AWS console →
+<https://eu-west-1.console.aws.amazon.com/systems-manager/parameters/?region=eu-west-1> → `/fenvix/prod/github-app/webhook-secret`
+→ **Show decrypted value** (under "Value") → copy.
+
+**C2.** Create the App: **github.com → Settings → Developer settings → GitHub Apps → New GitHub App** (for a
+company-owned App, in the organization's settings):
 
 | Field | Value |
 |---|---|
 | GitHub App name | `fenvix` (if taken: `fenvix-ci`) |
-| Homepage URL | the dashboard's address, e.g. `https://app.fenvix.dev` |
+| Homepage URL | `https://app.fenvix.dev` |
 | Callback URL | `https://github.fenvix.dev/github/setup` |
 | Expire user authorization tokens | on |
 | Request user authorization (OAuth) during installation | **on** |
@@ -106,489 +207,116 @@ the organization's settings for a company-owned App. Enter these values:
 | Redirect on update | on |
 | Webhook: Active | on |
 | Webhook URL | `https://github.fenvix.dev/webhooks/github` |
-| Webhook secret | `WEBHOOK_SECRET` from step 1 |
+| Webhook secret | the value from C1 |
 | SSL verification | Enable |
 | Repository permissions | Actions: **Read-only** · **Administration: Read and write** · Checks: **Read and write** · Contents: **Read and write** · Metadata: Read-only · Pull requests: **Read and write** · **Workflows: Read and write** |
 | Organization / account permissions | none |
 | Subscribe to events | **Pull request**, **Push**, **Workflow job** |
 | Where can this GitHub App be installed? | Only on this account (for now) |
 
-Click **Create GitHub App**. `docs/GITHUB-APP.md` explains the other permissions.
+Click **Create GitHub App**. `docs/GITHUB-APP.md` explains the permissions. **Administration: Read and write** is the
+permission GitHub requires to register a just-in-time runner on a repository (`POST .../actions/runners/generate-jitconfig`);
+the App uses it for nothing else.
 
-**Administration: Read and write** is new. It is the permission GitHub requires for the self-hosted runner calls on a
-repository, and the App uses it for nothing else:
+**C3.** On the App's General page: **Generate a new client secret** (copy it once), then **Private keys → Generate a
+private key** (a `.pem` file downloads; open it with a text editor such as TextEdit or Notepad and copy all of it).
 
-- in demo mode: `POST .../actions/runners/registration-token` (demo-up) and `DELETE .../actions/runners/{id}`
-  (demo-down);
-- in per-job and customer mode: `POST .../actions/runners/generate-jitconfig` (a just-in-time runner for one job).
+**C4.** GitHub → this repository → Settings → Environments → `production`:
 
-The runner is registered **on the repository**, so it can only take that repository's jobs.
+| Kind | Name | Value |
+|---|---|---|
+| Environment variable | `FENVIX_GITHUB_APP_ID` | the **App ID** (General page) |
+| Environment variable | `FENVIX_GITHUB_APP_SLUG` | the App's URL name: the last part of `https://github.com/apps/<slug>` |
+| Environment variable | `FENVIX_GITHUB_APP_CLIENT_ID` | the **Client ID** (General page) |
+| Environment secret | `FENVIX_GITHUB_APP_CLIENT_SECRET` | the client secret from C3 |
+| Environment secret | `FENVIX_GITHUB_APP_PRIVATE_KEY` | the whole `.pem` content from C3, from `-----BEGIN` to `-----END ... KEY-----` |
 
-The organization-level alternative is the organization permission **Self-hosted runners: Read and write**, with
-`POST /orgs/{org}/actions/runners/generate-jitconfig`. It is narrower in what it grants, but it does not work for
-installations on personal accounts, and its runners could take jobs of any repository in the organization. It is not
-used.
+Then delete the `.pem` file from Downloads. (Instead of the two secrets you may type the values straight into SSM
+Parameter Store as SecureString `/fenvix/prod/github-app/client-secret` and `/fenvix/prod/github-app/private-key`.)
 
-Customers see the permission on the install page. Customers who installed the App before must approve the added
-permission.
+**C5.** **Actions → Deploy → Run workflow** (or merge the next pull request). The summary says "GitHub App:
+configured".
 
-GitHub's first "ping" will fail because nothing answers yet. You redeliver it in step 20.
+**C6.** GitHub → the App's settings → **Advanced → Recent Deliveries**: open the failed `ping`, click **Redeliver**.
+The response must be `200 {"ok":true,"pong":true}`.
 
-**Step 4.** On the App's General page, copy the **App ID** and the **Client ID**. The slug is the last part of
-`https://github.com/apps/<slug>`.
+**C7.** In the dashboard (`https://app.fenvix.dev`): **Projects → Connect GitHub**, install the App on a repository,
+come back, open the setup pull request. Each queued fenvix job then gets its own machine (EC2 → Instances shows
+`fenvix-j<job id>`, terminated after the job).
 
-**Step 5.** On the same page, click **Generate a new client secret** and copy it once (`CLIENT_SECRET`).
+## D. Optional settings (GitHub → Settings → Environments → production → Environment variables)
 
-**Step 6.** Click **Private keys → Generate a private key**. A `.pem` file downloads. Leave it where it is until
-step 13, then delete it.
-
-### B. Supabase (SQL editor of your project)
-
-**Step 7.** Run the migrations once, in order. 0011 and 0012 are already applied. Paste the whole file
-`supabase/migrations/0013_github_app.sql` and click Run, then the whole file `supabase/migrations/0014_dashboard_api.sql`
-and click Run. Each is safe to repeat (0013 only before 0014: after 0014, run 0014 alone again). 0013 creates the
-`gh_*` tables and `ci_usage_events`, the role `fenvix_github_app` (no password, no BYPASSRLS) and its row-level
-security policies. 0014 removes the earlier database product, takes every right on our tables away from the browser
-(`anon`, `authenticated`: the dashboard talks to the API only), and creates the dashboard API's role `fenvix_api`
-(login, no password yet, no BYPASSRLS) with its policies. Then the whole file `supabase/migrations/0015_review_r016.sql`
-(safe to repeat: the review R-016 fixes), then the whole file `supabase/migrations/0016_review_r016b.sql` (safe to repeat: the review R-016b limits on explorations and staged summaries), then the whole file `supabase/migrations/0017_warm_cache.sql` (safe to repeat): the warm-up runs' table `gh_warmups`, the repositories' cache state, warm-up usage events (never
-billable), with their row level security.
-
-**Step 8.** Give the role its password (`DB_PASSWORD` from step 1) **without typing it into the SQL editor**, which
-keeps every query in its history. On your laptop, turn it into a SCRAM verifier (computed locally; Postgres stores it
-as given and checks logins against it):
-
-```
-cd infra/github-app && read -rsp "DB_PASSWORD: " v; echo; printf '%s' "$v" | node scripts/scram-verifier.mjs; unset v
-```
-
-It prints one line, `SCRAM-SHA-256$4096:...`. It is not the password and cannot be turned back into it. In the SQL
-editor:
-
-```sql
-alter role fenvix_github_app with password 'SCRAM-SHA-256$4096:<the rest of the line>';
-```
-
-Then build the connection string from Supabase → **Connect** → **Session pooler**, with the user
-`fenvix_github_app.<project-ref>`:
-
-```
-postgresql://fenvix_github_app.<project-ref>:<DB_PASSWORD>@aws-0-<supabase-region>.pooler.supabase.com:5432/postgres
-```
-
-Use the pooler, not the direct host. The direct host `db.<ref>.supabase.co` answers on IPv6 only, and Lambda (outside
-a VPC) has IPv4 only. Session mode behaves like a direct connection. Each warm Lambda keeps at most 2 connections
-(`DB_POOL_MAX=2`).
-
-**Step 8b.** The dashboard API's role, the same way. Choose a second password `API_DB_PASSWORD`
-(`openssl rand -hex 24`), turn it into a verifier on your laptop (`printf '%s' "$v" | node scripts/scram-verifier.mjs`
-as above), and in the SQL editor:
-
-```sql
-alter role fenvix_api with password 'SCRAM-SHA-256$4096:<the rest of the line>';
-```
-
-Its connection string uses the pooler in **transaction mode** (Supabase → **Connect** → **Transaction pooler**,
-port **6543**), with the user `fenvix_api.<project-ref>`:
-
-```
-postgresql://fenvix_api.<project-ref>:<API_DB_PASSWORD>@aws-0-<supabase-region>.pooler.supabase.com:6543/postgres
-```
-
-Transaction mode suits Lambda: a connection is held only for one transaction, so many short API calls share few
-database connections. The API is written for it: one transaction per request, who it acts for set with
-`set_config(..., true)` (it ends with the transaction), no session state and no named prepared statement. Each warm
-API Lambda keeps one connection (`DB_POOL_MAX=1`).
-
-### C. AWS account (an admin, once)
-
-**Step 9.** Create the permissions boundary and the three policies that CloudFormation will use when it creates this
-stack. The scope of each:
-
-- **boundary** (`fenvix-prod-github-app-boundary`, exactly this name): the most any role of the stack may ever do.
-  Logs of its own functions, `ssm:GetParameter(s)` on `/fenvix/prod/{github-app,cache}/*` and Ubuntu's public image
-  parameters, the image build machine's agent, the work queue, the overflow objects, starting, tagging and
-  terminating runner machines, passing only the stack's roles to EC2, invoking only the stack's functions. **No IAM
-  action** but `iam:PassRole`;
-- **app:** Lambda, IAM roles named `fenvix-prod-github-app-*` (created or changed **only with the boundary**; the
-  boundary can never be removed or rewritten), SQS, S3, logs, Scheduler;
-- **edge:** ACM, API Gateway, the alarm;
-- **fleet:** EC2 (only the instance types allowed) and Image Builder.
-
-Run this from `infra/github-app/`:
-
-```
-aws iam create-policy --policy-name fenvix-prod-github-app-boundary  --policy-document file://permissions-boundary.json
-aws iam create-policy --policy-name fenvix-github-app-cfn-exec-app   --policy-document file://cfn-exec-policy-app.json
-aws iam create-policy --policy-name fenvix-github-app-cfn-exec-edge  --policy-document file://cfn-exec-policy-edge.json
-aws iam create-policy --policy-name fenvix-github-app-cfn-exec-fleet --policy-document file://cfn-exec-policy-fleet.json
-```
-
-**Step 10.** Bootstrap CDK in eu-west-1 with those three policies, using the CDK CLI version pinned in this
-repository's lock file (not whatever `npx` would download):
-
-```
-cd infra/github-app && npm ci                                                  # installs the pinned aws-cdk
-aws cloudformation describe-stacks --stack-name CDKToolkit --region eu-west-1   # "does not exist" is expected
-npx --no-install cdk bootstrap aws://865859654353/eu-west-1 --cloudformation-execution-policies \
-  arn:aws:iam::865859654353:policy/fenvix-github-app-cfn-exec-app,arn:aws:iam::865859654353:policy/fenvix-github-app-cfn-exec-edge,arn:aws:iam::865859654353:policy/fenvix-github-app-cfn-exec-fleet
-```
-
-If `CDKToolkit` already exists, other stacks may rely on its current policies. In that case, add these ARNs to the
-policies it already has; do not replace them.
-
-**Step 11.** Create the deploy identity with **exactly** `infra/github-app/deploy-policy.json`. That policy lets it:
-
-- assume the three CDK bootstrap roles and read the stack;
-- print the certificate record;
-- write the `/fenvix/prod/{github-app,cache}/*` parameters;
-- read this stack's logs;
-- start the image build;
-- invoke the demo function (demo-up, demo-down).
-
-It calls no IAM, Lambda or EC2 API itself. What it can do **through CloudFormation** is bounded by the execution
-policies of step 9: CloudFormation creates or changes a role only with the permissions boundary, so no template the
-deployer submits can give any role more than the boundary allows (no IAM change, no parameter outside
-`/fenvix/prod/{github-app,cache}/`, EC2 only for runner machines). The deployer is therefore not an administrator.
-It does deploy the App's code, which reads the App's secrets: treat this identity as able to read them.
-
-- **IAM Identity Center (recommended):** create a permission set `fenvix-github-app-deployer` with the content of
-  `deploy-policy.json` as its inline policy. Assign it to your user on account 865859654353. Then run
-  `aws configure sso --profile fenvix-deployer` on your laptop.
-- **Or an IAM user:** `aws iam create-user --user-name fenvix-github-app-deployer`, then
-  `aws iam put-user-policy --user-name fenvix-github-app-deployer --policy-name deploy --policy-document file://deploy-policy.json`,
-  then `aws iam create-access-key --user-name fenvix-github-app-deployer` and
-  `aws configure --profile fenvix-deployer`.
-
-From here on, everything runs as this identity: `export AWS_PROFILE=fenvix-deployer AWS_REGION=eu-west-1`.
-
-### D. The secrets in SSM (your laptop, as the deployer)
-
-**Step 12.** Create six parameters. Type each value at the prompt, so that it stays out of your shell history:
-
-```
-P=/fenvix/prod/github-app
-for n in webhook-secret client-secret state-signing-key runner-token database-url api-database-url; do
-  read -rsp "$n: " v; echo
-  aws ssm put-parameter --name "$P/$n" --type SecureString --value "$v" --overwrite >/dev/null && echo "$P/$n stored"
-done
-unset v
-```
-
-| Parameter | Value |
+| Variable | Effect |
 |---|---|
-| `/fenvix/prod/github-app/webhook-secret` | `WEBHOOK_SECRET` (step 1, the same value as on the App's page) |
-| `/fenvix/prod/github-app/client-secret` | `CLIENT_SECRET` (step 5) |
-| `/fenvix/prod/github-app/state-signing-key` | `STATE_SIGNING_KEY` (step 1) |
-| `/fenvix/prod/github-app/runner-token` | `RUNNER_TOKEN` (step 1): the key that signs each machine's own summary credential. Read by the http function (to check), the worker (per-job) and the demo function (to sign). No machine reads it. |
-| `/fenvix/prod/github-app/database-url` | the connection string from step 8 |
-| `/fenvix/prod/github-app/api-database-url` | the connection string from step 8b (`fenvix_api`, port 6543). Read by the api function only. |
+| `FENVIX_ALARM_EMAIL` | an email for the dead-letter alarm (confirm the subscription email AWS sends) |
+| `CLOUDFLARE_ZONE_ID` | the zone's id (Cloudflare → fenvix.dev → Overview, right column), if the token cannot read zones |
+| `FENVIX_RUNNER_MODE` / `FENVIX_DEMO_REPOSITORY` | `demo` and `owner/name`: demo mode (section E) instead of per-job. Needs the GitHub App. |
 
-**Step 13.** Store the private key from its file, then delete the file:
+Approval before each deploy: tick **Required reviewers** on the environment (section A, step 3.3). Untick to go back.
 
-```
-aws ssm put-parameter --name /fenvix/prod/github-app/private-key --type SecureString --value file://$HOME/Downloads/<app>.<date>.private-key.pem --overwrite
-rm $HOME/Downloads/<app>.<date>.private-key.pem
-```
+Other settings (instance types, limits, warm-ups, log retention) are in `infra/github-app/cdk.json` (`context`):
+change them in a pull request.
 
-**Step 14.** (Per-job mode only; **skip it in demo mode**, which has no shared cache.) Create the cache signing key:
+## E. Demo mode (an option, off)
 
-```
-cd infra/github-app && bash scripts/cache-key.sh
-```
-
-It creates an RSA key pair on your laptop, stores the private half as `/fenvix/prod/cache/signing-key` in SSM (only
-the worker reads it, to sign one cache token per job), shreds the local copy and never prints it. It prints one
-line, `"cacheSigningPublicKey": "<base64>",`: the public half, not secret, and the only key the cache machine holds
-(it can check tokens, never make one).
-
-### E. Deploy
-
-**Step 15.** Fill in the non-secret settings in `infra/github-app/cdk.json` (section `context`) and commit them:
-
-| Setting | Value |
-|---|---|
-| `githubAppId`, `githubAppSlug`, `githubClientId` | step 4 |
-| `dashboardUrl` | the dashboard's address (step 3's Homepage URL) |
-| `supabaseUrl` | `https://<project-ref>.supabase.co` |
-| `demoRepository` | the test repository of step 2, e.g. `Mircoguidetti/fenvix-demo`. **Required in demo mode**: the demo function registers a runner on this repository and refuses any other, so our runner can never be put on a customer's repository (it would receive that repository's jobs, their `GITHUB_TOKEN` and secrets) |
-| `alarmEmail` | optional: an email for the dead-letter alarm (confirm the subscription email AWS sends) |
-| `apiCorsOrigins` | optional: more browser origins the dashboard API accepts besides `dashboardUrl`'s (comma separated `https://` origins, e.g. a preview of the dashboard). Every other origin gets no CORS header, and its preflight a 403 |
-| `fenvixRegion` | `us` (default) or `eu`: the region (an organization's setting) this stack's runner machines serve |
-| `secondFenvixRegion`, `secondAwsRegion`, `secondLaunchTemplateId` (and `secondCacheUrl`) | optional, the first three together or none: the other region's runner fleet (this stack deployed again, in another AWS region) and, per-job, its shared cache's URL. The worker gets both fleets as `RUNNER_PLACEMENT` (the second cache URL as that placement's `machineEnv`). Each region's machines are reaped by the reaper of the stack deployed in that region (a reaper cleans its own AWS region only). The worker's IAM permissions to start machines cover this stack's region only; a fleet in a second AWS region needs that region's statements added before it can be used |
-
-The other settings keep their defaults:
-
-- `runnerMode` `demo`, `runnerInstanceType` `c6i.large`, `runnerVolumeGb` `30`. Not a T3 by default: a T3 gets no
-  launch credits, so a fresh one in "standard" mode would run at its 20% CPU baseline for its whole short life (a T3
-  type is allowed and then runs "unlimited", which costs more than a c6i.large at full speed);
-- `demoMaxHours` `12`: the reaper terminates a demo machine somebody forgot to take down;
-- `engineCliCommit` `a20b93d` (`claude/shared-cache`);
-- `domainName` `github.fenvix.dev`, `logRetentionDays` `14`, `summaryWaitSeconds` `600`.
-
-Per-job mode (section H) adds `cacheSigningPublicKey` (step 14).
-
-**Step 16.** Run the deploy command, which is the only one:
-
-```
-cd infra/github-app && npm run deploy
-```
-
-It checks your account and the parameters (names only), installs and tests everything, shows the change, asks `y/N`,
-and deploys. If CloudFormation reports that the policy `fenvix-prod-github-app-boundary` does not exist, step 9's
-first command was skipped. The first deploy stops at the certificate. That is when it
-prints **Cloudflare record 1 of 2**.
-
-**Step 17.** In Cloudflare (zone `fenvix.dev` → DNS → Add record), add record 1 exactly as printed: Type `CNAME`,
-Name `_<hash>.github`, Target `_<hash>.<...>.acm-validations.aws`, Proxy status **DNS only**. Keep it after the
-certificate is issued, because ACM renews through it. The deploy continues within minutes, and at the end prints
-**Cloudflare record 2 of 2**. You can print both again at any time with `bash scripts/dns-records.sh`.
-
-**Step 18.** In Cloudflare, add record 2: Type `CNAME`, Name `github`, Target
-`d-xxxxxxxxxx.execute-api.eu-west-1.amazonaws.com` (the `DnsTarget` output), Proxy status **DNS only**.
-
-**Step 19.** Check the host: `curl -s https://github.fenvix.dev/healthz` must answer `{"ok":true}`. Then the
-dashboard API: `curl -s https://github.fenvix.dev/v1/me` must answer **401** `{"error":{"code":"unauthenticated",...}}`,
-and a preflight from the dashboard's origin must answer **204** with `access-control-allow-origin`:
-
-```
-curl -si -X OPTIONS https://github.fenvix.dev/v1/me -H "Origin: <dashboardUrl>" -H "Access-Control-Request-Method: GET" | head -5
-```
-
-Set the dashboard's `VITE_API_URL` to `https://github.fenvix.dev` (the `DashboardApiUrl` output).
-
-**Step 20.** GitHub → the App's settings → **Advanced → Recent Deliveries**. Open the failed `ping` and click
-**Redeliver**. The response must be `200 {"ok":true,"pong":true}`.
-
-### F. The runner image
-
-**Step 21.** Build the runner image:
-
-```
-bash scripts/build-image.sh
-```
-
-It starts the Image Builder pipeline and prints the status every minute. It takes **30 to 45 minutes**, because the
-engine is built from source, and ends with `runner image ready: ami-...`. Demo and job machines always start from the newest
-image, so no deploy is needed after a build. Run it again after changing `engineCliCommit` or
-`lib/runner/files/`. After a few builds, delete the old images (EC2 → AMIs → Deregister, then their snapshots); each
-one is billed as snapshot storage.
-
-### G. A demo: one fresh machine, then gone
-
-**Step 22.** Install the App on the test repository: open `https://github.com/apps/<slug>/installations/new`, choose
-**Only select repositories** → `fenvix-demo` → **Install**. GitHub then sends you to
-`https://github.fenvix.dev/github/setup`, which sends you on to the dashboard with `github=error&reason=expired`. That
-is expected: the installation did not start from the dashboard, so it carries no signed organization.
-
-**Step 23.** (So that the runs show in the dashboard.) Link the installation to your organization in the Supabase SQL
-editor:
-
-```sql
-select installation_id, account_login from gh_installations where workspace_id is null;   -- the installation id
-select w.id as workspace_id, m.user_id, m.role from workspaces w join workspace_members m on m.workspace_id = w.id
-  join auth.users u on u.id = m.user_id where u.email = '<your email>';                    -- your organization, you (owner)
-select public.gh_link_installation(<installation_id>, '<workspace_id>', '<user_id>');
-```
-
-**Step 24.** See the onboarding PR: test repository → **Pull requests** → **"Run the tests on fenvix (runs-on:
-fenvix)"**, from branch `fenvix/runs-on`. Its diff is one line. If it is missing, read the worker's log:
-`aws logs tail /aws/lambda/fenvix-prod-github-app-worker --since 30m`.
-
-**Step 25.** Before the demo, start the demo machine:
-
-```
-cd infra/github-app && bash scripts/demo-up.sh
-```
-
-It reuses the runner image (or builds it once, 30 to 45 minutes). It asks the demo function to register a runner on
-`demoRepository` through the App and to start **one new c6i.large** from the image, with its own summary credential
-(this runner name, this repository), then waits until GitHub shows the
-runner online, usually 1 to 2 minutes. The runner is `fenvix-demo-<date><time>` (repository → **Settings → Actions →
-Runners**, labels `self-hosted`, `Linux`, `X64`, `fenvix`).
-
-**Step 26.** Merge the onboarding PR. The `test` job runs on the demo machine: its "Set up job" step says
-`Runner name: 'fenvix-demo-...'`. This workflow still runs plain `pytest`, so no `summary.json` is written. The
-**fenvix** check run is completed by the sweep about 10 minutes later, with "No fenvix summary".
-
-**Step 27.** Open a pull request that runs the tests through the engine. On a branch, replace the last two steps of
-the `test` job with:
-
-```yaml
-      - name: Project environment with the fenvix engine
-        run: |
-          set -eu
-          uv venv -q --python 3.13 "$RUNNER_TEMP/venv"
-          py="$RUNNER_TEMP/venv/bin/python"
-          uv pip install -q --python "$py" -e . pytest "$(ls "$FENVIX_WHEEL_DIR"/detpy-*.whl | head -1)"
-          echo "FENVIX_PY=$py" >> "$GITHUB_ENV"
-      - name: Tests in the fenvix engine
-        run: >
-          "$FENVIX_PY" "$FENVIX_HOME/bin/fenvix-run" --project . --python "$FENVIX_PY" --key "$GITHUB_REPOSITORY"
-          ${FENVIX_CACHE_URL:+--cache "$FENVIX_CACHE_URL"} --out "$RUNNER_TEMP/fenvix"
-```
-
-Remove the `actions/setup-python` step: the machine's `uv` provides Python 3.13. The machine sets `FENVIX_WHEEL_DIR`
-and `FENVIX_HOME`. In demo mode `FENVIX_CACHE_URL` is unset, so the cache is the machine's own disk. When the job
-ends:
-
-- PR → **Checks** → **fenvix** is completed, with tests run, reused with proof and failures;
-- PR → **Conversation** has one comment by `<slug>[bot]`.
-
-**Step 28.** Push a second commit that changes one test file. The same demo machine runs it with its local cache, and
-the comment updates in place: most tests are now **reused with proof**.
-
-**Step 29.** After the demo, take the machine down:
-
-```
-bash scripts/demo-down.sh
-```
-
-It terminates the machine (its disk is deleted with it), waits until it is gone, then deregisters the runner from the
-repository. In that order because GitHub refuses to delete a runner while it runs a job, and a registered runner whose
-machine is gone stays listed (offline) for days. If GitHub still marks it busy after a minute, demo-down says so and
-the reaper deregisters it within the hour. **Every demo gets a new machine and a new disk**, so no data from one
-demo, whether code, cache or logs, is on the next one. The App, the queue and the dashboard stay up. If you forget
-demo-down, the reaper terminates the machine after 12 hours and then deregisters its runner.
-
-### H. Option: one machine per job (`runnerMode` = `per-job`)
-
-Each queued fenvix job gets its own EC2 machine, which takes just that job and is then terminated. The shared cache
-lets proof cross machines. Set `runnerMode` to `per-job`, run step 14 (cache signing key), put its line in
-`cdk.json`, deploy, and build the image (step 21). Then:
-
-What separates customers in this mode: every job is its own VM; the machine's role may do nothing; its summary
-credential is good for its own job only; its cache token is good for its own customer's cache organization only
-(`gh-<installation id>`), read-only for pull requests, forks and branches other than the default. What they still
-share: the cache machine (one process, one SQLite file, separated by organization in every query) and the VPC (no
-inbound rule on any runner machine). Run it for your own repositories and design partners; customer mode (below) is
-the plan for customers at large.
-
-**Step H1.** Install the App on the test repository: open `https://github.com/apps/<slug>/installations/new`, choose
-**Only select repositories** → `fenvix-demo` → **Install**. GitHub then sends you to
-`https://github.fenvix.dev/github/setup`, which sends you on to the dashboard with `github=error&reason=expired`. That
-is expected: the installation did not start from the dashboard, so it carries no signed organization.
-
-**Step H2.** Link the installation to your organization. This is **required for job machines**: an installation
-without an organization never starts one. In the Supabase SQL editor, run:
-
-```sql
-select installation_id, account_login from gh_installations where workspace_id is null;   -- the installation id
-select w.id as workspace_id, m.user_id, m.role from workspaces w join workspace_members m on m.workspace_id = w.id
-  join auth.users u on u.id = m.user_id where u.email = '<your email>';                    -- your organization, you (owner)
-select public.gh_link_installation(<installation_id>, '<workspace_id>', '<user_id>');
-```
-
-**Step H3.** See the onboarding PR: test repository → **Pull requests** → **"Run the tests on fenvix (runs-on:
-fenvix)"**, from branch `fenvix/runs-on`. Its diff is one line. If it is missing, read the worker's log:
-`aws logs tail /aws/lambda/fenvix-prod-github-app-worker --since 30m`.
-
-**Step H4.** Merge it. The `test` job is queued with the label `fenvix`, and within seconds the worker logs
-`runner machine requested`. EC2 → Instances shows `fenvix-j<job id>`. About one minute later, the job's "Set up job"
-step says `Runner name: 'fenvix-j<job id>'`. When the job ends, the machine shuts down and disappears (state
-**terminated**).
-
-This workflow still runs plain `pytest`, so no `summary.json` is written. The **fenvix** check run is completed by
-the sweep about 10 minutes later, with "No fenvix summary".
-
-**Step H5.** Open a pull request that runs the tests through the engine and the shared cache. On a branch, replace
-the last two steps of the `test` job with:
-
-```yaml
-      - name: Project environment with the fenvix engine
-        run: |
-          set -eu
-          uv venv -q --python 3.13 "$RUNNER_TEMP/venv"
-          py="$RUNNER_TEMP/venv/bin/python"
-          uv pip install -q --python "$py" -e . pytest "$(ls "$FENVIX_WHEEL_DIR"/detpy-*.whl | head -1)"
-          echo "FENVIX_PY=$py" >> "$GITHUB_ENV"
-      - name: Tests in the fenvix engine
-        run: >
-          "$FENVIX_PY" "$FENVIX_HOME/bin/fenvix-run" --project . --python "$FENVIX_PY" --key "$GITHUB_REPOSITORY"
-          ${FENVIX_CACHE_URL:+--cache "$FENVIX_CACHE_URL"} --out "$RUNNER_TEMP/fenvix"
-```
-
-Remove the `actions/setup-python` step: the machine's `uv` provides Python 3.13. The machine sets `FENVIX_WHEEL_DIR`,
-`FENVIX_HOME`, `FENVIX_CACHE_URL` (ending in this installation's organization, `gh-<installation id>`) and the cache
-token file.
-
-A job machine runs the PR's job, with a **read-only** cache token for this installation. The cache is empty, so every test runs. When the
-job ends:
-
-- PR → **Checks** → **fenvix** is completed;
-- PR → **Conversation** has one comment by `<slug>[bot]`.
-
-**Step H6.** Merge that pull request. The job on `main` (a trusted ref) gets a **write** token for this installation
-and records every test into the shared cache.
-
-**Step H7.** Open another pull request that changes one test file. A **new** machine runs it, pulls from the shared
-cache, and the comment shows most tests as **reused with proof**. This shows that proof crosses machines. The
-dashboard (after step H2) shows the project, the runs and the usage month.
-
-**Warm-up runs (per-job mode).** So that a customer's first pull request is not a cold run, the App also runs the test
-job once on the default branch after the setup pull request is merged (or when an installation whose repositories are
-already on fenvix is linked), and after each push to the default branch: on our machines, in the organization's
-region, at the lowest priority, never billed, nothing shown on GitHub (`docs/data-contract.md`, "Warm-up runs"). The
-Lambda `warmup` (EventBridge Scheduler, every minute) gives warm-ups their machines; the worker requests them and, when
-a customer job finds the fleet full, takes a warm-up's machine. EC2 → Instances shows them as `fenvix-w<id>` (tags
-`fenvix:kind=warmup`, `fenvix:warmup=<id>`); the worker and the warm-up function may terminate only those. Settings in
-`cdk.json`: `warmupEnabled` (`true`), `warmupDailyCap` (6 per repository per 24 hours), `warmupOrgConcurrency` (1),
-`warmupReserve` (1 machine per region never used by warm-ups; below `runnerMaxRunning`), `warmupGraceSeconds` (180:
-after a push, the customer's own push run of that commit fills the cache and no warm-up starts). **Until the runner's
-warm-up executor (`runner/warmup.sh` in fenvix-engine-cli at `engineCliCommit`) exists, a warm-up machine reports
-"unsupported" and powers off within about two minutes of booting** (then that repository's next warm-up waits a day);
-set `warmupEnabled` to `false` to start none.
-In the dashboard, Projects and Connect show "Cache warm since <commit>" per repository.
+One fresh c6i.large per demo, registered as a runner on one repository of yours, terminated after the demo. Set the
+environment variables `FENVIX_RUNNER_MODE` = `demo` and `FENVIX_DEMO_REPOSITORY` = `owner/name` (a private repository
+of yours, with the App installed), run the workflow. Then, in the AWS console → Lambda →
+`fenvix-prod-github-app-demo` → **Test**: event JSON `{"action":"up"}` before the demo, `{"action":"status"}` to see the
+runner, `{"action":"down"}` after it. The reaper terminates a forgotten demo machine after 12 hours. Remove the two
+variables and run the workflow to go back to per-job.
 
 ## When something fails
 
 | What you see | Where to look | What to do |
 |---|---|---|
-| the deploy stops with `AccessDenied ... cdk-hnb659fds-...` | the deploy's output | step 10 was not run (bootstrap), or the deploy identity lacks `deploy-policy.json` |
-| the deploy stops with `... is not authorized to perform: <action>` | the stack's Events in the console | add that action to the matching `cfn-exec-policy-*.json`, update the policy (`aws iam create-policy-version --set-as-default`), deploy again |
-| the deploy waits on `Certificate` for over 30 minutes | `bash scripts/dns-records.sh` | record 1 is missing, mistyped, or proxied (orange cloud) in Cloudflare |
-| a GitHub delivery shows **503** `queue_unavailable` | `aws logs tail /aws/lambda/fenvix-prod-github-app-http` | SQS refused the message; redeliver it from the App's Recent Deliveries |
-| the dashboard says "could not reach the server"; the browser console shows a CORS error | `aws logs tail /aws/lambda/fenvix-prod-github-app-api` | the dashboard's origin is not `dashboardUrl`'s nor in `apiCorsOrigins`: set it, deploy |
-| every dashboard call answers **401** | the API log | the API checks tokens against `supabaseUrl`'s published keys (`/auth/v1/.well-known/jwks.json`) and issuer: `supabaseUrl` must be the dashboard's Supabase project |
-| every dashboard call answers **500** / **503** | the API log (`password authentication failed`, `timeout`) | `/fenvix/prod/github-app/api-database-url`: the `fenvix_api` password (step 8b), the user `fenvix_api.<project-ref>`, port 6543; wait 5 minutes after changing it |
-| a delivery shows **401** | the App's webhook secret vs `/fenvix/prod/github-app/webhook-secret` | make them equal (`aws ssm put-parameter --overwrite`), wait 5 minutes (every function reloads its secrets every 5 minutes; no deploy needed), then redeliver |
-| demo-up says `the App is not installed on ...` | demo log (`aws logs tail /aws/lambda/fenvix-prod-github-app-demo`) | step 22 on that repository |
-| demo-up says `... is not the demo repository` | `demoRepository` in `cdk.json` | the demo function works only on that repository; change the setting and deploy if you mean another repository of your own |
-| demo-up says `Resource not accessible by integration` | demo log | the App lacks **Administration: Read and write** (step 3), or the installation has not approved it yet |
-| demo-up waits, the runner never comes online | EC2 → the instance → Actions → Monitor → Get system log | the machine could not register (the token is valid one hour): `demo-down`, then `demo-up` again |
-| a fenvix job stays **Queued** during a demo | repository → Settings → Actions → Runners | the demo runner is offline or busy; jobs wait, they are neither failed nor billed |
-| per-job: a job stays **Queued**, the worker logs `the installation is not linked` / `no runner image yet` / `limit 4` | worker log | step H2 / step 21 / 4 machines busy (retried every 12 minutes for about an hour) |
-| no PR comment; the check says "No fenvix summary" | the job's log, line `fenvix: ...`; on the machine, `journalctl -u fenvix-summary-poster` (EC2 → Get system log) | the job did not call `fenvix-run`, so there is no `$RUNNER_TEMP/fenvix/summary.json` (step 26); or the summary was refused: 401 (the credential's key is not `runner-token` or `runner-token-previous` any more, or it expired), 403 (the body named another runner, repository or run) |
-| nothing is reused on a second machine | the job's log, line `shared cache ...` | `cacheSigningPublicKey` in `cdk.json` does not match `/fenvix/prod/cache/signing-key` (run step 14 again, update `cdk.json`, deploy: the cache machine is replaced and starts empty), or the run was untrusted (read-only) and nothing was recorded yet, or it is another installation (each has its own cache) |
-| the dead-letter alarm fires | `aws logs tail /aws/lambda/fenvix-prod-github-app-worker --since 1h` | fix the cause, then SQS console → `fenvix-prod-github-app-dead-letters` → **Start DLQ redrive** |
+| the run stops at **AWS credentials** (`Not authorized to perform sts:AssumeRoleWithWebIdentity`) | the step's log | step 1 not done (or not CREATE_COMPLETE); or the job did not run on `main` in the `production` environment |
+| **Check the one-time setup** says `SUPABASE_DB_URL ...` | the step's log (one sentence: what is wrong) | fix the environment secret (step 3); never the direct connection, always the Session pooler |
+| **Database migrations** stops: "changed after it was applied" | the step's log | an applied migration file was edited: revert it and put the change in a new file |
+| **Database migrations** stops: "looks half-applied" / "not a fenvix database" | the step's log | nothing was changed; the database differs from what the migrations describe: a person must look at it in the SQL editor |
+| **Database migrations** stops: "... failed and was rolled back" | the step's log (the Postgres error) | fix the migration in a pull request; nothing of it was applied |
+| **Database roles**: "logging in through the pooler still fails" | the step's log | run the workflow again (the pooler can take a moment to see a new password) |
+| **GitHub App**: "half configured" | the step's log (it names what is missing) | add the missing variables or secrets (section C4), or remove all of them |
+| **CDK deploy** stops: `... is not authorized to perform: <action>` | the step's log; CloudFormation → the stack → Events | add the action to the matching `infra/github-app/cfn-exec-policy-*.json` in a pull request; the policies are updated by updating the `fenvix-bootstrap` stack: CloudFormation → `fenvix-bootstrap` → **Update** → Replace current template → upload the new `fenvix-bootstrap.json` |
+| **CDK deploy** waits on `Certificate` for over 30 minutes | the run's summary (records to add) | without a Cloudflare token: add the listed CNAME in Cloudflare, DNS only. With one: the token lacks `Zone · DNS · Edit` on fenvix.dev |
+| the dashboard says "could not reach the server"; the browser console shows a CORS error | CloudWatch → Log groups → `/aws/lambda/fenvix-prod-github-app-api` | the dashboard's origin must be `https://app.fenvix.dev` (`dashboardUrl`) |
+| every dashboard call answers **401** | the API log | `SUPABASE_DB_URL` and `SUPABASE_ANON_KEY` must be of the same Supabase project |
+| every dashboard call answers **500** / **503** | the API log (`password authentication failed`, `timeout`) | run the workflow: the role check sets a new password when the stored one is refused |
+| a GitHub delivery shows **503** `github_not_configured` | | section C is not finished (C5) |
+| a GitHub delivery shows **401** | the App's webhook secret vs `/fenvix/prod/github-app/webhook-secret` | make them equal (C1, C2), then redeliver |
+| a fenvix job stays **Queued**; the worker logs `the installation is not linked` / `no runner image yet` / `limit 4` | `/aws/lambda/fenvix-prod-github-app-worker` | link the installation from the dashboard / wait for the image build (EC2 Image Builder → Images) / 4 machines busy (retried for about an hour) |
+| the dead-letter alarm fires | `/aws/lambda/fenvix-prod-github-app-worker` | fix the cause, then SQS → `fenvix-prod-github-app-dead-letters` → **Start DLQ redrive** |
 
-### Rotating a secret
+### Rotating a secret (AWS console → Systems Manager → Parameter Store)
 
-Every function reloads its secrets from SSM every **5 minutes** (`SECRETS_TTL_SECONDS`), so a rotation needs no
-deploy.
+Every function reloads its secrets every **5 minutes**, so a rotation needs no deploy unless said.
 
-- **runner-token** (the key of the machines' summary credentials): copy the current value to
-  `/fenvix/prod/github-app/runner-token-previous`, put a new value in `runner-token`, wait 5 minutes. Machines started
-  before keep working (their credentials are checked against the previous key too). After the longest machine
-  lifetime (per-job 6 hours, demo 12 hours) plus a day, delete `runner-token-previous`.
-- **webhook-secret**: change it in SSM and on the App's page at the same time; deliveries in the 5 minutes between
-  fail with 401 and can be redelivered.
-- **client-secret**, **state-signing-key**, **database-url**, **api-database-url**, **private-key**: change in SSM
-  (and at GitHub or Supabase), wait 5 minutes. An install link made with the old state key fails within those minutes
-  (the person asks for a new link).
-- **cache signing key**: `bash scripts/cache-key.sh`, put the new line in `cdk.json`, deploy. The cache machine is
-  replaced and the cache starts empty.
+- **A database password** (`database-url`, `api-database-url`): **Delete** the parameter, then run the workflow. It sets
+  a new password and stores the new connection string.
+- **runner-token**: copy its value to a new SecureString `/fenvix/prod/github-app/runner-token-previous`, then delete
+  `runner-token` and run the workflow (a new one is generated). Machines started before keep working. A day later,
+  delete `runner-token-previous`.
+- **webhook-secret**: delete it, run the workflow, copy the new value to the App's page (C1, C2). Deliveries in
+  between fail with 401 and can be redelivered.
+- **state-signing-key**: delete it and run the workflow. An install link made with the old key fails (ask for a new
+  link).
+- **The App's private key or client secret:** generate a new one on the App's page and replace the environment secret
+  (C4); run the workflow.
+- **Cache signing key:** delete `/fenvix/prod/cache/signing-public-key` and run the workflow: a new pair is made, the
+  cache machine is replaced and the shared cache starts empty.
+- **Supabase's database password** (the one in `SUPABASE_DB_URL`): reset it in Supabase, update the environment secret.
+- **Cloudflare token:** roll it in Cloudflare, update the environment secret.
 
-### To remove everything
+### To remove everything (AWS console)
 
-1. Demo mode: `bash scripts/demo-down.sh` first. Per-job mode: wait until no job machine runs (EC2 → Instances,
-   tag `fenvix:role`). A running machine uses the stack's subnet and security group, and the deletion fails on them.
-2. Empty the overflow bucket (CloudFormation does not delete a bucket that has objects):
-   `aws s3 rm --recursive "s3://$(aws cloudformation describe-stack-resources --stack-name fenvix-prod-github-app --query "StackResources[?ResourceType=='AWS::S3::Bucket'].PhysicalResourceId | [0]" --output text)"`
-   (an admin: the deploy identity has no S3 permission).
-3. `cd infra/github-app && npx --no-install cdk destroy fenvix-prod-github-app`.
-4. Deregister the runner images (EC2 → AMIs) and delete their snapshots. The SSM parameters, the permissions
-   boundary and the Cloudflare records stay; delete them by hand.
+1. Wait until no job machine runs (EC2 → Instances, tag `fenvix:role`).
+2. S3: **Empty** the overflow bucket (`fenvix-prod-github-app-overflow...`).
+3. CloudFormation: **Delete** `fenvix-prod-dashboard`, then `fenvix-prod-github-app`. The dashboard bucket
+   (`fenvix-prod-dashboard-865859654353`) is kept on purpose: empty it and delete it in S3.
+4. EC2 → AMIs: deregister the runner images, then delete their snapshots.
+5. CloudFormation: **Delete** `fenvix-bootstrap` last (it keeps its assets bucket `cdk-fenvix-assets-...`: empty and
+   delete it in S3). The SSM parameters and the ACM certificate in us-east-1 stay; delete them by hand. Remove the
+   four records in Cloudflare.
 
 ## The dashboard API
 
@@ -600,12 +328,12 @@ tagged `dashboard`); the server is `github-app/src/api/`, its Lambda entry `gith
 | Routes | API Gateway sends `ANY /v1/{proxy+}` to the api function, `ANY /v1/runner/{proxy+}` and everything else (`/webhooks/github`, `/github/setup`, `/healthz`) to the http function. The more specific route wins. |
 | Sign-in | `Authorization: Bearer <Supabase access token>`, checked against the project's published keys (JWKS; ES256, RS256 or EdDSA only; issuer `<supabaseUrl>/auth/v1`, audience `authenticated`). No token or a bad one: 401. |
 | Organization | `X-Fenvix-Workspace: <organization id>` on every organization operation. Not a member: 404, the same as an organization that does not exist. A member calling an owner-or-admin operation (`x-fenvix-role: admin` in the contract): 403. |
-| Database | role `fenvix_api` through the transaction pooler (step 8b). In every transaction the API names the user and the organization (`set_config('app.user_id', …, true)`, `set_config('app.workspace_id', …, true)`); row level security shows a row only to a member of its organization and lets only owners and admins change settings, members, invitations and project settings (a second barrier behind the API's own checks). |
+| Database | role `fenvix_api` through the transaction pooler (its password and connection string are set by the pipeline, section B step 5). In every transaction the API names the user and the organization (`set_config('app.user_id', …, true)`, `set_config('app.workspace_id', …, true)`); row level security shows a row only to a member of its organization and lets only owners and admins change settings, members, invitations and project settings (a second barrier behind the API's own checks). |
 | CORS | answered by the function (API Gateway has no CORS setting): only `dashboardUrl`'s origin and `apiCorsOrigins`; headers `authorization`, `content-type`, `x-fenvix-workspace`, `if-none-match`; `etag`, `content-disposition` and `retry-after` readable. |
 | Live run view | `GET /v1/runs/{id}` answers an `ETag` (from the run's `updated_at` and `progress_at`, and the project as shown) with `Cache-Control: private, no-cache`; the same `If-None-Match` answers 304 with no body. |
 | Setup pull request | `POST /v1/github/repositories/{id}/setup-pull-request` queues `{ kind: "onboard", repositoryId }` on the work queue; the worker opens the pull request. |
 
-Tests: `cd github-app && npm test` runs the API's unit tests and, with the local Supabase running
+Tests (the workflow's Tests job runs all of them; a developer can run them too): `cd github-app && npm test` runs the API's unit tests and, with the local Supabase running
 (`bash scripts/local-supabase/up.sh`, Docker), its integration tests (real Supabase Auth tokens; every dashboard
 operation; every 2xx answer validated against the contract). `TEST_DATABASE_URL=... npm run test:rls` (repository
 root) runs the row level security tests (`supabase/tests/`).
@@ -644,7 +372,7 @@ No AWS account was available, so none of this was measured.
 These estimates assume the machine runs at full speed, which is why the default is a c6i.large and not a T3 (a fresh
 T3 in "standard" mode has no credits and runs at 20% of a vCPU).
 
-**Demo mode.** The machine is started before the demo, and `demo-up` returns once the runner is online. A job then
+**Demo mode.** The machine is started before the demo, and the demo function's `up` returns once it is started; the runner is online a minute or two later. A job then
 starts within a few seconds of being queued, as on any self-hosted runner. The first test runs after the job's own
 setup (checkout, `uv venv`, install: 10 to 60 s depending on the project). Starting the demo machine takes about 1 to
 2 minutes, before the demo.
@@ -667,6 +395,13 @@ no job runs. To cut it later: keep one warm, stopped machine to start, or turn o
 per hour).
 
 ## Monthly cost
+
+**Added by the pipeline (ESTIMATE; prices not re-read in this session):** the dashboard on S3 + CloudFront (a few MB
+of files; CloudFront's always-free tier covers 1 TB and 10 million requests a month as last read, before this
+session), the CDK assets bucket (the functions' zips, a few MB per deploy), the ACM certificates (free) and GitHub
+Actions minutes (free for a public repository; on a private one they count against the plan's included minutes: a
+deploy run takes about 15 to 25 minutes of tests and 10 to 15 of deploy, ESTIMATE). Expected well under $1 a month
+at this size; not measured.
 
 All prices are for eu-west-1, on demand, in USD, read on **2026-11-18**. Each price is marked **DECLARED**: it is
 AWS's published price, read today, and not a measured bill.
@@ -701,7 +436,7 @@ tiers, the metering units, the billing granularity and the flat prices.
 | ACM certificate for API Gateway | no cost | aws.amazon.com/certificate-manager/pricing |
 | Data transfer out | 100 GB per month free | aws.amazon.com/ec2/pricing/on-demand |
 
-### Default: demo mode
+### Option: demo mode
 
 **Assumptions** (ESTIMATE, not measured): the runner image holds about 6 GB of data; 10 demos a month, each machine
 up for 2 hours; the serverless part runs as in per-job mode at 0 jobs.
@@ -719,7 +454,7 @@ Each extra demo hour costs about $0.10. Image builds add about $0.08 each (45 mi
 and disk). Between demos nothing runs, so the cost
 is the image snapshot and the serverless part.
 
-### Option: one machine per job
+### Default: one machine per job
 
 **Assumptions** (ESTIMATE, not measured):
 

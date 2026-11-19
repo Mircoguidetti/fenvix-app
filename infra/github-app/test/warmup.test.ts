@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { appPrefix, cacheParameters } from "../lib/parameters.ts";
 import { IMAGE_FILES } from "../lib/runner.ts";
-import { resources, settings, synth } from "./helpers.ts";
+import { resources, settings, synth, DEMO } from "./helpers.ts";
 
 type Stmt = { Effect: string; Action: string | string[]; Resource: unknown; Sid?: string; Condition?: Record<string, Record<string, unknown>> };
 const arr = <T,>(x: T | T[]): T[] => (Array.isArray(x) ? x : [x]);
@@ -61,7 +61,7 @@ describe("warm-up runs (per-job mode): the warm-up scheduler function, its sched
   });
 
   it("demo mode: no warm-up function, warm-ups off", async () => {
-    const demo = await synth({});
+    const demo = await synth(DEMO);
     const names = resources(demo.template, "AWS::Lambda::Function").map(([, f]) => f.Properties.FunctionName as string);
     assert.ok(!names.some((n) => n.endsWith("-warmup")));
     const worker = resources(demo.template, "AWS::Lambda::Function").find(([, f]) => (f.Properties.FunctionName as string).endsWith("-worker"))![1];

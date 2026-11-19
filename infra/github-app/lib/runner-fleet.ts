@@ -45,6 +45,8 @@ export class RunnerFleet extends Construct {
   readonly launchTemplate: ec2.CfnLaunchTemplate;
   readonly jobRole: iam.Role;
   readonly pipeline: imagebuilder.CfnImagePipeline;
+  /** The recipe's version: an image built from this recipe is current (the deploy pipeline builds one when missing). */
+  readonly imageVersion: string;
 
   constructor(scope: Construct, id: string, s: Settings, net: RunnerNetwork) {
     super(scope, id);
@@ -56,6 +58,7 @@ export class RunnerFleet extends Construct {
     const doc = componentDocument(s);
     if (doc.length > COMPONENT_LIMIT) throw new Error(`the image component is ${doc.length} characters (limit ${COMPONENT_LIMIT})`);
     const version = contentVersion(doc + s.runnerVolumeGb);
+    this.imageVersion = version;
     const component = new imagebuilder.CfnComponent(this, "Component", {
       name: name("runner"), platform: "Linux", version, data: doc,
       description: "fenvix runner: install.sh from infra/github-app/lib/runner/files",

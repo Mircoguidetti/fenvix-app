@@ -21,6 +21,13 @@ export const forbidden = (message: string) => new ApiError(403, "forbidden", mes
 export const conflict = (message: string, field?: string) => new ApiError(409, "conflict", message, field);
 export const validation = (message: string, field?: string) => new ApiError(400, "validation_failed", message, field);
 export const unavailable = (message: string) => new ApiError(503, "unavailable", message);
+/**
+ * The GitHub App is not configured on this deployment yet (GITHUB_APP_SLUG empty: docs/DEPLOY-AWS.md, "Connecting
+ * the GitHub App"). The operations that need the App answer this; everything else works.
+ */
+export const GITHUB_NOT_CONFIGURED = "GitHub is not connected to fenvix on this server yet: the fenvix GitHub App has not been configured. " +
+  "Everything else works; connecting repositories becomes available once the App is configured.";
+export const githubNotConfigured = () => new ApiError(503, "github_not_configured", GITHUB_NOT_CONFIGURED);
 
 /** One message for every organization the person cannot see, member or not: ids cannot be probed. */
 export const NO_ORGANIZATION = "That organization does not exist, or you are not a member of it.";

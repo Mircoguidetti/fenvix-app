@@ -24,6 +24,7 @@ while :; do
     runuser -u fenvix -- env HOME=/home/fenvix FENVIX_HOME=/home/fenvix/fenvix FENVIX_REPO_URL="$FENVIX_REPO_URL" \
       FENVIX_RUNNER_NAME="$FENVIX_RUNNER_NAME" bash /home/fenvix/engine-cli/runner/bootstrap.sh register
     rc=$?
+    # shellcheck disable=SC2016 # expanded by the inner sh, on purpose
     runuser -u fenvix -- sh -c 'shred -u "$1" 2>/dev/null || rm -f "$1"' _ "$TOKEN_FILE"
     if [ $rc -eq 0 ]; then log "registered as $FENVIX_RUNNER_NAME on $FENVIX_REPO_URL; token deleted"; exit 0; fi
     log "registration failed (exit $rc; an expired token?). demo: run scripts/demo-down.sh and demo-up.sh again."

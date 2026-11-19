@@ -1,0 +1,226 @@
+# Deploy on merge to main (docs/DEPLOY-AWS.md): every test, then the database, the secrets, the API and the runners
+# (CDK, infra/github-app), the dashboard (S3 + CloudFront) and the DNS records. Nobody runs anything by hand.
+# A pull request runs the tests only. AWS access: OpenID Connect, no stored AWS key.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push waits for the running one instead of cancelling it half way.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('test-{0}', github.ref) || 'deploy-production' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: "22"
+  AWS_REGION: eu-west-1
+  AWS_ACCOUNT: "865859654353"
+  DEPLOY_ROLE: arn:aws:iam::865859654353:role/fenvix-github-deployer
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            github-app/package-lock.json
+            infra/github-app/package-lock.json
+            deploy/package-lock.json
+      - name: Install
+        run: |
+          npm ci --no-audit --no-fund
+          (cd github-app && npm ci --no-audit --no-fund)
+          (cd infra/github-app && npm ci --no-audit --no-fund)
+          (cd deploy && npm ci --no-audit --no-fund)
+      - name: Lint this workflow (actionlint)
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+      - name: The one-click AWS template matches the policy files
+        run: node infra/bootstrap/build.mjs --check
+      - name: Databases for the tests (scratch Postgres 16, local Supabase)
+        run: |
+          docker run -d --name scratch-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:54329:5432 postgres:16
+          for _ in $(seq 1 60); do psql postgresql://postgres@localhost:54329/postgres -Atc "select 1" >/dev/null 2>&1 && break; sleep 1; done
+          psql postgresql://postgres@localhost:54329/postgres -qc "create database gh_test" -qc "create database rls_scratch"
+          bash scripts/local-supabase/up.sh
+      - name: GitHub App and dashboard API (typecheck, unit, integration)
+        working-directory: github-app
+        run: npm test
+      - name: Row level security
+        run: TEST_DATABASE_URL=postgresql://postgres@localhost:54329/rls_scratch npm run test:rls
+      - name: Infrastructure (CDK synth, cdk-nag, policies)
+        working-directory: infra/github-app
+        run: npm test
+      - name: Deploy steps (migrations, secrets, DNS)
+        working-directory: deploy
+        run: npm test
+      - name: Dashboard (contract check, typecheck, build, unit)
+        run: |
+          npm run api:lint
+          npm run build
+          npm run test:unit
+
+  deploy:
+    name: Deploy to production
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    # Approval before deploying is off by default; to turn it on: Settings → Environments → production → Required
+    # reviewers (docs/DEPLOY-AWS.md). Its secrets and variables are readable by jobs of this environment only.
+    environment:
+      name: production
+      url: https://app.fenvix.dev
+    permissions:
+      contents: read
+      id-token: write # OpenID Connect token for AWS: no AWS key is stored anywhere
+    env:
+      FENVIX_ENV: prod
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            github-app/package-lock.json
+            infra/github-app/package-lock.json
+            deploy/package-lock.json
+      - name: Install
+        run: |
+          npm ci --no-audit --no-fund
+          (cd github-app && npm ci --no-audit --no-fund)
+          (cd infra/github-app && npm ci --no-audit --no-fund)
+          (cd deploy && npm ci --no-audit --no-fund)
+
+      - name: AWS credentials (OpenID Connect; the role trusts this repository's main branch and production environment only)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+          mask-aws-account-id: false
+
+      - name: 1. Check the one-time setup
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          [ "$account" = "$AWS_ACCOUNT" ] || { echo "::error::signed in to AWS account $account, expected $AWS_ACCOUNT"; exit 1; }
+          node deploy/cli.mjs preflight
+
+      - name: 2. Database migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: node deploy/cli.mjs migrate
+
+      - name: 3. Database roles (passwords generated here, stored in SSM only)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: node deploy/cli.mjs db-roles
+
+      - name: 4. Generated secrets (SSM, never printed)
+        run: node deploy/cli.mjs secrets
+
+      - name: 5. GitHub App (configured last; deployed without it until then)
+        env:
+          FENVIX_GITHUB_APP_ID: ${{ vars.FENVIX_GITHUB_APP_ID }}
+          FENVIX_GITHUB_APP_SLUG: ${{ vars.FENVIX_GITHUB_APP_SLUG }}
+          FENVIX_GITHUB_APP_CLIENT_ID: ${{ vars.FENVIX_GITHUB_APP_CLIENT_ID }}
+          FENVIX_GITHUB_APP_PRIVATE_KEY: ${{ secrets.FENVIX_GITHUB_APP_PRIVATE_KEY }}
+          FENVIX_GITHUB_APP_CLIENT_SECRET: ${{ secrets.FENVIX_GITHUB_APP_CLIENT_SECRET }}
+        run: node deploy/cli.mjs github-app
+
+      - name: 6. Dashboard certificate (us-east-1, for CloudFront)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+        run: node deploy/cli.mjs dashboard-certificate --wait-minutes 30
+
+      - name: 7. Keep the cache machine's image (a deploy never replaces it because Ubuntu published a newer one)
+        run: |
+          id="$(aws cloudformation describe-stacks --stack-name "fenvix-$FENVIX_ENV-github-app" \
+                --query "Stacks[0].Outputs[?OutputKey=='CacheAmiId'].OutputValue | [0]" --output text 2>/dev/null || true)"
+          if [ -z "$id" ] || [ "$id" = "None" ]; then
+            id="$(aws ssm get-parameter --name /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id --query Parameter.Value --output text)"
+          fi
+          echo "cache machine image: $id"
+          echo "FENVIX_CACHE_AMI_ID=$id" >> "$GITHUB_ENV"
+
+      - name: 8. API, runners and dashboard hosting (CDK)
+        working-directory: infra/github-app
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          FENVIX_ALARM_EMAIL: ${{ vars.FENVIX_ALARM_EMAIL }}
+          # Optional, off by default: demo mode (one machine per demo, docs/DEPLOY-AWS.md) instead of per-job.
+          FENVIX_RUNNER_MODE: ${{ vars.FENVIX_RUNNER_MODE }}
+          FENVIX_DEMO_REPOSITORY: ${{ vars.FENVIX_DEMO_REPOSITORY }}
+        run: |
+          # While CloudFormation waits for the API's certificate (first deploy), its validation record is put in
+          # Cloudflare (or listed in the run's summary).
+          node ../../deploy/cli.mjs watch-certificate --timeout-minutes 90 &
+          watcher=$!
+          rc=0
+          npx --no-install cdk deploy --all --require-approval never --progress events --outputs-file cdk-outputs.json \
+            -c "githubAppId=$FENVIX_CDK_GITHUB_APP_ID" -c "githubAppSlug=$FENVIX_CDK_GITHUB_APP_SLUG" \
+            -c "githubClientId=$FENVIX_CDK_GITHUB_CLIENT_ID" || rc=$?
+          kill "$watcher" 2>/dev/null || true
+          exit "$rc"
+
+      - name: 9. DNS records (Cloudflare)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+        run: node deploy/cli.mjs dns --outputs infra/github-app/cdk-outputs.json
+
+      - name: 10. Dashboard (build, upload, refresh the cache)
+        env:
+          VITE_API_URL: https://github.fenvix.dev
+          VITE_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+        run: |
+          export VITE_SUPABASE_URL="$SUPABASE_URL"
+          npm run build
+          out=infra/github-app/cdk-outputs.json
+          bucket="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-dashboard'].DashboardBucket")"
+          dist="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-dashboard'].DistributionId")"
+          # Hashed files are kept for a year; old ones stay, so a page loaded before this deploy keeps working.
+          aws s3 sync dist/assets "s3://$bucket/assets" --cache-control "public,max-age=31536000,immutable" --only-show-errors
+          aws s3 sync dist "s3://$bucket" --exclude "assets/*" --delete --cache-control "no-cache" --only-show-errors
+          aws cloudfront create-invalidation --distribution-id "$dist" --paths "/*" --query Invalidation.Id --output text
+
+      - name: 11. Runner image (built when its recipe changed; does not wait)
+        run: |
+          out=infra/github-app/cdk-outputs.json
+          arn="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-github-app'].ImagePipelineArn")"
+          ver="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-github-app'].RunnerImageVersion")"
+          states="$(aws imagebuilder list-image-pipeline-images --image-pipeline-arn "$arn" \
+                    --query "imageSummaryList[?starts_with(version, '$ver/')].state.status" --output text)"
+          if printf '%s' "$states" | grep -Eq 'AVAILABLE|PENDING|CREATING|BUILDING|TESTING|DISTRIBUTING|INTEGRATING'; then
+            echo "runner image $ver: $states"
+          else
+            aws imagebuilder start-image-pipeline-execution --image-pipeline-arn "$arn" --query imageBuildVersionArn --output text
+            echo "runner image $ver: build started (30-45 minutes; jobs wait for it)" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 12. Check the deployed hosts
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node deploy/cli.mjs smoke --minutes 10

@@ -122,11 +122,11 @@ class FakeDb {
   async close() {}
 }
 
-async function harness() {
+async function harness(env: Record<string, string> = ENV) {
   const { privateKey, publicKey } = await generateKeyPair("ES256");
   const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(publicKey)), kid: "k1", alg: "ES256" }] });
   const db = new FakeDb();
-  const cfg = loadApiConfig(ENV);
+  const cfg = loadApiConfig(env);
   const api = buildApi({ cfg, db: db as unknown as ApiDb, sessions: new SessionVerifier(cfg.supabaseUrl, "", jwks), queue: { enqueue: async () => {} }, logger: false });
   const sign = (o: { key?: CryptoKey; alg?: string; iss?: string; aud?: string; sub?: string; exp?: string } = {}) =>
     new SignJWT({}).setProtectedHeader({ alg: o.alg ?? "ES256", kid: "k1" }).setIssuer(o.iss ?? `${cfg.supabaseUrl}/auth/v1`).setAudience(o.aud ?? "authenticated")
@@ -244,5 +244,39 @@ describe("settings and the Lambda entry", () => {
     t = 5000;
     await get();
     assert.equal(made, 3);
+  });
+});
+
+describe("the GitHub App not configured yet (GITHUB_APP_SLUG empty: docs/DEPLOY-AWS.md)", async () => {
+  const { api, db, sign } = await harness({ ...ENV, GITHUB_APP_SLUG: "" });
+  const admin = [{ role: "owner", id: WS, name: "Acme", name_confirmed: true, region: "us", email_notices: true }];
+
+  it("the settings accept an empty slug and say so; a wrong one is still refused", () => {
+    assert.equal(loadApiConfig({ ...ENV, GITHUB_APP_SLUG: "" }).githubConfigured, false);
+    assert.equal(loadApiConfig(ENV).githubConfigured, true);
+    assert.throws(() => loadApiConfig({ ...ENV, GITHUB_APP_SLUG: "Not A Slug" }), /GITHUB_APP_SLUG/);
+  });
+
+  it("the operations that need the App answer 503 github_not_configured, before anything is queued or linked", async () => {
+    const token = `Bearer ${await sign()}`;
+    db.rows = { "from public.workspace_members m join public.workspaces w": admin, "from public.gh_repositories r": [{ repository_id: 5 }] };
+    for (const [url, body, ws] of [
+      ["/v1/github/install-link", undefined, true],
+      ["/v1/github/repositories/5/setup-pull-request", undefined, true],
+      ["/v1/github/installations/complete", { completion: "abc" }, false],
+    ] as const) {
+      const r = await api.fastify.inject({ method: "POST", url, payload: body, headers: { authorization: token, ...(ws ? { "x-fenvix-workspace": WS } : {}) } });
+      assert.equal(r.statusCode, 503, url);
+      assert.equal(r.json().error.code, "github_not_configured", url);
+      assert.match(r.json().error.message, /not been configured/);
+    }
+  });
+
+  it("everything else works: the organization's GitHub page lists no installation", async () => {
+    const token = `Bearer ${await sign()}`;
+    db.rows = { "from public.workspace_members m join public.workspaces w": admin };
+    const r = await api.fastify.inject({ method: "GET", url: "/v1/github", headers: { authorization: token, "x-fenvix-workspace": WS } });
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual(r.json().installations, []);
   });
 });

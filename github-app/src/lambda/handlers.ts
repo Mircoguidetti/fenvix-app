@@ -14,7 +14,7 @@ type WorkerCore = Pick<Core, "service"> & { log: Logger; blobs: BlobPort | null 
  * HTTP: API Gateway → Fastify. Every route answers before the function returns; webhooks and runner summaries are
  * checked, queued, and answered 202 (nothing runs after the response).
  */
-export function makeHttpHandler(getApp: () => Promise<App>) {
+export function makeHttpHandler(getApp: () => Promise<Pick<App, "fastify">>) {
   return async (event: HttpApiEvent): Promise<HttpApiResult> => {
     const app = await getApp();
     return invoke(app.fastify, event);
@@ -67,3 +67,20 @@ export function makeWarmupHandler(getCore: () => Promise<WorkerCore>) {
     return service.warmups.tick();
   };
 }
+
+/**
+ * While the GitHub App is not configured (GITHUB_APP_ID empty): nothing reaches the queue in the normal course (the
+ * HTTP function and the dashboard API refuse every GitHub operation), so a message here is kept, not lost: it is
+ * reported failed and comes back, and after 5 tries it waits in the dead-letter queue, where it can be redriven once
+ * the App is configured. No database, no secret.
+ */
+export function makeNotConfiguredWorkerHandler(log: Logger) {
+  return async (event: SqsEvent): Promise<SqsBatchResponse> => {
+    if (event.Records.length) log.warn({ messages: event.Records.length }, "work not run: the GitHub App is not configured");
+    return { batchItemFailures: event.Records.map((r) => ({ itemIdentifier: r.messageId })) };
+  };
+}
+
+/** The sweep and the warm-up scheduler while the GitHub App is not configured: nothing to do, nothing read. */
+export const notConfiguredSweep = async (): Promise<{ due: number; github: "not_configured" }> => ({ due: 0, github: "not_configured" });
+export const notConfiguredWarmup = async () => ({ dispatched: 0, covered: 0, terminated: 0, expired: 0, waiting: 0, github: "not_configured" as const });

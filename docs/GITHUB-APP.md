@@ -143,7 +143,7 @@ alter role fenvix_github_app with password '<the password>';
 Build `GITHUB_APP_DATABASE_URL` from Supabase → Project Settings → Database → Connection string (pooler in
 *transaction* mode, or direct), with the user `fenvix_github_app` (for the pooler: `fenvix_github_app.<project-ref>`)
 and that password. It is a **secret**. On AWS Lambda use the **session** pooler (port 5432): Lambda has no IPv6 for
-the direct host; see `DEPLOY-AWS.md`, step 8.
+the direct host; see `DEPLOY-AWS.md`, section B step 5 (the pipeline builds it).
 
 ### 7. Two more secrets
 

@@ -869,7 +869,7 @@ export interface components {
     schemas: {
         Error: {
             error: {
-                /** @description unauthenticated, forbidden, not_found, validation_failed, conflict, rate_limited, unavailable, internal */
+                /** @description unauthenticated, forbidden, not_found, validation_failed, conflict, rate_limited, unavailable, github_not_configured (503: the GitHub App is not configured on this server yet; install link, completing an installation and setup pull requests answer it), internal */
                 code: string;
                 message: string;
                 field?: string;
