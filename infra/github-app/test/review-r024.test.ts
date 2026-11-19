@@ -35,26 +35,31 @@ describe("review R-024", () => {
     assert.deepEqual(bad, []);
   });
 
-  // F2, as REPORT-deploy-pipeline-4 replaced it. The original assertion was "the trust is exactly
-  // ...:environment:production, and every job with id-token: write names environment production". The founder chose
-  // GitHub Free for a private repository, where environment secrets and deployment branch rules do not exist, so the
-  // environment can no longer be what limits the role. The equivalent for the new design: the trust is exactly
-  // ...:ref:refs/heads/main (one sub, no wildcard, no environment), and every job with id-token: write is one that runs
-  // only on refs/heads/main (its `if`), in no environment. R-024's concern (a job without an environment on main getting
-  // the role through workflow_run / issue_comment / schedule / another workflow) is held off by test/workflows.test.ts
-  // (no other workflow may ask for id-token: write; deploy.yml's triggers are push to main and workflow_dispatch only).
-  it("F2: the deploy role trusts the main branch only (the one sub the deploy job presents)", () => {
+  // F2, as REPORT-deploy-pipeline-4 replaced it and REPORT-deploy-pipeline-5 narrowed it again. The original assertion
+  // was "the trust is exactly ...:environment:production, and every job with id-token: write names environment
+  // production". The founder chose GitHub Free for a private repository, where environment secrets and deployment
+  // branch rules do not exist, so the environment can no longer be what limits the role. The equivalent for this design:
+  // the trust is exactly the main branch's sub (GitHub's immutable format: review R-024c K1), this repository's id, and
+  // job_workflow_ref = deploy.yml on main (review R-024c K5): AWS itself gives the role to jobs of deploy.yml on main
+  // only, which restores "only the deploy workflow" at the AWS side. In the repository, the one job of deploy.yml with
+  // id-token: write runs only on refs/heads/main, in no environment, and is found by parsing the YAML (review R-024c
+  // K2a: a regex job split missed a quoted job name). test/workflows.test.ts covers the other workflows.
+  it("F2: the deploy role trusts the main branch of deploy.yml only (the one sub the deploy job presents)", async () => {
     const tpl = JSON.parse(readFileSync(new URL("../../bootstrap/fenvix-bootstrap.json", import.meta.url), "utf8"));
-    const cond = tpl.Resources.DeployerRole.Properties.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals;
-    const subs = arr(cond["token.actions.githubusercontent.com:sub"]).map((x: { "Fn::Sub": string }) => x["Fn::Sub"]);
-    assert.deepEqual(subs, ["repo:${GitHubOwner}/${GitHubRepository}:ref:refs/heads/main"]);
-    const workflow = readFileSync(new URL("../../../.github/workflows/deploy.yml", import.meta.url), "utf8");
-    const jobs = workflow.split(/\n  (?=[a-z-]+:\n)/).slice(1);
-    const withToken = jobs.filter((x) => /id-token:\s*write/.test(x));
-    assert.equal(withToken.length, 1);
-    for (const j of withToken) {
-      assert.match(j, /\n    if: github\.ref == 'refs\/heads\/main'\n/);
-      assert.doesNotMatch(j, /\n    environment:/);
+    const cond = tpl.Resources.DeployerRole.Properties.AssumeRolePolicyDocument.Statement[0].Condition;
+    assert.deepEqual(Object.keys(cond), ["StringEquals"]);
+    const sub = (k: string) => arr(cond.StringEquals[`token.actions.githubusercontent.com:${k}`]).map((x: { "Fn::Sub": string }) => x["Fn::Sub"]);
+    assert.deepEqual(sub("sub"), ["repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepository}@${GitHubRepositoryId}:ref:refs/heads/main"]);
+    assert.deepEqual(sub("repository_id"), ["${GitHubRepositoryId}"]);
+    assert.deepEqual(sub("job_workflow_ref"), ["${GitHubOwner}/${GitHubRepository}/.github/workflows/deploy.yml@refs/heads/main"]);
+    const { parse } = await import("yaml");
+    const workflow = parse(readFileSync(new URL("../../../.github/workflows/deploy.yml", import.meta.url), "utf8"), { uniqueKeys: true, strict: true, merge: false });
+    const jobs = Object.entries(workflow.jobs as Record<string, { if?: string; environment?: unknown; permissions?: unknown }>);
+    const withToken = jobs.filter(([, j]) => typeof j.permissions === "string" ? j.permissions !== "read-all" : JSON.stringify(j.permissions ?? {}).includes("id-token"));
+    assert.deepEqual(withToken.map(([n]) => n), ["deploy"]);
+    for (const [, j] of withToken) {
+      assert.equal(j.if, "github.ref == 'refs/heads/main'");
+      assert.equal(j.environment, undefined);
     }
   });
 });

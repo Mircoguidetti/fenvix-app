@@ -1,9 +1,10 @@
 # Deploy on merge to main (docs/DEPLOY-AWS.md): every test (test.yml), then the database, the secrets, the API and the
 # runners (CDK, infra/github-app), the dashboard (S3 + CloudFront) and the DNS records. Nobody runs anything by hand.
 #
-# AWS access: OpenID Connect, no stored AWS key. The AWS role trusts exactly the token GitHub issues to a job that runs
-# on the branch main of this repository (sub = repo:Mircoguidetti/fenvix-app:ref:refs/heads/main): that is what makes
-# "only main can deploy" true, enforced by AWS, with no GitHub environment (the repository is private on GitHub Free,
+# AWS access: OpenID Connect, no stored AWS key. The AWS role trusts exactly the token GitHub issues to a job of this
+# file running on the branch main of this repository (sub = repo:Mircoguidetti@17613795/fenvix-app@1434576189:ref:
+# refs/heads/main, repository_id, job_workflow_ref = .../deploy.yml@refs/heads/main): that is what makes "only main
+# can deploy" true, enforced by AWS, with no GitHub environment (the repository is private on GitHub Free,
 # where environments' secrets and branch rules do not exist). GitHub holds no secret for this workflow: every value the
 # founder provides is in AWS SSM Parameter Store (/fenvix/prod/bootstrap/*), read by the step that needs it.
 #
@@ -51,7 +52,7 @@ jobs:
     # No GitHub environment: the repository is private on GitHub Free (no environment secrets or branch rules there).
     permissions:
       contents: read
-      id-token: write # OpenID Connect token for AWS (sub = repo:...:ref:refs/heads/main): no AWS key is stored anywhere
+      id-token: write # OpenID Connect token for AWS (main of this file only): no AWS key is stored anywhere
     env:
       FENVIX_ENV: prod
     steps:

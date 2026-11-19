@@ -34,6 +34,8 @@ export function template() {
     Parameters: {
       GitHubOwner: { Type: "String", Default: "Mircoguidetti", AllowedPattern: "^[A-Za-z0-9-]{1,39}$", Description: "The GitHub account that owns the repository (as it appears in the repository's URL)" },
       GitHubRepository: { Type: "String", Default: "fenvix-app", AllowedPattern: "^[A-Za-z0-9._-]{1,100}$" },
+      GitHubOwnerId: { Type: "String", Default: "17613795", AllowedPattern: "^[0-9]{1,20}$", Description: "The numeric id of the GitHub account that owns the repository (GitHub's immutable OIDC subject)" },
+      GitHubRepositoryId: { Type: "String", Default: "1434576189", AllowedPattern: "^[0-9]{1,20}$", Description: "The numeric id of the repository (GitHub's immutable OIDC subject, and the repository_id claim)" },
       CreateOidcProvider: { Type: "String", Default: "true", AllowedValues: ["true", "false"], Description: "false only if this account already has the provider token.actions.githubusercontent.com (IAM > Identity providers)" },
     },
     Rules: {
@@ -142,7 +144,7 @@ export function template() {
         Type: "AWS::IAM::Role",
         Properties: {
           RoleName: NAMES.deployerRole,
-          Description: sub(`fenvix: the deploy pipeline of ${repo} (GitHub Actions, OIDC): jobs on its branch main only`),
+          Description: sub(`fenvix: the deploy pipeline of ${repo} (GitHub Actions, OIDC): jobs of deploy.yml on its branch main only`),
           MaxSessionDuration: 7200,
           ManagedPolicyArns: [{ Ref: "DeployerPolicy" }],
           AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{
@@ -154,8 +156,16 @@ export function template() {
               StringEquals: {
                 "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
                 // Exactly the token of a job running on refs/heads/main (a push to main, or "Run workflow" on main).
-                // Never an environment, a pull request, a tag or another branch.
-                "token.actions.githubusercontent.com:sub": [sub(`repo:${repo}:ref:refs/heads/main`)],
+                // Never an environment, a pull request, a tag or another branch. GitHub's immutable subject format
+                // (repositories created after 2026-07-15 carry the owner and repository ids; review R-024c K1).
+                "token.actions.githubusercontent.com:sub": [sub("repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepository}@${GitHubRepositoryId}:ref:refs/heads/main")],
+                // This repository by id (a deleted and re-created repository of the same name is another one).
+                "token.actions.githubusercontent.com:repository_id": [sub("${GitHubRepositoryId}")],
+                // Only a job of deploy.yml on main: a new workflow file on main (workflow_run, issue_comment, schedule,
+                // ...) gets no role, whatever the repository's tests say (review R-024c K5). AWS STS documents this
+                // condition key; the value GitHub puts in it for a job written directly in deploy.yml is UNKNOWN until
+                // the first run, which fails safe at "AWS credentials" if it differs.
+                "token.actions.githubusercontent.com:job_workflow_ref": [sub(`${repo}/.github/workflows/deploy.yml@refs/heads/main`)],
               },
             },
           }] },

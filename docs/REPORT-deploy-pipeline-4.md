@@ -41,6 +41,10 @@ real accounts. **DOCUMENTED** means taken from GitHub's or AWS's documentation, 
   check; the pipeline does not need either.
 - **Not used:** GitHub's OIDC subject customization (it could bind the token to `job_workflow_ref`). Setting it is an
   API call, not a browser click, and whether STS matches that claim was UNKNOWN in R-024.
+- **Superseded (review R-024c K1, K5; REPORT-deploy-pipeline-5):** the trust now uses GitHub's immutable subject
+  `repo:Mircoguidetti@17613795/fenvix-app@1434576189:ref:refs/heads/main` (the `sub` above never matched this
+  repository's tokens), plus `repository_id` and `job_workflow_ref` (= `deploy.yml` on `main`), which STS matches
+  directly (DOCUMENTED), with no GitHub-side customization.
 
 ## 2. Reviewer tests (R-024, R-024b): what still applies, what was replaced
 
@@ -187,9 +191,12 @@ Supabase → Project Settings → Database → **SSL Configuration** → **Downl
 
 The UNKNOWNs in REPORT-deploy-pipeline-2 §6 still apply. New or changed ones:
 
-- **The real `sub` claim.** For a job on `main` with no environment, GitHub's documented default is
-  `repo:Mircoguidetti/fenvix-app:ref:refs/heads/main`. If the repository or account has customized OIDC subject claims,
-  "AWS credentials" fails safely, with nothing deployed.
+- **The real `sub` claim.** ~~For a job on `main` with no environment, GitHub's documented default is
+  `repo:Mircoguidetti/fenvix-app:ref:refs/heads/main`.~~ Out of date (review R-024c K1): this repository was created
+  after 2026-07-15, so GitHub's documented default is the immutable format
+  `repo:Mircoguidetti@17613795/fenvix-app@1434576189:ref:refs/heads/main`, which the trust now uses
+  (REPORT-deploy-pipeline-5). If the repository or account has customized OIDC subject claims, "AWS credentials" fails
+  safely, with nothing deployed.
 - **Decrypting through `aws/ssm`.** The deploy role decrypts the founder's SecureStrings through `aws/ssm` with no
   `kms:Decrypt` grant. This is the same reliance as the existing reads of the database URLs, not new.
 - **Two GitHub Free facts.** Both are DOCUMENTED, not verified here: that rulesets are unavailable on private

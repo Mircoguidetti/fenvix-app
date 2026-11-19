@@ -35,12 +35,21 @@ describe("the one-click AWS template", () => {
     assert.match(json(st[0]!.Principal), /oidc-provider\/token\.actions\.githubusercontent\.com/);
     assert.deepEqual(Object.keys(st[0]!.Condition), ["StringEquals"], "exact matches only: no StringLike wildcard");
     assert.equal(st[0]!.Condition.StringEquals!["token.actions.githubusercontent.com:aud"], "sts.amazonaws.com");
-    const subs = (st[0]!.Condition.StringEquals!["token.actions.githubusercontent.com:sub"] as { "Fn::Sub": string }[]).map((x) => x["Fn::Sub"]);
-    // REPORT-deploy-pipeline-4: main only, enforced by AWS (no environment exists on GitHub Free for a private repository).
-    assert.deepEqual(subs, ["repo:${GitHubOwner}/${GitHubRepository}:ref:refs/heads/main"]);
+    const key = (k: string) => (st[0]!.Condition.StringEquals![`token.actions.githubusercontent.com:${k}`] as { "Fn::Sub": string }[]).map((x) => x["Fn::Sub"]);
+    // REPORT-deploy-pipeline-5: main only, enforced by AWS (no environment exists on GitHub Free for a private
+    // repository), in GitHub's immutable subject format (owner and repository ids: review R-024c K1), for this
+    // repository's id, and for a job of deploy.yml only (job_workflow_ref: review R-024c K5).
+    assert.deepEqual(Object.keys(st[0]!.Condition.StringEquals!).sort(), ["aud", "job_workflow_ref", "repository_id", "sub"].map((k) => `token.actions.githubusercontent.com:${k}`));
+    assert.deepEqual(key("sub"), ["repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepository}@${GitHubRepositoryId}:ref:refs/heads/main"]);
+    assert.deepEqual(key("repository_id"), ["${GitHubRepositoryId}"]);
+    assert.deepEqual(key("job_workflow_ref"), ["${GitHubOwner}/${GitHubRepository}/.github/workflows/deploy.yml@refs/heads/main"]);
     assert.ok(!json(st).includes("environment:"), "no environment sub");
+    assert.ok(!json(st).includes("*"), "no wildcard");
     assert.equal(tpl.Parameters.GitHubOwner!.Default, "Mircoguidetti");
     assert.equal(tpl.Parameters.GitHubRepository!.Default, "fenvix-app");
+    // MEASURED (GitHub API, review R-024c): owner Mircoguidetti is 17613795, repository fenvix-app is 1434576189.
+    assert.equal(tpl.Parameters.GitHubOwnerId!.Default, "17613795");
+    assert.equal(tpl.Parameters.GitHubRepositoryId!.Default, "1434576189");
     assert.match(json(tpl.Rules), /865859654353/);
     assert.match(json(tpl.Rules), /eu-west-1/);
     // No access key anywhere.

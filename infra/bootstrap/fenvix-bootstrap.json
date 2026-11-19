@@ -13,6 +13,18 @@
       "Default": "fenvix-app",
       "AllowedPattern": "^[A-Za-z0-9._-]{1,100}$"
     },
+    "GitHubOwnerId": {
+      "Type": "String",
+      "Default": "17613795",
+      "AllowedPattern": "^[0-9]{1,20}$",
+      "Description": "The numeric id of the GitHub account that owns the repository (GitHub's immutable OIDC subject)"
+    },
+    "GitHubRepositoryId": {
+      "Type": "String",
+      "Default": "1434576189",
+      "AllowedPattern": "^[0-9]{1,20}$",
+      "Description": "The numeric id of the repository (GitHub's immutable OIDC subject, and the repository_id claim)"
+    },
     "CreateOidcProvider": {
       "Type": "String",
       "Default": "true",
@@ -1339,7 +1351,7 @@
       "Properties": {
         "RoleName": "fenvix-github-deployer",
         "Description": {
-          "Fn::Sub": "fenvix: the deploy pipeline of ${GitHubOwner}/${GitHubRepository} (GitHub Actions, OIDC): jobs on its branch main only"
+          "Fn::Sub": "fenvix: the deploy pipeline of ${GitHubOwner}/${GitHubRepository} (GitHub Actions, OIDC): jobs of deploy.yml on its branch main only"
         },
         "MaxSessionDuration": 7200,
         "ManagedPolicyArns": [
@@ -1364,7 +1376,17 @@
                   "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
                   "token.actions.githubusercontent.com:sub": [
                     {
-                      "Fn::Sub": "repo:${GitHubOwner}/${GitHubRepository}:ref:refs/heads/main"
+                      "Fn::Sub": "repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepository}@${GitHubRepositoryId}:ref:refs/heads/main"
+                    }
+                  ],
+                  "token.actions.githubusercontent.com:repository_id": [
+                    {
+                      "Fn::Sub": "${GitHubRepositoryId}"
+                    }
+                  ],
+                  "token.actions.githubusercontent.com:job_workflow_ref": [
+                    {
+                      "Fn::Sub": "${GitHubOwner}/${GitHubRepository}/.github/workflows/deploy.yml@refs/heads/main"
                     }
                   ]
                 }
