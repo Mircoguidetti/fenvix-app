@@ -65,6 +65,87 @@ end $$;
 revoke all on function public.api_complete_github_link(text) from public, anon, authenticated;
 grant execute on function public.api_complete_github_link(text) to fenvix_api;
 
+-- ================================================================ F5, F6: who gets a trial
+
+-- Every GitHub account (installation account id) that had a trial, or was a customer before trials existed.
+create table if not exists public.ci_trial_accounts (
+  account_id bigint primary key,
+  account_login text not null,
+  workspace_id uuid references public.workspaces (id) on delete set null,
+  trial_started_at timestamptz,
+  recorded_at timestamptz not null default now()
+);
+alter table public.ci_trial_accounts enable row level security;
+revoke all on public.ci_trial_accounts from public, anon, authenticated;
+
+-- Accounts linked today (before this migration): their trial (if any) is used up.
+insert into public.ci_trial_accounts (account_id, account_login, workspace_id, trial_started_at)
+select distinct on (i.account_id) i.account_id, i.account_login, i.workspace_id, s.trial_started_at
+  from public.gh_installations i left join public.ci_subscriptions s on s.workspace_id = i.workspace_id
+ where i.workspace_id is not null and i.account_id > 0
+ order by i.account_id, i.linked_at nulls last
+on conflict (account_id) do nothing;
+
+-- Organizations linked before 0014 (no trial dates): marked as having had their trial, in the past, so that no later
+-- link starts one (F6).
+update public.ci_subscriptions s
+   set trial_started_at = coalesce(i.first_linked, now()) - interval '60 days',
+       trial_ends_at = coalesce(i.first_linked, now()) - interval '30 days',
+       updated_at = now()
+  from (select workspace_id, min(linked_at) as first_linked from public.gh_installations where workspace_id is not null group by workspace_id) i
+ where s.workspace_id = i.workspace_id and s.trial_started_at is null;
+
+-- Linking an installation (0013, 0014). The trial starts only when ALL of these hold:
+--   * the organization never had a trial (its subscription has no trial dates);
+--   * the organization has no other installation linked, now or before (an existing customer adding an account);
+--   * the installation's GitHub account never had a trial, through any organization (reinstalling and linking to a
+--     new organization does not start another).
+create or replace function public.gh_link_installation(p_installation bigint, p_workspace uuid, p_user uuid)
+returns text
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_role text; v_current uuid; v_login text; v_deleted timestamptz; v_account bigint; v_trial boolean;
+begin
+  select role into v_role from public.workspace_members where workspace_id = p_workspace and user_id = p_user;
+  if v_role is null or v_role not in ('owner', 'admin') then
+    raise exception 'Only an owner or admin of the organization can connect a GitHub installation.' using errcode = '42501';
+  end if;
+  select workspace_id, account_login, deleted_at, account_id into v_current, v_login, v_deleted, v_account
+    from public.gh_installations where installation_id = p_installation for update;
+  if v_login is null then
+    raise exception 'GitHub has not told us about installation % yet.', p_installation using errcode = 'P0002';
+  end if;
+  if v_deleted is not null then
+    raise exception 'Installation % was removed on GitHub.', p_installation using errcode = '55000';
+  end if;
+  if v_current is not null and v_current <> p_workspace then
+    raise exception 'Installation % is connected to another organization.', p_installation using errcode = '23505';
+  end if;
+  -- One decision at a time per account (two organizations linking two installations of one account at once).
+  perform pg_advisory_xact_lock(hashtext('gh_trial_account:' || v_account::text));
+  v_trial := v_current is null
+    and not exists (select 1 from public.ci_subscriptions s where s.workspace_id = p_workspace and s.trial_started_at is not null)
+    and not exists (select 1 from public.gh_installations o where o.workspace_id = p_workspace and o.installation_id <> p_installation)
+    and not exists (select 1 from public.ci_trial_accounts a where a.account_id = v_account);
+  update public.gh_installations set workspace_id = p_workspace, linked_by = p_user, linked_at = now(), updated_at = now()
+    where installation_id = p_installation;
+  update public.gh_repositories set updated_at = now() where installation_id = p_installation;
+  update public.ci_usage_events set workspace_id = p_workspace where installation_id = p_installation and workspace_id is null;
+  insert into public.ci_subscriptions (workspace_id, plan_id, github_account, trial_started_at, trial_ends_at)
+    values (p_workspace, 'starter', v_login, case when v_trial then now() end, case when v_trial then now() + interval '30 days' end)
+  on conflict (workspace_id) do update set
+    github_account = coalesce(public.ci_subscriptions.github_account, excluded.github_account),
+    trial_started_at = coalesce(public.ci_subscriptions.trial_started_at, excluded.trial_started_at),
+    trial_ends_at = coalesce(public.ci_subscriptions.trial_ends_at, excluded.trial_ends_at),
+    updated_at = now();
+  -- The account's chance of a trial is used by its first link, trial or not.
+  insert into public.ci_trial_accounts (account_id, account_login, workspace_id, trial_started_at)
+    values (v_account, v_login, p_workspace, case when v_trial then now() end)
+  on conflict (account_id) do nothing;
+  return v_login;
+end $$;
+revoke all on function public.gh_link_installation(bigint, uuid, uuid) from public, anon, authenticated;
+grant execute on function public.gh_link_installation(bigint, uuid, uuid) to fenvix_github_app;
+
 -- ================================================================ F3: units from the minutes the machine was held
 
 -- GitHub's timings of the job (started_at -> completed_at), in minutes. The job's own summary.json cannot change it.
