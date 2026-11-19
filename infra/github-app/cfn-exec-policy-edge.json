@@ -11,7 +11,8 @@
         "acm:AddTagsToCertificate",
         "acm:RemoveTagsFromCertificate",
         "acm:ListTagsForCertificate",
-        "acm:ListCertificates"
+        "acm:ListCertificates",
+        "acm:UpdateCertificateOptions"
       ],
       "Resource": "*",
       "Condition": {
@@ -28,7 +29,9 @@
         "apigateway:POST",
         "apigateway:PUT",
         "apigateway:PATCH",
-        "apigateway:DELETE"
+        "apigateway:DELETE",
+        "apigateway:AddCertificateToDomain",
+        "apigateway:RemoveCertificateFromDomain"
       ],
       "Resource": [
         "arn:aws:apigateway:eu-west-1::/apis",
@@ -64,7 +67,10 @@
         "sns:TagResource",
         "sns:UntagResource",
         "sns:ListTagsForResource",
-        "sns:GetSubscriptionAttributes"
+        "sns:GetSubscriptionAttributes",
+        "sns:SetSubscriptionAttributes",
+        "sns:ListSubscriptionsByTopic",
+        "sns:GetDataProtectionPolicy"
       ],
       "Resource": "arn:aws:sns:eu-west-1:865859654353:fenvix-prod-github-app-*"
     },
@@ -73,7 +79,8 @@
       "Effect": "Allow",
       "Action": [
         "sns:Unsubscribe",
-        "sns:GetSubscriptionAttributes"
+        "sns:GetSubscriptionAttributes",
+        "sns:SetSubscriptionAttributes"
       ],
       "Resource": "*",
       "Condition": {

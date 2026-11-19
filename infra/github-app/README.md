@@ -59,6 +59,7 @@ credentials; the founder never needs them (docs/DEPLOY-AWS.md, sections B and E)
 | `permissions-boundary.json` | `fenvix-prod-github-app-boundary`: the most any role of the stack may do |
 | (all four above) | embedded in `../bootstrap/fenvix-bootstrap.json` by `../bootstrap/build.mjs`; a test fails if they drift |
 | `scripts/` | the image build and demo up/down for an operator (not used by the pipeline); `scram-verifier.mjs` (used by the pipeline) |
+| `test/cfn-permissions.test.ts`, `test/cfn-handler-permissions.json` | for every resource type of every synthesized template: the execution policies allow its create and tag actions on its own ARN, and every other action CloudFormation's handler calls (create, update, delete, read), unless named as not needed with the reason. The JSON comes from the resource-provider schemas cfn-lint ships: `python3 scripts/cfn-handler-permissions.py [AWS::New::Type]` (CI checks it with `--check`) |
 
 Why CDK and not SAM: CDK in TypeScript (with cdk-nag) matches the service, which is TypeScript, and `NodejsFunction` bundles it with esbuild locally (no Docker); the EC2 runner, its VPC and IAM are
 first-class in CDK, while SAM is aimed at the serverless half and adds a second toolchain (SAM CLI).

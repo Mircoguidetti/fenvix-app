@@ -30,6 +30,19 @@
       ]
     },
     {
+      "Sid": "ClearAFailedFirstCreate",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:DeleteStack",
+        "s3:DeleteBucket"
+      ],
+      "Resource": [
+        "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-github-app/*",
+        "arn:aws:cloudformation:eu-west-1:865859654353:stack/fenvix-prod-dashboard/*",
+        "arn:aws:s3:::fenvix-prod-dashboard-865859654353"
+      ]
+    },
+    {
       "Sid": "PrintCertificateValidationRecord",
       "Effect": "Allow",
       "Action": [
