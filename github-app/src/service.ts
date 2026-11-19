@@ -745,12 +745,16 @@ export class GitHubService {
     // The pull request: from pull_request events, else from the workflow run.
     const pr = await this.pullRequestOf(job, run);
 
-    // Billing: one event per job that ran on our machines.
+    // Billing: one event per job. Whether it is billable rests on GitHub's data only (review R-016b G1): a job that
+    // started on our machine (runner_name and started_at of the signed workflow_job) is billed its held minutes,
+    // whatever its summary and its conclusion; a job that never started on our machine is not. The summary (a file the
+    // job writes) and the conclusion "cancelled" (the job can cancel its own run) only name the reason.
     const startedOnFenvix = !!job.runner_name && !!job.started_at;
-    let billable: boolean; let reason: string;
-    if (summary) { billable = true; reason = job.conclusion === "cancelled" ? "cancelled_after_start" : job.conclusion === "success" ? "completed" : "failed"; }
-    else if (job.conclusion === "cancelled" || job.conclusion === "skipped" || !startedOnFenvix) { billable = false; reason = "cancelled_before_tests"; }
-    else { billable = true; reason = "no_summary"; }
+    const billable = startedOnFenvix;
+    const reason = !startedOnFenvix ? "cancelled_before_tests"
+      : job.conclusion === "cancelled" ? "cancelled_after_start"
+      : !summary ? "no_summary"
+      : job.conclusion === "success" ? "completed" : "failed";
 
     // GitHub's timings of the job (workflow_job started_at and completed_at, in webhooks signed by GitHub): how long the
     // job held our machine. The job cannot change them. Billing counts these minutes only (review R-016 F3).
@@ -797,8 +801,8 @@ export class GitHubService {
             await this.finishRun(c, started.id, job, summary, run, pr?.number ?? null, values);
             ciRunId = started.id;
           } else if (started) {
-            // A job that started on our machine but is not billable (cancelled before its tests): the row the live view
-            // showed stays, marked cancelled (the App may not delete runs); usage counts billable events only.
+            // A run row without a start on our machine by GitHub's data (not billable): kept, marked cancelled (the App
+            // may not delete runs); usage counts billable events only.
             await c.query("update ci_runs set status = 'cancelled', finished_at = $2, duration_ms = $3 where id = $1", [started.id, completedAt, durationMs]);
             ciRunId = started.id;
           } else if (billable) {

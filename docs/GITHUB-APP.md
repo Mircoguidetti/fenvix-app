@@ -257,18 +257,21 @@ the `workflow_job` events of that job, whichever comes first, and publishes once
 One `ci_usage_events` row per GitHub job that asked for `runs-on: fenvix`, unique per job id (a webhook delivered
 twice is never billed twice):
 
+Whether an event is billable rests on GitHub's data only (review R-016b G1): a job that started on our machine
+(`runner_name` and `started_at` of the signed `workflow_job`) is billable, whatever its summary and its conclusion. The
+summary and the conclusion only name the reason:
+
 | case | billable | reason |
 |---|---|---|
-| summary received, job succeeded | yes | `completed` |
-| summary received, job failed | yes | `failed` |
-| summary received, job cancelled | yes | `cancelled_after_start` |
-| no summary, the job ran on our machine | yes | `no_summary` (a machine was used; e.g. dependency install failed) |
+| started on our machine, summary received, job succeeded | yes | `completed` |
+| started on our machine, summary received, job failed | yes | `failed` |
+| started on our machine, job cancelled (with or without a summary) | yes | `cancelled_after_start` |
+| started on our machine, no summary, not cancelled | yes | `no_summary` (a machine was used; e.g. dependency install failed) |
 | cancelled or skipped before it started on our machine | no | `cancelled_before_tests` |
-| started on our machine, cancelled before a summary | no | `cancelled_before_tests` |
 
 Run rows follow the same rule: a job that never started on our machine gets no `ci_runs` row. A job that started gets
-its row at once (status `running`, for the live view); if it then ends without being billable, the row is kept and
-marked `cancelled` (the App's role may not delete runs) and its usage event is not billable. Usage and units are
+its row at once (status `running`, for the live view) and is finished at publish (a cancelled job's row is marked
+`cancelled`). Usage and units are
 counted from billable usage events only (1 run unit = 10 baseline minutes).
 
 The row carries the plan at that time, test minutes run, minutes saved and other-step minutes. An installation not yet

@@ -335,7 +335,7 @@ chunk (sent again: replaced), with `appliedAt` once applied to the run and `appl
 | `kind` | `"ci_run"` | |
 | `quantity` | number | 1 |
 | `billable` | boolean | see `reason` |
-| `reason` | `"completed"` \| `"failed"` \| `"cancelled_after_start"` \| `"no_summary"` \| `"cancelled_before_tests"` | only `cancelled_before_tests` is not billable |
+| `reason` | `"completed"` \| `"failed"` \| `"cancelled_after_start"` \| `"no_summary"` \| `"cancelled_before_tests"` | only `cancelled_before_tests` is not billable: the job never started on our machine, by GitHub's data (see Run units) |
 | `planId` | string \| null | the organization's plan when the run ended |
 | `conclusion` | string \| null | GitHub's conclusion of the job |
 | `testMinutesRan`, `minutesSaved`, `otherStepMinutes` | number | as in the Run summary (from `summary.json`, bounded by the job's duration): shown, not billed |
@@ -536,9 +536,12 @@ value the App derives from GitHub's own timings (for example the same job's dura
 skipped). Until one of those exists, `minutes_saved` on the usage event is a claim, kept for the dashboard only.
 
 Units are counted on **billable usage events only** (`ci_usage_events.units`, generated; a month's units are the exact
-sum rounded up to a whole unit). A job cancelled before it started on our
-machine is not billable and has no run row; a job that started on our machine and was cancelled before its tests (no
-summary) is not billable either, and its run row (created at the start for the live view) is kept, marked `cancelled`.
+sum rounded up to a whole unit). **Whether** an event is billable also rests on GitHub's data only (review R-016b G1): a
+job that started on our machine (`runner_name` and `started_at` of the `workflow_job`) is billable, and is billed its
+held minutes, whatever its summary and its conclusion (a job that sends no summary, or cancels its own run, a click on
+Cancel, a `timeout-minutes`, is billed the minutes it held the machine; a job cancelled a few seconds after its start
+holds a few seconds). A job that never started on our machine is not billable and has no run row. The summary and the
+conclusion only name the `reason`.
 
 ### Region
 
@@ -556,6 +559,9 @@ database directly.
 
 ## Changes
 
+- 2026-11-19 (review R-016b): **whether a job is billable comes from GitHub's data only**: a job that started on our
+  machine is billed its held minutes whatever its summary and conclusion (`cancelled_before_tests` now means "never
+  started on our machine").
 - 2026-11-18 (review R-016, migration 0015): **run units from GitHub's job timings** (`held_minutes`; summary.json no
   longer sets what is billed); the **run's mode is the App's** (`FENVIX_MODE` recorded on the job; the results' and the
   summary's `mode` are ignored); test durations and `wouldSaveMs` bounded by the job's duration and the run's test time;

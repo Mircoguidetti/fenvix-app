@@ -311,7 +311,7 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     assert.equal(await n(), 4);
   });
 
-  it("14. a job that started on our machine but was cancelled before its tests: the row is marked cancelled; not billable", async () => {
+  it("14. a job that started on our machine and was cancelled without a summary: the row is marked cancelled; billed its held minutes", async () => {
     const sha = "e".repeat(40);
     h.gh.addRun("acme/shop", 31002, { event: "push", headSha: sha, headBranch: "main", message: "cancel me" });
     await h.send("workflow_job", workflowJob("in_progress", { id: 81002, runId: 31002, sha, branch: "main", runner: "fenvix-j81002" }));
@@ -319,7 +319,7 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     assert.equal((await runRow(id)).status, "running");
     await h.send("workflow_job", workflowJob("completed", { id: 81002, runId: 31002, sha, branch: "main", runner: "fenvix-j81002", conclusion: "cancelled" }));
     assert.equal((await runRow(id)).status, "cancelled");
-    assert.deepEqual((await admin.query("select billable, reason, ci_run_id from ci_usage_events where github_job_id = 81002")).rows[0], { billable: false, reason: "cancelled_before_tests", ci_run_id: id });
+    assert.deepEqual((await admin.query("select billable, reason, ci_run_id from ci_usage_events where github_job_id = 81002")).rows[0], { billable: true, reason: "cancelled_after_start", ci_run_id: id });
     // A progress record for a finished run is ignored.
     await runner("progress", "fenvix-j81002", 31002, { runId: 31002, seq: 9, phase: "testing", testsDone: 1, passed: 1, failed: 0, skippedWithProof: 0, elapsedMs: 1 });
     assert.equal(rows.mapRun(plain(await runRow(id))).progress, null);
