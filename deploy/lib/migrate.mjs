@@ -59,13 +59,17 @@ export const PROBES = {
     first: `to_regclass('public.ci_audit_reruns') is not null and to_regclass('public.databases') is null
              and exists (select 1 from pg_roles where rolname = 'fenvix_api')
              and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'ci_runs' and column_name = 'audit_rerun')`,
-    // Its last statements re-create gh_link_installation (0013's, grants kept: not distinctive) right after the policy
-    // workspaces_github_app, which only 0014 creates; and execute on that function stays off for anon.
+    // Its last statements re-create gh_link_installation right after the policy workspaces_github_app, which only 0014
+    // creates. The grants are 0013's (kept by create or replace: not distinctive), so the probe also requires the
+    // function's source to mention trial_ends_at, which only 0014's version does (linking starts the trial); and
+    // execute on that function stays off for anon.
     last: `${pol("workspaces", "workspaces_github_app")} and case when to_regprocedure('public.gh_link_installation(bigint,uuid,uuid)') is not null
                    and exists (select 1 from pg_roles where rolname = 'fenvix_github_app') and exists (select 1 from pg_roles where rolname = 'anon')
              then has_function_privilege('fenvix_github_app', 'public.gh_link_installation(bigint,uuid,uuid)', 'execute')
                   and not has_function_privilege('anon', 'public.gh_link_installation(bigint,uuid,uuid)', 'execute')
-             else false end`,
+             else false end
+             and coalesce((select prosrc like '%trial_ends_at%' from pg_proc
+                           where oid = to_regprocedure('public.gh_link_installation(bigint,uuid,uuid)')), false)`,
   },
   "0015": {
     first: `to_regclass('public.gh_install_completions') is not null and to_regclass('public.ci_trial_accounts') is not null

@@ -4,7 +4,7 @@
 // itself never reaches the database, its logs or a statement), and stores the new connection string. A network
 // failure never changes a password.
 import { randomBytes } from "node:crypto";
-import { GetParameterCommand, PutParameterCommand } from "@aws-sdk/client-ssm";
+import { DeleteParameterCommand, GetParameterCommand, PutParameterCommand } from "@aws-sdk/client-ssm";
 import pg from "pg";
 import { scramVerifier } from "../../infra/github-app/scripts/scram-verifier.mjs";
 import { info, mask, Stop } from "./log.mjs";
@@ -88,13 +88,25 @@ export async function ensureRoles(admin, a, ssm, { env = "prod", login = tryLogi
     // password (and nobody is left without one).
     const verifier = scramVerifier(password);
     await admin.query("begin");
+    let putDone = false;
     try {
       await admin.query(`alter role ${r.role} with login password '${verifier}'`);
       await ssm.send(new PutParameterCommand({ Name: name, Type: "SecureString", Value: url, Overwrite: true, Description: `fenvix: connection string of the role ${r.role} (Supabase pooler, ${r.mode} mode). Set by the deploy pipeline.` }));
+      putDone = true;
       await admin.query("commit");
     } catch (e) {
       await admin.query("rollback").catch(() => undefined);
-      throw new Stop(`${r.role}: the new connection string could not be stored (${/** @type {{ name?: string }} */ (e).name ?? "error"}); the password change was rolled back, nothing changed. Run the workflow again.`);
+      const why = /** @type {{ name?: string }} */ (e).name ?? "error";
+      if (!putDone) throw new Stop(`${r.role}: the new connection string could not be stored (${why}); the password change was rolled back, nothing changed. Run the workflow again.`);
+      // SSM already holds the new string, but the password change was not committed: put SSM back the way it was
+      // (or remove the parameter if there was none), so the running services keep a string that logs in.
+      try {
+        if (stored) await ssm.send(new PutParameterCommand({ Name: name, Type: "SecureString", Value: stored, Overwrite: true }));
+        else await ssm.send(new DeleteParameterCommand({ Name: name }));
+      } catch (restoreError) {
+        throw new Stop(`${r.role}: the new connection string was stored in ${name}, but the password change could not be committed (${why}), and putting the previous value back failed too (${/** @type {{ name?: string }} */ (restoreError).name ?? "error"}). SSM now holds a connection string that the role does NOT accept: the API and the GitHub App load it within 5 minutes and will then fail to log in. Run the workflow again NOW (it sees "wrong password" and sets a new one).`);
+      }
+      throw new Stop(`${r.role}: the password change could not be committed (${why}) after the new connection string was stored; the previous value of ${name} was ${stored ? "put back" : "removed (there was none)"} and the password change was rolled back, so nothing changed. Run the workflow again.`);
     }
     // The pooler may take a moment to see the new password.
     const check = await login(url, { attempts: verifyAttempts, delayMs: verifyDelayMs }).catch(() => "unreachable");

@@ -50,8 +50,20 @@ Supabase (yours): the role fenvix_github_app writes gh_*, ci_projects, ci_runs, 
 
 ## A. The one-time setup (browser only)
 
-Five steps, once, **in this order** (step 1 before step 2 matters: see step 1), then merge the pull request that
-brought this page. Step 5 is recommended, not required.
+Five steps, once, **in this order** (step 0 first: it checks the plan that steps 1 and 5 need; step 1 before step 2
+matters: see step 1), then merge the pull request that brought this page. Step 5 is recommended, not required.
+
+### Step 0. GitHub: check the plan (Pro or Team)
+
+The repository is **private**. On a private repository, GitHub allows environment secrets and an environment's
+deployment branch rule (step 1) only on **GitHub Pro** (personal account) or **GitHub Team / Enterprise**
+(organization). On GitHub Free those settings are missing or greyed out, and the deploy then stops at its first step
+("Check the one-time setup") because it finds no branch rule and no secrets: nothing goes live.
+
+1. Open <https://github.com/settings/billing/summary> (top-right avatar → **Settings** → **Billing and plans** →
+   **Plans and usage**; for an organization: the organization's **Settings** → **Billing and plans**).
+2. Under **Current plan**, check that it says **GitHub Pro** (or Team). If it says **GitHub Free**: **Upgrade** →
+   **GitHub Pro** → follow the payment page. Without it, steps 1 and 5 cannot be done as written.
 
 ### Step 1. GitHub: the environment `production`, its branch rule, its secrets
 
@@ -89,9 +101,10 @@ repository's `production` environment, which step 1 limits to `main`), the permi
 execution role with its four policies, and what CDK needs to deploy (an assets bucket, a deploy role, a publishing
 role, a version parameter). No access key, no user.
 
-1. Open <https://github.com/Mircoguidetti/fenvix-app/blob/main/infra/bootstrap/fenvix-bootstrap.json> (before the
-   merge: the same path on the branch `claude/deploy-pipeline`) and click **Download raw file** (the download icon
-   above the file, on the right).
+1. Open <https://github.com/Mircoguidetti/fenvix-app/blob/claude/deploy-pipeline/infra/bootstrap/fenvix-bootstrap.json>
+   (the pull request's branch: this step comes before the merge, and `main` does not have the file yet; after the
+   merge the same path on `main` holds the same file) and click **Download raw file** (the download icon above the
+   file, on the right).
 2. Sign in to the AWS console as an administrator of account 865859654353 and open
    <https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/create>.
 3. **Prerequisite - Prepare template:** "Choose an existing template". **Specify template:** "Upload a template file"

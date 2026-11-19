@@ -20,6 +20,10 @@ export class MemorySsm {
       this.params.set(i.Name, { Value: i.Value, Type: i.Type, Version: (p?.Version ?? 0) + 1 });
       return { Version: (p?.Version ?? 0) + 1 };
     }
+    if (name === "DeleteParameterCommand") {
+      if (!this.params.delete(i.Name)) { const e = new Error("not found"); e.name = "ParameterNotFound"; throw e; }
+      return {};
+    }
     throw new Error(`unexpected ${name}`);
   }
 }
