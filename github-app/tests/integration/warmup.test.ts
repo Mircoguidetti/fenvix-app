@@ -266,6 +266,9 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     await admin.query(
       `insert into gh_repositories (repository_id, installation_id, full_name, default_branch, onboarding_state, onboarding_workflow_path, onboarding_job)
        values ($1, $2, 'acme/web', 'main', 'merged', '.github/workflows/ci.yml', 'test')`, [REPOS.web.id, INSTALLATION_ID]);
+    // Its default branch on GitHub is at the commit warmed below (a machine starts only for the branch's head).
+    const web = h.gh.repos.get("acme/web")!;
+    web.branches.set("main", { ...web.branches.get("main")!, sha: "d".repeat(40) });
     await pushTo(shaN(20), 1_795_500_500);
     assert.equal(await h.app.service.warmups.request({ repositoryId: REPOS.web.id, sha: "d".repeat(40), trigger: "push", grace: false }), "created");
     await due();
@@ -356,6 +359,85 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     await pushTo(shaN(41), 1_795_500_800);
     assert.equal(await one(shaN(41)), undefined);
     assert.deepEqual(h.gh.validateAll().map((x) => `${x.method} ${x.path}: ${JSON.stringify(x.problems)}`), [], "every GitHub call matches GitHub's REST description");
+  });
+});
+
+describe("review R-018 follow-ups: only the default branch's head runs; a reset commit is warmed again; machine time by the App's clock", () => {
+  const h = new Harness();
+  const fleet = new FakeFleet();
+  let admin: pg.Client;
+  const sha = (c: string) => c.repeat(40);
+  const one = async (s: string): Promise<Row | undefined> =>
+    (await admin.query("select * from gh_warmups where repository_id = $1 and commit_sha = $2", [REPOS.shop.id, s])).rows[0];
+  const due = () => admin.query("update gh_warmups set not_before = now() - interval '1 second' where status = 'pending'");
+  const report = (cred: string, body: Row) => h.app.fastify.inject({ method: "POST", url: "/v1/runner/warmups", headers: { authorization: `Bearer ${cred}`, "content-type": "application/json" }, payload: body });
+  const pushTo = (s: string, at: number) => h.send("push", push(s, "refs/heads/main", at));
+  const main = () => h.gh.repos.get("acme/shop")!.branches.get("main")!;
+  let head = "";
+
+  before(async () => {
+    admin = await resetDb();
+    await h.start({ WARMUP_GRACE_SECONDS: "180", WARMUP_DAILY_CAP: "50" }, { launcher: fleet });
+    const org = await makeOrg(admin, "r018-follow");
+    h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });
+    h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": CI_YAML } });
+    await h.send("installation", installationCreated([REPOS.shop]));
+    const pr = (await admin.query("select setup_pr_number from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].setup_pr_number as number;
+    await h.send("pull_request", pullRequest("closed", { number: pr, headRef: "fenvix/runs-on", headSha: "1".repeat(40), merged: true, mergeSha: sha("a") }));
+    await h.app.service.linkInstallation(INSTALLATION_ID, org.workspaceId, org.userId);
+    head = main().sha;
+  });
+  after(async () => { await h.stop(); await admin.end(); });
+
+  it("the branch moved with no webhook (lost delivery, force push): the warm-up is superseded before any machine, and the new head is requested instead", async () => {
+    assert.equal((await one(head))?.status, "pending");
+    const moved = sha("e");
+    main().sha = moved;
+    const before = fleet.warmups.length;
+    const t = await h.app.service.warmups.tick();
+    assert.equal(t.dispatched, 0);
+    assert.equal(fleet.warmups.length, before, "no machine for a commit that is not the branch's head");
+    const old = await one(head);
+    assert.equal(old?.status, "superseded");
+    assert.match(String(old?.detail), /is no longer the head of main \(now eeeeeee\)/);
+    const next = await one(moved);
+    assert.deepEqual({ status: next?.status, trigger: next?.trigger }, { status: "pending", trigger: "linked" });
+    await due();
+    assert.equal((await h.app.service.warmups.tick()).dispatched, 1);
+    assert.equal(fleet.warmups.at(-1)!.commitSha, moved);
+  });
+
+  it("a warm-up's usage event: held minutes are its machine time by the App's clock, and bound its test minutes (the summary cannot raise them)", async () => {
+    const l = fleet.warmups.at(-1)!;
+    await admin.query("update gh_warmups set dispatched_at = now() - interval '2 minutes' where id = $1", [l.warmupId]);
+    // The job user writes summary.json: it claims an hour of tests on a machine that ran two minutes.
+    const forged = { ...SUMMARY, test_seconds_run: 3600 };
+    assert.equal((await report(l.summaryToken, { warmupId: l.warmupId, event: "finished", outcome: "succeeded", summary: forged })).statusCode, 202);
+    fleet.done(l.warmupId);
+    const ev = (await admin.query("select billable, held_minutes, baseline_minutes, units, test_minutes_ran from ci_usage_events where warmup_id = $1", [l.warmupId])).rows[0];
+    assert.equal(ev.billable, false);
+    const held = Number(ev.held_minutes);
+    assert.ok(held >= 1.9 && held <= 2.5, `about two minutes held, got ${held}`);
+    assert.equal(Number(ev.baseline_minutes), held);
+    assert.ok(Number(ev.test_minutes_ran) <= held, "test minutes bounded by the machine time");
+  });
+
+  it("a commit superseded before its machine is warmed again when the branch is pushed back to it later; a replay of the old push changes nothing", async () => {
+    const x = sha("f"); const y = sha("9");
+    await pushTo(x, 1_795_800_000);
+    await pushTo(y, 1_795_800_060);
+    assert.equal((await one(x))?.status, "superseded");
+    // A replay of x's original push (same push time): nothing.
+    await pushTo(x, 1_795_800_000);
+    assert.equal((await one(x))?.status, "superseded");
+    assert.equal((await one(y))?.status, "pending");
+    // The maintainers reset main back to x (pushed again, later): y's warm-up ends, x's is pending again.
+    await pushTo(x, 1_795_800_120);
+    assert.equal((await one(y))?.status, "superseded");
+    assert.equal((await one(x))?.status, "pending");
+    await due();
+    assert.equal((await h.app.service.warmups.tick()).dispatched, 1);
+    assert.equal(fleet.warmups.at(-1)!.commitSha, x);
   });
 });
 

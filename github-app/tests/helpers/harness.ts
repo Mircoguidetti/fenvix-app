@@ -220,6 +220,8 @@ export async function completeLink(h: Harness, completion: string, userId: strin
 }
 
 export class Harness {
+  /** The newest push time (unix seconds) seen per repository, for the fake's default branch. */
+  private readonly lastPush = new Map<string, number>();
   app!: App;
   gh!: FakeGitHub;
   cfg!: Config;
@@ -256,6 +258,19 @@ export class Harness {
 
   /** Delivers a webhook the way GitHub does (signed, JSON) and waits until the App has handled it. */
   async send(event: string, payload: Json, o: { delivery?: string; secret?: string } = {}) {
+    // As on GitHub, a push to the default branch moves it (the files stay those of the branch): the App reads the
+    // branch's head back (GET /git/ref/heads/<branch>) before a warm-up machine starts (review R-018 F1). A push
+    // delivered late (older than the newest one seen) does not move it back.
+    if (event === "push" && typeof payload.after === "string" && !payload.deleted) {
+      const r = payload.repository as Json | undefined;
+      const repo = this.gh?.repos.get(String(r?.full_name ?? ""));
+      const br = repo && payload.ref === `refs/heads/${repo.defaultBranch}` ? repo.branches.get(repo.defaultBranch) : undefined;
+      const at = typeof r?.pushed_at === "string" ? Date.parse(r.pushed_at) / 1000 : Number(r?.pushed_at ?? 0);
+      if (repo && br && at >= (this.lastPush.get(repo.fullName) ?? 0)) {
+        this.lastPush.set(repo.fullName, at);
+        repo.branches.set(repo.defaultBranch, { sha: payload.after, files: br.files });
+      }
+    }
     const body = JSON.stringify(payload);
     const res = await this.app.fastify.inject({
       method: "POST", url: "/webhooks/github", payload: body,

@@ -554,8 +554,15 @@ a customer job that finds the fleet full **preempts** the newest warm-up (its ma
 goes back to pending and runs later on a new machine). At most `WARMUP_ORG_CONCURRENCY` (1) warm-ups of an
 organization on machines at once; at most `WARMUP_DAILY_CAP` (6) warm-ups of a repository take a machine in any 24
 hours (the next waits until the oldest of the window is 24 hours old). A newer default-branch commit **supersedes** the
-warm-up in flight (a running machine is terminated); an older commit delivered late is stored superseded. The machine
-runs in the **organization's region** (`workspaces.region`) or not at all. A machine that has not reported `started`
+warm-up in flight (a running machine is terminated); an older commit delivered late is stored superseded. Any
+default-branch push newer than a warm-up in flight for another commit supersedes it, also when the pushed commit is
+already warm (a reset of the branch to the last warm commit stops the warm-up of the commit it removed; review R-018
+F1). **Only the branch's head runs:** right before a machine starts, the App reads `GET /git/ref/heads/<branch>`; a
+warm-up whose commit is no longer the head is `superseded` with no machine, and the current head is requested in its
+place. A commit whose warm-up was superseded before it had a machine is warmed again when it is pushed again later (a
+replayed delivery, same push time, changes nothing). A customer's trusted run covers a pending warm-up only until that
+run is published: one published without results re-arms the warm-up, which it never covers again (review R-018 F2).
+The machine runs in the **organization's region** (`workspaces.region`) or not at all. A machine that has not reported `started`
 after `WARMUP_START_TIMEOUT_SECONDS` (900 s) is terminated and the warm-up tried again (3 machines at most); a warm-up
 running longer than `WARMUP_MAX_SECONDS` (3 h) is stopped (`failed`). Suspending or uninstalling the App, or removing
 the repository from it, cancels its warm-ups (machines terminated). After a warm-up of a repository ends `unsupported`,
@@ -689,7 +696,11 @@ database directly.
   runner's warm-up executor must do; usage events of kind `warmup`, reason `warm-up`, never billable (`githubJobId` and
   `githubRunId` null for them, `warmupId` set); `gh_jobs.cache_access` and `launched_at`.
 - 2026-11-19 (merge with review R-016): a warm-up's `heldMinutes` is its machine time by the App's clock and bounds its
-  `testMinutesRan`.
+  `testMinutesRan`; linking through `POST /v1/github/installations/complete` (the worker's `installation_linked`) warms
+  the repositories already on fenvix, as the link did before.
+- 2026-11-19 (review R-018): only the default branch's head gets a warm-up machine (checked against GitHub right before
+  it starts); any newer default-branch push supersedes warm-ups in flight for other commits, also when its commit is
+  already warm; a covering run that was published without results never covers its warm-up again.
 
 - 2026-11-18: "What the runner sends" (replaces the planned direct posting): live progress (`POST /v1/runner/progress`),
   per-test results in chunks with receipts, defect bundles with the engine's replay command, audit reruns and shadow

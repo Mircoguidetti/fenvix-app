@@ -106,9 +106,14 @@ export class Warmups {
       this.log.info({ repositoryId: o.repositoryId, sha: o.sha, trigger: o.trigger, why }, "no warm-up");
       return "ignored";
     }
-    if (r.cache_warm_sha === o.sha) return "exists";
     const now = this.now();
     const pushedAt = o.pushedAt ?? now;
+    // Any default-branch push newer (by push time) than a warm-up in flight for ANOTHER commit takes that commit's
+    // place on the branch: that warm-up ends now, before the "already warm" and "already requested" answers below. A
+    // reset of the branch to a commit that is already warm (git push --force origin H:main) therefore stops the warm-up
+    // of the commit it removed, which would otherwise run with a write cache token (review R-018 F1).
+    await this.supersedeOlder(r, o.sha, pushedAt);
+    if (r.cache_warm_sha === o.sha) return "exists";
     let notBefore = o.grace === false ? now : new Date(now.getTime() + this.w.graceSeconds * 1000);
     let waitDetail = o.grace === false ? "waiting for a machine" : `waiting ${this.w.graceSeconds} s for the customer's own run of this commit`;
     // The runner could not run this job outside GitHub Actions lately: one try a day, not one machine per push.
@@ -125,8 +130,27 @@ export class Warmups {
     return this.db.tx(null, async (c) => {
       // One request at a time per repository (two pushes delivered together).
       await c.query("select 1 from gh_repositories where repository_id = $1 for update", [o.repositoryId]);
-      const have = (await c.query<{ status: string }>("select status from gh_warmups where repository_id = $1 and commit_sha = $2", [o.repositoryId, o.sha])).rows[0];
-      if (have) return "exists" as const;
+      const have = (await c.query<{ id: number; status: string; pushed_at: Date; had_machine: boolean }>(
+        `select id, status, pushed_at, (attempts > 0 or machine_seconds > 0 or usage_recorded_at is not null or terminate_requested_at is not null) as had_machine
+         from gh_warmups where repository_id = $1 and commit_sha = $2`, [o.repositoryId, o.sha])).rows[0];
+      if (have) {
+        // The branch was moved back to a commit whose warm-up was superseded before it got a machine (pushed again,
+        // later): it is the head again, so it is warmed again. A replayed delivery carries the same push time and
+        // changes nothing. (One that already had a machine keeps its record: one warm-up per commit.)
+        if (have.status === "superseded" && !have.had_machine && pushedAt > have.pushed_at) {
+          const newerInFlight = (await c.query("select 1 from gh_warmups where repository_id = $1 and status in ('pending', 'dispatched', 'running') and pushed_at > $2",
+            [o.repositoryId, pushedAt])).rows.length > 0;
+          if (!newerInFlight) {
+            await c.query(
+              `update gh_warmups set status = 'pending', trigger = $2, detail = $3, pushed_at = $4, not_before = $5, finished_at = null, covered_by_job = null,
+                 runner_name = null, dispatched_at = null, started_at = null, updated_at = now()
+               where id = $1 and status = 'superseded'`, [have.id, o.trigger, waitDetail, pushedAt, notBefore]);
+            this.log.info({ repository: r.full_name, sha: o.sha, trigger: o.trigger }, "warm-up requested again (the branch is back at this commit)");
+            return "created" as const;
+          }
+        }
+        return "exists" as const;
+      }
       const newer = (await c.query<{ commit_sha: string }>(
         `select commit_sha from gh_warmups where repository_id = $1 and status in ('pending', 'dispatched', 'running') and pushed_at > $2`,
         [o.repositoryId, pushedAt])).rows[0];
@@ -149,6 +173,17 @@ export class Warmups {
       this.log.info({ repository: r.full_name, sha: o.sha, trigger: o.trigger }, "warm-up requested");
       return "created" as const;
     });
+  }
+
+  /** Ends the warm-ups in flight of other commits pushed before `pushedAt` (their machines: terminated by the next tick). */
+  private async supersedeOlder(r: RepoCtx, sha: string, pushedAt: Date): Promise<number> {
+    const rows = await this.db.q(
+      `update gh_warmups set status = 'superseded', detail = $4, finished_at = now(), updated_at = now(),
+         terminate_requested_at = case when status in ('dispatched', 'running') then now() end
+       where repository_id = $1 and commit_sha <> $2 and status in ('pending', 'dispatched', 'running') and pushed_at < $3
+       returning id`,
+      [r.repository_id, sha, pushedAt, `superseded by a newer commit on ${r.default_branch} (${short(sha)})`]);
+    return rows.length;
   }
 
   /** A warm-up of the default branch's head (the link; a repository found already on fenvix). Asks GitHub for it. */
@@ -371,13 +406,16 @@ export class Warmups {
          and (machine_seconds > 0 or summary is not null) and (terminate_requested_at is null or terminated_at is not null) order by id limit 50`);
     for (const r of ended) await this.recordUsage(r).catch((e: unknown) => this.log.warn({ warmup: r.id, err: errText(e) }, "warm-up usage not recorded (next tick)"));
 
-    // 4. Covered by the customer's own trusted run of the same commit.
+    // 4. Covered by the customer's own trusted run of the same commit, while that run has not been published yet. A
+    //    published run either warmed the cache (then dispatchOne finds cache_warm_sha) or ended without results; the
+    //    latter re-armed the warm-up (onJobPublished) and must never cover it again, whatever its conclusion
+    //    (review R-018 F2: a run that failed before its tests left the commit cold).
     const covered = await this.db.q(
       `update gh_warmups w set status = 'covered', covered_by_job = j.job_id, finished_at = now(), updated_at = now(),
          detail = 'the customer''s own run of this commit fills the cache'
        from gh_jobs j
        where w.status = 'pending' and j.repository_id = w.repository_id and j.head_sha = w.commit_sha and j.cache_access = 'write'
-         and coalesce(j.conclusion, '') not in ('cancelled', 'skipped')
+         and j.published_at is null and coalesce(j.conclusion, '') not in ('cancelled', 'skipped')
        returning w.id`);
     out.covered = covered.length;
 
@@ -435,6 +473,25 @@ export class Warmups {
     });
     if (!d.dispatch) return wait(d.detail, d.retryAt);
     if (!this.d.summaryKey) return wait("no summary signing key (RUNNER_TOKEN): no machine is started without its own credential");
+
+    // The commit must still be the default branch's head, read from GitHub now: a commit taken off the branch (reset,
+    // force push) never runs with a write cache token, even when no webhook told us (review R-018 F1). A newer head is
+    // requested in its place (a lost push webhook does not leave the cache cold).
+    const gh = this.gh.installation(repo.installation_id);
+    const ref = await gh.request<{ object?: { sha?: string } }>("GET", `${repoPath(repo.full_name)}/git/ref/heads/${encodeURIComponent(repo.default_branch!)}`, { allow: [404, 409] });
+    const head = ref.status === 200 ? ref.data.object?.sha ?? "" : "";
+    if (head !== row.commit_sha) {
+      const detail = SHA.test(head)
+        ? `superseded: ${short(row.commit_sha)} is no longer the head of ${repo.default_branch} (now ${short(head)})`
+        : `superseded: ${repo.default_branch} has no head commit now`;
+      const ended = await this.db.q("update gh_warmups set status = 'superseded', detail = $2, finished_at = now(), updated_at = now() where id = $1 and status = 'pending' returning id", [row.id, detail]);
+      this.log.warn({ warmup: row.id, repository: repo.full_name, sha: row.commit_sha, head }, "warm-up superseded: the commit is no longer the default branch's head");
+      if (ended.length && SHA.test(head)) {
+        const pushed = (await this.db.q<{ pushed_at: Date }>("select pushed_at from gh_pushes where repository_id = $1 and sha = $2", [repo.repository_id, head]))[0];
+        await this.request({ repositoryId: repo.repository_id, sha: head, trigger: row.trigger as "onboarded" | "push" | "linked", pushedAt: pushed?.pushed_at ?? this.now() });
+      }
+      return "cancelled";
+    }
 
     // Claim it (one dispatcher wins), then the machine.
     const attempt = row.attempts + 1;
