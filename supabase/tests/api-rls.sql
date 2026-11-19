@@ -89,9 +89,13 @@ begin
     values (v_p, 't::d', 'reproduced', 'fails_alone', array['t::d'], repeat('c', 32), '<none>', now(), now(), 'python'),
            (v_xp, 't::xd', 'reproduced', 'fails_alone', array['t::xd'], repeat('d', 32), '<none>', now(), now(), 'python');
   insert into public.ci_explorations (project_id, started_at, finished_at, commit_sha, seeds, runs) values (v_p, now(), now(), repeat('a', 40), 5, 5), (v_xp, now(), now(), repeat('b', 40), 5, 5);
-  insert into public.ci_usage_events (installation_id, repository_id, repository_full_name, github_job_id, github_run_id, billable, reason, occurred_at, test_minutes_ran, minutes_saved, other_step_minutes)
-    values (31, 3101, 'northwind/app', 31001, 1, true, 'completed', now(), 2, 7, 1), (32, 3201, 'outsider/secret', 32001, 1, true, 'completed', now(), 1, 1, 1);
+  insert into public.ci_usage_events (installation_id, repository_id, repository_full_name, github_job_id, github_run_id, billable, reason, occurred_at, test_minutes_ran, minutes_saved, other_step_minutes, held_minutes)
+    values (31, 3101, 'northwind/app', 31001, 1, true, 'completed', now(), 2, 7, 1, 10), (32, 3201, 'outsider/secret', 32001, 1, true, 'completed', now(), 1, 1, 1, 3),
+           (31, 3101, 'northwind/app', 31002, 2, true, 'completed', now(), 0, 0, 0, 60);
   assert (select units from public.ci_usage_events where github_job_id = 31001) = 1.00, 'units: 10 baseline minutes are 1 unit';
+  -- Units come from the minutes the job held the machine (GitHub's timings), never from what its summary claims
+  -- (review R-016 F3): a 60-minute job whose summary says nothing ran is 60 baseline minutes, 6 units.
+  assert (select (baseline_minutes, units) from public.ci_usage_events where github_job_id = 31002) = (60.00::numeric, 6.00::numeric), 'units: from the held minutes';
   insert into public.workspace_invites (workspace_id, email, role, token_hash, expires_at) values
     (r.w, 'api.invited@fenvix.invalid', 'member', encode(sha256('w-token'), 'hex'), now() + interval '7 days'),
     (r.xw, 'someone@fenvix.invalid', 'admin', encode(sha256('xw-token'), 'hex'), now() + interval '7 days');

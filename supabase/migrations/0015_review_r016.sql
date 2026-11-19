@@ -65,4 +65,31 @@ end $$;
 revoke all on function public.api_complete_github_link(text) from public, anon, authenticated;
 grant execute on function public.api_complete_github_link(text) to fenvix_api;
 
+-- ================================================================ F3: units from the minutes the machine was held
+
+-- GitHub's timings of the job (started_at -> completed_at), in minutes. The job's own summary.json cannot change it.
+alter table public.ci_usage_events add column if not exists held_minutes numeric(12, 2) not null default 0;
+alter table public.ci_usage_events drop constraint if exists ci_usage_events_held_minutes_check;
+alter table public.ci_usage_events add constraint ci_usage_events_held_minutes_check check (held_minutes >= 0);
+
+do $$
+declare v_expr text;
+begin
+  select pg_get_expr(d.adbin, d.adrelid) into v_expr
+    from pg_attrdef d join pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum
+   where d.adrelid = 'public.ci_usage_events'::regclass and a.attname = 'baseline_minutes';
+  if v_expr is null or v_expr not like '%held_minutes%' then
+    -- Events before this migration: GitHub's timings of their job where we have them, else what was measured then
+    -- without the claimed saved time (tests run + other steps, i.e. the job's own minutes).
+    update public.ci_usage_events e set held_minutes = round(greatest(0, extract(epoch from (j.completed_at - j.started_at)) / 60.0)::numeric, 2)
+      from public.gh_jobs j where j.job_id = e.github_job_id and j.started_at is not null and j.completed_at is not null;
+    update public.ci_usage_events e set held_minutes = e.test_minutes_ran + e.other_step_minutes
+     where e.held_minutes = 0 and not exists (select 1 from public.gh_jobs j where j.job_id = e.github_job_id and j.started_at is not null and j.completed_at is not null);
+    alter table public.ci_usage_events drop column if exists units;
+    alter table public.ci_usage_events drop column if exists baseline_minutes;
+    alter table public.ci_usage_events add column baseline_minutes numeric generated always as (held_minutes) stored;
+    alter table public.ci_usage_events add column units numeric generated always as (round(held_minutes / 10.0, 2)) stored;
+  end if;
+end $$;
+
 notify pgrst, 'reload schema';

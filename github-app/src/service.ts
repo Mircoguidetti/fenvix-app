@@ -696,14 +696,22 @@ export class GitHubService {
     else if (job.conclusion === "cancelled" || job.conclusion === "skipped" || !startedOnFenvix) { billable = false; reason = "cancelled_before_tests"; }
     else { billable = true; reason = "no_summary"; }
 
+    // GitHub's timings of the job (workflow_job started_at and completed_at, in webhooks signed by GitHub): how long the
+    // job held our machine. The job cannot change them. Billing counts these minutes only (review R-016 F3).
     const startedAt = job.started_at ?? job.created_at ?? new Date();
     const completedAt = job.completed_at ?? new Date();
     const durationMs = Math.max(0, completedAt.getTime() - startedAt.getTime());
-    const otherStepMinutes = summary ? Math.max(0, durationMs / 1000 - summary.wallSeconds) / 60 : durationMs / 60_000;
+    const heldMinutes = durationMs / 60_000;
+    // What the job's summary.json says, bounded by the job's own duration: shown, never billed. A job cannot report
+    // more test time or wall time than it held the machine; its time "saved" is a claim (not a part of the units).
+    const ranMinutes = summary ? Math.min(summary.testSecondsRun / 60, heldMinutes) : 0;
+    const wallMinutes = summary ? Math.min(summary.wallSeconds / 60, heldMinutes) : 0;
+    const otherStepMinutes = summary ? Math.max(0, heldMinutes - wallMinutes) : heldMinutes;
     const minutes = {
-      ran: summary ? summary.testSecondsRun / 60 : 0,
+      ran: ranMinutes,
       saved: summary ? summary.testSecondsSaved / 60 : 0,
       other: otherStepMinutes,
+      held: heldMinutes,
     };
 
     const [inst] = await this.db.q<{ workspace_id: string | null }>("select workspace_id from gh_installations where installation_id = $1", [job.installation_id]);
@@ -745,11 +753,12 @@ export class GitHubService {
       }
       await c.query(
         `insert into ci_usage_events (installation_id, repository_id, repository_full_name, project_id, ci_run_id, github_job_id, github_run_id,
-           github_run_attempt, billable, reason, plan_id, conclusion, test_minutes_ran, minutes_saved, other_step_minutes, occurred_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, round($13::numeric, 2), round($14::numeric, 2), round($15::numeric, 2), $16)
+           github_run_attempt, billable, reason, plan_id, conclusion, test_minutes_ran, minutes_saved, other_step_minutes, held_minutes, occurred_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, round($13::numeric, 2), round($14::numeric, 2), round($15::numeric, 2),
+           round($16::numeric, 2), $17)
          on conflict (github_job_id) do nothing`,
         [job.installation_id, job.repository_id, repo.full_name, projectId, ciRunId, job.job_id, job.run_id, job.run_attempt, billable, reason,
-          planId, job.conclusion, minutes.ran, minutes.saved, minutes.other, completedAt]);
+          planId, job.conclusion, minutes.ran, minutes.saved, minutes.other, minutes.held, completedAt]);
     });
     // The runner's per-test results, receipts, defects and audit reruns that came before the end (staged).
     if (ws && ciRunId && job.runner_name) {
@@ -790,7 +799,7 @@ export class GitHubService {
   }
 
   /** The trigger, the status and the counts of a run from the job, its workflow run and the runner's summary. */
-  private runFields(job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null) {
+  private runFields(job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, durationMs: number | null = null) {
     const event = run?.event ?? (pr ? "pull_request" : "push");
     const trigger = TRIGGERS.has(event) ? event : event === "pull_request_target" ? "pull_request" : "workflow_dispatch";
     const fails = s ? s.failed.length + s.flaky.length : 0;
@@ -799,7 +808,8 @@ export class GitHubService {
     return {
       trigger, status, commitMessage: (run?.head_commit?.message ?? "").split("\n")[0]!.slice(0, 500),
       tests: [s?.tests ?? 0, s?.ran ?? 0, passedRan, fails, s?.reusedWithProof ?? 0, s?.flaky.length ?? 0] as const,
-      timeRanMs: Math.round((s?.testSecondsRun ?? 0) * 1000), timeSkippedMs: Math.round((s?.testSecondsSaved ?? 0) * 1000),
+      // Test time run: at most the job's own duration (GitHub's timings), whatever the summary says.
+      timeRanMs: Math.round(Math.min((s?.testSecondsRun ?? 0) * 1000, durationMs ?? Infinity)), timeSkippedMs: Math.round((s?.testSecondsSaved ?? 0) * 1000),
     };
   }
 
@@ -807,7 +817,7 @@ export class GitHubService {
   private async insertRun(c: Client, projectId: string, job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, v: RunValues): Promise<string> {
     const [push] = (await c.query<{ pushed_at: Date }>("select pushed_at from gh_pushes where repository_id = $1 and sha = $2", [job.repository_id, job.head_sha])).rows;
     const pushedAt = push?.pushed_at ?? (run?.created_at ? new Date(run.created_at) : job.created_at ?? v.startedAt);
-    const f = this.runFields(job, s, run, pr);
+    const f = this.runFields(job, s, run, pr, v.completedAt ? v.durationMs : null);
     const status = v.completedAt ? f.status : "running";
     const r = await c.query<{ id: string }>(
       `insert into ci_runs (workspace_id, project_id, number, commit_sha, commit_message, branch, pull_request, trigger, status, pushed_at, started_at,

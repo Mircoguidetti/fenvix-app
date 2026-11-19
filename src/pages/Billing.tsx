@@ -23,7 +23,7 @@ export function BillingPage() {
 
   return (
     <>
-      <PageHeader back={<Kicker />} title="Billing" description="A monthly plan sized by your projects and your run units. A run unit is 10 baseline minutes, so a job fenvix makes faster never costs more." />
+      <PageHeader back={<Kicker />} title="Billing" description="A monthly plan sized by your projects and your run units. A run unit is 10 baseline minutes of a fenvix machine, timed by GitHub, so a job fenvix makes faster costs less." />
 
       {billing.status === "loading" && <Message>Loading billing</Message>}
       {billing.status === "error" && <Message role="alert">{billing.message}</Message>}

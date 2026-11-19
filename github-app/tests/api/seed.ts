@@ -129,9 +129,12 @@ export async function seedOrg(admin: pg.Client, workspaceId: string, account: st
   // Usage events: billable jobs this month (one of a repository that is no project), one last month, one not billable.
   const event = (projectId: string | null, repositoryId: number, name: string, daysAgo: number, billable: boolean, minutes: [number, number, number]) => q(
     `insert into public.ci_usage_events (installation_id, repository_id, repository_full_name, project_id, github_job_id, github_run_id, billable, reason, plan_id,
-       test_minutes_ran, minutes_saved, other_step_minutes, occurred_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, 'team', $9, $10, $11, $12)`,
-    [installationId, repositoryId, `${account}/${name}`, projectId, githubId(), githubId(), billable, billable ? "ran on fenvix" : "cancelled before start", ...minutes, at(daysAgo)]);
+       test_minutes_ran, minutes_saved, other_step_minutes, held_minutes, occurred_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, 'team', $9, $10, $11, $12, $13)`,
+    // held_minutes (GitHub's timings of the job; what units count since review R-016 F3): the three parts' sum here,
+    // so that the seeded months keep their unit totals.
+    [installationId, repositoryId, `${account}/${name}`, projectId, githubId(), githubId(), billable, billable ? "ran on fenvix" : "cancelled before start", ...minutes,
+      minutes.reduce((a, b) => a + b, 0), at(daysAgo)]);
   await event(shop, repoIds.shop, "shop", 1, true, [2, 8, 1.5]);
   await event(shop, repoIds.shop, "shop", 3, true, [2.5, 7, 1.5]);
   await event(web, repoIds.web, "web", 2, true, [0.5, 1, 1]);
