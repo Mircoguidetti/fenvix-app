@@ -204,9 +204,17 @@ export async function buildApp(deps: Deps): Promise<App> {
     });
   });
 
+  // One night of exploration (at most 6 MB, 500 defects). Not from a CI job's credential (review R-016b G2): a per-job
+  // credential names its run, and the job's own steps can read it. Explorations come from a machine whose credential
+  // names the repository only; the worker keeps at most one new exploration per project and UTC day, and the newest
+  // EXPLORATION_KEEP_NIGHTS of a project (service.receiveExploration).
   fastify.post("/v1/runner/explorations", { bodyLimit: 6 * 1024 * 1024 }, async (req, reply) => {
     const r = runnerBody(req, reply, parseExploration);
     if (!r) return reply;
+    if (r.scope.runId !== undefined) {
+      req.log.warn({ runner: r.scope.runnerName, repositoryId: r.scope.repositoryId }, "an exploration from a CI job's credential was refused");
+      return fail(reply, 403, "forbidden", "A CI job's credential cannot send explorations.");
+    }
     return handOff(req, reply, { kind: "exploration", repositoryId: r.scope.repositoryId, runnerName: r.scope.runnerName, exploration: r.body });
   });
 

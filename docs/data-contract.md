@@ -4,7 +4,7 @@ Written 2026-11-17, runner part rewritten 2026-11-18. This is **our** contract b
 behind `runs-on: fenvix`, which run the engine) and the customer dashboard. It is not the engine's internal file
 format: the runner reads the engine's files and sends these records to the fenvix GitHub App (`github-app/`), which
 writes them to Postgres; the dashboard reads them through the fenvix API (`openapi/fenvix-api.yaml`), never from the
-database directly. The tables (`supabase/migrations/0011` to `0016`), the API's schemas, the mock (`src/data/mock.ts`)
+database directly. The tables (`supabase/migrations/0011` to `0017`), the API's schemas, the mock (`src/data/mock.ts`)
 and the TypeScript types (`src/data/types.ts`) all follow it. **What the runner must send, and when, is the section
 "What the runner sends" below.**
 
@@ -319,7 +319,7 @@ same organization keeps its project.
 **Job** (`gh_jobs`): one GitHub job that asked for `runs-on: fenvix`; `region` is where its machine was placed, `mode`
 the run mode the App chose for it (`FENVIX_MODE`, migration 0015), `ciRunId` its run row.
 
-**Warm-up** (`gh_warmups`, migration 0016): one warm-up run of a repository's default branch at one commit (unique
+**Warm-up** (`gh_warmups`, migration 0017): one warm-up run of a repository's default branch at one commit (unique
 per repository and commit; at most one pending or running per repository). `commitSha`, `ref`, `trigger`
 (`onboarded` | `push` | `linked`), `status` (`pending` | `dispatched` | `running` | `succeeded` | `failed` |
 `unsupported` | `covered` | `superseded` | `cancelled`), `detail` (why it waits or how it ended, for a person),
@@ -328,7 +328,7 @@ per repository and commit; at most one pending or running per repository). `comm
 API; the App writes them.
 
 **Repository cache state** (`gh_repositories.cache_warm_sha`, `cache_warm_at`, `cache_warm_source` = `warmup` | `run`,
-`cache_warm_pushed_at`, migration 0016): the newest default-branch commit (by push time) whose proofs are in the shared
+`cache_warm_pushed_at`, migration 0017): the newest default-branch commit (by push time) whose proofs are in the shared
 cache. The API shows it as `warmCache` on every Project and GitHub repository:
 
 | Field | Type | Notes |
@@ -343,7 +343,7 @@ cache. The API shows it as `warmCache` on every Project and GitHub repository:
 chunk (sent again: replaced), with `appliedAt` once applied to the run and `applyError` when not (yet).
 
 **Usage event** (`ci_usage_events`, per-run billing): one per GitHub job that asked for `runs-on: fenvix`, and one per
-warm-up run that used one of our machines (migration 0016, never billable: see "Warm-up runs").
+warm-up run that used one of our machines (migration 0017, never billable: see "Warm-up runs").
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -358,7 +358,7 @@ warm-up run that used one of our machines (migration 0016, never billable: see "
 | `kind` | `"ci_run"` \| `"warmup"` | |
 | `quantity` | number | 1 |
 | `billable` | boolean | see `reason` |
-| `reason` | `"completed"` \| `"failed"` \| `"cancelled_after_start"` \| `"no_summary"` \| `"cancelled_before_tests"` \| `"warm-up"` | `cancelled_before_tests` and `warm-up` are not billable; a `warm-up` event is never billable (database check) |
+| `reason` | `"completed"` \| `"failed"` \| `"cancelled_after_start"` \| `"no_summary"` \| `"cancelled_before_tests"` \| `"warm-up"` | for a job, only `cancelled_before_tests` is not billable: the job never started on our machine, by GitHub's data (see Run units); a `warm-up` event is never billable (database check) |
 | `planId` | string \| null | the organization's plan when the run ended |
 | `conclusion` | string \| null | GitHub's conclusion of the job; for a warm-up, how it ended (its status) |
 | `testMinutesRan`, `minutesSaved`, `otherStepMinutes` | number | as in the Run summary (from `summary.json`, bounded by the job's duration): shown, not billed |
@@ -527,6 +527,16 @@ The App writes one Exploration for the repository's project (sent again: the sam
 defects; `newDefectIds` are the defects this exploration found first. An exploration is not a run: it does not count
 as a defect occurrence. A repository without a project keeps nothing (logged).
 
+**Limits** (review R-016b G2, migration 0016), the same kind as the results' limits:
+
+- **Not from a CI job's credential.** A per-job credential (it names a run; the job's own steps can read it) is refused
+  with `403`. Explorations come from a machine whose credential names the repository only.
+- **One new exploration per project and UTC day**, by the App's clock (`ci_explorations.received_at`), so at most 6 MB
+  a night. The same one sent again (same `startedAt` and `commitSha`) is updated; another one that day is dropped
+  (`202`, logged).
+- **90 nights kept per project**: the newest by `received_at`; older ones are deleted when a new one is stored. The
+  defects they found stay.
+
 ### 5. Warm-up runs: `POST /v1/runner/warmups`
 
 **Why.** A customer should almost never see a cold first run. When a repository goes on fenvix (its setup pull request
@@ -663,9 +673,12 @@ value the App derives from GitHub's own timings (for example the same job's dura
 skipped). Until one of those exists, `minutes_saved` on the usage event is a claim, kept for the dashboard only.
 
 Units are counted on **billable usage events only** (`ci_usage_events.units`, generated; a month's units are the exact
-sum rounded up to a whole unit). A job cancelled before it started on our
-machine is not billable and has no run row; a job that started on our machine and was cancelled before its tests (no
-summary) is not billable either, and its run row (created at the start for the live view) is kept, marked `cancelled`.
+sum rounded up to a whole unit). **Whether** an event is billable also rests on GitHub's data only (review R-016b G1): a
+job that started on our machine (`runner_name` and `started_at` of the `workflow_job`) is billable, and is billed its
+held minutes, whatever its summary and its conclusion (a job that sends no summary, or cancels its own run, a click on
+Cancel, a `timeout-minutes`, is billed the minutes it held the machine; a job cancelled a few seconds after its start
+holds a few seconds). A job that never started on our machine is not billable and has no run row. The summary and the
+conclusion only name the `reason`.
 
 ### Region
 
@@ -683,6 +696,12 @@ database directly.
 
 ## Changes
 
+- 2026-11-19 (review R-016b): **whether a job is billable comes from GitHub's data only**: a job that started on our
+  machine is billed its held minutes whatever its summary and conclusion (`cancelled_before_tests` now means "never
+  started on our machine").
+- 2026-11-19 (review R-016b, migration 0016): **explorations are bounded**: none from a CI job's credential, one new
+  per project and UTC day (`ci_explorations.received_at`), 90 nights kept per project; staged summaries
+  (`gh_run_summaries`) are deleted after 7 days, as staged results are.
 - 2026-11-18 (review R-016, migration 0015): **run units from GitHub's job timings** (`held_minutes`; summary.json no
   longer sets what is billed); the **run's mode is the App's** (`FENVIX_MODE` recorded on the job; the results' and the
   summary's `mode` are ignored); test durations and `wouldSaveMs` bounded by the job's duration and the run's test time;
@@ -690,7 +709,7 @@ database directly.
   names the **run attempt**; results limited to the job's own attempt, chunk numbers below `chunks`, 200 chunks and
   256 MB per job, deleted after 7 days; connecting GitHub is completed by the signed-in person through
   `POST /v1/github/installations/complete` (see "GitHub App records").
-- 2026-11-18: Warm-up runs (migration 0016, `github-app/src/warmup/`): `gh_warmups`, the repository's cache state
+- 2026-11-18: Warm-up runs (migration 0017 (0016 before the R-016b merge), `github-app/src/warmup/`): `gh_warmups`, the repository's cache state
   (`cache_warm_*`), `warmCache` on Project and GitHub repository in the API, `POST /v1/runner/warmups` with the
   warm-up machine's own credential (refused on every other runner route), what a warm-up machine receives and what the
   runner's warm-up executor must do; usage events of kind `warmup`, reason `warm-up`, never billable (`githubJobId` and

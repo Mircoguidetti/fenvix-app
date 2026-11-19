@@ -151,7 +151,7 @@ and click Run. Each is safe to repeat (0013 only before 0014: after 0014, run 00
 security policies. 0014 removes the earlier database product, takes every right on our tables away from the browser
 (`anon`, `authenticated`: the dashboard talks to the API only), and creates the dashboard API's role `fenvix_api`
 (login, no password yet, no BYPASSRLS) with its policies. Then the whole file `supabase/migrations/0015_review_r016.sql`
-(safe to repeat: the review R-016 fixes), then the whole file `supabase/migrations/0016_warm_cache.sql` (safe to repeat): the warm-up runs' table `gh_warmups`, the repositories' cache state, warm-up usage events (never
+(safe to repeat: the review R-016 fixes), then the whole file `supabase/migrations/0016_review_r016b.sql` (safe to repeat: the review R-016b limits on explorations and staged summaries), then the whole file `supabase/migrations/0017_warm_cache.sql` (safe to repeat): the warm-up runs' table `gh_warmups`, the repositories' cache state, warm-up usage events (never
 billable), with their row level security.
 
 **Step 8.** Give the role its password (`DB_PASSWORD` from step 1) **without typing it into the SQL editor**, which

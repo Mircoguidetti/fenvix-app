@@ -40,12 +40,17 @@ export async function resetDb(): Promise<pg.Client> {
     execFileSync("bash", [fileURLToPath(new URL("../../scripts/prepare-test-db.sh", import.meta.url))], { env: { ...process.env, TEST_DATABASE_URL: ADMIN_URL }, stdio: "inherit" });
     return resetDb();
   }
-  // A database prepared before migration 0015 (review R-016) or 0016 (warm cache): apply what is missing, in order.
+  // A database prepared before migration 0015 (review R-016), 0016 (review R-016b) or 0017 (warm cache): apply what is missing, in order.
   if (!(await admin.query("select to_regclass('public.ci_trial_accounts') as t")).rows[0].t) {
     execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0015_review_r016.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
   }
+  // A database prepared before migration 0016 (review R-016b).
+  if (!(await admin.query("select 1 from information_schema.columns where table_name = 'ci_explorations' and column_name = 'received_at'")).rowCount) {
+    execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0016_review_r016b.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
+  }
+  // A database prepared before migration 0017 (warm cache).
   if (!(await admin.query("select to_regclass('public.gh_warmups') as t")).rows[0].t) {
-    execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0016_warm_cache.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
+    execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0017_warm_cache.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
   }
   await admin.query(`truncate gh_install_completions, ci_trial_accounts, gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_warmups, gh_repositories,
     gh_installations, ci_test_results, ci_skip_receipts, ci_audit_reruns, ci_defects, ci_explorations, ci_runs, ci_projects, ci_subscriptions cascade`);

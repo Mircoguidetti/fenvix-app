@@ -67,7 +67,7 @@ for (const [i, st] of STATES.entries()) {
       ["pr_open", "merged", "closed"].includes(st) ? `https://github.com/olive-${run}/repo-${st}/pull/${10 + i}` : null, i % 2 ? "node" : "python", i % 2 ? "jest" : "pytest"]);
 }
 
-// The shared cache (warm-ups, migration 0016): shop warm since a commit with a warm-up running for the next one; one
+// The shared cache (warm-ups, migration 0017): shop warm since a commit with a warm-up running for the next one; one
 // onboarded repository whose last warm-up could not run the job.
 const WARM_SHA = "4a7c2e9" + "0".repeat(33);
 const NEXT_SHA = "b81f0d3" + "0".repeat(33);

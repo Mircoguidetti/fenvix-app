@@ -9,7 +9,7 @@ import { conflict, forbidden, notFound, unavailable } from "./errors.ts";
 import { mapGitHubRepository, mapInstallation } from "./shared.js";
 
 /**
- * The latest warm-up of a repository `r` (supabase/migrations/0016_warm_cache.sql), the one in flight first: its
+ * The latest warm-up of a repository `r` (supabase/migrations/0017_warm_cache.sql), the one in flight first: its
  * columns as mapWarmCache (src/data/ci-rows.ts) reads them. Row level security shows the organization's warm-ups only.
  */
 export const LATEST_WARMUP = `left join lateral (select w.status as warmup_status, w.commit_sha as warmup_sha, w.detail as warmup_detail, w.updated_at as warmup_updated_at
