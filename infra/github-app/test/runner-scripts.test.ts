@@ -107,10 +107,13 @@ describe("runner machine scripts", () => {
 describe("customer-mode spike (infra/customer-mode/spike)", () => {
   const SPIKE = fileURLToPath(new URL("../../customer-mode/spike/", import.meta.url));
 
-  it("scripts are valid bash (shellcheck when installed); run-job.sh prints a valid sandbox configuration", () => {
+  it("scripts are valid bash (shellcheck: optional locally, required in CI); run-job.sh prints a valid sandbox configuration", () => {
     const sh = ["host-setup.sh", "build-guest.sh", "run-job.sh", "guest-kernel-docker-check.sh", "guest/fenvix-guest-job"];
     for (const f of sh) execFileSync("bash", ["-n", join(SPIKE, f)]);
-    if (spawnSync("shellcheck", ["--version"]).status === 0) execFileSync("shellcheck", ["-x", ...sh.map((f) => join(SPIKE, f))]);
+    const haveShellcheck = spawnSync("shellcheck", ["--version"]).status === 0;
+    // Locally shellcheck is optional; in CI a missing binary must fail, never skip silently.
+    if (process.env.GITHUB_ACTIONS === "true") assert.ok(haveShellcheck, "shellcheck must be installed in CI (GITHUB_ACTIONS=true)");
+    if (haveShellcheck) execFileSync("shellcheck", ["-x", ...sh.map((f) => join(SPIKE, f))], { stdio: ["ignore", "pipe", "pipe"] });
     const cfg = JSON.parse(execFileSync("bash", [join(SPIKE, "run-job.sh"), "--print-config"], { env: { PATH: process.env.PATH!, SLOT: "7" }, encoding: "utf8" }));
     assert.deepEqual(cfg.enclave, { direct_mode: true, cpu_overcommit: true, debug_mode: false });
     assert.deepEqual(cfg["machine-config"], { vcpu_count: 2, mem_size_mib: 2048 });
