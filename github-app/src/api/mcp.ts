@@ -17,6 +17,20 @@ import type { Caller, Execute } from "./server.ts";
 import type { Operation } from "./spec.ts";
 
 export const MCP_PROTOCOL = "2025-06-18";
+
+/**
+ * What the server tells an agent at `initialize`: the loop fenvix is made for (docs: README, "Remote MCP server").
+ * The job logs stay in GitHub Actions (our runners stream them there); fenvix gives the structured cause.
+ */
+export const MCP_INSTRUCTIONS = [
+  "fenvix runs this repository's CI tests deterministically and turns every flaky test into a reproducible defect.",
+  "The loop for fixing CI: (1) push your fix; (2) wait_for_run with the commit (or the pull request and projectId) until it",
+  "says the runs finished (call it again while callAgain is true); (3) read the failures it returns: for each test the error,",
+  "a log excerpt, whether it is new or a known defect, and for flaky tests the first divergent event and the replay command;",
+  "(4) get_test_log for a test's full output; (5) for a flaky test, pull_bundle and run the replay command locally, or replay",
+  "to replay it on a fenvix machine; fix, push, repeat. failures_for answers the same without waiting.",
+  "list_projects, list_runs, list_defects and get_defect browse the rest.",
+].join(" ");
 const SUPPORTED = new Set(["2025-06-18", "2025-03-26", "2024-11-05"]);
 
 interface Tool {
@@ -31,7 +45,59 @@ const uuid = { type: "string", format: "uuid" };
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
 const int = (v: unknown, d: number, max: number) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? Math.min(v, max) : d);
 
+/** How long a waiting tool waits in one call (the API function stops at 29 s): past it, it says "call again". */
+export const WAIT_SECONDS = 20;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const target = {
+  projectId: { ...uuid, description: "the project (needed with pullRequest)" },
+  pullRequest: { type: "integer", minimum: 1, description: "the pull request: its newest commit's runs" },
+  commitSha: { type: "string", pattern: "^[0-9a-f]{40}$" },
+  runId: uuid,
+};
+const targetQuery = (a: Record<string, unknown>) => Object.fromEntries(Object.entries({ projectId: a.projectId, pullRequest: a.pullRequest, commitSha: a.commitSha, runId: a.runId })
+  .filter(([, v]) => v !== undefined));
+
 export const TOOLS: Tool[] = [
+  {
+    name: "failures_for",
+    description: "The failing and flaky tests of a pull request (with projectId), a commit or a run. For each test: the error, a log excerpt, the defect id, the first divergent event (flaky tests), the replay command, and whether it is a new failure or a known one. status says whether the run is still running.",
+    inputSchema: { type: "object", additionalProperties: false, properties: target },
+    run: (call, a) => call("listFailures", { query: targetQuery(a) }),
+  },
+  {
+    name: "get_test_log",
+    description: "The full output of one test of a run (what the test printed and logged, at most 64 KB), with its failure.",
+    inputSchema: { type: "object", required: ["runId", "testId"], additionalProperties: false, properties: { runId: uuid, testId: { type: "string", minLength: 1, maxLength: 2000 } } },
+    run: (call, a) => call("getTestLog", { params: { runId: a.runId }, query: { testId: a.testId } }),
+  },
+  {
+    name: "wait_for_run",
+    description: `Waits until the fenvix runs of a pushed commit (or a pull request's newest commit) finish, then returns their failures, as failures_for. Waits at most ${WAIT_SECONDS} s per call: when status is still running (or none: GitHub has not started it yet), call it again. This lets an agent push, wait and read in one step.`,
+    inputSchema: { type: "object", additionalProperties: false, properties: target },
+    run: async (call, a) => {
+      const until = Date.now() + WAIT_SECONDS * 1000;
+      for (;;) {
+        const out = (await call("listFailures", { query: targetQuery(a) })) as { status: string };
+        if ((out.status !== "running" && out.status !== "none") || Date.now() > until) return { ...out, waitedUpTo: WAIT_SECONDS, callAgain: out.status === "running" || out.status === "none" };
+        await sleep(3000);
+      }
+    },
+  },
+  {
+    name: "replay",
+    description: `Replays a defect on a fenvix machine (fenvix replay of its bundle, 10 times) and returns the result: reproduced, flaky or passed. Waits at most ${WAIT_SECONDS} s per call; while the replay is queued or running, call get_replay with its id. Needs a key with the replay scope.`,
+    inputSchema: { type: "object", required: ["defectId"], additionalProperties: false, properties: { defectId: uuid, commitSha: { type: "string", pattern: "^[0-9a-f]{40}$" } } },
+    run: async (call, a) => {
+      const until = Date.now() + WAIT_SECONDS * 1000;
+      let r = (await call("requestDefectReplay", { params: { defectId: a.defectId }, body: a.commitSha ? { commitSha: a.commitSha } : {} })) as { body?: { id: string; state: string } } & { id?: string; state?: string };
+      let rep = (r.body ?? r) as { id: string; state: string };
+      while ((rep.state === "queued" || rep.state === "running") && Date.now() < until) {
+        await sleep(3000);
+        rep = (await call("getReplay", { params: { replayId: rep.id } })) as { id: string; state: string };
+      }
+      return rep;
+    },
+  },
   {
     name: "list_projects",
     description: "The organization's projects (connected GitHub repositories): id, repository, language, test runner, setup state, the shared cache's state.",
@@ -66,7 +132,7 @@ export const TOOLS: Tool[] = [
     name: "pull_bundle",
     description: "The defect's replay bundle (.tar.gz of bundle.json, order.txt and the run's traces), base64. Unpack it into .fenvix/defects/<id> and run the replay command.",
     inputSchema: { type: "object", required: ["defectId"], additionalProperties: false, properties: { defectId: uuid } },
-    run: (call, a) => call("getDefectBundle", { params: { defectId: a.defectId } }),
+    run: (call, a) => call("downloadDefectBundle", { params: { defectId: a.defectId } }),
   },
   {
     name: "request_replay",
@@ -128,7 +194,7 @@ export function mcpRoute(fastify: FastifyInstance, o: { db: ApiDb; execute: Exec
           protocolVersion: SUPPORTED.has(asked) ? asked : MCP_PROTOCOL,
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "fenvix", title: "fenvix", version: "1.0.0" },
-          instructions: "fenvix turns flaky CI tests into reproducible defects. list_defects, then get_defect for the cause (first divergent event) and replay command; pull_bundle to replay locally, or request_replay to replay on a fenvix machine.",
+          instructions: MCP_INSTRUCTIONS,
         } });
       }
       case "ping": return reply.code(200).send({ jsonrpc: "2.0", id, result: {} });

@@ -8,12 +8,17 @@
 export type RunMode = "enforce" | "shadow";
 export type Phase = "setup" | "collecting" | "testing" | "reporting";
 
+export interface TraceEvent { index: number; thread: string; source: string; op: string; site: string; value: string }
+
 /** Which job (RunnerJob). The identity (runner, repository, run for per-job machines) comes from the credential. */
 export interface RunnerJob { runId: number; runAttempt: number; repositoryId?: number; runnerName?: string }
 
 export interface RunnerProgress extends RunnerJob {
   seq: number; phase: Phase; testsTotal: number | null; testsDone: number; passed: number; failed: number; skippedWithProof: number;
   currentTest: string | null; elapsedMs: number; mode?: RunMode;
+  /** The tests finished since the previous record (the live view), and the parallel workers. */
+  finished?: RunnerTestOutcome[];
+  workers?: { id: string; currentTest?: string | null; testsDone?: number; state?: "running" | "idle" | "done" }[];
 }
 
 export interface RunnerFailure {
@@ -21,7 +26,7 @@ export interface RunnerFailure {
 }
 export interface RunnerTestOutcome {
   testId: string; outcome: "passed" | "failed" | "skipped_with_proof"; durationMs: number; failure?: RunnerFailure | null;
-  cacheKey?: string | null; wouldSkip?: boolean;
+  cacheKey?: string | null; wouldSkip?: boolean; worker?: string | null; finishedAt?: string; output?: string;
 }
 export interface RunnerReceipt {
   testId: string; cacheKey: string; reusedEngineRunId: string; fingerprint: string; reusedDurationMs: number;
@@ -36,7 +41,7 @@ export interface RunnerDefect {
   polluters?: string[]; setters?: string[]; order: string[]; prefixLength?: number; seed?: number | null; fingerprint: string;
   replay: { runs: number; fails: number; identicalFingerprint: boolean }; outcome?: string;
   exception: { type: string; phase: string; message: string; location: string };
-  divergence?: { index: number; reason: string; description: string } | null;
+  divergence?: { index: number; reason: string; description: string; passing?: TraceEvent[]; failing?: TraceEvent[] } | null;
   engineVersion?: string; language?: "python" | "node"; replayCommand?: string;
 }
 /** The bundle's `kind`: order dependence (order, brittle, fails-alone) or the kind of the first divergent event. */
@@ -146,6 +151,16 @@ export function parseProgress(raw: unknown): RunnerProgress {
     currentTest: opt(o, "currentTest", "", orNull((v, p) => text(v, p, 2000))) ?? null,
     elapsedMs: nonNeg("elapsedMs"),
     mode: opt(o, "mode", "", (v, p) => oneOf(v, p, MODES)),
+    finished: opt(o, "finished", "", (v, p) => list(v, p, testOutcome, { max: 500 })),
+    workers: opt(o, "workers", "", (v, p) => list(v, p, (x, q) => {
+      const w = obj(x, q);
+      return def({
+        id: text(need(w, "id", q), at(q, "id"), 100),
+        currentTest: opt(w, "currentTest", q, orNull((y, r) => text(y, r, 2000))),
+        testsDone: opt(w, "testsDone", q, (y, r) => int(y, r, 0)),
+        state: opt(w, "state", q, (y, r) => oneOf(y, r, ["running", "idle", "done"] as const)),
+      });
+    }, { max: 256 })),
   });
 }
 
@@ -170,6 +185,9 @@ function testOutcome(v: unknown, path: string): RunnerTestOutcome {
     failure: opt(o, "failure", path, orNull(failure)),
     cacheKey: opt(o, "cacheKey", path, orNull((x, p) => text(x, p, undefined, HEX32))),
     wouldSkip: opt(o, "wouldSkip", path, bool),
+    worker: opt(o, "worker", path, orNull((x, p) => text(x, p, 100))),
+    finishedAt: opt(o, "finishedAt", path, (x, p) => text(x, p, undefined, DATE_TIME)),
+    output: opt(o, "output", path, (x, p) => text(x, p, 65536)),
   });
 }
 
@@ -228,7 +246,13 @@ export function parseDefect(v: unknown, path: string): RunnerDefect {
     exception,
     divergence: opt(o, "divergence", path, orNull((x, p) => {
       const d = obj(x, p);
-      return { index: int(need(d, "index", p), at(p, "index")), reason: text(need(d, "reason", p), at(p, "reason")), description: text(need(d, "description", p), at(p, "description")) };
+      const ev = (y: unknown, r: string) => list(y, r, (e, q) => {
+        const t = obj(e, q);
+        return { index: int(need(t, "index", q), at(q, "index")), thread: text(need(t, "thread", q), at(q, "thread")), source: text(need(t, "source", q), at(q, "source")),
+          op: text(need(t, "op", q), at(q, "op")), site: text(need(t, "site", q), at(q, "site")), value: text(need(t, "value", q), at(q, "value")) };
+      }, { max: 200 });
+      return def({ index: int(need(d, "index", p), at(p, "index")), reason: text(need(d, "reason", p), at(p, "reason")), description: text(need(d, "description", p), at(p, "description")),
+        passing: opt(d, "passing", p, ev), failing: opt(d, "failing", p, ev) });
     })),
     engineVersion: opt(o, "engineVersion", path, (x, p) => text(x, p)),
     language: opt(o, "language", path, (x, p) => oneOf(x, p, ["python", "node"] as const)),
@@ -332,6 +356,7 @@ export function progressRecord(p: RunnerProgress): Record<string, unknown> {
   return {
     seq: p.seq, phase: p.phase, testsTotal: p.testsTotal, testsDone: p.testsDone, passed: p.passed, failed: p.failed,
     skippedWithProof: p.skippedWithProof, currentTest: p.currentTest, elapsedMs: p.elapsedMs,
+    workers: (p.workers ?? []).map((w) => ({ id: w.id, currentTest: w.currentTest ?? null, testsDone: w.testsDone ?? 0, state: w.state ?? "running" })),
   };
 }
 

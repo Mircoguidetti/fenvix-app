@@ -31,10 +31,29 @@ things outside this session block "DONE" as the founder defines it:
 | 2. Memory across runs, dedup | **One defect per flaky test of a project** across runs and PRs (`ci_defects` unique on project + test), with every sighting in `ci_defect_occurrences` (run, commit, branch, PR, fingerprint, `fingerprintChanged`, divergent event). Replay command, first divergent event and bundle on every defect. Flaky tests named only by the summary are defects too (`reported`). | `backend.test.ts` steps 3, 5, 9, 10 |
 | 3. PR comment, check runs | ONE comment per PR made from **every** fenvix job of the head commit (a green job never hides a red one; running jobs shown as running); per defect: cause (first divergent event), seed, minimal order, replay command, pull command, "replay it on fenvix" link, how often seen across PRs; skip-with-proof summary; culprit and dependency verdict lines appear when the defect carries them (`ci_defects.culprit`, `dependency_verdict`). One check run per job (`fenvix / <job>`), with annotations; a job that gets no machine gets an `action_required` check run saying why. Every open PR whose head is the commit gets the comment. | `backend.test.ts` steps 1, 3, 4; `backend-gaps.test.ts` G-2318; `results.test.ts`, `e2e.test.ts` |
 | 4. Replay on our machines | Dashboard / API key (scope `replay`) / MCP / PR link → `ci_replays` → scheduler → `launchTask` (P-047's fleet) → machine fetches the bundle and reports → result on the defect; 10/10 passing on a commit that never saw it marks it **fixed**. At most one in flight per defect, 10 a day. | `backend.test.ts` step 8 |
-| 5. API keys, documented API | Keys per organization (`fxk_…`, SHA-256 stored, shown once, scopes `read`/`replay`, revocable, optional expiry), owners/admins manage them; keys read runs, defects, bundles, explorations (`x-fenvix-key` in `openapi/fenvix-api.yaml`), never anything else; per-key and per-person rate limit. The contract documents every route, `/healthz`, `/webhooks/github`, `/github/setup` included. | `backend.test.ts` step 6; `api-dashboard.test.ts` (63 operations, real GoTrue tokens) |
-| 6. Remote MCP server | `POST /v1/mcp` (MCP 2025-06-18, streamable HTTP, JSON): `list_projects`, `list_runs`, `list_defects`, `get_defect`, `pull_bundle`, `request_replay`, `get_replay`; each tool is an API operation run with the key (same RLS, scopes, rate limit). `mcp.fenvix.dev`: DNS/certificate not made (infra). | `backend.test.ts` steps 7, 8 |
+| 5. API keys, documented API | Keys per organization (`fxk_…`, SHA-256 stored, shown once, scopes `read`/`replay`, revocable, optional expiry), owners/admins manage them; keys read runs, defects, bundles, explorations (`x-fenvix-key` in `openapi/fenvix-api.yaml`), never anything else; per-key and per-person rate limit. The contract documents every route, `/healthz`, `/webhooks/github`, `/github/setup` included. | `backend.test.ts` step 6; `api-dashboard.test.ts` (68 operations, real GoTrue tokens) |
+| 6. Remote MCP server | `POST /v1/mcp` (MCP 2025-06-18, streamable HTTP, JSON): the agent loop `failures_for`, `get_test_log`, `wait_for_run`, `replay`, and `list_projects`, `list_runs`, `list_defects`, `get_defect`, `pull_bundle`, `request_replay`, `get_replay`; each tool is an API operation run with the key (same RLS, scopes, rate limit). `mcp.fenvix.dev`: DNS/certificate not made (infra). | `backend.test.ts` steps 7, 8 |
 | 7. Shadow trial label | **Removed until real**: no runner reads `FENVIX_MODE`, so trial runs are started and labelled `enforce` (what happens). `SHADOW_MODE=true` turns shadow back on once P-047's runner runs it. | `backend-gaps.test.ts` G-0187 |
-| 8. Live run control | `POST /v1/runs/{id}/cancel` (members, not keys): within a minute the GitHub run is cancelled (needs Actions: write) and the machine ended; `POST /v1/runs/{id}/replays` replays one test of a run. `cancelRequestedAt` on the run for the live view. | `backend.test.ts` step 11; `api-dashboard.test.ts` |
+| 8. Live run control | `POST /v1/runs/{id}/stop` (now, first failure, off; owners and admins, not keys): within a minute the GitHub run is cancelled (needs Actions: write) and the machine ended; `Run.stop` says armed / requested / done / failed. `POST /v1/runs/{id}/replays` replays one test; `GET /v1/runs/{id}/tests/live` the tests as they finish. | `backend.test.ts` step 11; `api-dashboard.test.ts` |
+
+## Round 2 (after the coordination messages)
+
+- **Migration renumbered 0019** (the coordinator gave 0018 to P-047's machines); 0019 runs after it.
+- **P-049's "Live test view" contract merged and served**: `listLiveTests`, `stopRun` (now / first failure / off,
+  owner or admin; replaces my `cancelRun`), `listReplays`, `replayTest`, `getReplay` (P-049's `Replay` shape; my defect
+  replays fill it, `runId` may be null), `listDefectOccurrences` (`/occurrences`, P-049's fields plus mine), `getDefectBundle`
+  (a signed 5-minute link; the bytes are `downloadDefectBundle`, which the pull command and MCP use), runs filtered by
+  pull request and branch, `Run.stop`/`job`/`githubRunId`/`githubJobId`, `RunProgress.workers`, per-test `worker`/`seq`/
+  `finishedAt`, `Defect.firstPullRequest`, divergence `passing`/`failing`. The runner's progress takes `finished` and
+  `workers` (docs/data-contract.md "1b").
+- **The coding agent's loop (founder addition to F-14)**: MCP tools `failures_for`, `get_test_log`, `wait_for_run`,
+  `replay` (waits up to 20 s per call; the API function stops at 29 s), documented in the server's `initialize`
+  instructions and the README; API operations `listFailures`, `getTestLog`. A test's full output needs the runner to send
+  `output` (P-047).
+- **`FENVIX_SKIP`** written for P-047's runner (0 in shadow mode or when skip with proof is off or paused).
+- Evidence: `backend.test.ts` steps 5, 7, 8, 11 (signed link, the agent loop on a PR, replay verdict, live tests and the
+  first-failure stop, failures and log); `api-dashboard.test.ts` (68 operations, the admin matrix with `stopRun`,
+  `replayTest`).
 
 ## Numbers
 

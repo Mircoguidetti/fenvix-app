@@ -1,6 +1,6 @@
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { client, type Defect } from "../data";
-import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker, LoadError } from "../components/PageHeader";
 import { CodeBlock, ReplayStatus, causeLabel, causeSentence, shortTest } from "../components/ci";
 import { STATE_ICONS, StatusPill } from "../components/StateBadge";
 import { Select } from "../components/Select";
@@ -73,7 +73,7 @@ export function DefectsPage({ fixedProjectId }: { fixedProjectId?: string } = {}
       </div>
 
       {families.status === "loading" && <Message>Loading defects</Message>}
-      {families.status === "error" && <Message role="alert">{families.message}</Message>}
+      {families.status === "error" && <LoadError message={families.message} onRetry={families.reload} />}
       {families.status === "ready" && families.data.length === 0 && (
         <div className="empty">
           <h2>No {state === "all" ? "" : `${state} `}defects</h2>
@@ -168,7 +168,7 @@ export function DefectPage() {
   const defect = useAsync(() => client.getDefect(id), [id]);
   const now = client.now();
   if (defect.status === "loading") return <Message>Loading defect</Message>;
-  if (defect.status === "error") return <Message role="alert">{defect.message}</Message>;
+  if (defect.status === "error") return <LoadError message={defect.message} onRetry={defect.reload} />;
   const d = defect.data;
   if (!d)
     return (

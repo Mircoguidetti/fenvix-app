@@ -191,9 +191,17 @@ describe("service back-end: runner → API stores → PR comment + check runs + 
     assert.deepEqual([j.testId, j.cause, j.causeTests, j.status, j.occurrences, j.divergence.index], [EUR, "polluter", [POLLUTER], "reproduced", 1, 412]);
     assert.equal(j.replayCommand, defectA().replayCommand);
     assert.equal(j.bundle.sha256, createHash("sha256").update(BUNDLE).digest("hex"));
-    const hist = await call("listDefectOccurrences", `/v1/defects/${defectId}/history`, { auth: t, ws: org.workspaceId });
-    assert.deepEqual(hist.json().items.map((o: Row) => [o.source, o.pullRequest, o.fingerprint]), [["run", 12, H("a")]]);
-    const bundle = await call("getDefectBundle", `/v1/defects/${defectId}/bundle`, { auth: t, ws: org.workspaceId });
+    const hist = await call("listDefectOccurrences", `/v1/defects/${defectId}/occurrences`, { auth: t, ws: org.workspaceId });
+    assert.deepEqual(hist.json().items.map((o: Row) => [o.source, o.pullRequest, o.fingerprint, typeof o.at]), [["run", 12, H("a"), "string"]]);
+    // P-049's signed link: { url, expiresAt, sha256, bytes }; the url works without any header, for 5 minutes.
+    const link = await call("getDefectBundle", `/v1/defects/${defectId}/bundle`, { auth: t, ws: org.workspaceId });
+    assert.equal(link.statusCode, 200);
+    assert.deepEqual([link.json().sha256, link.json().bytes], [createHash("sha256").update(BUNDLE).digest("hex"), BUNDLE.length]);
+    const u = new URL(link.json().url);
+    const got = await api.fastify.inject({ method: "GET", url: u.pathname + u.search });
+    assert.deepEqual([got.statusCode, got.rawPayload], [200, BUNDLE]);
+    assert.equal((await api.fastify.inject({ method: "GET", url: (u.pathname + u.search).slice(0, -2) + "xx" })).statusCode, 404, "a forged link");
+    const bundle = await call("downloadDefectBundle", `/v1/defects/${defectId}/bundle/download`, { auth: t, ws: org.workspaceId });
     assert.equal(bundle.statusCode, 200);
     assert.deepEqual(bundle.rawPayload, BUNDLE);
     // A member mutes it, then reopens it; the audit log says who did (G-1625, G-1632).
@@ -217,7 +225,7 @@ describe("service back-end: runner → API stores → PR comment + check runs + 
     // With the key: no organization header needed.
     const ds = await call("listDefects", "/v1/defects", { auth: readKey });
     assert.deepEqual(ds.json().items.map((x: Row) => x.id), [defectId]);
-    const b = await call("getDefectBundle", `/v1/defects/${defectId}/bundle`, { auth: readKey });
+    const b = await call("downloadDefectBundle", `/v1/defects/${defectId}/bundle/download`, { auth: readKey });
     assert.deepEqual(b.rawPayload, BUNDLE);
     // A key cannot do what needs a person, nor ask for replays without the replay scope.
     assert.equal((await call("listApiKeys", "/v1/api-keys", { auth: readKey })).statusCode, 403);
@@ -228,6 +236,7 @@ describe("service back-end: runner → API stores → PR comment + check runs + 
     otherKey = ko.json().key;
     assert.equal((await call("getDefect", `/v1/defects/${defectId}`, { auth: otherKey })).statusCode, 404);
     assert.equal((await call("getDefectBundle", `/v1/defects/${defectId}/bundle`, { auth: otherKey })).statusCode, 404);
+    assert.equal((await call("downloadDefectBundle", `/v1/defects/${defectId}/bundle/download`, { auth: otherKey })).statusCode, 404);
     assert.equal((await call("listDefects", "/v1/defects", { auth: otherKey, ws: org.workspaceId })).statusCode, 404, "a key cannot name another organization");
     assert.deepEqual((await call("listDefects", "/v1/defects", { auth: otherKey })).json().items, []);
     // Revoked: refused at once.
@@ -241,7 +250,15 @@ describe("service back-end: runner → API stores → PR comment + check runs + 
     assert.equal(init.json().result.serverInfo.name, "fenvix");
     assert.equal((await mcp(readKey, { jsonrpc: "2.0", method: "notifications/initialized" })).statusCode, 202);
     const tools = (await mcp(readKey, { jsonrpc: "2.0", id: 2, method: "tools/list" })).json().result.tools.map((t: Row) => t.name);
-    assert.deepEqual(tools, ["list_projects", "list_runs", "list_defects", "get_defect", "pull_bundle", "request_replay", "get_replay"]);
+    assert.deepEqual(tools, ["failures_for", "get_test_log", "wait_for_run", "replay", "list_projects", "list_runs", "list_defects", "get_defect", "pull_bundle", "request_replay", "get_replay"]);
+    assert.match(init.json().result.instructions, /push your fix; \(2\) wait_for_run/);
+    // The agent's loop: the PR's failures (finished: no wait), the flaky test with its divergent event and replay command.
+    const pid = (await admin.query("select project_id from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].project_id;
+    const waited = (await mcp(readKey, { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "wait_for_run", arguments: { projectId: pid, pullRequest: 12 } } })).json().result.structuredContent;
+    assert.deepEqual([waited.status, waited.callAgain], ["failed", false]);
+    const flaky = waited.items.find((x: Row) => x.testId === EUR);
+    assert.deepEqual([flaky.kind, flaky.defectId, (flaky.divergence as Row).index, flaky.new], ["flaky_defect", defectId, 412, true]);
+    assert.match(flaky.replayCommand, /--det-order=\.fenvix\/defects\//);
     const got = (await mcp(readKey, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "get_defect", arguments: { defectId } } })).json().result;
     assert.equal(got.isError, false);
     assert.equal(got.structuredContent.defect.id, defectId);
@@ -279,7 +296,9 @@ describe("service back-end: runner → API stores → PR comment + check runs + 
     assert.equal((await report({ replayId, event: "started" })).statusCode, 202);
     assert.equal((await report({ replayId, event: "finished", outcome: "passed", runs: 10, fails: 0, fingerprint: H("b"), identicalFingerprint: true })).statusCode, 202);
     const d = (await call("getDefect", `/v1/defects/${defectId}`, { auth: readKey })).json();
-    assert.deepEqual([d.state, d.lastReplay.status, d.lastReplay.runs, d.lastReplay.fails], ["fixed", "passed", 10, 0]);
+    assert.deepEqual([d.state, d.lastReplay.state, d.lastReplay.verdict, d.lastReplay.runs, d.lastReplay.fails], ["fixed", "done", "passed", 10, 0]);
+    // The run's replays (P-049's list) show it too, in their shape.
+    assert.equal((await call("getReplay", `/v1/replays/${replayId}`, { auth: readKey })).json().verdict, "passed");
   });
 
   it("9. the same flaky test on another pull request: the same defect (another fingerprint), seen twice across two pull requests; it opens again", async () => {
@@ -295,7 +314,7 @@ describe("service back-end: runner → API stores → PR comment + check runs + 
     assert.equal((await admin.query("select count(*)::int as n from ci_defects where test_id = $1", [EUR])).rows[0].n, 1, "one defect per flaky test");
     const d = (await call("getDefect", `/v1/defects/${defectId}`, { auth: readKey })).json();
     assert.deepEqual([d.occurrences, d.fingerprint, d.state], [2, H("c"), "open"]);
-    const hist = (await call("listDefectOccurrences", `/v1/defects/${defectId}/history`, { auth: readKey })).json().items;
+    const hist = (await call("listDefectOccurrences", `/v1/defects/${defectId}/occurrences`, { auth: readKey })).json().items;
     assert.deepEqual(hist.map((o: Row) => [o.pullRequest, o.fingerprint, o.fingerprintChanged]), [[13, H("c"), true], [12, H("a"), false]]);
     const pr13 = comment().find((c) => c.issue === 13)!;
     assert.match(pr13.body, /seen in 2 runs across 2 pull requests/);
@@ -315,16 +334,34 @@ describe("service back-end: runner → API stores → PR comment + check runs + 
     assert.deepEqual([ds[0].status, ds[0].cause, ds[0].replayCommand], ["reported", "unknown", "python -m pytest --det tests/test_report.py"]);
   });
 
-  it("11. stopping a live run from the dashboard ends its machine", async () => {
+  it("11. the live view: tests as they finish, workers, a stop armed for the first failure ends the machine; the agent reads the failure and its log", async () => {
     const sha = "4".repeat(40);
     h.gh.addRun("acme/shop", 54000, { event: "push", headSha: sha, headBranch: "main", message: "Main", pullRequests: [] });
     await h.send("workflow_job", workflowJob("queued", { id: 94001, runId: 54000, sha, branch: "main" }));
     await h.send("workflow_job", workflowJob("in_progress", { id: 94001, runId: 54000, sha, branch: "main", runner: "fenvix-j94001" }));
     const runId = (await admin.query("select ci_run_id from gh_jobs where job_id = 94001")).rows[0].ci_run_id;
-    assert.equal((await call("cancelRun", `/v1/runs/${runId}/cancel`, { method: "POST", auth: readKey })).statusCode, 403, "a key cannot stop runs");
-    const r = await call("cancelRun", `/v1/runs/${runId}/cancel`, { method: "POST", auth: await token(org.userId), ws: org.workspaceId });
-    assert.equal(r.statusCode, 202);
-    assert.ok(r.json().cancelRequestedAt);
+    assert.equal((await call("stopRun", `/v1/runs/${runId}/stop`, { method: "POST", auth: readKey, body: { when: "now" } })).statusCode, 403, "a key cannot stop runs");
+    // Armed for the first failure: nothing yet; the live progress brings a failed test: requested.
+    const t = await token(org.userId);
+    const armed = await call("stopRun", `/v1/runs/${runId}/stop`, { method: "POST", auth: t, ws: org.workspaceId, body: { when: "first_failure" } });
+    assert.deepEqual([armed.statusCode, armed.json().run.stop.state, armed.json().run.stop.when], [202, "armed", "first_failure"]);
+    await runner("progress", "fenvix-j94001", 54000, { runId: 54000, seq: 1, phase: "testing", testsTotal: 3, testsDone: 2, passed: 1, failed: 1, skippedWithProof: 0, elapsedMs: 900,
+      currentTest: "t::c", workers: [{ id: "gw0", currentTest: "t::c", testsDone: 2, state: "running" }],
+      finished: [{ testId: "t::a", outcome: "passed", durationMs: 3, worker: "gw0" }, { testId: "t::b", outcome: "failed", durationMs: 4, worker: "gw0", output: "boom\nTraceback...", failure: { kind: "real", exceptionType: "AssertionError", message: "assert 1 == 2", location: "t.py:9" } }] });
+    const live = await call("listLiveTests", `/v1/runs/${runId}/tests/live?afterSeq=0`, { auth: t, ws: org.workspaceId });
+    assert.deepEqual(live.json().items.map((x: Row) => [x.testId, x.seq, x.worker]), [["t::a", 1, "gw0"], ["t::b", 2, "gw0"]]);
+    assert.equal(live.json().lastSeq, 2);
+    assert.deepEqual((await call("listLiveTests", `/v1/runs/${runId}/tests/live?afterSeq=2`, { auth: t, ws: org.workspaceId })).json().items, []);
+    const detail = (await call("getRun", `/v1/runs/${runId}`, { auth: t, ws: org.workspaceId })).json().run;
+    assert.deepEqual([detail.stop.state, detail.progress.workers[0].id, detail.job.name, detail.githubJobId], ["requested", "gw0", "test", 94001]);
+    await h.app.service.sweep();
+    assert.deepEqual(launcher.ended, ["fenvix-j94001"]);
+    // The coding agent's view of it: the failure with its log excerpt and the full log.
+    const f = (await call("listFailures", `/v1/failures?runId=${runId}`, { auth: readKey })).json();
+    assert.deepEqual([f.status, f.items[0].testId, f.items[0].new, f.items[0].logExcerpt], ["running", "t::b", true, "boom\nTraceback..."]);
+    assert.equal((await call("getTestLog", `/v1/runs/${runId}/tests/log?testId=t::b`, { auth: readKey })).json().output, "boom\nTraceback...");
+    await h.send("workflow_job", workflowJob("completed", { id: 94001, runId: 54000, sha: "4".repeat(40), branch: "main", runner: "fenvix-j94001", conclusion: "cancelled" }));
+    assert.equal((await call("getRun", `/v1/runs/${runId}`, { auth: t, ws: org.workspaceId })).json().run.stop.state, "done");
     await h.app.service.sweep();
     assert.deepEqual(launcher.ended, ["fenvix-j94001"]);
   });

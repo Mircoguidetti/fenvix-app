@@ -126,7 +126,7 @@ begin
   -- Writes into B are refused (0 rows), state changes only of A's defects.
   update public.ci_defects set state = 'muted' where workspace_id = r.b; get diagnostics n = row_count;
   assert n = 0, 'WRITE LEAK: A changed B''s defect';
-  update public.ci_runs set cancel_requested_at = now() where workspace_id = r.b; get diagnostics n = row_count;
+  update public.ci_runs set stop_state = 'requested' where workspace_id = r.b; get diagnostics n = row_count;
   assert n = 0, 'WRITE LEAK: A stopped B''s run';
   update public.ci_api_keys set revoked_at = now() where workspace_id = r.b; get diagnostics n = row_count;
   assert n = 0, 'WRITE LEAK: A revoked B''s key';
@@ -185,7 +185,7 @@ begin
   -- A key changes no state and manages no keys.
   update public.ci_defects set state = 'fixed' where workspace_id = r.a; get diagnostics n = row_count;
   assert n = 0, 'a key changed a defect''s state';
-  update public.ci_runs set cancel_requested_at = now() where workspace_id = r.a; get diagnostics n = row_count;
+  update public.ci_runs set stop_state = 'requested' where workspace_id = r.a; get diagnostics n = row_count;
   assert n = 0, 'a key stopped a run';
   select count(*) into n from public.ci_api_keys; assert n = 0, 'a key reads the API keys';
   -- Revoked: nothing at all.

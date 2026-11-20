@@ -40,7 +40,7 @@ export interface StoredChunk { id: number; chunk: number; payload: RunnerResults
 export interface TestRow {
   test_id: string; outcome: RunnerTestOutcome["outcome"]; duration_ms: number; failure_kind: "real" | "flaky_defect" | null;
   failure_phase: string | null; exception_type: string | null; failure_message: string | null; failure_location: string | null;
-  defect_fingerprint: string | null;
+  defect_fingerprint: string | null; worker: string | null; finished_at: string | null; output: string | null;
 }
 
 /** A per-test outcome as ci_test_results stores it: failure fields only for a failed test (a failed test always has a kind). */
@@ -51,6 +51,7 @@ export function testRow(t: RunnerTestOutcome): TestRow {
     failure_kind: f?.kind ?? null, failure_phase: f ? (f.phase ?? "call") : null, exception_type: f?.exceptionType ?? null,
     failure_message: f?.message ?? null, failure_location: f?.location ?? null,
     defect_fingerprint: f?.kind === "flaky_defect" ? (f.defectFingerprint ?? null) : null,
+    worker: t.worker ?? null, finished_at: t.finishedAt ?? null, output: t.output ?? null,
   };
 }
 
@@ -270,19 +271,28 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
   if (ready.length) {
     await c.query(
       `insert into ci_test_results (run_id, workspace_id, test_id, outcome, duration_ms, failure_kind, failure_phase, exception_type, failure_message,
-         failure_location, defect_id, receipt_id)
+         failure_location, worker, finished_at, output, defect_id, receipt_id)
        select $1, public.cp_workspace(), x.test_id, x.outcome, x.duration_ms, x.failure_kind, x.failure_phase, x.exception_type, x.failure_message,
-         x.failure_location,
+         x.failure_location, x.worker, x.finished_at, x.output,
          case when x.failure_kind = 'flaky_defect' then (
            select d.id from ci_defects d where d.project_id = $2 and d.test_id = x.test_id) end,
          case when x.outcome = 'skipped_with_proof' then (select r.id from ci_skip_receipts r where r.run_id = $1 and r.test_id = x.test_id) end
        from jsonb_to_recordset($3::jsonb) as x(test_id text, outcome text, duration_ms bigint, failure_kind text, failure_phase text, exception_type text,
-         failure_message text, failure_location text, defect_fingerprint text)
+         failure_message text, failure_location text, defect_fingerprint text, worker text, finished_at timestamptz, output text)
        on conflict (run_id, test_id) do update set outcome = excluded.outcome, duration_ms = excluded.duration_ms, failure_kind = excluded.failure_kind,
          failure_phase = excluded.failure_phase, exception_type = excluded.exception_type, failure_message = excluded.failure_message,
          failure_location = excluded.failure_location, defect_id = coalesce(excluded.defect_id, ci_test_results.defect_id),
-         receipt_id = excluded.receipt_id`,
+         receipt_id = excluded.receipt_id, worker = coalesce(ci_test_results.worker, excluded.worker),
+         finished_at = coalesce(ci_test_results.finished_at, excluded.finished_at), output = coalesce(excluded.output, ci_test_results.output)`,
       [run.id, run.projectId, JSON.stringify(ready)]);
+    // The live view's order: rows the progress records did not bring get the next seq numbers (keeping the ones they did).
+    await c.query(
+      `update ci_test_results t set seq = n.seq from (
+         select test_id, (select coalesce(max(seq), 0) from ci_test_results where run_id = $1) + row_number() over (order by finished_at nulls last, test_id) as seq
+         from ci_test_results where run_id = $1 and seq is null) n
+       where t.run_id = $1 and t.test_id = n.test_id`, [run.id]);
+    // A stop armed for the first failure fires (P-049's live view).
+    if (ready.some((t) => t.outcome === "failed")) await armedStopFires(c, run.id);
   }
   // A flaky failure whose bundle came in a later chunk: linked now.
   await c.query(
@@ -373,4 +383,32 @@ export async function applyExploration(c: Client, projectId: string, language: s
   const ids = [...new Set([...known, ...defects.filter((d) => d.inserted).map((d) => d.id)])];
   await c.query("update ci_explorations set new_defect_ids = $2 where id = $1", [id, JSON.stringify(ids)]);
   return { id, newDefectIds: ids };
+}
+
+/** A stop armed for the first failed test (stop_when first_failure) is requested: the sweep cancels the job. */
+export async function armedStopFires(c: Client, runId: string): Promise<void> {
+  await c.query(
+    `update ci_runs set stop_state = 'requested', stop_detail = 'the first test failed' where id = $1 and status = 'running'
+       and stop_state = 'armed' and stop_when = 'first_failure'`, [runId]);
+}
+
+/**
+ * The live view's per-test rows from a runner progress record (`finished`): stored as they arrive with the next seq
+ * numbers, a test sent twice keeps the first. Tests skipped with proof wait for the results chunk (their receipt).
+ */
+export async function storeLiveTests(c: Client, runId: string, tests: RunnerTestOutcome[]): Promise<number> {
+  const rows = lastBy(tests.map(testRow), (t) => t.test_id).filter((t) => t.outcome !== "skipped_with_proof");
+  if (!rows.length) return 0;
+  await c.query("select 1 from ci_runs where id = $1 for update", [runId]);
+  const r = await c.query(
+    `insert into ci_test_results (run_id, workspace_id, test_id, outcome, duration_ms, failure_kind, failure_phase, exception_type, failure_message,
+       failure_location, worker, finished_at, output, seq)
+     select $1, public.cp_workspace(), x.test_id, x.outcome, x.duration_ms, x.failure_kind, x.failure_phase, x.exception_type, x.failure_message,
+       x.failure_location, x.worker, coalesce(x.finished_at, now()), x.output,
+       (select coalesce(max(seq), 0) from ci_test_results where run_id = $1) + x.n
+     from (select y.*, row_number() over () as n from jsonb_to_recordset($2::jsonb) as y(test_id text, outcome text, duration_ms bigint, failure_kind text,
+       failure_phase text, exception_type text, failure_message text, failure_location text, worker text, finished_at timestamptz, output text)) x
+     on conflict (run_id, test_id) do nothing`, [runId, JSON.stringify(rows)]);
+  if (rows.some((t) => t.outcome === "failed")) await armedStopFires(c, runId);
+  return r.rowCount ?? 0;
 }

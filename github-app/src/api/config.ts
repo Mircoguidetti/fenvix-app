@@ -26,6 +26,8 @@ export interface ApiConfig {
   /** False while the GitHub App is not configured (GITHUB_APP_SLUG empty). */
   githubConfigured: boolean;
   webUrl: string;
+  /** This API's own address (PUBLIC_API_URL, default https://api.fenvix.dev): signed bundle links. */
+  publicApiUrl: string;
 }
 
 type Env = Record<string, string | undefined>;
@@ -89,5 +91,6 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     appSlug,
     githubConfigured: appSlug !== "",
     webUrl: url(env, "GITHUB_WEB_URL", "https://github.com", nodeEnv),
+    publicApiUrl: url(env, "PUBLIC_API_URL", "https://api.fenvix.dev", nodeEnv),
   };
 }

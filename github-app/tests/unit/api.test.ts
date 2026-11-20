@@ -57,8 +57,8 @@ describe("the contract inside the bundle", () => {
 
 describe("the role table", () => {
   const ADMIN_OPS = ["changeMemberRole", "createApiKey", "createInstallLink", "createInvitation", "deleteOrganization", "deleteProject", "exportOrganization",
-    "listApiKeys", "listAuditEvents", "listInvitations", "openSetupPullRequest", "removeMember", "renameOrganization", "requestExploration", "resumeSkip", "revokeApiKey",
-    "revokeInvitation", "saveExplorationSettings", "saveProjectSettings", "saveSettings", "unlinkInstallation"];
+    "listApiKeys", "listAuditEvents", "listInvitations", "openSetupPullRequest", "removeMember", "renameOrganization", "replayTest", "requestExploration", "resumeSkip", "revokeApiKey",
+    "revokeInvitation", "saveExplorationSettings", "saveProjectSettings", "saveSettings", "stopRun", "unlinkInstallation"];
 
   it("x-fenvix-role: admin marks exactly the owner-or-admin operations", () => {
     assert.deepEqual(dashboardOperations().filter((o) => o.admin).map((o) => o.operationId).sort(), ADMIN_OPS);

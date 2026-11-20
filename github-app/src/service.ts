@@ -6,7 +6,7 @@ import { combinedComment, type DefectView, type JobView } from "./results/commen
 import { pullCommand, replayCommand } from "./api/shared.js";
 import { parseSummary, type RunSummary } from "./results/summary.ts";
 import { createHash, randomBytes, type KeyObject } from "node:crypto";
-import { applyChunks, applyExploration, type JobKey, recordReportedFlaky } from "./results/apply.ts";
+import { applyChunks, applyExploration, armedStopFires, type JobKey, recordReportedFlaky, storeLiveTests } from "./results/apply.ts";
 import { projectStack, type Stack } from "./results/detect.ts";
 import { parseResults, progressRecord, type RunnerExploration, type RunnerProgress, type RunnerResults } from "./results/runner-records.ts";
 import { signCacheToken, signSummaryCredential } from "./runners/credentials.ts";
@@ -879,10 +879,17 @@ export class GitHubService {
        order by j.job_id desc limit 1`,
       [o.repositoryId, o.runId, o.runAttempt, o.runnerName]);
     if (!j?.workspace_id) return "no_run";
-    const updated = await this.db.tx(j.workspace_id, (c) => c.query(
-      `update ci_runs set progress = $2::jsonb, progress_at = now()
-       where id = $1 and status = 'running' and coalesce((progress->>'seq')::bigint, -1) < $3`,
-      [j.ci_run_id, JSON.stringify(progressRecord(o.progress)), o.progress.seq]));
+    const updated = await this.db.tx(j.workspace_id, async (c) => {
+      const u = await c.query(
+        `update ci_runs set progress = $2::jsonb, progress_at = now()
+         where id = $1 and status = 'running' and coalesce((progress->>'seq')::bigint, -1) < $3`,
+        [j.ci_run_id, JSON.stringify(progressRecord(o.progress)), o.progress.seq]);
+      // The tests finished since the last record (the live view), whatever the order the records came in.
+      const running = (await c.query("select 1 from ci_runs where id = $1 and status = 'running'", [j.ci_run_id])).rowCount;
+      if (running && o.progress.finished?.length) await storeLiveTests(c, j.ci_run_id, o.progress.finished);
+      if (running && o.progress.failed > 0) await armedStopFires(c, j.ci_run_id);
+      return u;
+    });
     return updated.rowCount ? "stored" : "stale";
   }
 
@@ -1205,6 +1212,11 @@ export class GitHubService {
           const mode = lock?.mode ?? (await this.orgContext(c)).mode;
           if (!lock?.mode) await c.query("update gh_jobs set mode = $2 where job_id = $1 and mode is null", [job.job_id, mode]);
           const values: RunValues = { startedAt, completedAt, durationMs, otherStepMinutes, mode, region: lock?.region ?? null };
+          if (started) {
+            // A stop that was asked for is done once GitHub reports the job over.
+            await c.query(`update ci_runs set stop_state = case when stop_state = 'requested' then 'done' when stop_state = 'armed' then null else stop_state end,
+                stop_detail = case when stop_state = 'requested' then 'the job was cancelled' else stop_detail end where id = $1`, [started.id]);
+          }
           if (started && billable) {
             await this.finishRun(c, started.id, job, summary, run, pr?.number ?? null, values);
             ciRunId = started.id;
@@ -1337,13 +1349,13 @@ export class GitHubService {
     const r = await c.query<{ id: string }>(
       `insert into ci_runs (workspace_id, project_id, number, commit_sha, commit_message, branch, pull_request, trigger, status, pushed_at, started_at,
          finished_at, duration_ms, tests_total, tests_ran, tests_passed, tests_failed, tests_skipped, tests_flaky_defects, test_time_ran_ms,
-         test_time_skipped_ms, other_step_minutes, engine_version, skip_misses, mode, region)
+         test_time_skipped_ms, other_step_minutes, engine_version, skip_misses, mode, region, github_run_id, github_job_id, job_workflow, job_name)
        values (public.cp_workspace(), $1, (select coalesce(max(number), 0) + 1 from ci_runs where project_id = $1), $2, $3, $4, $5, $6, $7, $8, $9,
-         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, round($20::numeric, 2), $21, $22, $23, $24)
+         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, round($20::numeric, 2), $21, $22, $23, $24, $25, $26, $27, $28)
        returning id`,
       [projectId, job.head_sha, f.commitMessage, job.head_branch ?? "", pr, f.trigger, status,
         pushedAt, v.startedAt, v.completedAt, v.durationMs, ...f.tests, f.timeRanMs, f.timeSkippedMs, v.otherStepMinutes, s?.engineVersion ?? "",
-        JSON.stringify(s?.notReusedReasons ?? {}), v.mode, v.region]);
+        JSON.stringify(s?.notReusedReasons ?? {}), v.mode, v.region, job.run_id, job.job_id, job.workflow_name || null, job.job_name || null]);
     return r.rows[0]!.id;
   }
 

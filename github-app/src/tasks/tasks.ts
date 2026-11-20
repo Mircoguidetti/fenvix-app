@@ -203,15 +203,15 @@ export class Tasks {
   // ---------------------------------------------------------------- stopping a run
 
   /**
-   * A run stopped from the dashboard (ci_runs.cancel_requested_at): the GitHub job is cancelled (the App needs the
+   * A run stopped from the dashboard (ci_runs.stop_state requested): the GitHub job is cancelled (the App needs the
    * repository permission "Actions: Read and write"; without it GitHub answers 403 and only the machine is ended) and
    * its machine is ended, so the job fails on GitHub with the runner gone.
    */
   async cancelRun(ws: string, runId: string): Promise<"cancelled" | "not_running" | "unknown"> {
     const job = await this.db.tx(ws, async (c) => {
-      const r = (await c.query<{ status: string; cancel_requested_at: Date | null }>("select status, cancel_requested_at from ci_runs where id = $1", [runId])).rows[0];
+      const r = (await c.query<{ status: string; stop_state: string | null }>("select status, stop_state from ci_runs where id = $1", [runId])).rows[0];
       if (!r) return "unknown" as const;
-      if (r.status !== "running" || !r.cancel_requested_at) return "not_running" as const;
+      if (r.status !== "running" || r.stop_state !== "requested") return "not_running" as const;
       return (await c.query<{ job_id: number; run_id: number; runner_name: string | null; region: Region | null; installation_id: number; full_name: string }>(
         `select j.job_id, j.run_id, j.runner_name, j.region, j.installation_id, g.full_name from gh_jobs j join gh_repositories g on g.repository_id = j.repository_id
          where j.ci_run_id = $1`, [runId])).rows[0] ?? ("unknown" as const);
@@ -220,7 +220,12 @@ export class Tasks {
     const gh = this.gh.installation(job.installation_id);
     const r = await gh.request("POST", `/repos/${job.full_name}/actions/runs/${job.run_id}/cancel`, { allow: [403, 404, 409] }).catch(() => ({ status: 0 }));
     if (r.status === 403) this.log.warn({ run: runId }, "the GitHub job could not be cancelled: the App lacks Actions: Read and write (the machine is ended)");
-    if (job.runner_name && this.launcher?.terminateRunner) await this.launcher.terminateRunner(job.region ?? "us", job.runner_name);
+    let ended = 0;
+    if (job.runner_name && this.launcher?.terminateRunner) ended = (await this.launcher.terminateRunner(job.region ?? "us", job.runner_name)).length;
+    if (r.status >= 300 && !ended) {
+      await this.db.tx(ws, (c) => c.query("update ci_runs set stop_state = 'failed', stop_detail = $2 where id = $1 and stop_state = 'requested'",
+        [runId, r.status === 403 ? "GitHub refused to cancel the job (the App needs Actions: Read and write) and no fenvix machine was found to end" : "the job could not be cancelled and no fenvix machine was found to end"]));
+    }
     this.log.info({ run: runId, job: job.job_id, github: r.status }, "run stopped from the dashboard");
     return "cancelled";
   }

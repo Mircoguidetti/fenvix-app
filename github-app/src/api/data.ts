@@ -37,11 +37,14 @@ export async function project(t: Tx, ws: string, id: string): Promise<Project> {
   return mapProject(r);
 }
 
-const runs = async (t: Tx, sql: string, params: unknown[]): Promise<Run[]> => (await t.q(`select * from public.ci_runs where ${sql}`, params)).map(mapRun);
+/** A run row with the name of whoever asked to stop it (P-049's Run.stop.requestedBy). */
+export const RUN_COLUMNS = `ci_runs.*, (select m.name from public.api_members() m where m.user_id = ci_runs.stop_requested_by) as stop_requested_by_name`;
+const runs = async (t: Tx, sql: string, params: unknown[]): Promise<Run[]> => (await t.q(`select ${RUN_COLUMNS} from public.ci_runs where ${sql}`, params)).map(mapRun);
 
 /** A defect row with its current bundle's facts and its newest replay (the API's Defect record). */
 export const DEFECT_ROWS = `select d.*, b.sha256 as bundle_sha256, b.size_bytes as bundle_size, b.received_at as bundle_received_at,
-    (select row_to_json(x) from (select * from public.ci_replays rp where rp.id = d.last_replay_id) x) as last_replay
+    (select row_to_json(x) from (select * from public.ci_replays rp where rp.id = d.last_replay_id) x) as last_replay,
+    (select fr.pull_request from public.ci_runs fr where fr.id = d.first_run_id) as first_pull_request
   from public.ci_defects d left join public.ci_defect_bundles b on b.id = d.bundle_id`;
 
 async function defects(t: Tx, ws: string, where: string, params: unknown[], all: Project[], page: { limit: number; offset: number } = { limit: 100_000, offset: 0 }) {
@@ -158,13 +161,15 @@ export const SINCE_MAX = 20_000;
 export const listRuns: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const p = await project(ctx.t, ws, ctx.params.projectId);
-  const q = ctx.query as { scope: "all" | "pr" | "default"; status: "all" | "passed" | "failed"; since?: string; page: number; pageSize: number };
+  const q = ctx.query as { scope: "all" | "pr" | "default"; status: "all" | "passed" | "failed"; since?: string; page: number; pageSize: number; pullRequest?: number; branch?: string };
   const where = ["workspace_id = $1", "project_id = $2"];
   const params: unknown[] = [ws, p.id];
   if (q.scope === "pr") where.push("pull_request is not null");
   if (q.scope === "default") { params.push(p.defaultBranch); where.push(`branch = $${params.length}`); }
   if (q.status === "passed" || q.status === "failed") { params.push(q.status); where.push(`status = $${params.length}`); }
   if (q.since) { params.push(new Date(q.since)); where.push(`started_at >= $${params.length}`); }
+  if (q.pullRequest) { params.push(q.pullRequest); where.push(`pull_request = $${params.length}`); }
+  if (q.branch) { params.push(q.branch); where.push(`branch = $${params.length}`); }
   const cond = where.join(" and ");
   const total = (await ctx.t.one<{ n: number }>(`select count(*)::int as n from public.ci_runs where ${cond}`, params))!.n;
   if (q.since) {
@@ -262,8 +267,9 @@ export function etagMatches(header: string | string[] | undefined, etag: string)
   return raw.split(",").map((s) => s.trim()).some((tag) => tag === "*" || tag.replace(/^W\//, "") === plain);
 }
 
-async function runRow(t: Tx, ws: string, id: string): Promise<Row> {
-  const r = await t.one("select r.*, r.updated_at::text as etag_updated, r.progress_at::text as etag_progress from public.ci_runs r where r.workspace_id = $1 and r.id = $2", [ws, id]);
+export async function runRow(t: Tx, ws: string, id: string): Promise<Row> {
+  const r = await t.one(`select ${RUN_COLUMNS}, ci_runs.updated_at::text as etag_updated, ci_runs.progress_at::text as etag_progress from public.ci_runs
+    where ci_runs.workspace_id = $1 and ci_runs.id = $2`, [ws, id]);
   if (!r) throw notFound(NO_RUN);
   return r;
 }

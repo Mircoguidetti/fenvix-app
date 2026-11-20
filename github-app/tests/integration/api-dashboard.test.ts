@@ -354,7 +354,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
   describe("every operation marked x-fenvix-role: admin: a member is refused (403), an admin and an owner may", () => {
     let owner: Person; let adm: Person; let mem: Person; let targets: Person[];
     let ws: string;
-    let projectId: string; let repositoryId: number;
+    let projectId: string; let repositoryId: number; let matrixRun: string;
 
     before(async () => {
       owner = await signUp(admin, "m-owner"); adm = await signUp(admin, "m-admin"); mem = await signUp(admin, "m-member");
@@ -366,6 +366,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       const seeded = await seedOrg(admin, ws, `matrix-${githubId()}`);
       projectId = seeded.projects.shop;
       repositoryId = seeded.repoIds.loose;
+      matrixRun = (await admin.query("select id from ci_runs where project_id = $1 order by started_at desc limit 1", [projectId])).rows[0].id;
     });
 
     const matrix: Record<string, (who: Person, role: "member" | "admin" | "owner") => Promise<number>> = {
@@ -402,6 +403,11 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
           [ws, `matrix/delete-${role}-${githubId()}`])).rows[0].id;
         return (await call(api, "deleteProject", { token: who.token, ws, params: { projectId: p } })).status;
       },
+      stopRun: async (who) => {
+        await admin.query("update ci_runs set status = 'running', stop_state = null, stop_when = null where id = $1", [matrixRun]);
+        return (await call(api, "stopRun", { token: who.token, ws, params: { runId: matrixRun }, body: { when: "first_failure" } })).status;
+      },
+      replayTest: async (who, role) => (await call(api, "replayTest", { token: who.token, ws, params: { runId: matrixRun }, body: { testId: `tests/m.py::t_${role}` } })).status,
       unlinkInstallation: async (who) => {
         const id = githubId();
         await admin.query("insert into gh_installations (installation_id, account_id, account_login, account_type, workspace_id, linked_at) values ($1, $1, 'matrix-unlink', 'User', $2, now())", [id, ws]);
@@ -632,12 +638,17 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     assert.equal((await call(api, "setDefectState", { token: memberA.token, ws, params: { defectId: d.id }, body: { state: "muted", reason: "tracked" } })).body.state, "muted");
     const rp = await call(api, "requestDefectReplay", { token: memberA.token, ws, params: { defectId: d.id }, body: { commitSha: run.commit_sha } });
     assert.equal(rp.status, 202);
-    assert.equal((await call(api, "getReplay", { token: memberA.token, ws, params: { replayId: rp.body.id } })).body.status, "requested");
+    assert.equal((await call(api, "getReplay", { token: memberA.token, ws, params: { replayId: rp.body.id } })).body.state, "queued");
     assert.equal((await call(api, "listDefectReplays", { token: memberA.token, ws, params: { defectId: d.id } })).body.items.length, 1);
-    const tr = await call(api, "requestTestReplay", { token: memberA.token, ws, params: { runId: run.id }, body: { testId: "tests/other.py::t" } });
-    assert.equal(tr.status, 202);
+    assert.equal((await call(api, "listReplays", { token: memberA.token, ws, params: { runId: run.id } })).status, 200);
+    assert.equal((await call(api, "downloadDefectBundle", { token: memberA.token, ws, params: { defectId: d.id } })).status, 200);
     await admin.query("update ci_runs set status = 'running' where id = $1", [run.id]);
-    assert.equal((await call(api, "cancelRun", { token: memberA.token, ws, params: { runId: run.id } })).status, 202);
+    assert.equal((await call(api, "listLiveTests", { token: memberA.token, ws, params: { runId: run.id } })).status, 200);
+    const failures = await call(api, "listFailures", { token: memberA.token, ws, query: { runId: run.id } });
+    assert.equal(failures.status, 200);
+    await admin.query("insert into ci_test_results (run_id, workspace_id, test_id, outcome, failure_kind, output) values ($1, $2, 'tests/log.py::t', 'failed', 'real', 'the output') on conflict do nothing", [run.id, ws]);
+    const log = await call(api, "getTestLog", { token: memberA.token, ws, params: { runId: run.id }, query: { testId: "tests/log.py::t" } });
+    assert.deepEqual([log.status, log.body.output], [200, "the output"]);
     const pid = String(d.project_id);
     assert.equal((await call(api, "listExplorationJobs", { token: memberA.token, ws, params: { projectId: pid } })).status, 200);
     // Another organization sees none of it.
@@ -655,7 +666,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
   it("every dashboard operation of the contract was called and answered as the contract says", () => {
     const all = dashboardOperations().map((o) => o.operationId).sort();
     assert.deepEqual(all.filter((x) => !covered.has(x)), []);
-    assert.equal(all.length, 63);
+    assert.equal(all.length, 68);
     void NOW;
   });
 });

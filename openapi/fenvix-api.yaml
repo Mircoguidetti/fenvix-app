@@ -46,6 +46,12 @@ tags:
     description: The remote MCP server, for coding agents, with an API key.
   - name: app
     description: The GitHub App's own endpoints (GitHub calls them, or the browser on its way back from GitHub). Outside /v1.
+  - name: proposed
+    description: |
+      Agreed for the dashboard (docs/data-contract.md, "Live test view"), not served yet. The server serves only
+      operations tagged `dashboard` and needs a handler for each, so an operation moves from `proposed` to `dashboard`
+      in the same change that adds its handler (github-app/src/api/server.ts). Until then the dashboard builds against
+      it with test fixtures and shows the API's error when it is called.
 
 paths:
   # ------------------------------------------------------------------ the person and their organizations
@@ -239,6 +245,8 @@ paths:
         - { name: scope, in: query, schema: { type: string, enum: [all, pr, default], default: all } }
         - { name: status, in: query, schema: { type: string, enum: [all, passed, failed], default: all } }
         - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: pullRequest, in: query, description: "Only the runs of this pull request.", schema: { type: integer, minimum: 1 } }
+        - { name: branch, in: query, description: "Only the runs of this branch.", schema: { type: string, maxLength: 255 } }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
       responses:
@@ -339,6 +347,72 @@ paths:
           description: The run's tests by file
           content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/RunFile" } } } } } }
         default: { $ref: "#/components/responses/Error" }
+  /runs/{runId}/tests/live:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/RunId" }]
+    get:
+      tags: [dashboard]
+      operationId: listLiveTests
+      x-fenvix-key: read
+      description: |
+        The live view's tests: the tests of the run that finished after `afterSeq`, in the order they finished (by `seq`),
+        at most 2,000 per answer. The dashboard asks with the last `lastSeq` it got, every 3 to 5 seconds while the run
+        is running and the page is visible. While the run runs these come from the runner's progress records
+        (`finished`); once its results are applied, from the results (the same tests, `seq` kept where known).
+      parameters:
+        - { name: afterSeq, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/LiveTests" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /runs/{runId}/stop:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/RunId" }]
+    post:
+      tags: [dashboard]
+      operationId: stopRun
+      x-fenvix-role: admin
+      description: |
+        Stops a running run on fenvix's machines (the dispatcher cancels the GitHub job and terminates its machine).
+        `now`: at once. `first_failure`: armed; the run is stopped when its first test fails (at once if one already
+        failed). `off`: disarms `first_failure`. 409 when the run is not running.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [when], properties: { when: { type: string, enum: [now, first_failure, off] } } } } }
+      responses:
+        "202": { description: "Accepted: the run with its stop request", content: { application/json: { schema: { $ref: "#/components/schemas/RunDetail" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /runs/{runId}/replays:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/RunId" }]
+    get:
+      tags: [dashboard]
+      operationId: listReplays
+      x-fenvix-key: read
+      responses:
+        "200":
+          description: The run's replays, newest first
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/Replay" } } } } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [dashboard]
+      operationId: replayTest
+      x-fenvix-role: admin
+      description: |
+        Replays one test of the run on fenvix's machines: the run's commit, seed and order (the defect's minimal order
+        when the test is a flaky defect), `runs` times (10). A test already queued or running for this run is answered
+        with that replay.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [testId], properties: { testId: { type: string, maxLength: 2000 } } } } }
+      responses:
+        "202": { description: Accepted, content: { application/json: { schema: { $ref: "#/components/schemas/Replay" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /replays/{replayId}:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { name: replayId, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [dashboard]
+      operationId: getReplay
+      x-fenvix-key: read
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Replay" } } } }
+        default: { $ref: "#/components/responses/Error" }
   /receipts/{receiptId}:
     parameters: [{ $ref: "#/components/parameters/Workspace" }, { name: receiptId, in: path, required: true, schema: { type: string, format: uuid } }]
     get:
@@ -385,19 +459,6 @@ paths:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Defect" } } } }
         default: { $ref: "#/components/responses/Error" }
 
-  /defects/{defectId}/history:
-    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/DefectId" }]
-    get:
-      tags: [dashboard]
-      operationId: listDefectOccurrences
-      x-fenvix-key: read
-      description: Every run (with its commit, branch and pull request) and exploration that saw the defect, newest first, with the fingerprint and the divergent event of that time.
-      parameters: [{ $ref: "#/components/parameters/Limit" }, { $ref: "#/components/parameters/Offset" }]
-      responses:
-        "200":
-          description: OK
-          content: { application/json: { schema: { type: object, required: [items, total], properties: { items: { type: array, items: { $ref: "#/components/schemas/DefectOccurrence" } }, total: { type: integer } } } } }
-        default: { $ref: "#/components/responses/Error" }
   /defects/{defectId}/state:
     parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/DefectId" }]
     post:
@@ -408,11 +469,11 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Defect" } } } }
         default: { $ref: "#/components/responses/Error" }
-  /defects/{defectId}/bundle:
+  /defects/{defectId}/bundle/download:
     parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/DefectId" }]
     get:
       tags: [dashboard]
-      operationId: getDefectBundle
+      operationId: downloadDefectBundle
       x-fenvix-key: read
       description: "The defect's replay bundle as the runner uploaded it: a .tar.gz of bundle.json, order.txt and the run's traces. `curl -H 'Authorization: Bearer $FENVIX_API_KEY' .../bundle | tar -xz`"
       responses:
@@ -438,35 +499,6 @@ paths:
       x-fenvix-key: replay
       description: "Replays the defect on a fenvix machine (`fenvix replay` of its bundle, 10 times) at a commit (default: the newest commit that saw it). One replay in flight per defect; at most 10 a day. The result comes back to the defect: 10 of 10 passing on a later commit marks it fixed."
       requestBody: { required: false, content: { application/json: { schema: { $ref: "#/components/schemas/ReplayRequest" } } } }
-      responses:
-        "202": { description: Requested, content: { application/json: { schema: { $ref: "#/components/schemas/Replay" } } } }
-        default: { $ref: "#/components/responses/Error" }
-  /replays/{replayId}:
-    parameters: [{ $ref: "#/components/parameters/Workspace" }, { name: replayId, in: path, required: true, schema: { type: string, format: uuid } }]
-    get:
-      tags: [dashboard]
-      operationId: getReplay
-      x-fenvix-key: read
-      responses:
-        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Replay" } } } }
-        default: { $ref: "#/components/responses/Error" }
-  /runs/{runId}/cancel:
-    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/RunId" }]
-    post:
-      tags: [dashboard]
-      operationId: cancelRun
-      description: "Stops a running run (the live view's Stop button; any member): its GitHub job is cancelled and its fenvix machine ended within a minute."
-      responses:
-        "202": { description: Requested, content: { application/json: { schema: { $ref: "#/components/schemas/Run" } } } }
-        default: { $ref: "#/components/responses/Error" }
-  /runs/{runId}/replays:
-    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/RunId" }]
-    post:
-      tags: [dashboard]
-      operationId: requestTestReplay
-      x-fenvix-key: replay
-      description: Replays one test of the run on a fenvix machine at the run's commit (the live view and the run page). For a test that is a defect, the defect's replay.
-      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [testId], properties: { testId: { type: string, minLength: 1, maxLength: 2000 } } } } } }
       responses:
         "202": { description: Requested, content: { application/json: { schema: { $ref: "#/components/schemas/Replay" } } } }
         default: { $ref: "#/components/responses/Error" }
@@ -541,6 +573,44 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/OrganizationExport" } } } }
         default: { $ref: "#/components/responses/Error" }
+  /failures:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }]
+    get:
+      tags: [dashboard]
+      operationId: listFailures
+      x-fenvix-key: read
+      description: "The coding agent's question (MCP failures_for): the failing and flaky tests of a pull request (its newest commit; with projectId), a commit or a run, each with the error, a log excerpt, the defect, the first divergent event, the replay command, and whether it is new or a known failure. status: running while one of the runs runs, none when no run was found."
+      parameters:
+        - { name: projectId, in: query, schema: { type: string, format: uuid } }
+        - { name: pullRequest, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: commitSha, in: query, schema: { type: string, pattern: "^[0-9a-f]{40}$" } }
+        - { name: runId, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Failures" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /runs/{runId}/tests/log:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/RunId" }]
+    get:
+      tags: [dashboard]
+      operationId: getTestLog
+      x-fenvix-key: read
+      description: "The full output of one test of the run, as the runner captured it (at most 64 KB; null when the runner sent none)."
+      parameters: [{ name: testId, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 2000 } }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runId, testId, outcome, output, failure]
+                properties:
+                  runId: { type: string }
+                  testId: { type: string }
+                  outcome: { $ref: "#/components/schemas/TestOutcome" }
+                  output: { type: [string, "null"] }
+                  failure: { oneOf: [{ $ref: "#/components/schemas/TestFailure" }, { type: "null" }] }
+        default: { $ref: "#/components/responses/Error" }
   /organization/audit-log:
     parameters: [{ $ref: "#/components/parameters/Workspace" }]
     get:
@@ -610,6 +680,28 @@ paths:
       responses:
         "200": { description: A JSON-RPC response, content: { application/json: { schema: { type: object } } } }
         "202": { description: A notification was accepted }
+  /defects/{defectId}/occurrences:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { name: defectId, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [dashboard]
+      operationId: listDefectOccurrences
+      x-fenvix-key: read
+      parameters: [{ $ref: "#/components/parameters/Limit" }, { $ref: "#/components/parameters/Offset" }]
+      description: Every run where this defect's test failed with this defect, newest first (the defect's memory across runs).
+      responses:
+        "200":
+          description: Newest first
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/DefectOccurrence" } }, total: { type: integer } } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /defects/{defectId}/bundle:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { name: defectId, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [dashboard]
+      operationId: getDefectBundle
+      x-fenvix-key: read
+      description: A short-lived link to the defect's replay bundle (a .tar.gz of bundle.json, order.txt and the traces). 404 when no bundle is stored.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/DefectBundle" } } } }
         default: { $ref: "#/components/responses/Error" }
 
   # ------------------------------------------------------------------ usage and billing
@@ -1134,6 +1226,36 @@ components:
         currentTest: { type: [string, "null"] }
         elapsedMs: { type: integer }
         updatedAt: { type: string, format: date-time }
+        workers:
+          type: array
+          description: "Proposed (P-049): the parallel workers and what each runs now; empty or absent when the runner did not say."
+          items: { $ref: "#/components/schemas/RunWorker" }
+    RunWorker:
+      type: object
+      required: [id, currentTest, testsDone, state]
+      properties:
+        id: { type: string, description: "The worker's name as the runner gives it, e.g. gw0" }
+        currentTest: { type: [string, "null"] }
+        testsDone: { type: integer }
+        state: { type: string, enum: [running, idle, done] }
+    RunStop:
+      type: object
+      description: "A stop asked for on a running run (POST /runs/{runId}/stop). armed: first_failure waits for a failure; requested: sent to the machines; done: the job was cancelled; failed: it could not be (detail says why)."
+      required: [when, state, requestedAt, requestedBy, detail]
+      properties:
+        when: { type: string, enum: [now, first_failure] }
+        state: { type: string, enum: [armed, requested, done, failed] }
+        requestedAt: { type: string, format: date-time }
+        requestedBy: { type: string, description: "The person's name" }
+        detail: { type: string }
+    RunJob:
+      type: object
+      description: "The GitHub job behind a run: a repository with several test jobs or a matrix has one run per job."
+      required: [workflow, name, matrix]
+      properties:
+        workflow: { type: string }
+        name: { type: string }
+        matrix: { type: [string, "null"], description: "The matrix values, e.g. python 3.12" }
     MissDetail:
       type: object
       required: [kind, detail, tests]
@@ -1184,8 +1306,11 @@ components:
           required: [rerun, wrongSkips]
           properties: { rerun: { type: integer }, wrongSkips: { type: integer } }
         region: { oneOf: [{ $ref: "#/components/schemas/Region" }, { type: "null" }] }
-        cancelRequestedAt: { type: [string, "null"], format: date-time, description: "someone stopped the run from the dashboard; it ends within a minute" }
         progress: { oneOf: [{ $ref: "#/components/schemas/RunProgress" }, { type: "null" }] }
+        stop: { oneOf: [{ $ref: "#/components/schemas/RunStop" }, { type: "null" }], description: "Proposed (P-049)" }
+        job: { oneOf: [{ $ref: "#/components/schemas/RunJob" }, { type: "null" }], description: "Proposed (P-049)" }
+        githubRunId: { type: [integer, "null"], description: "Proposed (P-049): GitHub's workflow run id, for the link to the job" }
+        githubJobId: { type: [integer, "null"], description: "Proposed (P-049): GitHub's job id" }
     RunPage:
       type: object
       required: [items, total, page, pageSize]
@@ -1264,6 +1389,42 @@ components:
         durationMs: { type: integer }
         failure: { oneOf: [{ $ref: "#/components/schemas/TestFailure" }, { type: "null" }] }
         receiptId: { type: [string, "null"] }
+        worker: { type: [string, "null"], description: "Proposed (P-049): the worker that ran it" }
+        seq: { type: [integer, "null"], description: "Proposed (P-049): its place in the order tests finished" }
+        finishedAt: { type: [string, "null"], format: date-time, description: "Proposed (P-049)" }
+    LiveTests:
+      type: object
+      required: [items, lastSeq, status]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/TestResult" } }
+        lastSeq: { type: integer, description: "The highest seq given so far: ask again with afterSeq = lastSeq" }
+        status: { $ref: "#/components/schemas/RunStatus" }
+    Replay:
+      type: object
+      description: |
+        One test of a run replayed on fenvix's machines, `runs` times with the run's seed and order. verdict, once done:
+        reproduced (failed every time with an identical fingerprint), flaky (failed some of the times), passed (never failed).
+      required: [id, runId, testId, defectId, state, verdict, runs, done, fails, identicalFingerprint, command, detail, requestedAt, startedAt, finishedAt]
+      properties:
+        id: { type: string }
+        runId: { type: [string, "null"], description: "null: a replay of a defect asked for outside a run (API key, MCP)" }
+        projectId: { type: string }
+        commitSha: { type: string }
+        fingerprint: { type: [string, "null"] }
+        requestedVia: { type: string, enum: [dashboard, api_key, mcp, pull_request] }
+        testId: { type: string }
+        defectId: { type: [string, "null"] }
+        state: { type: string, enum: [queued, running, done, failed] }
+        verdict: { type: [string, "null"], enum: [reproduced, flaky, passed, null] }
+        runs: { type: integer }
+        done: { type: integer }
+        fails: { type: integer }
+        identicalFingerprint: { type: [boolean, "null"] }
+        command: { type: string, description: "The engine command the machine ran" }
+        detail: { type: string, description: "For a person: what it waits for, or why it failed" }
+        requestedAt: { type: string, format: date-time }
+        startedAt: { type: [string, "null"], format: date-time }
+        finishedAt: { type: [string, "null"], format: date-time }
     TestPage:
       type: object
       required: [items, total, page, pageSize, counts]
@@ -1347,6 +1508,32 @@ components:
 
     # ---------------------------------------------------------------- defects
     DefectCause: { type: string, enum: [polluter, state_setter, fails_alone, async_order, thread, clock, random, network, filesystem, environment, unknown] }
+    Failures:
+      type: object
+      required: [status, runs, items]
+      properties:
+        status: { type: string, enum: [running, passed, failed, none] }
+        runs:
+          type: array
+          items: { type: object, required: [id, number, status, commitSha, job], properties: { id: { type: string }, number: { type: integer }, status: { type: string }, commitSha: { type: string }, job: { type: [string, "null"] } } }
+        items:
+          type: array
+          items:
+            type: object
+            required: [runId, runNumber, job, testId, kind, error, logExcerpt, defectId, divergence, replayCommand, new, known]
+            properties:
+              runId: { type: string }
+              runNumber: { type: integer }
+              job: { type: [string, "null"] }
+              testId: { type: string }
+              kind: { type: string, enum: [real, flaky_defect] }
+              error: { type: object, required: [type, message, location], properties: { type: { type: string }, message: { type: string }, location: { type: string } } }
+              logExcerpt: { type: [string, "null"], description: "the last 2,000 characters of the test's output (else the error message)" }
+              defectId: { type: [string, "null"] }
+              divergence: { type: [object, "null"], description: "the first divergent event (flaky tests)" }
+              replayCommand: { type: [string, "null"] }
+              new: { type: boolean, description: "first seen in these runs" }
+              known: { type: boolean, description: "seen before (a known defect, or a test that failed before)" }
     AuditEvent:
       type: object
       required: [id, at, actor, action, target, detail]
@@ -1360,28 +1547,6 @@ components:
         action: { type: string }
         target: { type: string }
         detail: { type: object }
-    DefectOccurrence:
-      type: object
-      required: [id, source, runId, runNumber, explorationId, commitSha, branch, pullRequest, fingerprint, fingerprintChanged, divergence, seed, engineVersion, status, seenAt]
-      properties:
-        id: { type: string }
-        source: { type: string, enum: [run, exploration] }
-        runId: { type: [string, "null"] }
-        runNumber: { type: [integer, "null"] }
-        explorationId: { type: [string, "null"] }
-        commitSha: { type: [string, "null"] }
-        branch: { type: [string, "null"] }
-        pullRequest: { type: [integer, "null"] }
-        fingerprint: { type: [string, "null"] }
-        fingerprintChanged: { type: boolean, description: "the fingerprint differs from the defect's previous sighting" }
-        divergence:
-          oneOf:
-            - { type: object, required: [index, reason, description], properties: { index: { type: integer }, reason: { type: string }, description: { type: string } } }
-            - { type: "null" }
-        seed: { type: [integer, "null"] }
-        engineVersion: { type: string }
-        status: { type: string, enum: [reproduced, replay_unstable, reported] }
-        seenAt: { type: string, format: date-time }
     DefectStateChange:
       type: object
       additionalProperties: false
@@ -1389,29 +1554,6 @@ components:
       properties:
         state: { type: string, enum: [open, fixed, muted] }
         reason: { type: string, maxLength: 500 }
-    DefectBundle:
-      type: object
-      required: [id, sha256, sizeBytes, receivedAt]
-      properties: { id: { type: string }, sha256: { type: string }, sizeBytes: { type: integer }, receivedAt: { type: string, format: date-time } }
-    Replay:
-      type: object
-      required: [id, defectId, runId, projectId, testId, commitSha, status, detail, runs, fails, fingerprint, identicalFingerprint, requestedVia, createdAt, finishedAt]
-      properties:
-        id: { type: string }
-        defectId: { type: [string, "null"] }
-        runId: { type: [string, "null"] }
-        projectId: { type: string }
-        testId: { type: string }
-        commitSha: { type: string }
-        status: { type: string, enum: [requested, dispatched, running, passed, failed, error, cancelled] }
-        detail: { type: string }
-        runs: { type: [integer, "null"] }
-        fails: { type: [integer, "null"] }
-        fingerprint: { type: [string, "null"] }
-        identicalFingerprint: { type: [boolean, "null"] }
-        requestedVia: { type: string, enum: [dashboard, api_key, mcp, pull_request] }
-        createdAt: { type: string, format: date-time }
-        finishedAt: { type: [string, "null"], format: date-time }
     ReplayRequest:
       type: object
       additionalProperties: false
@@ -1529,8 +1671,16 @@ components:
           properties: { type: { type: string }, phase: { type: string }, message: { type: string }, location: { type: string } }
         divergence:
           oneOf:
-            - { type: object, required: [index, reason, description], properties: { index: { type: integer }, reason: { type: string }, description: { type: string } } }
+            - type: object
+              required: [index, reason, description]
+              properties:
+                index: { type: integer }
+                reason: { type: string }
+                description: { type: string }
+                passing: { type: array, items: { $ref: "#/components/schemas/TraceEvent" }, description: "A passing run's events up to the divergent one (the last)" }
+                failing: { type: array, items: { $ref: "#/components/schemas/TraceEvent" }, description: "The failing run's events up to the divergent one (the last)" }
             - { type: "null" }
+        firstPullRequest: { type: [integer, "null"], description: "Proposed (P-049): the pull request of the run where it was first seen" }
         familyKey: { type: string }
         firstSeenAt: { type: string, format: date-time }
         lastSeenAt: { type: string, format: date-time }
@@ -1545,11 +1695,57 @@ components:
           description: "The replay command the runner sent with the bundle (e.g. the engine's own command); null: the dashboard builds it from the seed and the minimal order."
         stateReason: { type: [string, "null"] }
         stateChangedAt: { type: [string, "null"], format: date-time }
-        bundle: { oneOf: [{ $ref: "#/components/schemas/DefectBundle" }, { type: "null" }] }
+        bundle: { oneOf: [{ $ref: "#/components/schemas/DefectBundleInfo" }, { type: "null" }] }
         lastReplay: { oneOf: [{ $ref: "#/components/schemas/Replay" }, { type: "null" }] }
         pullCommand: { type: string, description: "fetches the bundle with an API key (curl and tar)" }
         culprit: { oneOf: [{ type: object, required: [summary], properties: { summary: { type: string }, url: { type: [string, "null"] } } }, { type: "null" }], description: "Passo 3's culprit verdict, when the engine delivers it" }
         dependencyVerdict: { oneOf: [{ type: object, required: [summary], properties: { summary: { type: string } } }, { type: "null" }], description: "Passo 3's dependency verdict, when the engine delivers it" }
+    TraceEvent:
+      type: object
+      description: One event of the engine's trace (thread, source, operation, call site, value).
+      required: [index, thread, source, op, site, value]
+      properties:
+        index: { type: integer }
+        thread: { type: string }
+        source: { type: string, description: "time, random, entropy, fs, net, env, sched, ..." }
+        op: { type: string }
+        site: { type: string, description: "path:line" }
+        value: { type: string }
+    DefectOccurrence:
+      type: object
+      description: "One sighting of the defect: a run (with its commit, branch and pull request), or an exploration (runId, runNumber null)."
+      required: [runId, runNumber, commitSha, branch, pullRequest, at]
+      properties:
+        runId: { type: [string, "null"] }
+        runNumber: { type: [integer, "null"] }
+        commitSha: { type: [string, "null"] }
+        branch: { type: [string, "null"] }
+        pullRequest: { type: [integer, "null"] }
+        at: { type: string, format: date-time }
+        id: { type: string }
+        source: { type: string, enum: [run, exploration] }
+        explorationId: { type: [string, "null"] }
+        fingerprint: { type: [string, "null"] }
+        fingerprintChanged: { type: boolean, description: "the fingerprint differs from the defect's previous sighting" }
+        divergence:
+          oneOf:
+            - { type: object, required: [index, reason, description], properties: { index: { type: integer }, reason: { type: string }, description: { type: string } } }
+            - { type: "null" }
+        seed: { type: [integer, "null"] }
+        engineVersion: { type: string }
+        status: { type: string, enum: [reproduced, replay_unstable, reported] }
+    DefectBundleInfo:
+      type: object
+      required: [id, sha256, sizeBytes, receivedAt]
+      properties: { id: { type: string }, sha256: { type: string }, sizeBytes: { type: integer }, receivedAt: { type: string, format: date-time } }
+    DefectBundle:
+      type: object
+      required: [url, expiresAt, sha256, bytes]
+      properties:
+        url: { type: string, description: "Signed, short-lived" }
+        expiresAt: { type: string, format: date-time }
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        bytes: { type: integer }
     DefectFamily:
       type: object
       required: [key, projectId, projectName, cause, causeTests, defects]
@@ -1780,6 +1976,22 @@ components:
             currentTest: { type: [string, "null"], maxLength: 2000 }
             elapsedMs: { type: integer, minimum: 0 }
             mode: { $ref: "#/components/schemas/RunMode" }
+            finished:
+              type: array
+              maxItems: 500
+              description: "The tests finished since the previous progress record (the live view); a test sent twice keeps the first. The results chunks stay authoritative."
+              items: { $ref: "#/components/schemas/RunnerTestOutcome" }
+            workers:
+              type: array
+              maxItems: 256
+              items:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: string, maxLength: 100 }
+                  currentTest: { type: [string, "null"], maxLength: 2000 }
+                  testsDone: { type: integer, minimum: 0 }
+                  state: { type: string, enum: [running, idle, done] }
     RunnerTestOutcome:
       type: object
       required: [testId, outcome, durationMs]
@@ -1801,6 +2013,9 @@ components:
             - { type: "null" }
         cacheKey: { type: [string, "null"], pattern: "^[0-9a-f]{32}$", description: "skipped_with_proof: the receipt's key" }
         wouldSkip: { type: boolean, description: "Shadow mode: the engine would have skipped it" }
+        worker: { type: [string, "null"], maxLength: 100, description: "The worker that ran it (e.g. gw0); null for a serial run" }
+        finishedAt: { type: string, format: date-time }
+        output: { type: string, maxLength: 65536, description: "The test's captured output (stdout, stderr, log), at most 64 KB: the coding agent's get_test_log" }
     RunnerReceipt:
       type: object
       description: One reused test's receipt (receipts.jsonl line plus the lists from proof-cache.json).
@@ -1846,7 +2061,14 @@ components:
           properties: { type: { type: string }, phase: { type: string }, message: { type: string, maxLength: 4000 }, location: { type: string } }
         divergence:
           oneOf:
-            - { type: object, required: [index, reason, description], properties: { index: { type: integer }, reason: { type: string }, description: { type: string } } }
+            - type: object
+              required: [index, reason, description]
+              properties:
+                index: { type: integer }
+                reason: { type: string }
+                description: { type: string }
+                passing: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/TraceEvent" }, description: "a passing run's events up to the divergent one" }
+                failing: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/TraceEvent" }, description: "the failing run's events up to the divergent one" }
             - { type: "null" }
         engineVersion: { type: string }
         language: { type: string, enum: [python, node] }

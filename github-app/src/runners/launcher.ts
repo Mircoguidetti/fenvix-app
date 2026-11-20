@@ -177,6 +177,8 @@ export function jobUserData(l: RunnerLaunch, machineEnv: Record<string, string>)
     FENVIX_RUNNER_NAME: l.runnerName,
     FENVIX_JOB_ID: String(l.jobId),
     FENVIX_CACHE_ACCESS: l.cacheAccess,
+    // P-047's runner contract: FENVIX_SKIP=0 reuses nothing (shadow mode, or skip with proof off or paused).
+    FENVIX_SKIP: l.cacheAccess === "none" || l.mode === "shadow" ? "0" : "1",
   };
   if (common.FENVIX_CACHE_URL) {
     const org = cacheOrgOf(l.installationId);

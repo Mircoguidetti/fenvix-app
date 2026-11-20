@@ -29,6 +29,8 @@ export interface ApiConfig {
   now?: () => Date;
   /** A download link for text (URL.createObjectURL in the browser). */
   blobUrl?: (text: string, type: string) => string;
+  /** Called when the API answers 401 or there is no session token: the session is over (audit G-1689). */
+  onUnauthenticated?: () => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -52,9 +54,16 @@ export function createApi(cfg: ApiConfig) {
     async onRequest({ request }) {
       if (!cfg.baseUrl) throw new ApiError("not_configured", "This dashboard is not connected to fenvix yet: VITE_API_URL is not set.", 0);
       const token = await cfg.token();
-      if (!token) throw new ApiError("unauthenticated", SESSION_ENDED, 401);
+      if (!token) {
+        cfg.onUnauthenticated?.();
+        throw new ApiError("unauthenticated", SESSION_ENDED, 401);
+      }
       request.headers.set("Authorization", `Bearer ${token}`);
       return request;
+    },
+    onResponse({ response }) {
+      if (response.status === 401) cfg.onUnauthenticated?.();
+      return response;
     },
   };
   api.use(auth);

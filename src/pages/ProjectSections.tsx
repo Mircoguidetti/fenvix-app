@@ -7,7 +7,7 @@ import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowRight, Check, Moon, TriangleAlert, X } from "lucide-react";
 import { client, type ActivityItem, type AuditSummary, type ProjectRow } from "../data";
-import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker, LoadError, Await } from "../components/PageHeader";
 import { AreaSeriesChart, BeforeWithChart, HBars, TimeBarsChart } from "../components/charts";
 import { MinuteSum, SAVED_NOTE, shortTest } from "../components/ci";
 import { StatusPill } from "../components/StateBadge";
@@ -77,7 +77,7 @@ export function SkipWithProofPage() {
   const audit = useAsync(() => client.getAudit(id, 30), [id]);
   const summary = useMemo(() => (runs.status === "ready" ? missSummary(runs.data) : null), [runs]);
   if (project.status === "loading") return <Message>Loading project</Message>;
-  if (project.status === "error") return <Message role="alert">{project.message}</Message>;
+  if (project.status === "error") return <LoadError message={project.message} onRetry={project.reload} />;
   const p = project.data;
   if (!p) return <Missing what="Project" />;
   const finished = runs.status === "ready" ? runs.data.filter((r) => r.status === "passed" || r.status === "failed") : [];
@@ -94,12 +94,12 @@ export function SkipWithProofPage() {
           <span className="kpi-sub muted small">median share of test time, this month</span>
         </div>
         <div className="kpi">
-          <strong className="kpi-value">{formatCount(skippedTests)}</strong>
+          <strong className="kpi-value">{runs.status === "ready" ? formatCount(skippedTests) : "–"}</strong>
           <span className="kpi-label">Tests skipped</span>
           <span className="kpi-sub muted small">last 30 days, each with a receipt</span>
         </div>
         <div className="kpi">
-          <strong className="kpi-value">{formatCount(ranTests)}</strong>
+          <strong className="kpi-value">{runs.status === "ready" ? formatCount(ranTests) : "–"}</strong>
           <span className="kpi-label">Tests that ran</span>
           <span className="kpi-sub muted small">because something they use changed</span>
         </div>
@@ -110,7 +110,7 @@ export function SkipWithProofPage() {
         </div>
       </div>
       <Card id="skip-trend" title="Skipped with proof over time" description="Median share of test time skipped per run, day by day, over 60 days.">
-        {series.status === "ready" ? <AreaSeriesChart points={series.data} range="30d" valueLabel={(n) => formatPercent(n)} /> : <Message>Loading the chart</Message>}
+        <Await state={series} loading="Loading the chart">{(pts) => <AreaSeriesChart points={pts} range="30d" valueLabel={(n) => formatPercent(n)} />}</Await>
         <p className="minute-line">
           This month: <MinuteSum m={p.minutesThisMonth} />
         </p>
@@ -121,7 +121,7 @@ export function SkipWithProofPage() {
           {summary && summary.byKind.length > 0 ? (
             <HBars labelWidth={230} rows={summary.byKind.map((k) => ({ label: MISS_LABELS[k.kind], sort: k.tests, value: formatCount(k.tests) }))} />
           ) : (
-            <Message>{runs.status === "ready" ? "No runs in the last 30 days." : "Loading"}</Message>
+            <Await state={runs} loading="Loading the runs">{() => <Message>No runs in the last 30 days.</Message>}</Await>
           )}
         </Card>
         <Card id="details" title="What made the most tests run" description="The changes behind the most re-runs: a function, a file, a variable, the packages.">
@@ -145,7 +145,7 @@ export function SkipWithProofPage() {
       </div>
       <Card id="audit" title="Audit reruns" description="To check the proof, fenvix runs some of the tests it skipped anyway. Each must pass, as its receipt said. Last 30 days.">
         {audit.status === "loading" && <Message>Loading the audit</Message>}
-        {audit.status === "error" && <Message role="alert">{audit.message}</Message>}
+        {audit.status === "error" && <LoadError message={audit.message} onRetry={audit.reload} />}
         {audit.status === "ready" && <AuditBlock a={audit.data} projectId={id} />}
       </Card>
       <Card id="lowest" title="Runs that skipped the least" description="Usually a dependency or configuration change: everything has to run again once, then skipping resumes.">
@@ -298,7 +298,7 @@ export function NightlyPage() {
   const addon = plans.status === "ready" ? plans.data.find((x) => x.kind === "addon" && /nightly/i.test(`${x.id} ${x.name}`)) : undefined;
   const hasAddon = addon?.current ?? false;
   if (project.status === "loading") return <Message>Loading project</Message>;
-  if (project.status === "error") return <Message role="alert">{project.message}</Message>;
+  if (project.status === "error") return <LoadError message={project.message} onRetry={project.reload} />;
   const p = project.data;
   if (!p) return <Missing what="Project" />;
   const list = nights.status === "ready" ? nights.data : [];
@@ -328,7 +328,7 @@ export function NightlyPage() {
         </p>
       )}
       {nights.status === "loading" && <Message>Loading nights</Message>}
-      {nights.status === "error" && <Message role="alert">{nights.message}</Message>}
+      {nights.status === "error" && <LoadError message={nights.message} onRetry={nights.reload} />}
       {nights.status === "ready" && list.length === 0 && (
         <div className="empty">
           <h2>No nights yet</h2>
@@ -449,7 +449,7 @@ export function TimeToGreenPage() {
   const since = new Date(now.getTime() - 30 * DAY).toISOString();
   const runs = useAsync(async () => (await client.listRuns(id, { since })).items, [id]);
   if (project.status === "loading") return <Message>Loading project</Message>;
-  if (project.status === "error") return <Message role="alert">{project.message}</Message>;
+  if (project.status === "error") return <LoadError message={project.message} onRetry={project.reload} />;
   const p = project.data;
   if (!p) return <Missing what="Project" />;
   const per = runs.status === "ready" ? timeToGreenPerCommit(runs.data) : [];
@@ -478,13 +478,13 @@ export function TimeToGreenPage() {
           <span className="kpi-sub muted small">90th percentile with fenvix</span>
         </div>
         <div className="kpi">
-          <strong className="kpi-value">{formatCount(per.length)}</strong>
+          <strong className="kpi-value">{runs.status === "ready" ? formatCount(per.length) : "–"}</strong>
           <span className="kpi-label">Commits</span>
           <span className="kpi-sub muted small">turned green in 30 days</span>
         </div>
       </div>
       <Card id="ttg-chart" title="Time to green, per commit" description="Each commit's push to its first green run, with fenvix, against the median before fenvix.">
-        {runs.status !== "ready" ? <Message>Loading the chart</Message> : per.length < 2 ? <p className="muted">Not enough green commits yet.</p> : <BeforeWithChart points={per.map((x) => ({ at: x.at, value: x.seconds }))} before={before} format={(n) => seconds(n)} />}
+        {runs.status !== "ready" ? <Await state={runs} loading="Loading the chart">{() => null}</Await> : per.length < 2 ? <p className="muted">Not enough green commits yet.</p> : <BeforeWithChart points={per.map((x) => ({ at: x.at, value: x.seconds }))} before={before} format={(n) => seconds(n)} />}
       </Card>
       <Card id="slowest" title="Slowest commits" description="Usually a change that made most tests run again, or a failure fixed by a later run.">
         {slowest.length === 0 ? (

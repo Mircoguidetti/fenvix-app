@@ -131,6 +131,17 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/fenvix_scratch npm run te
 What these cannot show: the real API's answers (another check runs every page against it locally) and that your
 Google and GitHub apps, redirect URLs, SMTP and keys are set up correctly. That needs a real sign-in.
 
+## Remote MCP server (coding agents)
+
+`POST https://api.fenvix.dev/v1/mcp` with an organization's API key (API keys page; scope `read`, plus `replay` to
+replay on our machines). Agents install nothing. The loop fenvix is made for: the agent pushes a fix, calls
+`wait_for_run` with the commit (or the pull request and its project) until the runs finish (each call waits at most 20 s
+and says `callAgain`), reads the failures it returns (per test: the error, a log excerpt, new or a known defect, for a
+flaky test the first divergent event and the replay command), reads a test's full output with `get_test_log`, replays a
+flaky test with `replay` (on our machines) or `pull_bundle` (locally), fixes, pushes again. `failures_for` answers
+without waiting. The job logs stay in GitHub Actions (our runners stream them there); the MCP server gives the agent the
+structured cause, which GitHub does not have. The same answers are API operations (`listFailures`, `getTestLog`, ...).
+
 ## Where things are
 
 - `openapi/fenvix-api.yaml` describes the API; `npm run api:generate` writes `src/api/schema.d.ts` from it and

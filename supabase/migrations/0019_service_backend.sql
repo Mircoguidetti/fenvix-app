@@ -159,8 +159,27 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 -- Stopping a running run from the dashboard (the App's worker cancels the GitHub job and ends our machine).
-alter table public.ci_runs add column if not exists cancel_requested_at timestamptz;
-alter table public.ci_runs add column if not exists cancel_requested_by uuid references auth.users (id) on delete set null;
+-- POST /v1/runs/{id}/stop (P-049's live view): now, or armed until the first failed test; requested once sent to the
+-- machines; done when GitHub reports the job cancelled; failed with why.
+alter table public.ci_runs add column if not exists stop_when text check (stop_when is null or stop_when in ('now', 'first_failure'));
+alter table public.ci_runs add column if not exists stop_state text check (stop_state is null or stop_state in ('armed', 'requested', 'done', 'failed'));
+alter table public.ci_runs add column if not exists stop_requested_at timestamptz;
+alter table public.ci_runs add column if not exists stop_requested_by uuid references auth.users (id) on delete set null;
+alter table public.ci_runs add column if not exists stop_detail text not null default '' check (char_length(stop_detail) <= 500);
+-- The GitHub job behind the run (a matrix or several test jobs give several runs of one commit).
+alter table public.ci_runs add column if not exists github_run_id bigint;
+alter table public.ci_runs add column if not exists github_job_id bigint;
+alter table public.ci_runs add column if not exists job_workflow text;
+alter table public.ci_runs add column if not exists job_name text;
+update public.ci_runs r set github_run_id = j.run_id, github_job_id = j.job_id, job_workflow = j.workflow_name, job_name = j.job_name
+  from public.gh_jobs j where j.ci_run_id = r.id and r.github_job_id is null;
+-- The live view's per-test rows (runner progress `finished`): the worker, the order they finished, when; the test's
+-- output (the runner's capture, at most 64 KB) for the coding agent's get_test_log.
+alter table public.ci_test_results add column if not exists worker text check (worker is null or char_length(worker) <= 100);
+alter table public.ci_test_results add column if not exists seq int;
+alter table public.ci_test_results add column if not exists finished_at timestamptz;
+alter table public.ci_test_results add column if not exists output text check (output is null or octet_length(output) <= 65536);
+create index if not exists ci_test_results_run_seq on public.ci_test_results (run_id, seq) where seq is not null;
 -- The trigger of a run started by an event outside the five (release, repository_dispatch, ...): 'other', not a manual run.
 alter table public.ci_runs drop constraint if exists ci_runs_trigger_check;
 alter table public.ci_runs add constraint ci_runs_trigger_check check (trigger in ('push', 'pull_request', 'merge_group', 'schedule', 'workflow_dispatch', 'other'));
@@ -337,11 +356,12 @@ grant update (state, state_changed_at, state_changed_by, state_reason) on public
 drop policy if exists ci_defects_api_state on public.ci_defects;
 create policy ci_defects_api_state on public.ci_defects for update to fenvix_api
   using (workspace_id = public.api_workspace() and public.api_user() is not null) with check (workspace_id = public.api_workspace());
--- A run's cancel request: any member (not a key).
-grant update (cancel_requested_at, cancel_requested_by) on public.ci_runs to fenvix_api;
+-- A run's stop: owners and admins (not a key).
+grant update (stop_when, stop_state, stop_requested_at, stop_requested_by, stop_detail) on public.ci_runs to fenvix_api;
 drop policy if exists ci_runs_api_cancel on public.ci_runs;
-create policy ci_runs_api_cancel on public.ci_runs for update to fenvix_api
-  using (workspace_id = public.api_workspace() and public.api_user() is not null) with check (workspace_id = public.api_workspace());
+drop policy if exists ci_runs_api_stop on public.ci_runs;
+create policy ci_runs_api_stop on public.ci_runs for update to fenvix_api
+  using (workspace_id = public.api_admin_workspace()) with check (workspace_id = public.api_admin_workspace());
 -- The project's exploration settings and the skip pause, with the other settings (owner or admin).
 grant update (exploration_hour_utc, exploration_budget_seconds, exploration_seeds, exploration_target, skip_paused_at, skip_paused_reason)
   on public.ci_projects to fenvix_api;
@@ -675,8 +695,8 @@ $$;
 create or replace function public.gh_cancel_requests()
 returns table (run_id uuid, workspace_id uuid)
 language sql stable security definer set search_path = public, pg_temp as $$
-  select r.id, r.workspace_id from public.ci_runs r where r.status = 'running' and r.cancel_requested_at is not null
-   and r.cancel_requested_at > now() - interval '1 day' limit 50
+  select r.id, r.workspace_id from public.ci_runs r where r.status = 'running' and r.stop_state = 'requested'
+   and r.stop_requested_at > now() - interval '1 day' limit 50
 $$;
 
 do $$
@@ -815,3 +835,17 @@ end $$;
 grant insert on public.ci_exploration_jobs to fenvix_api;
 drop policy if exists ci_exploration_jobs_api_insert on public.ci_exploration_jobs;
 create policy ci_exploration_jobs_api_insert on public.ci_exploration_jobs for insert to fenvix_api with check (workspace_id = public.api_admin_workspace());
+
+-- ================================================================ 12. the defect bundle's signed link (P-049)
+
+-- The bytes behind a signed, short-lived link the API made for a member or a key (GET /v1/defects/{id}/bundle answers
+-- the link; GET /v1/bundles/{token} serves it). The API checks the signature and the expiry first; this only returns
+-- the bundle of that defect in that organization.
+create or replace function public.api_signed_bundle(p_workspace uuid, p_defect uuid, p_bundle uuid)
+returns table (content bytea, sha256 text)
+language sql stable security definer set search_path = public, pg_temp as $$
+  select b.content, b.sha256 from public.ci_defect_bundles b
+   where b.id = p_bundle and b.defect_id = p_defect and b.workspace_id = p_workspace
+$$;
+revoke all on function public.api_signed_bundle(uuid, uuid, uuid) from public, anon, authenticated;
+grant execute on function public.api_signed_bundle(uuid, uuid, uuid) to fenvix_api;

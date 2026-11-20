@@ -4,12 +4,12 @@
  * one's own account; unlinking a GitHub installation; the organization's export. Rows are read and written as
  * fenvix_api inside the request's transaction, so row level security (0019) checks the organization again.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { type Ctx, type Handler, mayAdminister, orgOf, Reply } from "./context.ts";
-import { defectById, project, projects } from "./data.ts";
+import { defectById, project, projects, runRow } from "./data.ts";
 import type { Tx } from "./db.ts";
 import { ApiError, conflict, forbidden, notFound } from "./errors.ts";
-import { mapDefect, mapExploration, mapProject, mapReplay, mapRun, type Replay } from "./shared.js";
+import { mapDefect, mapExploration, mapProject, mapReplay, mapRun, mapTestResult, type Replay, replayCommand } from "./shared.js";
 
 /** Replays one defect may get per day, from any source (src/tasks/tasks.ts). */
 const REPLAYS_PER_DAY = 10;
@@ -43,7 +43,7 @@ export const listDefectOccurrences: Handler = async (ctx) => {
       fingerprint: (o.fingerprint as string | null) ?? null, fingerprintChanged: o.fingerprint_changed === true,
       divergence: (o.divergence as { index: number; reason: string; description: string } | null) ?? null,
       seed: o.seed === null || o.seed === undefined ? null : Number(o.seed), engineVersion: String(o.engine_version ?? ""),
-      status: String(o.status), seenAt: iso(o.seen_at)!,
+      status: String(o.status), at: iso(o.seen_at)!,
     })),
   };
 };
@@ -59,7 +59,41 @@ export const setDefectState: Handler = async (ctx) => {
   return defectById(ctx.t, ws, ctx.params.defectId);
 };
 
+/** How long the bundle's signed link lives. */
+const BUNDLE_LINK_SECONDS = 300;
+
+/** The signed link's token: organization, defect, bundle, expiry, HMAC with the API's state key. */
+export function bundleToken(key: string, o: { ws: string; defect: string; bundle: string; exp: number }): string {
+  const body = Buffer.from(JSON.stringify(o)).toString("base64url");
+  return `${body}.${createHmac("sha256", key).update(`bundle.${body}`).digest("base64url")}`;
+}
+export function verifyBundleToken(key: string, token: string, now = Date.now()): { ws: string; defect: string; bundle: string; exp: number } | null {
+  const [body, mac] = token.split(".");
+  if (!body || !mac || token.length > 1000) return null;
+  const want = createHmac("sha256", key).update(`bundle.${body}`).digest();
+  const got = Buffer.from(mac, "base64url");
+  if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
+  try {
+    const o = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as { ws: string; defect: string; bundle: string; exp: number };
+    return o.exp * 1000 > now ? o : null;
+  } catch { return null; }
+}
+
+/** P-049's link: { url, expiresAt, sha256, bytes }; the url works without a header for BUNDLE_LINK_SECONDS. */
 export const getDefectBundle: Handler = async (ctx) => {
+  const { id: ws } = orgOf(ctx);
+  const r = await ctx.t.one<{ found: boolean; id: string | null; sha256: string | null; size_bytes: number | null }>(
+    `select true as found, b.id, b.sha256, b.size_bytes from public.ci_defects d left join public.ci_defect_bundles b on b.id = d.bundle_id
+     where d.workspace_id = $1 and d.id = $2`, [ws, ctx.params.defectId]);
+  if (!r?.found) throw notFound("That defect does not exist in this organization.");
+  if (!r.id) throw notFound("This defect has no replay bundle yet: the runner uploads it with the run's results.");
+  const exp = Math.floor(ctx.now.getTime() / 1000) + BUNDLE_LINK_SECONDS;
+  const token = bundleToken(ctx.cfg.stateSigningKey, { ws, defect: String(ctx.params.defectId), bundle: r.id, exp });
+  return { url: `${ctx.cfg.publicApiUrl}/v1/bundles?token=${token}`, expiresAt: new Date(exp * 1000).toISOString(), sha256: r.sha256!, bytes: Number(r.size_bytes) };
+};
+
+/** The bundle's bytes (a .tar.gz), for a member or an API key: the pull command and the MCP's pull_bundle. */
+export const downloadDefectBundle: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const r = await ctx.t.one<{ content: Buffer | null; sha256: string | null; found: boolean }>(
     `select true as found, b.content, b.sha256 from public.ci_defects d left join public.ci_defect_bundles b on b.id = d.bundle_id
@@ -111,7 +145,8 @@ export const requestDefectReplay: Handler = async (ctx) => {
   if (!d) throw notFound("That defect does not exist in this organization.");
   const commit = (ctx.body as { commitSha?: string } | undefined)?.commitSha ?? d.commit_sha;
   if (!commit) throw conflict("No commit is known for this defect yet; name one (commitSha).", "commitSha");
-  return new Reply(202, await requestReplay(ctx.t, ctx, { projectId: d.project_id, defectId: d.id, runId: null, testId: d.test_id, commitSha: commit, command: d.replay_command }));
+  const last = await ctx.t.one<{ last_run_id: string | null }>("select last_run_id from public.ci_defects where id = $1", [d.id]);
+  return new Reply(202, await requestReplay(ctx.t, ctx, { projectId: d.project_id, defectId: d.id, runId: last?.last_run_id ?? null, testId: d.test_id, commitSha: commit, command: d.replay_command }));
 };
 
 export const getReplay: Handler = async (ctx) => {
@@ -122,23 +157,61 @@ export const getReplay: Handler = async (ctx) => {
 
 // ---------------------------------------------------------------- the live view: stop a run, replay one test
 
-export const cancelRun: Handler = async (ctx) => {
+/**
+ * P-049's stop: now, or armed until the first failed test; off disarms. Owners and admins. The sweep sends a requested
+ * stop to the machines (cancel the GitHub job, end the machine); done once GitHub reports the job over.
+ */
+export const stopRun: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const userId = person(ctx, "stop a run");
-  const r = await ctx.t.one("select * from public.ci_runs where workspace_id = $1 and id = $2", [ws, ctx.params.runId]);
-  if (!r) throw notFound("That run does not exist in this organization.");
-  if (r.status !== "running") throw conflict("This run has already finished.");
-  const u = await ctx.t.one("update public.ci_runs set cancel_requested_at = coalesce(cancel_requested_at, now()), cancel_requested_by = coalesce(cancel_requested_by, $3) where workspace_id = $1 and id = $2 returning *", [ws, ctx.params.runId, userId]);
-  return new Reply(202, mapRun(u!));
+  const when = (ctx.body as { when: "now" | "first_failure" | "off" }).when;
+  const r = await runRow(ctx.t, ws, ctx.params.runId);
+  if (r.status !== "running") throw conflict("This run is not running.");
+  if (when === "off") {
+    await ctx.t.q("update public.ci_runs set stop_when = null, stop_state = null, stop_detail = '' where workspace_id = $1 and id = $2 and stop_state = 'armed'", [ws, r.id]);
+  } else {
+    const fire = when === "now" || Number(r.tests_failed) > 0 || Number((r.progress as { failed?: number } | null)?.failed ?? 0) > 0
+      || !!(await ctx.t.one("select 1 from public.ci_test_results where run_id = $1 and outcome = 'failed' limit 1", [r.id]));
+    await ctx.t.q(
+      `update public.ci_runs set stop_when = $3, stop_state = $4, stop_requested_at = now(), stop_requested_by = $5, stop_detail = $6
+       where workspace_id = $1 and id = $2 and coalesce(stop_state, '') <> 'requested'`,
+      [ws, r.id, when, fire ? "requested" : "armed", userId, fire ? (when === "now" ? "stopping the job on its fenvix machine" : "a test has failed: stopping the job") : "waiting for the first failed test"]);
+  }
+  return new Reply(202, await runDetail(ctx, ws, String(r.id)));
 };
 
-export const requestTestReplay: Handler = async (ctx) => {
+async function runDetail(ctx: Ctx, ws: string, runId: string) {
+  const r = await runRow(ctx.t, ws, runId);
+  return { run: mapRun(r), project: await project(ctx.t, ws, String(r.project_id)) };
+}
+
+export const replayTest: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const testId = (ctx.body as { testId: string }).testId;
   const r = await ctx.t.one<{ id: string; project_id: string; commit_sha: string }>("select id, project_id, commit_sha from public.ci_runs where workspace_id = $1 and id = $2", [ws, ctx.params.runId]);
   if (!r) throw notFound("That run does not exist in this organization.");
+  // A replay of this test of this run already queued or running is the answer.
+  const live = await ctx.t.one("select * from public.ci_replays where workspace_id = $1 and run_id = $2 and test_id = $3 and status in ('requested', 'dispatched', 'running') order by created_at desc limit 1", [ws, r.id, testId]);
+  if (live) return new Reply(202, mapReplay(live));
   const d = await ctx.t.one<{ id: string; replay_command: string | null }>("select id, replay_command from public.ci_defects where project_id = $1 and test_id = $2", [r.project_id, testId]);
   return new Reply(202, await requestReplay(ctx.t, ctx, { projectId: r.project_id, defectId: d?.id ?? null, runId: r.id, testId, commitSha: r.commit_sha, command: d?.replay_command ?? null }));
+};
+
+export const listReplays: Handler = async (ctx) => {
+  const { id: ws } = orgOf(ctx);
+  const r = await runRow(ctx.t, ws, ctx.params.runId);
+  const rows = await ctx.t.q("select * from public.ci_replays where workspace_id = $1 and run_id = $2 order by created_at desc limit 100", [ws, r.id]);
+  return { items: rows.map(mapReplay) };
+};
+
+/** P-049's live test view: the tests finished after `afterSeq`, in the order they finished, at most 2,000. */
+export const listLiveTests: Handler = async (ctx) => {
+  const { id: ws } = orgOf(ctx);
+  const r = await runRow(ctx.t, ws, ctx.params.runId);
+  const after = Number(ctx.query.afterSeq ?? 0);
+  const rows = await ctx.t.q("select * from public.ci_test_results where workspace_id = $1 and run_id = $2 and seq > $3 order by seq limit 2000", [ws, r.id, after]);
+  const last = rows.length ? Number(rows[rows.length - 1]!.seq) : after;
+  return { items: rows.map(mapTestResult), lastSeq: last, status: String(r.status) };
 };
 
 // ---------------------------------------------------------------- explorations, skip with proof
@@ -295,4 +368,72 @@ export const listAuditEvents: Handler = async (ctx) => {
         : e.actor_key ? { kind: "api_key", id: String(e.actor_key), email: null } : { kind: "fenvix", id: null, email: null },
     })),
   };
+};
+
+// ---------------------------------------------------------------- the coding agent's loop (F-14)
+
+const EXCERPT = 2000;
+
+/**
+ * The failing and flaky tests of a pull request (its newest commit), a commit or a run: per test the error, a log
+ * excerpt, the defect, the first divergent event (flaky tests), the replay command, and whether it is new or known.
+ * `status`: running while any of those runs runs; none when no run was found.
+ */
+export const listFailures: Handler = async (ctx) => {
+  const { id: ws } = orgOf(ctx);
+  const q = ctx.query as { projectId?: string; pullRequest?: number; commitSha?: string; runId?: string };
+  if (!q.runId && !q.commitSha && !q.pullRequest) throw new ApiError(400, "validation_failed", "Name a pullRequest (with projectId), a commitSha or a runId.");
+  if (q.pullRequest && !q.projectId) throw new ApiError(400, "validation_failed", "A pull request is named with its projectId.", "projectId");
+  const where = ["r.workspace_id = $1"];
+  const params: unknown[] = [ws];
+  if (q.projectId) { params.push(q.projectId); where.push(`r.project_id = $${params.length}`); }
+  if (q.runId) { params.push(q.runId); where.push(`r.id = $${params.length}`); }
+  if (q.commitSha) { params.push(q.commitSha); where.push(`r.commit_sha = $${params.length}`); }
+  if (q.pullRequest) {
+    params.push(q.pullRequest);
+    where.push(`r.pull_request = $${params.length} and r.commit_sha = (select r2.commit_sha from public.ci_runs r2 where r2.workspace_id = $1 and r2.project_id = r.project_id
+      and r2.pull_request = $${params.length} order by r2.pushed_at desc, r2.started_at desc limit 1)`);
+  }
+  const runs = await ctx.t.q<Record<string, unknown>>(
+    `select distinct on (coalesce(r.job_workflow, ''), coalesce(r.job_name, ''), r.project_id) r.* from public.ci_runs r where ${where.join(" and ")}
+     order by coalesce(r.job_workflow, ''), coalesce(r.job_name, ''), r.project_id, r.started_at desc limit 50`, params);
+  const ids = runs.map((r) => String(r.id));
+  const rows = ids.length ? await ctx.t.q<Record<string, unknown>>(
+    `select t.*, r.number as run_number, r.job_workflow, r.job_name, r.project_id, r.started_at as run_started,
+       d.id as d_id, d.divergence, d.replay_command, d.seed, d.language, d.first_run_id, d.cause, d.cause_tests, d.state as d_state,
+       exists (select 1 from public.ci_test_results t2 join public.ci_runs r2 on r2.id = t2.run_id
+                where r2.project_id = r.project_id and t2.test_id = t.test_id and t2.outcome = 'failed' and r2.started_at < r.started_at) as failed_before
+     from public.ci_test_results t join public.ci_runs r on r.id = t.run_id left join public.ci_defects d on d.id = t.defect_id
+     where t.workspace_id = $1 and t.run_id = any($2::uuid[]) and t.outcome = 'failed' order by r.started_at, t.seq nulls last, t.test_id limit 500`, [ws, ids]) : [];
+  const items = rows.map((t) => {
+    const flaky = t.failure_kind === "flaky_defect";
+    const out = typeof t.output === "string" ? t.output : null;
+    const isNew = flaky ? String(t.first_run_id ?? "") === String(t.run_id) : t.failed_before !== true;
+    return {
+      runId: String(t.run_id), runNumber: Number(t.run_number), job: t.job_name ? `${t.job_workflow ?? "workflow"} / ${t.job_name}` : null,
+      testId: String(t.test_id), kind: flaky ? "flaky_defect" : "real",
+      error: { type: String(t.exception_type ?? ""), message: String(t.failure_message ?? ""), location: String(t.failure_location ?? "") },
+      logExcerpt: out ? (out.length > EXCERPT ? `...${out.slice(-EXCERPT)}` : out) : (t.failure_message ? String(t.failure_message) : null),
+      defectId: t.d_id ? String(t.d_id) : null,
+      divergence: (t.divergence as Record<string, unknown> | null) ?? null,
+      replayCommand: t.d_id ? replayCommandOf(t) : null,
+      new: isNew, known: !isNew,
+    };
+  });
+  const status = !runs.length ? "none" : runs.some((r) => r.status === "running") ? "running" : runs.some((r) => r.status === "failed") ? "failed" : "passed";
+  return { status, runs: runs.map((r) => ({ id: String(r.id), number: Number(r.number), status: String(r.status), commitSha: String(r.commit_sha), job: r.job_name ? String(r.job_name) : null })), items };
+};
+
+function replayCommandOf(t: Record<string, unknown>): string {
+  return replayCommand({ id: String(t.d_id), seed: t.seed === null || t.seed === undefined ? null : Number(t.seed), language: t.language === "node" ? "node" : "python",
+    testRunner: "pytest", replayCommand: (t.replay_command as string | null) ?? null });
+}
+
+/** The full captured output of one test of a run (the runner's, at most 64 KB), with its failure. */
+export const getTestLog: Handler = async (ctx) => {
+  const { id: ws } = orgOf(ctx);
+  const r = await runRow(ctx.t, ws, ctx.params.runId);
+  const t = await ctx.t.one<Record<string, unknown>>("select * from public.ci_test_results where workspace_id = $1 and run_id = $2 and test_id = $3", [ws, r.id, String(ctx.query.testId)]);
+  if (!t) throw notFound("That test is not in this run.");
+  return { runId: r.id, testId: String(t.test_id), outcome: String(t.outcome), output: (t.output as string | null) ?? null, failure: mapTestResult(t).failure };
 };

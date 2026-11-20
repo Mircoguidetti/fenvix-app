@@ -37,7 +37,8 @@ export const HANDLERS: Record<string, Handler> = {
   listPlans: data.listPlans, getBilling: data.getBilling,
   listDefectOccurrences: backend.listDefectOccurrences, setDefectState: backend.setDefectState, getDefectBundle: backend.getDefectBundle,
   listDefectReplays: backend.listDefectReplays, requestDefectReplay: backend.requestDefectReplay, getReplay: backend.getReplay,
-  cancelRun: backend.cancelRun, requestTestReplay: backend.requestTestReplay, saveExplorationSettings: backend.saveExplorationSettings,
+  downloadDefectBundle: backend.downloadDefectBundle, stopRun: backend.stopRun, replayTest: backend.replayTest, listReplays: backend.listReplays,
+  listLiveTests: backend.listLiveTests, listFailures: backend.listFailures, getTestLog: backend.getTestLog, saveExplorationSettings: backend.saveExplorationSettings,
   listExplorationJobs: backend.listExplorationJobs, requestExploration: backend.requestExploration, resumeSkip: backend.resumeSkip,
   deleteProject: backend.deleteProject, deleteOrganization: backend.deleteOrganization, exportOrganization: backend.exportOrganization,
   deleteMe: backend.deleteMe, listApiKeys: backend.listApiKeys, createApiKey: backend.createApiKey, revokeApiKey: backend.revokeApiKey,
@@ -307,6 +308,16 @@ export function buildApi(deps: ApiDeps): Api {
       },
     });
   }
+
+  // A defect bundle's signed, short-lived link (GET /v1/defects/{id}/bundle makes it): the token is the credential.
+  fastify.get("/v1/bundles", async (req: FastifyRequest<{ Querystring: { token?: string } }>, reply) => {
+    const t = backend.verifyBundleToken(cfg.stateSigningKey, String(req.query.token ?? ""));
+    if (!t) return errorReply(reply, notFound("This link expired or is not valid. Ask for the bundle again."));
+    const b = await db.tx("", null, (x) => x.one<{ content: Buffer; sha256: string }>("select content, sha256 from public.api_signed_bundle($1, $2, $3)", [t.ws, t.defect, t.bundle]));
+    if (!b) return errorReply(reply, notFound("This bundle no longer exists."));
+    return reply.code(200).header("content-type", "application/gzip").header("content-disposition", `attachment; filename="fenvix-defect-${t.defect}.tar.gz"`)
+      .header("x-fenvix-bundle-sha256", b.sha256).header("cache-control", "private, no-store").send(b.content);
+  });
 
   // The remote MCP server (src/api/mcp.ts): POST /v1/mcp with an API key, backed by the same operations.
   mcpRoute(fastify, { db, execute, operations: dashboardOperations() });

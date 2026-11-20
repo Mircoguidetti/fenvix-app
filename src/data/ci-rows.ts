@@ -2,7 +2,7 @@
  * Postgres rows (supabase/migrations/0011_ci_runs.sql, snake_case) to the contract's records (camelCase). Pure, so
  * tests/unit/ci.test.ts covers it without a database.
  */
-import type { AuditRerun, Exploration, Defect, GitHubRate, GitHubRepository, Installation, OnboardingState, Plan, Project, Run, RunProgress, SkipReceipt, TestResult, TestRunner, WarmCache, WarmupStatus } from "./types";
+import type { AuditRerun, Exploration, Defect, Replay, GitHubRate, GitHubRepository, Installation, OnboardingState, Plan, Project, Run, RunProgress, SkipReceipt, TestResult, TestRunner, WarmCache, WarmupStatus } from "./types";
 import { familyKeyOf, pullCommand, type UsageEvent } from "./ci.ts";
 
 export type Row = Record<string, unknown>;
@@ -84,7 +84,12 @@ export function mapRun(r: Row): Run {
     skipMisses: obj(r.skip_misses) as Run["skipMisses"], missDetails: arr(r.miss_details),
     mode: str(r.mode) === "shadow" ? "shadow" : "enforce", wouldSkipTests: num(r.would_skip_tests), wouldSaveMs: num(r.would_save_ms),
     audit: { rerun: num(r.audit_rerun), wrongSkips: num(r.audit_wrong_skips) },
-    cancelRequestedAt: r.cancel_requested_at ? iso(r.cancel_requested_at) : null,
+    stop: r.stop_state && r.stop_when ? {
+      when: str(r.stop_when) === "first_failure" ? "first_failure" : "now", state: str(r.stop_state) as NonNullable<Run["stop"]>["state"],
+      requestedAt: r.stop_requested_at ? iso(r.stop_requested_at) : "", requestedBy: str(r.stop_requested_by_name), detail: str(r.stop_detail),
+    } : null,
+    job: r.job_name ? { workflow: str(r.job_workflow), name: str(r.job_name), matrix: /\(([^)]*)\)\s*$/.exec(str(r.job_name))?.[1] ?? null } : null,
+    githubRunId: numOrNull(r.github_run_id), githubJobId: numOrNull(r.github_job_id),
     region: r.region === "us" || r.region === "eu" ? r.region : null,
     progress: str(r.status) === "running" && r.progress ? mapProgress(obj(r.progress), r.progress_at) : null,
   };
@@ -99,6 +104,10 @@ export function mapProgress(p: Row, at: unknown): RunProgress {
     testsTotal: numOrNull(p.testsTotal), testsDone: num(p.testsDone), passed: num(p.passed), failed: num(p.failed), skippedWithProof: num(p.skippedWithProof),
     currentTest: typeof p.currentTest === "string" ? p.currentTest : null, elapsedMs: num(p.elapsedMs),
     updatedAt: at instanceof Date ? at.toISOString() : str(at),
+    workers: arr<Row>(p.workers).map((w) => ({
+      id: str(w.id), currentTest: typeof w.currentTest === "string" ? w.currentTest : null, testsDone: num(w.testsDone),
+      state: (["running", "idle", "done"].includes(str(w.state)) ? str(w.state) : "running") as "running" | "idle" | "done",
+    })),
   };
 }
 
@@ -122,6 +131,7 @@ export function mapTestResult(r: Row): TestResult {
     runId: str(r.run_id), testId: str(r.test_id), file: fileOfTest(str(r.test_id)), outcome: str(r.outcome) as TestResult["outcome"], durationMs: num(r.duration_ms),
     failure: kind ? { kind, phase: str(r.failure_phase, "call"), exceptionType: str(r.exception_type), message: str(r.failure_message), location: str(r.failure_location), defectId: r.defect_id ? str(r.defect_id) : null } : null,
     receiptId: r.receipt_id ? str(r.receipt_id) : null,
+    worker: r.worker ? str(r.worker) : null, seq: numOrNull(r.seq), finishedAt: r.finished_at ? iso(r.finished_at) : null,
   };
 }
 
@@ -136,7 +146,8 @@ export function mapDefect(r: Row, project: { fullName: string; testRunner: TestR
     cause: str(r.cause) as Defect["cause"], causeTests, minimalOrder: arr<string>(r.minimal_order), prefixLength: num(r.prefix_length), seed: numOrNull(r.seed),
     fingerprint: r.fingerprint ? str(r.fingerprint) : null, replays: { runs: num(r.replay_runs, 10), fails: num(r.replay_fails, 10), identicalFingerprint: r.identical_fingerprint !== false },
     outcome: str(r.outcome, "failed"), exception: { type: str(ex.type), phase: str(ex.phase, "call"), message: str(ex.message), location: str(ex.location) },
-    divergence: dv ? { index: num(dv.index), reason: str(dv.reason), description: str(dv.description) } : null,
+    divergence: dv ? { index: num(dv.index), reason: str(dv.reason), description: str(dv.description), passing: arr(dv.passing), failing: arr(dv.failing) } : null,
+    firstPullRequest: numOrNull(r.first_pull_request),
     familyKey: str(r.family_key) || familyKeyOf(causeTests), firstSeenAt: str(r.first_seen_at), lastSeenAt: str(r.last_seen_at),
     firstRunId: r.first_run_id ? str(r.first_run_id) : null, lastRunId: r.last_run_id ? str(r.last_run_id) : null, occurrences: num(r.occurrences, 1),
     engineVersion: str(r.engine_version), language: str(r.language) === "node" ? "node" : "python", testRunner: project?.testRunner ?? "pytest",
@@ -150,16 +161,24 @@ export function mapDefect(r: Row, project: { fullName: string; testRunner: TestR
   };
 }
 
-/** ci_replays (a row, or the same keys as JSON). */
-export function mapReplay(r: Row): NonNullable<Defect["lastReplay"]> {
-  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+/**
+ * ci_replays (a row, or the same keys as JSON) as P-049's Replay: state queued | running | done | failed; verdict once
+ * done: reproduced (failed every time, identical fingerprint), flaky (failed some of the times), passed (never failed).
+ */
+export function mapReplay(r: Row): Replay {
+  const status = str(r.status, "requested");
+  const runs = num(r.runs, 10);
+  const fails = num(r.fails, 0);
+  const finished = status === "passed" || status === "failed";
+  const state: Replay["state"] = status === "running" ? "running" : finished ? "done" : status === "error" || status === "cancelled" ? "failed" : "queued";
+  const verdict: Replay["verdict"] = !finished ? null : fails === 0 ? "passed" : fails >= runs && r.identical_fingerprint !== false ? "reproduced" : "flaky";
   return {
-    id: str(r.id), defectId: r.defect_id ? str(r.defect_id) : null, runId: r.run_id ? str(r.run_id) : null, projectId: str(r.project_id),
-    testId: str(r.test_id), commitSha: str(r.commit_sha), status: str(r.status, "requested") as NonNullable<Defect["lastReplay"]>["status"],
-    detail: str(r.detail), runs: n(r.runs), fails: n(r.fails), fingerprint: r.fingerprint ? str(r.fingerprint) : null,
-    identicalFingerprint: r.identical_fingerprint === null || r.identical_fingerprint === undefined ? null : r.identical_fingerprint === true,
-    requestedVia: str(r.requested_via, "dashboard") as NonNullable<Defect["lastReplay"]>["requestedVia"], createdAt: iso(r.created_at),
+    id: str(r.id), runId: r.run_id ? str(r.run_id) : null, testId: str(r.test_id), defectId: r.defect_id ? str(r.defect_id) : null,
+    state, verdict, runs, done: finished ? runs : 0, fails, identicalFingerprint: r.identical_fingerprint === null || r.identical_fingerprint === undefined ? null : r.identical_fingerprint === true,
+    command: str(r.command), detail: str(r.detail), requestedAt: iso(r.created_at), startedAt: r.started_at ? iso(r.started_at) : null,
     finishedAt: r.finished_at ? iso(r.finished_at) : null,
+    projectId: str(r.project_id), commitSha: str(r.commit_sha), fingerprint: r.fingerprint ? str(r.fingerprint) : null,
+    requestedVia: str(r.requested_via, "dashboard") as Replay["requestedVia"],
   };
 }
 

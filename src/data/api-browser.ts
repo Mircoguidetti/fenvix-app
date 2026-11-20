@@ -6,6 +6,7 @@ import { apiUrl } from "../lib/env";
 import { getSupabase } from "../lib/supabaseClient";
 import { activeWorkspaceId } from "../lib/org";
 import { blobUrl } from "../lib/download";
+import { SESSION_ENDED_EVENT } from "../lib/returnPath";
 import { createApiDataClient, createApiOrgsClient, type ApiConfig } from "./api";
 
 const config: ApiConfig = {
@@ -16,6 +17,9 @@ const config: ApiConfig = {
   },
   workspace: activeWorkspaceId,
   blobUrl,
+  // A 401 ends the session: SessionProvider signs out in this browser and shows the sign-in page, keeping the page
+  // the person was on to come back to (audit G-1689).
+  onUnauthenticated: () => window.dispatchEvent(new Event(SESSION_ENDED_EVENT)),
 };
 
 export const apiClient = createApiDataClient(config);

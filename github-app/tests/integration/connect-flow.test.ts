@@ -173,7 +173,7 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     assert.equal((await runner("progress", "fenvix-j81000", 31000, p(3, "testing", 20, { currentTest: VAT, failed: 1, passed: 19 }))).statusCode, 202);
     assert.equal((await runner("progress", "fenvix-j81000", 31000, p(2, "collecting", 0))).statusCode, 202, "an older record is accepted and ignored");
     const live = rows.mapRun(plain(await runRow(run1))).progress!;
-    assert.deepEqual({ ...live, updatedAt: "" }, { phase: "testing", testsTotal: 56, testsDone: 20, passed: 19, failed: 1, skippedWithProof: 0, currentTest: VAT, elapsedMs: 3000, updatedAt: "" });
+    assert.deepEqual({ ...live, updatedAt: "" }, { phase: "testing", testsTotal: 56, testsDone: 20, passed: 19, failed: 1, skippedWithProof: 0, currentTest: VAT, elapsedMs: 3000, updatedAt: "", workers: [] });
     assert.equal(((await runRow(run1)).progress as Row).seq, 3);
     // Another runner, another run, a malformed record.
     assert.equal((await runner("progress", "fenvix-j81000", 31000, p(4, "testing", 21, { runnerName: "fenvix-j1" }))).statusCode, 403);

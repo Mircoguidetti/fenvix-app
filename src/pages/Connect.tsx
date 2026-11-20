@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Check, CircleCheck, ExternalLink, Lock, TriangleAlert } from "lucide-react";
 import { client, type GitHubRepository, type Installation, type SetupChange } from "../data";
-import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker, LoadError } from "../components/PageHeader";
 import { InstallationStatusPill, OnboardingPill } from "../components/StateBadge";
 import { useToast } from "../components/Toast";
 import { WarmCacheNote } from "../components/ci";
@@ -375,7 +375,7 @@ export function ConnectPage() {
         <Step n={1} done={anyActive} title="Choose the repositories fenvix may see">
           <p className="muted">On a GitHub account or organization, for the repositories you choose. It reads code and workflow files, posts results on pull requests and opens the setup pull request. It never pushes to a branch.</p>
           {connection.status === "loading" && <Message>Loading installations</Message>}
-          {connection.status === "error" && <Message role="alert">{connection.message}</Message>}
+          {connection.status === "error" && <LoadError message={connection.message} onRetry={connection.reload} />}
           {connection.status === "ready" && installations.length > 0 && (
             <ul className="install-more" aria-label="Your GitHub installations">
               {installations.map((i) => (
@@ -415,7 +415,7 @@ export function ConnectPage() {
         <Step n={2} done={opened} title="Open the setup pull request">
           <p className="muted">One line changes in the test job: runs-on: fenvix. Your workflow, secrets and other jobs stay as they are.</p>
           {repos.status === "loading" && <Message>Loading repositories</Message>}
-          {repos.status === "error" && <Message role="alert">{repos.message}</Message>}
+          {repos.status === "error" && <LoadError message={repos.message} onRetry={repos.reload} />}
           {connection.status === "ready" && repos.status === "ready" && installations.length === 0 && <p className="muted small">No installation yet: install the app first.</p>}
           {connection.status === "ready" && repos.status === "ready" && installations.map((i) => <InstallationBlock key={i.installationId} installation={i} repos={list} queued={queued} onOpen={open} highlight={i.installationId === highlighted} />)}
         </Step>
