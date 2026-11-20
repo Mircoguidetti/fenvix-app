@@ -26,7 +26,7 @@ import { dashboardOperations, type Operation } from "./spec.ts";
 export const HANDLERS: Record<string, Handler> = {
   getMe: orgs.getMe, listOrganizations: orgs.listOrganizations, createOrganization: orgs.createOrganization,
   getOrganization: orgs.getOrganization, renameOrganization: orgs.renameOrganization, leaveOrganization: orgs.leaveOrganization,
-  listMembers: orgs.listMembers, changeMemberRole: orgs.changeMemberRole, removeMember: orgs.removeMember,
+  listMembers: orgs.listMembers, changeMemberRole: orgs.changeMemberRole, removeMember: orgs.removeMember, transferOwnership: orgs.transferOwnership,
   listInvitations: orgs.listInvitations, createInvitation: orgs.createInvitation, revokeInvitation: orgs.revokeInvitation,
   acceptInvitation: orgs.acceptInvitation, getSettings: orgs.getSettings, saveSettings: orgs.saveSettings,
   getOverview: data.getOverview, listProjects: data.listProjects, getProject: data.getProject, saveProjectSettings: data.saveProjectSettings,

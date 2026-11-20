@@ -36,7 +36,7 @@ rows. The contract the engine needs is `docs/data-contract.md` "1b", "2b" and "R
 | 2. Memory across runs, dedup | **One defect per flaky test of a project** across runs and PRs (`ci_defects` unique on project + test), with every sighting in `ci_defect_occurrences` (run, commit, branch, PR, fingerprint, `fingerprintChanged`, divergent event). Replay command, first divergent event and bundle on every defect. Flaky tests named only by the summary are defects too (`reported`). | `backend.test.ts` steps 3, 5, 9, 10 |
 | 3. PR comment, check runs | ONE comment per PR made from **every** fenvix job of the head commit (a green job never hides a red one; running jobs shown as running); per defect: cause (first divergent event), seed, minimal order, replay command, pull command, "replay it on fenvix" link, how often seen across PRs; skip-with-proof summary; culprit and dependency verdict lines appear when the defect carries them (`ci_defects.culprit`, `dependency_verdict`). One check run per job (`fenvix / <job>`), with annotations; a job that gets no machine gets an `action_required` check run saying why. Every open PR whose head is the commit gets the comment. | `backend.test.ts` steps 1, 3, 4; `backend-gaps.test.ts` G-2318; `results.test.ts`, `e2e.test.ts` |
 | 4. Replay on our machines | Dashboard / API key (scope `replay`) / MCP / PR link → `ci_replays` → scheduler → `launchTask` (P-047's fleet) → machine fetches the bundle and reports → result on the defect; 10/10 passing on a commit that never saw it marks it **fixed**. At most one in flight per defect, 10 a day. | `backend.test.ts` step 8 |
-| 5. API keys, documented API | Keys per organization (`fxk_…`, SHA-256 stored, shown once, scopes `read`/`replay`, revocable, optional expiry), owners/admins manage them; keys read runs, defects, bundles, explorations (`x-fenvix-key` in `openapi/fenvix-api.yaml`), never anything else; per-key and per-person rate limit. The contract documents every route, `/healthz`, `/webhooks/github`, `/github/setup` included. | `backend.test.ts` step 6; `api-dashboard.test.ts` (68 operations, real GoTrue tokens) |
+| 5. API keys, documented API | Keys per organization (`fxk_…`, SHA-256 stored, shown once, scopes `read`/`replay`, revocable, optional expiry), owners/admins manage them; keys read runs, defects, bundles, explorations (`x-fenvix-key` in `openapi/fenvix-api.yaml`), never anything else; per-key and per-person rate limit. The contract documents every route, `/healthz`, `/webhooks/github`, `/github/setup` included. | `backend.test.ts` step 6; `api-dashboard.test.ts` (69 operations, real GoTrue tokens) |
 | 6. Remote MCP server | `POST /v1/mcp` (MCP 2025-06-18, streamable HTTP, JSON): the agent loop `failures_for`, `get_test_log`, `wait_for_run`, `replay`, and `list_projects`, `list_runs`, `list_defects`, `get_defect`, `pull_bundle`, `request_replay`, `get_replay`; each tool is an API operation run with the key (same RLS, scopes, rate limit). `mcp.fenvix.dev`: DNS/certificate not made (infra). | `backend.test.ts` steps 7, 8 |
 | 7. Shadow trial label | **Removed until real**: no runner reads `FENVIX_MODE`, so trial runs are started and labelled `enforce` (what happens). `SHADOW_MODE=true` turns shadow back on once P-047's runner runs it. | `backend-gaps.test.ts` G-0187 |
 | 8. Live run control | `POST /v1/runs/{id}/stop` (now, first failure, off; owners and admins, not keys): within a minute the GitHub run is cancelled (needs Actions: write) and the machine ended; `Run.stop` says armed / requested / done / failed. `POST /v1/runs/{id}/replays` replays one test; `GET /v1/runs/{id}/tests/live` the tests as they finish. | `backend.test.ts` step 11; `api-dashboard.test.ts` |
@@ -129,7 +129,7 @@ merges with no conflict.
 ## Numbers
 
 - Tests, MEASURED on this branch, locally (`npm test` in `github-app`, local Postgres 16 + local Supabase from
-  `scripts/local-supabase/up.sh`, 2026-11-20): unit **141/141**, integration **207/207** (on `main`: 141 + 136 with the two local-Supabase API suites skipped,
+  `scripts/local-supabase/up.sh`, 2026-11-20): unit **141/141**, integration **211/211** (on `main`: 141 + 136 with the two local-Supabase API suites skipped,
   MEASURED the same way before any change). New: `backend.test.ts` (13 steps), `backend-gaps.test.ts` (23),
   `api-dashboard.test.ts` +1 test and +11 matrix rows.
 - Row level security, MEASURED: `npm run test:rls` 6/6 files OK on scratch Postgres 16, and `backend-rls.sql` OK on the
@@ -294,6 +294,26 @@ Status words: **FIXED** (with the regression test), **OUT OF SCOPE** (with the s
 | G-1804, G-2330, G-2331 | OUT OF SCOPE | Cache machine and its tenants are Infra (P-047). | — |
 | G-1632 | FIXED | Audit log (see G-1805). | `backend.test.ts` "5." |
 | G-2309 | FIXED | Retention (see G-1816). | retention test |
+
+### Rows handed over by P-047 (coordinator, 2026-11-20)
+
+Split: API and back end here; `src/` and `vercel.json` to P-049 (G-2285, and the screens for G-2325, G-2329, G-1790,
+G-1800).
+
+| Row | Verdict | What | Evidence |
+| --- | --- | --- | --- |
+| G-0616 | FIXED | Playwright and Cypress are test runners a project can have (DB, contract `TestRunner`, workflow detection, summary detection). fenvix does not run them yet: the setup pull request is not opened, and the reason names the runner. | `backend-gaps.test.ts` "G-0616, G-1750" |
+| G-1750 | FIXED | unittest, Django, nose2 and ward (Python); mocha, node:test, ava, tap and bun (Node): recognised and stored as themselves. A `python -m unittest` job is no longer stored as pytest. The engine runs pytest, Vitest and Jest (MEASURED by the engine's sessions); the rest are recognised, not run. | `backend-gaps.test.ts` "G-0616, G-1750" |
+| G-1752 | FIXED (Node/any runner); OUT OF SCOPE (Go/JVM) | A summary's flaky test may be named `testId`, not only pytest's `nodeid`. The engine version from `detpy`/`detjs` covers Python and Node. Go and JVM summaries: out of scope. Rule: go-live scope: Python and Node only, Linux x86_64 only, GitHub Actions only, jobs only on our machines, no billing. | `backend-gaps.test.ts` "G-1752" |
+| G-1753 | OUT OF SCOPE | Go package and JVM class receipts. Rule: go-live scope: Python and Node only, Linux x86_64 only, GitHub Actions only, jobs only on our machines, no billing. Node receipts fit `{path, qualname, digest}`. | — |
+| G-1754 | FIXED | Defect kinds beyond order (thread, async order, clock, randomness, network, files, environment: since 0019). Such a defect needs no order now; its minimal order is the test alone. An order defect still needs one. | `backend-gaps.test.ts` "G-1754" |
+| G-1755 | FIXED | Each run keeps its own language and runner from its summary (`ci_runs.language`, `test_runner`; `Run.language`, `Run.testRunner` in the API); its defects and results use them. A repository with Python and TypeScript test jobs reports both. The project keeps its first language for its settings. | `backend-gaps.test.ts` "G-1755" |
+| G-1790 | FIXED (before) | `deleteMe` (G-1626): an account is deleted; an only owner of an organization with members is refused. | `backend-gaps.test.ts` "G-1626"; `api-dashboard.test.ts` |
+| G-1798 | BLOCKED (founder step 4) | Sending the invitation e-mail needs the mail provider credential (as G-1756, G-2310). The link is returned meanwhile. | — |
+| G-1799 | BLOCKED (founder step 4) | E-mail notices need the same mail provider. | — |
+| G-1800 | FIXED (before) | `unlinkInstallation` (G-1700): an owner or admin unlinks; it can then be linked to another organization. | `backend-gaps.test.ts` "G-1700" |
+| G-2325 | FIXED | `transferOwnership` (owners only, confirmed by typing the organization's name). In one step the member becomes an owner and the caller an admin; the audit log records `organization.ownership_transferred` (besides the two role changes). | `api-dashboard.test.ts` "the service back-end's operations" |
+| G-2329 | FIXED | A pending invitation used by someone signed in with another address answers 403 `invitation_other_email` and says what to do; every other refusal stays the same 404. | `api-dashboard.test.ts` "an invitation" |
 
 ## What is not true yet
 

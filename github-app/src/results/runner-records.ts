@@ -47,6 +47,7 @@ export interface RunnerDefect {
 /** The bundle's `kind`: order dependence (order, brittle, fails-alone) or the kind of the first divergent event. */
 export const DEFECT_KINDS = ["order", "brittle", "fails-alone", "async-order", "thread", "clock", "random", "network", "fs", "env"] as const;
 export type DefectKind = (typeof DEFECT_KINDS)[number];
+const ORDER_KINDS: readonly string[] = ["order", "brittle", "fails-alone"];
 export interface RunnerAuditRerun { testId: string; cacheKey: string; outcome: "confirmed" | "wrong_skip"; untrusted?: boolean; detail?: string }
 export type MissKind = "new" | "failed-before" | "config" | "runtime" | "clock" | "env" | "data" | "code";
 export interface MissDetail { kind: MissKind; detail: string; tests: number }
@@ -233,7 +234,11 @@ export function parseDefect(v: unknown, path: string): RunnerDefect {
     kind: oneOf(need(o, "kind", path), at(path, "kind"), DEFECT_KINDS),
     polluters: opt(o, "polluters", path, strings()),
     setters: opt(o, "setters", path, strings()),
-    order: list(need(o, "order", path), at(path, "order"), (x, p) => text(x, p), { min: 1 }),
+    // The minimal order: required for an order defect (order, brittle, fails-alone); a Level 1 or Level 2 defect
+    // (threads, async order, clock, randomness, network, files, environment) may send none: the test alone (G-1754).
+    order: ORDER_KINDS.includes(String(o.kind)) || o.order !== undefined
+      ? list(need(o, "order", path), at(path, "order"), (x, p) => text(x, p), { min: 1 })
+      : [text(need(o, "testId", path), at(path, "testId"), 2000)],
     prefixLength: opt(o, "prefixLength", path, (x, p) => int(x, p, 0)),
     seed: opt(o, "seed", path, orNull((x, p) => int(x, p))),
     fingerprint: text(need(o, "fingerprint", path), at(path, "fingerprint"), undefined, HEX32),

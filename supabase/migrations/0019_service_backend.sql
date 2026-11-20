@@ -1024,7 +1024,69 @@ end $$;
 revoke all on function public.gh_repo_access_forget(bigint, bigint, bigint) from public, anon, authenticated;
 grant execute on function public.gh_repo_access_forget(bigint, bigint, bigint) to fenvix_github_app;
 
--- ================================================================ 14. replays on our machines (with P-047's 0018)
+-- ================================================================ 14. every test runner, and the run's own language (G-0616, G-1750, G-1755)
+
+-- A project may have any runner the service knows (Python: pytest, unittest, Django, nose2, ward; Node: Vitest, Jest,
+-- mocha, node:test, ava, tap, bun, Playwright, Cypress), not only those the engine runs (a python -m unittest job is
+-- no longer stored as pytest). Which runners fenvix runs is the onboarding's engineRuns.
+alter table public.ci_projects drop constraint if exists ci_projects_test_runner_check;
+alter table public.ci_projects add constraint ci_projects_test_runner_check check (test_runner in ('pytest', 'unittest', 'django', 'nose2', 'ward', 'vitest', 'jest', 'mocha', 'node:test', 'ava', 'tap', 'bun', 'playwright', 'cypress', 'go test'));
+alter table public.gh_repositories drop constraint if exists gh_repositories_detected_test_runner_check;
+alter table public.gh_repositories add constraint gh_repositories_detected_test_runner_check
+  check (detected_test_runner is null or detected_test_runner in ('pytest', 'unittest', 'django', 'nose2', 'ward', 'vitest', 'jest', 'mocha', 'node:test', 'ava', 'tap', 'bun', 'playwright', 'cypress', 'go test'));
+-- A repository with Python and TypeScript tests (or two test jobs) reports each run in its own language and runner,
+-- from the run's summary; null: the project's.
+alter table public.ci_runs add column if not exists language text check (language is null or language in ('python', 'node', 'go'));
+alter table public.ci_runs add column if not exists test_runner text;
+alter table public.ci_runs drop constraint if exists ci_runs_test_runner_check;
+alter table public.ci_runs add constraint ci_runs_test_runner_check check (test_runner is null or test_runner in ('pytest', 'unittest', 'django', 'nose2', 'ward', 'vitest', 'jest', 'mocha', 'node:test', 'ava', 'tap', 'bun', 'playwright', 'cypress', 'go test'));
+
+-- ================================================================ 16. ownership transfer; why an invitation was refused (G-2325, G-2329)
+
+-- An owner hands the organization to another member in one step, confirmed by typing its name: the member becomes an
+-- owner, the owner an admin, and the audit log records the transfer itself (besides the two role changes).
+create or replace function public.api_transfer_ownership(p_to uuid, p_confirm_name text)
+returns void language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_ws uuid := public.api_owner_workspace(); v_me uuid := public.api_user(); v_name text;
+begin
+  if v_ws is null or v_me is null then raise exception 'Only an owner can transfer the organization.' using errcode = '42501'; end if;
+  select w.name into v_name from public.workspaces w where w.id = v_ws for update;
+  if p_confirm_name is distinct from v_name then raise exception 'Type the organization''s name to confirm.' using errcode = '22023'; end if;
+  if p_to = v_me then raise exception 'You are already an owner.' using errcode = '22023'; end if;
+  if not exists (select 1 from public.workspace_members m where m.workspace_id = v_ws and m.user_id = p_to) then
+    raise exception 'That member does not exist.' using errcode = 'P0002';
+  end if;
+  update public.workspace_members set role = 'owner' where workspace_id = v_ws and user_id = p_to;
+  update public.workspace_members set role = 'admin' where workspace_id = v_ws and user_id = v_me;
+  insert into public.audit_events (workspace_id, actor_user, actor_key, action, target, detail)
+    values (v_ws, v_me, null, 'organization.ownership_transferred', p_to::text, jsonb_build_object('from', v_me, 'to', p_to));
+end $$;
+
+-- Why a pending, unexpired invitation (its token) cannot be accepted by the signed-in person: 'other_email' when it was
+-- sent to another address than their verified one. Null for everything else (unknown, used, expired, revoked tokens stay
+-- the same 404 and are not told apart).
+create or replace function public.api_invitation_refusal(p_hash text)
+returns text language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare v_user uuid := public.api_user(); v_inv record; v_email text; v_verified boolean;
+begin
+  if v_user is null or p_hash is null then return null; end if;
+  select i.* into v_inv from public.workspace_invites i where i.token_hash = p_hash;
+  if v_inv.id is null or v_inv.revoked_at is not null or v_inv.accepted_at is not null or v_inv.expires_at <= now() then return null; end if;
+  select lower(u.email), u.email_confirmed_at is not null into v_email, v_verified from auth.users u where u.id = v_user;
+  if v_email is null or v_email <> v_inv.email or not v_verified then return 'other_email'; end if;
+  return null;
+end $$;
+do $$
+declare f text;
+begin
+  foreach f in array array['api_transfer_ownership(uuid, text)', 'api_invitation_refusal(text)']
+  loop
+    execute format('revoke all on function public.%s from public, anon, authenticated', f);
+    execute format('grant execute on function public.%s to fenvix_api', f);
+  end loop;
+end $$;
+
+-- ================================================================ 15. replays on our machines (with P-047's 0018)
 
 -- A replay the API asked for (ci_replays) runs on our machines as gh_replays (0018) leases: the link, and the commit
 -- the replay names (a defect's replay may be on a later commit than the run's). Only where 0018 made gh_replays.

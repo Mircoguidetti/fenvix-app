@@ -115,6 +115,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organization/transfer-ownership": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Owners only (G-2325). The member becomes an owner and the caller an admin, in one step, confirmed by typing the organization's name; the audit log records organization.ownership_transferred. */
+        post: operations["transferOwnership"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organization/invitations": {
         parameters: {
             query?: never;
@@ -164,7 +184,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Every refusal (unknown, used, expired, revoked, another or an unverified e-mail) is the same 404. */
+        /** @description A pending invitation sent to another address than the signed-in person's verified one answers 403 `invitation_other_email` (G-2329); every other refusal (unknown, used, expired, revoked) is the same 404. */
         post: operations["acceptInvitation"];
         delete?: never;
         options?: never;
@@ -1539,8 +1559,11 @@ export interface components {
         };
         /** @enum {string} */
         Language: "python" | "node" | "go";
-        /** @enum {string} */
-        TestRunner: "pytest" | "vitest" | "jest" | "go test";
+        /**
+         * @description Every runner the service knows (G-0616, G-1750). fenvix runs pytest, Vitest and Jest; a project with another runner is recognised and its setup pull request says why it is not run yet.
+         * @enum {string}
+         */
+        TestRunner: "pytest" | "unittest" | "django" | "nose2" | "ward" | "vitest" | "jest" | "mocha" | "node:test" | "ava" | "tap" | "bun" | "playwright" | "cypress" | "go test";
         /** @enum {string} */
         RunTrigger: "push" | "pull_request" | "merge_group" | "schedule" | "workflow_dispatch" | "other";
         /** @enum {string} */
@@ -1719,6 +1742,10 @@ export interface components {
             /** Format: uuid */
             projectId: string;
             number: number;
+            /** @description The run's own language, from its summary (G-1755: a repository with Python and TypeScript test jobs). Null: the project's. */
+            language?: components["schemas"]["Language"] | null;
+            /** @description The run's own test runner, from its summary. Null: the project's. */
+            testRunner?: components["schemas"]["TestRunner"] | null;
             engineRunId: string | null;
             commitSha: string;
             commitMessage: string;
@@ -2942,6 +2969,42 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    transferOwnership: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    userId: string;
+                    confirmName: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Transferred */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        userId: string;
+                        role: components["schemas"]["OrgRole"];
+                        yourRole: components["schemas"]["OrgRole"];
+                    };
+                };
             };
             default: components["responses"]["Error"];
         };

@@ -21,6 +21,10 @@ import { loadApiConfig } from "../../src/api/config.ts";
 import { type Api, buildApi } from "../../src/api/server.ts";
 import { rateLimitWait } from "../../src/github/client.ts";
 import { engineRuns, permissionNote } from "../../src/onboarding/onboard.ts";
+import { analyzeWorkflow } from "../../src/onboarding/workflow.ts";
+import { projectStack, stackFromSummary } from "../../src/results/detect.ts";
+import { parseResults } from "../../src/results/runner-records.ts";
+import { parseSummary } from "../../src/results/summary.ts";
 import { signSummaryCredential } from "../../src/runners/credentials.ts";
 import type { Region, RunnerLaunch, RunnerLauncher, TaskLaunch } from "../../src/runners/launcher.ts";
 import {
@@ -264,6 +268,70 @@ describe("service back-end: the audit rows, one regression test per family", () 
     assert.equal(out.state, "unsupported", out.detail);
     assert.match(out.detail, /pytest \(Python\) and Vitest or Jest \(Node\)/);
     assert.equal(h.gh.repos.get(REPOS.web.full_name)!.pulls.length, 0);
+  });
+
+  // ---------------------------------------------------------------- every runner, every defect kind, the run's own language (P-047's hand-over)
+
+  it("G-0616, G-1750: every runner is recognised (unittest is no longer pytest); a runner fenvix does not run gets no setup pull request, with why", async () => {
+    const job = (cmd: string) => analyzeWorkflow({ path: ".github/workflows/ci.yml", text: `name: CI\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ${cmd}\n` }, "fenvix").jobs[0]!;
+    const seen = Object.fromEntries([
+      "python -m unittest discover", "python manage.py test", "nose2 -v", "ward test", "npx playwright test", "npx cypress run", "npx mocha", "node --test",
+      "npx ava", "npx tap", "bun test", "pytest -q", "npx vitest run", "npx jest",
+    ].map((c) => [c, `${job(c).language}/${job(c).testRunner}`]));
+    assert.deepEqual(seen, {
+      "python -m unittest discover": "python/unittest", "python manage.py test": "python/django", "nose2 -v": "python/nose2", "ward test": "python/ward",
+      "npx playwright test": "node/playwright", "npx cypress run": "node/cypress", "npx mocha": "node/mocha", "node --test": "node/node:test",
+      "npx ava": "node/ava", "npx tap": "node/tap", "bun test": "node/bun", "pytest -q": "python/pytest", "npx vitest run": "node/vitest", "npx jest": "node/jest",
+    });
+    assert.deepEqual(projectStack({ language: "python", testRunner: "unittest" }, null), { language: "python", testRunner: "unittest" }, "not pytest");
+    assert.deepEqual(stackFromSummary({ test_runner: "playwright" }), { language: "node", testRunner: "playwright" });
+    const r = engineRuns("python", "unittest");
+    assert.equal(r.ok, false);
+    assert.match((r as { why: string }).why, /unittest/);
+    // A repository whose tests run with unittest: recognised and stored as such, no pull request, the reason given.
+    const repo = REPOS.docs;
+    h.gh.addRepo({ id: repo.id, fullName: repo.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": "name: CI\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: python -m unittest discover\n" } });
+    h.gh.installations.get(INSTALLATION_ID)!.repos.push(repo.id);
+    await admin.query("insert into gh_repositories (repository_id, installation_id, full_name) values ($1, $2, $3) on conflict (repository_id) do update set installation_id = excluded.installation_id, removed_at = null", [repo.id, INSTALLATION_ID, repo.full_name]);
+    const out = await h.app.service.onboard(repo.id);
+    assert.equal(out.state, "unsupported", out.detail);
+    assert.match(out.detail, /unittest/);
+    assert.deepEqual((await admin.query("select detected_language, detected_test_runner from gh_repositories where repository_id = $1", [repo.id])).rows[0],
+      { detected_language: "python", detected_test_runner: "unittest" });
+    assert.equal(h.gh.repos.get(repo.full_name)!.pulls.length, 0);
+  });
+
+  it("G-1752: a summary's flaky test may be named by testId (any runner), not only pytest's nodeid", async () => {
+    const base = (await import("../fixtures/runner/job3-warm-pass.summary.json", { with: { type: "json" } })).default as Row;
+    const s = parseSummary({ ...base, flaky: [{ testId: "src/money.test.ts > eur", replay: "npx vitest run --sequence.seed=3" }] });
+    assert.deepEqual(s.flaky.map((f) => f.nodeid), ["src/money.test.ts > eur"]);
+  });
+
+  it("G-1754: a Level 1 or Level 2 defect (threads, async order, clock, network) is stored without an order; an order defect still needs one", () => {
+    const d = (kind: string, order?: string[]) => ({
+      testId: "tests/t.py::t", status: "reproduced", kind, ...(order ? { order } : {}), fingerprint: "a".repeat(32), seed: 1,
+      replay: { runs: 10, fails: 10, identicalFingerprint: true }, exception: { type: "AssertionError", phase: "call", message: "boom", location: "t.py:1" },
+    });
+    for (const kind of ["thread", "async-order", "clock", "network"]) {
+      const c = parseResults({ runId: 1, chunk: 0, chunks: 1, defects: [d(kind)] });
+      assert.deepEqual(c.defects?.[0]?.order, ["tests/t.py::t"], kind);
+    }
+    assert.throws(() => parseResults({ runId: 1, chunk: 0, chunks: 1, defects: [d("order")] }), /order/);
+  });
+
+  it("G-1755: two test jobs of one repository, Python and TypeScript: each run carries its own language and runner", async () => {
+    const t = await token(org.userId);
+    const node = { ...((await import("../fixtures/runner/job3-warm-pass.summary.json", { with: { type: "json" } })).default as Row), language: "node", test_runner: "vitest" };
+    const sha = "a7".repeat(20);
+    h.gh.addRun("acme/shop", 61070, { event: "push", headSha: sha, headBranch: "main", message: "two jobs" });
+    await h.send("workflow_job", workflowJob("queued", { id: 96070, runId: 61070, sha, branch: "main", name: "ts" }));
+    await h.send("workflow_job", workflowJob("in_progress", { id: 96070, runId: 61070, sha, branch: "main", name: "ts", runner: "fenvix-j96070" }));
+    await h.summary({ runId: 61070, runner: "fenvix-j96070", summary: node });
+    await h.send("workflow_job", workflowJob("completed", { id: 96070, runId: 61070, sha, branch: "main", name: "ts", runner: "fenvix-j96070" }));
+    const run = (await admin.query("select r.id, r.language, r.test_runner, p.language as project_language from ci_runs r join ci_projects p on p.id = r.project_id join gh_jobs j on j.ci_run_id = r.id where j.job_id = 96070")).rows[0];
+    assert.deepEqual([run.language, run.test_runner, run.project_language], ["node", "vitest", "python"], "the run's own, the project keeps its first");
+    const got = (await call("GET", `/v1/runs/${run.id}`, t, org.workspaceId)).json().run;
+    assert.deepEqual([got.language, got.testRunner], ["node", "vitest"]);
   });
 
   // ---------------------------------------------------------------- explorations (G-0597, G-0630, G-1720, G-1721, G-1722)

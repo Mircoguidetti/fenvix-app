@@ -1031,7 +1031,7 @@ export class GitHubService {
       const out = await this.db.tx(ws, async (c) => {
         // One application at a time per run (chunks arriving together).
         const run = (await c.query<{ id: string; project_id: string; seen_at: Date; language: string; duration_ms: number | string | null }>(
-          `select r.id, r.project_id, coalesce(r.finished_at, r.started_at) as seen_at, p.language, r.duration_ms
+          `select r.id, r.project_id, coalesce(r.finished_at, r.started_at) as seen_at, coalesce(r.language, p.language) as language, r.duration_ms
            from ci_runs r join ci_projects p on p.id = r.project_id where r.id = $1 for update of r`, [ciRunId])).rows[0];
         if (!run) return null;
         const res = await applyChunks(c, { id: run.id, projectId: run.project_id, language: run.language, seenAt: run.seen_at, maxTestMs: run.duration_ms === null ? null : Number(run.duration_ms) }, key, chunks);
@@ -1130,7 +1130,7 @@ export class GitHubService {
     const sha = createHash("sha256").update(o.content).digest("hex");
     await this.db.tx(j.workspace_id, async (c) => {
       const r = (await c.query<{ id: string; project_id: string; language: string; seen_at: Date }>(
-        `select r.id, r.project_id, p.language, coalesce(r.finished_at, r.started_at) as seen_at from ci_runs r join ci_projects p on p.id = r.project_id
+        `select r.id, r.project_id, coalesce(r.language, p.language) as language, coalesce(r.finished_at, r.started_at) as seen_at from ci_runs r join ci_projects p on p.id = r.project_id
          where r.id = $1 for update of r`, [j.ci_run_id])).rows[0]!;
       let d = (await c.query<{ id: string }>("select id from ci_defects where project_id = $1 and test_id = $2", [r.project_id, o.testId])).rows[0];
       if (!d) {
@@ -1297,6 +1297,10 @@ export class GitHubService {
             ciRunId = await this.insertRun(c, projectId, job, summary, run, pr?.number ?? null, values);
           }
           if (summary) await c.query("update ci_projects set setup_state = 'active' where id = $1", [projectId]);
+          // The run's own language and runner (G-1755): a repository with Python and TypeScript test jobs reports each in its own.
+          if (ciRunId && summary?.stack) {
+            await c.query("update ci_runs set language = $2, test_runner = $3 where id = $1", [ciRunId, summary.stack.language, summary.stack.testRunner]);
+          }
         }
         if (ciRunId) await c.query("update gh_jobs set ci_run_id = $2 where job_id = $1", [job.job_id, ciRunId]);
       }
@@ -1323,7 +1327,7 @@ export class GitHubService {
       const flaky = summary.flaky;
       await this.db.tx(ws, async (c) => {
         const r = (await c.query<{ id: string; project_id: string; language: string; seen_at: Date }>(
-          `select r.id, r.project_id, p.language, coalesce(r.finished_at, r.started_at) as seen_at from ci_runs r join ci_projects p on p.id = r.project_id
+          `select r.id, r.project_id, coalesce(r.language, p.language) as language, coalesce(r.finished_at, r.started_at) as seen_at from ci_runs r join ci_projects p on p.id = r.project_id
            where r.id = $1 for update of r`, [ciRunId])).rows[0];
         if (r) await recordReportedFlaky(c, { id: r.id, projectId: r.project_id, language: r.language, seenAt: r.seen_at }, flaky);
       }).catch((e: unknown) => this.log.error({ job: job.job_id, err: e instanceof Error ? e.message : String(e) }, "the summary's flaky tests could not be recorded"));

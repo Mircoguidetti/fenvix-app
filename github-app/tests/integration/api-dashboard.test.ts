@@ -508,7 +508,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       assert.equal((await call(api, "listOrganizations", { token: p.token })).body.items.length, 2);
     });
 
-    it("an invitation: created by an owner, accepted once by the invited address only; every refusal is the same 404", async () => {
+    it("an invitation: created by an owner, accepted once by the invited address only; another address is told so (G-2329); every other refusal is the same 404", async () => {
       const owner = await signUp(admin, "inv-owner");
       const ws = owner.workspaceId;
       const email = `api-${process.pid}-${githubId()}@api.fenvix.test`;
@@ -523,11 +523,16 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       const listed = await call(api, "listInvitations", { token: owner.token, ws });
       assert.deepEqual(listed.body.items.map((i: { email: string }) => i.email), [email]);
 
+      // Signed in with another address (e.g. a GitHub account's personal e-mail): told so, with what to do (G-2329).
       const stranger = await signUp(admin, "inv-stranger");
-      const refused = await call(api, "acceptInvitation", { token: stranger.token, body: { token } });
+      const other = await call(api, "acceptInvitation", { token: stranger.token, body: { token } });
+      assert.deepEqual([other.status, other.body.error.code], [403, "invitation_other_email"]);
+      assert.match(other.body.error.message, /another e-mail address/);
+      assert.equal((await call(api, "listInvitations", { token: owner.token, ws })).body.items.length, 1, "still pending");
+      const refused = await call(api, "acceptInvitation", { token: stranger.token, body: { token: "x".repeat(43) } });
       assert.equal(refused.status, 404);
       const malformed = await call(api, "acceptInvitation", { token: stranger.token, body: { token: "abc" } });
-      assert.deepEqual(malformed.body, refused.body, "the same answer for every refusal");
+      assert.deepEqual(malformed.body, refused.body, "the same answer for every other refusal");
 
       // The invited person signs up with that address (Supabase Auth confirms it locally) and accepts.
       const res = await fetch(`${LOCAL!.supabaseUrl}/auth/v1/signup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password: "pw-invited-0123456789" }) });
@@ -663,12 +668,30 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     assert.equal((await call(api, "deleteOrganization", { token: solo.token, ws: solo.workspaceId, body: { confirmName: name } })).status, 204);
     assert.equal((await call(api, "deleteMe", { token: solo.token })).status, 204);
     assert.equal((await admin.query("select count(*)::int as n from auth.users where id = $1", [solo.userId])).rows[0].n, 0);
+    // G-2325: the owner hands the organization over in one step, confirmed by its name; the audit log records it.
+    const from = await signUp(admin, "transfer-owner");
+    const to = await signUp(admin, "transfer-member");
+    const helper = await signUp(admin, "transfer-admin");
+    await addTo(admin, to, from.workspaceId, "member");
+    await addTo(admin, helper, from.workspaceId, "admin");
+    const tws = from.workspaceId;
+    const tname = (await admin.query("select name from workspaces where id = $1", [tws])).rows[0].name;
+    assert.equal((await call(api, "transferOwnership", { token: helper.token, ws: tws, body: { userId: to.userId, confirmName: tname } })).status, 403, "an admin cannot");
+    const wrong = await call(api, "transferOwnership", { token: from.token, ws: tws, body: { userId: to.userId, confirmName: "not it" } });
+    assert.deepEqual([wrong.status, wrong.body.error.field], [400, "confirmName"]);
+    const done = await call(api, "transferOwnership", { token: from.token, ws: tws, body: { userId: to.userId, confirmName: tname } });
+    assert.deepEqual([done.status, done.body], [200, { userId: to.userId, role: "owner", yourRole: "admin" }]);
+    const roles = (await admin.query("select user_id, role from workspace_members where workspace_id = $1", [tws])).rows;
+    assert.deepEqual(Object.fromEntries(roles.map((r) => [r.user_id, r.role])), { [from.userId]: "admin", [to.userId]: "owner", [helper.userId]: "admin" });
+    const audit = await call(api, "listAuditEvents", { token: to.token, ws: tws });
+    assert.ok(audit.body.items.some((e: { action: string; target: string }) => e.action === "organization.ownership_transferred" && e.target === to.userId), JSON.stringify(audit.body.items.slice(0, 3)));
+    assert.equal((await call(api, "transferOwnership", { token: from.token, ws: tws, body: { userId: helper.userId, confirmName: tname } })).status, 403, "no longer an owner");
   });
 
   it("every dashboard operation of the contract was called and answered as the contract says", () => {
     const all = dashboardOperations().map((o) => o.operationId).sort();
     assert.deepEqual(all.filter((x) => !covered.has(x)), []);
-    assert.equal(all.length, 68);
+    assert.equal(all.length, 69);
     void NOW;
   });
 });

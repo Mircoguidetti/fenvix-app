@@ -153,6 +153,22 @@ export const changeMemberRole: Handler = async (ctx) => {
   return { userId: id, role: to };
 };
 
+/**
+ * POST /organization/transfer-ownership (G-2325): an owner hands the organization to another member in one step,
+ * confirmed by typing its name. The member becomes an owner, the caller an admin; the audit log records the transfer.
+ */
+export const transferOwnership: Handler = async (ctx) => {
+  const o = orgOf(ctx);
+  if (o.role !== "owner") throw forbidden("Only an owner can transfer the organization.");
+  const to = String(ctx.body.userId ?? "").toLowerCase();
+  if (ctx.body.confirmName !== o.name) throw validation("Type the organization's name exactly to confirm.", "confirmName");
+  if (to === ctx.userId) throw validation("You are already an owner. Choose another member.", "userId");
+  await lockOrg(ctx.t, o.id);
+  if (!(await memberRole(ctx.t, o.id, to))) throw notFound(MEMBER_NOT_FOUND);
+  await ctx.t.q("select public.api_transfer_ownership($1, $2)", [to, o.name]);
+  return { userId: to, role: "owner" as Role, yourRole: "admin" as Role };
+};
+
 export const removeMember: Handler = async (ctx) => {
   const o = orgOf(ctx);
   const id = String(ctx.params.userId).toLowerCase();
@@ -228,7 +244,15 @@ export const acceptInvitation: Handler = async (ctx) => {
   // The lookup runs whatever the token looks like (a malformed one hashes to nothing stored).
   const hash = hashToken(token);
   const r = await ctx.t.one<{ workspace_id: string; role: Role; already_member: boolean }>("select * from public.api_accept_invitation($1, $2)", [hash, LIMITS.maxMembersPerOrganization]);
-  if (!r || !TOKEN_RE.test(token)) throw notFound(INVITE_INVALID);
+  if (!r || !TOKEN_RE.test(token)) {
+    // G-2329: a valid invitation sent to another address says so (the person signed in with another e-mail, e.g. a
+    // GitHub account's personal address); every other refusal stays the same 404.
+    const why = TOKEN_RE.test(token) ? (await ctx.t.one<{ why: string | null }>("select public.api_invitation_refusal($1) as why", [hash]))?.why : null;
+    if (why === "other_email") {
+      throw new ApiError(403, "invitation_other_email", "This invitation was sent to another e-mail address than the one you are signed in with. Sign in with the invited address, or ask for an invitation to your address.");
+    }
+    throw notFound(INVITE_INVALID);
+  }
   const w = await ctx.t.one<{ name: string; name_confirmed: boolean }>("select name, name_confirmed from public.workspaces where id = $1", [r.workspace_id]);
   return { organization: { id: r.workspace_id, name: w?.name ?? "", role: r.role, nameConfirmed: !!w?.name_confirmed } };
 };

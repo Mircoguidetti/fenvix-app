@@ -134,6 +134,18 @@ paths:
       responses:
         "204": { description: Removed }
         default: { $ref: "#/components/responses/Error" }
+  /organization/transfer-ownership:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }]
+    post:
+      tags: [dashboard]
+      operationId: transferOwnership
+      description: "Owners only (G-2325). The member becomes an owner and the caller an admin, in one step, confirmed by typing the organization's name; the audit log records organization.ownership_transferred."
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [userId, confirmName], additionalProperties: false, properties: { userId: { type: string, format: uuid }, confirmName: { type: string, maxLength: 64 } } } } } }
+      responses:
+        "200":
+          description: Transferred
+          content: { application/json: { schema: { type: object, required: [userId, role, yourRole], properties: { userId: { type: string }, role: { $ref: "#/components/schemas/OrgRole" }, yourRole: { $ref: "#/components/schemas/OrgRole" } } } } }
+        default: { $ref: "#/components/responses/Error" }
   /organization/invitations:
     parameters: [{ $ref: "#/components/parameters/Workspace" }]
     get:
@@ -170,7 +182,7 @@ paths:
     post:
       tags: [dashboard]
       operationId: acceptInvitation
-      description: Every refusal (unknown, used, expired, revoked, another or an unverified e-mail) is the same 404.
+      description: "A pending invitation sent to another address than the signed-in person's verified one answers 403 `invitation_other_email` (G-2329); every other refusal (unknown, used, expired, revoked) is the same 404."
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string, maxLength: 128 } } } } } }
       responses:
         "200":
@@ -1101,7 +1113,7 @@ components:
 
     # ---------------------------------------------------------------- projects and runs
     Language: { type: string, enum: [python, node, go] }
-    TestRunner: { type: string, enum: [pytest, vitest, jest, go test] }
+    TestRunner: { type: string, enum: [pytest, unittest, django, nose2, ward, vitest, jest, mocha, "node:test", ava, tap, bun, playwright, cypress, go test], description: "Every runner the service knows (G-0616, G-1750). fenvix runs pytest, Vitest and Jest; a project with another runner is recognised and its setup pull request says why it is not run yet." }
     RunTrigger: { type: string, enum: [push, pull_request, merge_group, schedule, workflow_dispatch, other] }
     RunStatus: { type: string, enum: [running, passed, failed, cancelled] }
     RunMode: { type: string, enum: [enforce, shadow], description: "shadow: the trial; every test ran and the engine recorded what it would have skipped." }
@@ -1269,6 +1281,8 @@ components:
         id: { type: string, format: uuid }
         projectId: { type: string, format: uuid }
         number: { type: integer }
+        language: { oneOf: [{ $ref: "#/components/schemas/Language" }, { type: "null" }], description: "The run's own language, from its summary (G-1755: a repository with Python and TypeScript test jobs). Null: the project's." }
+        testRunner: { oneOf: [{ $ref: "#/components/schemas/TestRunner" }, { type: "null" }], description: "The run's own test runner, from its summary. Null: the project's." }
         engineRunId: { type: [string, "null"] }
         commitSha: { type: string }
         commitMessage: { type: string }

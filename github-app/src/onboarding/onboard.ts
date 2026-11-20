@@ -85,7 +85,7 @@ export function engineRuns(language: Language | null, runner: TestRunner | null)
   if (language === "node" && (runner === "vitest" || runner === "jest")) return { ok: true };
   if (!language) return { ok: false, why: "runs tests fenvix cannot run yet: fenvix runs pytest (Python) and Vitest or Jest (Node)" };
   if (language === "go") return { ok: false, why: "runs go test: fenvix runs Python (pytest) and Node (Vitest, Jest) only for now" };
-  return { ok: false, why: `runs ${language} tests with a runner fenvix cannot run yet: fenvix runs pytest (Python) and Vitest or Jest (Node)` };
+  return { ok: false, why: `runs ${language} tests with ${runner ?? "a runner"}, which fenvix cannot run yet: fenvix runs pytest (Python) and Vitest or Jest (Node)` };
 }
 
 /** The test runner behind a Node job's `npm test`: package.json's scripts.test names vitest or jest, else null. */

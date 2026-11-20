@@ -71,9 +71,15 @@ export function mapProject(r: Row): Project {
   };
 }
 
+const RUNNER_NAMES: readonly string[] = ["pytest", "unittest", "django", "nose2", "ward", "vitest", "jest", "mocha", "node:test", "ava", "tap", "bun", "playwright", "cypress", "go test"];
+/** A test runner the service knows (G-0616, G-1750), else null. */
+const runnerOf = (v: unknown): TestRunner | null => (typeof v === "string" && RUNNER_NAMES.includes(v) ? (v as TestRunner) : null);
+const languageOf = (v: unknown): "python" | "node" | "go" | null => (v === "python" || v === "node" || v === "go" ? v : null);
+
 export function mapRun(r: Row): Run {
   return {
     id: str(r.id), projectId: str(r.project_id), number: num(r.number), engineRunId: r.engine_run_id ? str(r.engine_run_id) : null,
+    language: languageOf(r.language), testRunner: runnerOf(r.test_runner),
     commitSha: str(r.commit_sha), commitMessage: str(r.commit_message), branch: str(r.branch), pullRequest: numOrNull(r.pull_request),
     trigger: str(r.trigger) as Run["trigger"], status: str(r.status) as Run["status"],
     pushedAt: str(r.pushed_at), startedAt: str(r.started_at), finishedAt: r.finished_at ? str(r.finished_at) : null, durationMs: num(r.duration_ms),
@@ -228,7 +234,7 @@ export function mapGitHubRepository(r: Row): GitHubRepository {
   return {
     repositoryId: num(r.repository_id), installationId: num(r.installation_id), fullName: str(r.full_name), private: r.private !== false, removed: !!r.removed_at,
     language: lang === "python" || lang === "node" || lang === "go" ? lang : null,
-    testRunner: runner === "pytest" || runner === "vitest" || runner === "jest" || runner === "go test" ? runner : null,
+    testRunner: runnerOf(runner),
     onboardingState: state, onboardingDetail: str(r.onboarding_detail), workflowPath: r.onboarding_workflow_path ? str(r.onboarding_workflow_path) : null,
     job: r.onboarding_job ? str(r.onboarding_job) : null,
     setupPullRequest: r.setup_pr_number ? { number: num(r.setup_pr_number), url: str(r.setup_pr_url), state: prState } : null,

@@ -9,7 +9,8 @@ import { isMap, isPair, isScalar, isSeq, parseDocument, type Node, type Pair, ty
  */
 
 export type Language = "python" | "node" | "go";
-export type TestRunner = "pytest" | "vitest" | "jest" | "go test";
+export type { TestRunner } from "../results/detect.ts";
+import type { TestRunner } from "../results/detect.ts";
 
 export interface WorkflowFile { path: string; text: string }
 
@@ -43,7 +44,18 @@ const COMMANDS: Command[] = [
   { re: /\bgo\s+test\b/, score: 6, language: "go", runner: "go test", label: "runs go test" },
   { re: /\b(tox|nox)\b/, score: 4, language: "python", runner: "pytest", label: "runs tox/nox" },
   { re: /\b(uv\s+run|poetry\s+run|hatch\s+run|pdm\s+run)\s+(python\s+-m\s+)?(pytest|test)\b/, score: 6, language: "python", runner: "pytest", label: "runs pytest" },
-  { re: /\bpython3?\s+-m\s+unittest\b|\bmanage\.py\s+test\b/, score: 4, language: "python", runner: null, label: "runs Python tests" },
+  // Runners the service knows (G-0616, G-1750); the engine runs pytest, Vitest and Jest (engineRuns).
+  { re: /\bpython3?\s+-m\s+unittest\b/, score: 5, language: "python", runner: "unittest", label: "runs unittest" },
+  { re: /\bmanage\.py\s+test\b/, score: 5, language: "python", runner: "django", label: "runs the Django tests" },
+  { re: /\bnose2\b/, score: 5, language: "python", runner: "nose2", label: "runs nose2" },
+  { re: /\bward\b(\s+test)?/, score: 4, language: "python", runner: "ward", label: "runs ward" },
+  { re: /\bplaywright\s+test\b/, score: 5, language: "node", runner: "playwright", label: "runs Playwright" },
+  { re: /\bcypress\s+run\b/, score: 5, language: "node", runner: "cypress", label: "runs Cypress" },
+  { re: /\bmocha\b/, score: 5, language: "node", runner: "mocha", label: "runs mocha" },
+  { re: /\bnode\s+(--\S+\s+)*--test\b/, score: 5, language: "node", runner: "node:test", label: "runs node:test" },
+  { re: /\bnpx\s+ava\b|\bava\s+--/, score: 5, language: "node", runner: "ava", label: "runs ava" },
+  { re: /\bnpx\s+tap\b|\btap\s+(test|--)/, score: 5, language: "node", runner: "tap", label: "runs tap" },
+  { re: /\bbun\s+test\b/, score: 5, language: "node", runner: "bun", label: "runs bun test" },
   { re: /\b(npm|pnpm|yarn|bun)\s+(run\s+)?test\b|\bnpm\s+t\b/, score: 5, language: "node", runner: null, label: "runs the package's test script" },
   { re: /\bmake\s+(test|check)\b/, score: 3, language: null, runner: null, label: "runs make test" },
 ];
