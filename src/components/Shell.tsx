@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { BookOpen, Building2, ChartColumn, Check, ChevronDown, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, BookOpen, Building2, ChartColumn, Check, ChevronDown, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { AccountMenu, OrgAvatar, useCurrentOrg } from "./AccountMenu";
 import { useToast } from "./Toast";
@@ -100,12 +100,12 @@ export function useProjectTitle(name: string | undefined, more?: Omit<ProjectInf
 const ProjectsList = createContext<ProjectRow[] | null>(null);
 
 /** The project the frame is about: the one in the address (a project page, or the defects filtered to one project). */
-function useProjectContext(): { projectId: string | null; section: SectionKey | null } {
+function useProjectContext(): { projectId: string | null; section: SectionKey | null; runId: string | null } {
   const { pathname, search } = useLocation();
-  const m = /^\/projects\/([^/]+)(?:\/([^/]+))?/.exec(pathname);
-  if (m && m[1] !== "connect") return { projectId: m[1], section: SECTION_OF[m[2] ?? "runs"] ?? "runs" };
+  const m = /^\/projects\/([^/]+)(?:\/([^/]+))?(?:\/([^/]+))?/.exec(pathname);
+  if (m && m[1] !== "connect") return { projectId: m[1], section: SECTION_OF[m[2] ?? "runs"] ?? "runs", runId: m[2] === "runs" ? (m[3] ?? null) : null };
   const only = pathname === "/defects" ? new URLSearchParams(search).get("project") : null;
-  return only ? { projectId: only, section: "defects" } : { projectId: null, section: null };
+  return only ? { projectId: only, section: "defects", runId: null } : { projectId: null, section: null, runId: null };
 }
 
 /** The open project's name and runner: from its page when it set them, otherwise read once from the project list. */
@@ -196,6 +196,10 @@ function SubNav({ path, orgName }: { path: string; orgName: string }) {
     <aside className="cx-sub" aria-label="Pages">
       {area === "projects" && projectId ? (
         <>
+          <Link to="/projects" className="cx-sub-back">
+            <ArrowLeft size={15} strokeWidth={2} aria-hidden="true" />
+            All projects
+          </Link>
           <div className="cx-sub-head">
             <span className="cx-sub-kind">Project</span>
             <span className="cx-sub-title">
@@ -325,6 +329,10 @@ function Drawer({ onClose }: { path: string; onClose: () => void }) {
         </nav>
         {projectId && (
           <nav aria-label="Project sections" className="cx-drawer-group">
+            <Link to="/projects" onClick={onClose} className="cx-sub-link cx-drawer-back">
+              <ArrowLeft size={16} strokeWidth={2} aria-hidden="true" />
+              All projects
+            </Link>
             <p className="cx-drawer-label">
               Project <span className="cx-drawer-label-name">{info.name}</span>
             </p>
@@ -415,7 +423,10 @@ function OrgCrumb({ name }: { name: string }) {
   );
 }
 
-/** "Project <name> ▾": the organization's projects to switch to; the same section stays open. */
+/**
+ * "Project <name> ▾": the name goes to the project, the arrow opens the organization's projects to switch to (the same
+ * section stays open).
+ */
 function ProjectCrumb({ projectId, name }: { projectId: string; name: string }) {
   const list = useContext(ProjectsList) ?? [];
   const { section } = useProjectContext();
@@ -436,10 +447,11 @@ function ProjectCrumb({ projectId, name }: { projectId: string; name: string }) 
   const target = PROJECT_SECTIONS.find((s) => s.key === (section ?? "runs")) ?? PROJECT_SECTIONS[0];
   return (
     <span className="cx-crumb-menu" ref={ref}>
-      <button type="button" className="cx-crumb-btn" aria-expanded={open} aria-controls={listId} onClick={() => setOpen((o) => !o)}>
+      <Link to={`/projects/${projectId}`} className="cx-crumb-btn cx-crumb-link" title={name}>
         <span className="cx-crumb-kind">Project</span>
         <span className="cx-crumb-name cx-crumb-db">{name}</span>
-        <span className="sr-only">: switch project</span>
+      </Link>
+      <button type="button" className="cx-crumb-btn cx-crumb-chevron" aria-expanded={open} aria-controls={listId} aria-label="Switch project" onClick={() => setOpen((o) => !o)}>
         <ChevronDown size={14} strokeWidth={2} aria-hidden="true" />
       </button>
       {open && (
@@ -452,6 +464,11 @@ function ProjectCrumb({ projectId, name }: { projectId: string; name: string }) 
               </span>
             </Link>
           ))}
+          <Link to="/projects" className="org-item" onClick={() => setOpen(false)}>
+            <span className="org-item-text">
+              <span className="org-item-name">All projects</span>
+            </span>
+          </Link>
           <Link to="/projects/connect" className="org-item" onClick={() => setOpen(false)}>
             <span className="org-item-text">
               <span className="org-item-name">Connect a project</span>
@@ -463,29 +480,70 @@ function ProjectCrumb({ projectId, name }: { projectId: string; name: string }) 
   );
 }
 
+const Sep = () => (
+  <span className="cx-crumb-sep" aria-hidden="true">
+    /
+  </span>
+);
+
+/** The pages of an area, and the one the address is on (the longest address that matches), for the last crumb. */
+function pageOf(area: AreaKey, path: string): { to: string; label: string } | null {
+  const pages = area === "projects" ? PROJECTS_PAGES : area === "usage" ? USAGE_PAGES : area === "org" ? SETTINGS_PAGES : [];
+  const hit = pages.filter((p) => path === p.to || path.startsWith(`${p.to}/`)).sort((a, b) => b.to.length - a.to.length)[0];
+  return hit ?? null;
+}
+
+/**
+ * Where you are, clickable at every level: Org / Projects / <project> / <section> inside a project, otherwise
+ * Org / <area> / <page>. The current level is marked aria-current; each level before it goes back one click.
+ */
 function Crumbs({ path, orgName }: { path: string; orgName: string }) {
-  const { projectId } = useProjectContext();
+  const { projectId, section, runId } = useProjectContext();
   const info = useProjectInfo(projectId);
   const area = AREAS.find((x) => x.match(path));
+  const sectionDef = PROJECT_SECTIONS.find((s) => s.key === section);
+  const inProject = !!(projectId && info.name);
+  const page = area && !inProject ? pageOf(area.key, path) : null;
+  const sectionHere = !runId;
   return (
     <nav aria-label="Where you are" className="cx-crumbs">
       {orgName && <OrgCrumb name={orgName} />}
       {area && (
-        <span className="cx-crumb-sep" aria-hidden="true">
-          /
-        </span>
-      )}
-      {area && (
-        <Link to={area.to} className="cx-crumb-btn cx-crumb-area" aria-current={!projectId && path === area.to ? "page" : undefined}>
-          <span className="cx-crumb-name">{area.label}</span>
-        </Link>
-      )}
-      {projectId && info.name && (
         <>
-          <span className="cx-crumb-sep" aria-hidden="true">
-            /
-          </span>
+          <Sep />
+          <Link to={area.to} className="cx-crumb-btn cx-crumb-area" aria-current={!inProject && !page && path === area.to ? "page" : undefined}>
+            <span className="cx-crumb-name">{area.label}</span>
+          </Link>
+        </>
+      )}
+      {inProject && projectId && (
+        <>
+          <Sep />
           <ProjectCrumb projectId={projectId} name={info.name.split("/").pop() ?? info.name} />
+          {sectionDef && (
+            <>
+              <Sep />
+              <Link to={sectionDef.to(projectId)} className="cx-crumb-btn cx-crumb-area" aria-current={sectionHere ? "page" : undefined}>
+                <span className="cx-crumb-name">{sectionDef.label}</span>
+              </Link>
+            </>
+          )}
+          {runId && (
+            <>
+              <Sep />
+              <span className="cx-crumb-btn" aria-current="page">
+                <span className="cx-crumb-name">Run</span>
+              </span>
+            </>
+          )}
+        </>
+      )}
+      {page && area && page.to !== area.to && (
+        <>
+          <Sep />
+          <Link to={page.to} className="cx-crumb-btn cx-crumb-area" aria-current={path === page.to ? "page" : undefined}>
+            <span className="cx-crumb-name">{page.label}</span>
+          </Link>
         </>
       )}
     </nav>

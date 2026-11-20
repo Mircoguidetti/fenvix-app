@@ -1304,6 +1304,8 @@ html:has(.cx-shell), body:has(.cx-shell) { height: 100%; overflow: hidden; backg
 span.cx-crumb-btn { cursor: default; }
 a.cx-crumb-btn:hover, button.cx-crumb-btn:hover, .cx-crumb-btn[aria-expanded="true"] { background: var(--nav-hover); color: var(--nav-text); }
 .cx-crumb-btn:focus-visible { outline-color: var(--nav-text); }
+.cx-crumb-menu .cx-crumb-link { padding-right: 2px; }
+.cx-crumb-menu .cx-crumb-chevron { padding: 0 6px 0 4px; }
 .cx-crumb-kind { font-size: 11px; color: var(--nav-label); }
 .cx-crumb-name { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .cx-crumb-sep { color: #b7b9be; padding: 0 2px; }
@@ -1336,13 +1338,17 @@ a.cx-crumb-btn:hover, button.cx-crumb-btn:hover, .cx-crumb-btn[aria-expanded="tr
 .cx-account .avatar { width: 34px; height: 34px; background: var(--bg); color: var(--nav-text); border: 1px solid #d7dae0; }
 .cx-account .account-panel { top: calc(100% + 8px); bottom: auto; left: auto; right: 0; width: 300px; }
 .cx-body { position: relative; flex: 1; min-height: 0; display: flex; }
-.cx-content { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; }
+/* Stacking, bottom to top: content, second bar, the rail while it is wide (an overlay), then the top bar's menus. */
+.cx-content { position: relative; z-index: 0; flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; }
 .cx-rail, .cx-sub { display: none; }
 
 /* The thin bar of areas; it widens over the page on hover, or stays open when pinned. */
-.cx-rail { position: relative; flex: 0 0 56px; z-index: 20; }
+.cx-rail { position: relative; flex: 0 0 56px; z-index: 25; }
 .cx-rail-inner { position: absolute; inset: 0 auto 0 0; width: 56px; display: flex; flex-direction: column; gap: 2px; padding: 10px 8px 12px; background: var(--nav-bg); border-right: 1px solid var(--nav-border); overflow: hidden; }
-.cx-rail[data-wide] .cx-rail-inner { width: 232px; box-shadow: 8px 0 24px rgba(15, 23, 42, 0.08); }
+.cx-rail[data-wide] { z-index: 28; }
+.cx-rail[data-wide] .cx-rail-inner { width: 232px; box-shadow: 10px 0 32px rgba(15, 23, 42, 0.22), 1px 0 0 var(--nav-border); }
+:root[data-theme="dark"] .cx-rail[data-wide] .cx-rail-inner { box-shadow: 10px 0 32px rgba(6, 8, 14, 0.6), 1px 0 0 var(--nav-border); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .cx-rail[data-wide] .cx-rail-inner { box-shadow: 10px 0 32px rgba(6, 8, 14, 0.6), 1px 0 0 var(--nav-border); } }
 .cx-rail[data-open] { flex-basis: 232px; }
 .cx-rail[data-open] .cx-rail-inner { box-shadow: none; }
 .cx-rail-link { display: flex; align-items: center; gap: 12px; width: 100%; height: 40px; flex-shrink: 0; padding: 0 11px; border: 0; border-radius: 8px; background: transparent; color: var(--nav-muted); font: 500 14px var(--font); white-space: nowrap; text-align: left; cursor: pointer; }
@@ -1360,7 +1366,7 @@ a.cx-crumb-btn:hover, button.cx-crumb-btn:hover, .cx-crumb-btn[aria-expanded="tr
 }
 
 /* The second bar: what is open and its pages. */
-.cx-sub { flex: 0 0 232px; flex-direction: column; gap: 2px; padding: 16px 12px; background: var(--nav-sub); border-right: 1px solid var(--border); overflow-y: auto; }
+.cx-sub { position: relative; z-index: 1; flex: 0 0 232px; flex-direction: column; gap: 2px; padding: 16px 12px; background: var(--nav-sub); border-right: 1px solid var(--border); overflow-y: auto; }
 .cx-sub-head { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 2px 10px 14px; }
 .cx-sub-kind { font-size: 12px; color: var(--muted); }
 .cx-sub-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
@@ -1414,7 +1420,8 @@ a.cx-crumb-btn:hover, button.cx-crumb-btn:hover, .cx-crumb-btn[aria-expanded="tr
   .cx-sub { display: flex; }
   /* Inside a database the second bar lists its sections, so the page does not repeat them as tabs. */
   .tabs[aria-label="Database sections"] { display: none; }
-  .cx-content main { padding: 32px 40px 56px; }
+  /* The page uses the width it is given, whether the rail is collapsed or pinned: fluid gutters, one cap for very wide screens. */
+  .cx-content main { max-width: 1680px; padding: 28px clamp(20px, 2.6vw, 40px) 56px; }
 }
 @media (min-width: 900px) and (max-width: 1099px) {
   .cx-search { width: 180px; }
@@ -1787,3 +1794,13 @@ table.data.dbs thead th { font-size: 12px; }
   td .row-link, .setup-done .row-link, .audit-list .row-link, .running-note .row-link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
 }
 @media (max-width: 640px) { .repo-row .name-cell > .row-link, .latest-title .row-link { display: inline-flex; align-items: center; min-height: 44px; } }
+
+/* Connect a project, step 1: the installations already connected, each with its way to choose more repositories. */
+.install-more { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.install-more-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 10px 12px; border-radius: 10px; background: var(--surface); }
+.install-more-row .btn { gap: 6px; }
+
+/* The project's second bar replaces the projects list: one level at a time, with the way back on top. */
+.cx-sub-back { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; min-height: 32px; margin: -4px 0 6px; padding: 0 10px 0 6px; border-radius: 8px; color: var(--muted); font-size: 13px; font-weight: 500; }
+.cx-sub-back:hover { background: var(--nav-hover); color: var(--text); }
+.cx-drawer .cx-drawer-back { color: var(--nav-text); }

@@ -652,6 +652,75 @@ const TESTS = {
     await eventually(async () => (await page.locator(".workspace-name").first().textContent()).includes("Northwind Platform"), "the sidebar still shows the old organization name");
     await page.getByRole("heading", { name: "Northwind Platform" }).waitFor();
   },
+
+  async "navigation: breadcrumb at every level, one way back to all projects, the rail opens above everything"(page, vp) {
+    if (isMobile(vp)) return;
+    await signIn(page, "projects/prj_homehub/defects");
+    const crumbs = page.getByRole("navigation", { name: "Where you are" });
+    // Org / Projects / <project> / <section>: each level before the current one is a link.
+    await crumbs.getByRole("link", { name: "Defects" }).waitFor();
+    assert((await crumbs.getByRole("link", { name: "Defects" }).getAttribute("aria-current")) === "page", "the section is not marked as the current level");
+    // ONE sub-navigation: the project's sections replace the projects list, with the way back on top.
+    assert((await page.locator(".cx-sub").count()) === 1, "more than one second bar");
+    assert(!(await page.getByRole("navigation", { name: "Your projects" }).count()), "the projects list is shown next to the project's sections");
+    // The switcher opens a list of projects; choosing one keeps the section.
+    await crumbs.getByRole("button", { name: "Switch project" }).click();
+    await page.getByRole("group", { name: "Switch project" }).getByRole("link", { name: /docs-site/ }).click();
+    await page.waitForURL(/\/projects\/prj_docs\/defects/);
+    // Back to all projects in one click, from the breadcrumb or from the second bar.
+    await page.locator(".cx-sub").getByRole("link", { name: "All projects" }).click();
+    await page.waitForURL(/\/projects$/);
+    await page.getByRole("navigation", { name: "Your projects" }).waitFor();
+    // Browser back returns to the project, with its sections.
+    await page.goBack();
+    await page.waitForURL(/\/projects\/prj_docs\/defects/);
+    await crumbs.getByRole("link", { name: "Projects", exact: true }).click();
+    await page.waitForURL(/\/projects$/);
+
+    // The collapsed rail opens ABOVE the second bar and the content, not under them.
+    await page.locator("main").waitFor();
+    await page.getByRole("link", { name: "northwind/homehub" }).first().click();
+    await page.locator(".cx-sub").waitFor();
+    await page.locator(".cx-rail").hover();
+    await page.waitForFunction(() => document.querySelector(".cx-rail[data-wide]"));
+    const top = await page.evaluate(() => {
+      const sub = document.querySelector(".cx-sub").getBoundingClientRect();
+      const el = document.elementFromPoint(sub.left + 40, sub.top + 140);
+      return el.closest(".cx-rail") ? "rail" : el.className;
+    });
+    assert(top === "rail", `the open rail is under ${top}`);
+  },
+
+  async "connect a project always offers more repositories and another GitHub account"(page, vp) {
+    if (isMobile(vp)) return;
+    await signIn(page, "projects/connect");
+    // An account already connected: GitHub's own page for it, where the repositories are chosen.
+    const link = page.getByRole("link", { name: "Choose more repositories for northwind on GitHub" });
+    await link.waitFor();
+    assert((await link.getAttribute("href")) === "https://github.com/organizations/northwind/settings/installations/" + (await link.getAttribute("href")).split("/").pop(), "the link does not go to the organization's installation page");
+    assert((await link.getAttribute("target")) === "_blank", "GitHub's page replaces the dashboard");
+    await page.getByRole("button", { name: "Add another GitHub account" }).waitFor();
+    await page.getByRole("button", { name: "Refresh repositories" }).click();
+    await page.getByText("Setup pull request", { exact: false }).first().waitFor();
+  },
+
+  async "the page uses the width it is given, collapsed rail or wide screen"(page, vp) {
+    if (isMobile(vp)) return;
+    await signIn(page, "overview");
+    for (const width of [1100, 1440, 1920]) {
+      await page.setViewportSize({ width, height: 900 });
+      await go(page, "overview");
+      await settled(page);
+      const m = await page.evaluate(() => {
+        const c = document.querySelector(".cx-content").getBoundingClientRect();
+        const main = document.querySelector("main").getBoundingClientRect();
+        return { left: main.left - c.left, right: c.right - main.right, wide: c.width };
+      });
+      // Gutters are the same on both sides and at most 40 px, unless the screen is wider than the page's cap.
+      assert(Math.abs(m.left - m.right) < 2, `${width}px: uneven gutters ${m.left} / ${m.right}`);
+      if (width <= 1440) assert(m.left <= 41, `${width}px: ${m.left}px gutter around the content`);
+    }
+  },
 };
 
 // ONLY=fleet runs just the tests whose name holds that text.
