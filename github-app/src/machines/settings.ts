@@ -33,6 +33,12 @@ export interface PoolSettings {
   offerMinutes: number;
   /** Hard limit of a machine's life. */
   maxHours: number;
+  /**
+   * Whether the installed engine honours FENVIX_MODE=shadow and FENVIX_SKIP=0 (docs/data-contract.md "The engine
+   * contract"). Until it does (false), a shadow run or a project with skip-with-proof off gets NO shared-cache
+   * credential: with a fresh slot and no cache nothing can be reused, so every test runs (audit G-0187, G-0191).
+   */
+  engineHonoursMode: boolean;
 }
 
 export const DEFAULT_POOL: PoolSettings = {
@@ -48,6 +54,7 @@ export const DEFAULT_POOL: PoolSettings = {
   silentMinutes: 10,
   offerMinutes: 5,
   maxHours: 6,
+  engineHonoursMode: false,
 };
 
 const SIZE = /^[a-z][a-z0-9-]{0,30}$/;
@@ -72,6 +79,7 @@ export function parsePool(raw: string | undefined): PoolSettings {
     const n = out[k] as unknown;
     if (!Number.isInteger(n) || (n as number) < lo || (n as number) > hi) throw new Error(`FENVIX_POOL.${k} must be an integer from ${lo} to ${hi}`);
   }
+  if (typeof out.engineHonoursMode !== "boolean") throw new Error("FENVIX_POOL.engineHonoursMode must be true or false");
   if (out.alwaysOn + out.reserve > out.maxMachines) throw new Error("FENVIX_POOL: alwaysOn + reserve must fit in maxMachines");
   return out;
 }

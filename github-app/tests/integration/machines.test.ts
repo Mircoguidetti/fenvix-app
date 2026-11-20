@@ -1,10 +1,12 @@
 // Our machines (P-047, F-15): the dispatcher of src/machines/ against a fake GitHub and an in-memory EC2.
 // docs/REPORT-our-machines.md lists which audit gap each test closes.
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import type pg from "pg";
 import { PoolLauncher } from "../../src/machines/launcher.ts";
 import { MachinePool } from "../../src/machines/pool.ts";
+import { unseal } from "../../src/machines/seal.ts";
 import { parsePool, sizeOfLabels } from "../../src/machines/settings.ts";
 import type { Db } from "../../src/db.ts";
 import { FakeDriver } from "../helpers/fake-machines.ts";
@@ -50,7 +52,8 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
 
   before(async () => {
     admin = await resetDb();
-    await h.start({}, { launcher: (db: Db) => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    await h.start({ CACHE_SIGNING_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString() }, { launcher: (db: Db) => {
       pool = new MachinePool(db, driver, POOL, { keys: ["runner-token-for-tests-0123456789abcdef"], apiUrl: API, machineEnv, regions: ["eu"] });
       return new PoolLauncher(pool, machineEnv);
     } });
@@ -142,7 +145,10 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
     assert.match(w.summaryToken, /^fxr1\./);
     assert.equal(w.env.FENVIX_MODE, "shadow", "linking started the 30-day trial");
     assert.equal(w.env.FENVIX_SKIP, "1");
-    assert.equal(w.env.FENVIX_CACHE_URL, `http://10.42.0.10:8787/gh-${INSTALLATION_ID}-r${REPOS.shop.id}`);
+    // Shadow, and the engine not declared to honour it: no cache credential at all, so nothing can be reused (G-0187).
+    assert.equal((w as { cacheToken?: unknown }).cacheToken, null);
+    assert.equal(w.env.FENVIX_CACHE_ACCESS, "none");
+    assert.equal(w.env.FENVIX_CACHE_URL, undefined);
     assert.equal(w.env.FENVIX_REGION, "eu");
     // Taken once: the payload is deleted.
     assert.equal(((await poll(acmeToken, [leases[0]!.leaseId])).body.leases as unknown[]).length, 0);
@@ -245,9 +251,17 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
   });
 
   it("a size label: the runner carries it, and the job gets a machine of that size", async () => {
+    // After the trial (enforce) with skip-with-proof on: the job gets its repository's cache, nothing else.
+    await admin.query("update ci_subscriptions set trial_started_at = now() - interval '31 days', trial_ends_at = now() - interval '1 day' where workspace_id = $1", [acme.workspaceId]);
+    await admin.query("update ci_projects set skip_with_proof = true where full_name = 'acme/shop'");
     h.gh.addRun("acme/shop", 9406, { event: "pull_request", headSha: "1".repeat(40), headBranch: "feature", message: "pr" });
     await h.send("workflow_job", workflowJob("queued", { id: 1006, runId: 9406, sha: "1".repeat(40), branch: "feature", labels: ["fenvix", "fenvix-large"] }));
-    const m = await machine((await leaseOfJob(1006)).machine_id);
+    const lease = await leaseOfJob(1006);
+    const work = unseal<{ cacheToken: string; env: Record<string, string> }>(["runner-token-for-tests-0123456789abcdef"], lease.id, lease.payload);
+    assert.equal(work.env.FENVIX_MODE, "enforce");
+    assert.equal(work.env.FENVIX_CACHE_URL, `http://10.42.0.10:8787/gh-${INSTALLATION_ID}-r${REPOS.shop.id}`);
+    assert.match(work.cacheToken, /^fxs1\./);
+    const m = await machine(lease.machine_id);
     assert.deepEqual({ size: m.size, type: m.instance_type, slots: m.slots }, { size: "large", type: "c7a.2xlarge", slots: 4 });
     const jit = h.gh.repos.get("acme/shop")!.jitRunners.find((r) => r.name === "fenvix-j1006")!;
     assert.deepEqual(jit.labels, ["fenvix", "fenvix-large"]);

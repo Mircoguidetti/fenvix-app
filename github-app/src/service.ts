@@ -670,7 +670,10 @@ export class GitHubService {
     const exp = Math.floor(Date.now() / 1000) + JOB_CREDENTIAL_SECONDS;
     const cacheAccess = trusted ? "write" as const : "read" as const;
     const summaryToken = signSummaryCredential(this.s.summaryKey, { runnerName, repositoryId: repo.id, runId: row.run_id, runAttempt: row.run_attempt, exp });
-    const cacheToken = this.s.cacheSigningKey ? signCacheToken(this.s.cacheSigningKey, { installationId, repositoryId: repo.id, write: trusted, exp, jobId }) : undefined;
+    // A shadow run or skip-with-proof off may reuse nothing: until the engine honours FENVIX_MODE and FENVIX_SKIP, such a
+    // job gets no cache credential (its slot starts empty), so every test runs (G-0187, G-0191).
+    const noReuse = !!this.pool && !this.pool.pool.s.engineHonoursMode && (org.mode === "shadow" || !skipWithProof);
+    const cacheToken = this.s.cacheSigningKey && !noReuse ? signCacheToken(this.s.cacheSigningKey, { installationId, repositoryId: repo.id, write: trusted, exp, jobId }) : undefined;
     let res: { instanceId: string | null; already: boolean };
     try {
       res = await this.launcher!.launch({
