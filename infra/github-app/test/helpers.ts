@@ -13,7 +13,7 @@ export const CACHE_KEY = generateKeyPairSync("rsa", { modulusLength: 2048 });
 /** cdk.json's context plus the settings the founder fills in (sample values, no secret). */
 export const SAMPLE: Record<string, string> = {
   githubAppId: "123456", githubAppSlug: "fenvix", githubClientId: "Iv1.example", dashboardUrl: "https://console.fenvix.dev",
-  supabaseUrl: "https://example.supabase.co", demoRepository: "Mircoguidetti/fenvix-demo",
+  supabaseUrl: "https://example.supabase.co",
   cacheSigningPublicKey: CACHE_KEY.publicKey.export({ type: "spki", format: "der" }).toString("base64"),
 };
 
@@ -46,10 +46,9 @@ export async function synth(over: Record<string, string> = {}): Promise<{ templa
   return { ...c, nagErrors };
 }
 
-/** Per-job mode (the default). */
-export const PER_JOB = { runnerMode: "per-job" };
-/** Demo mode (an option; needs the GitHub App). */
-export const DEMO = { runnerMode: "demo" };
+/** Our machines (the only runner mode; the pool's defaults from cdk.json). */
+export const PER_JOB: Record<string, string> = {};
+export const POOL = PER_JOB;
 /** The GitHub App not configured yet: the stack's first deploys (docs/DEPLOY-AWS.md). */
 export const NO_APP = { githubAppId: "", githubAppSlug: "", githubClientId: "" };
 

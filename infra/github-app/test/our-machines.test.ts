@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const FILES = fileURLToPath(new URL("../lib/runner/files/", import.meta.url));
 const ISOLATION = fileURLToPath(new URL("./sandbox/isolation.sh", import.meta.url));
+const IMAGE_INSTALL = fileURLToPath(new URL("./sandbox/image-install.sh", import.meta.url));
 const read = (f: string) => readFileSync(join(FILES, f), "utf8");
 
 /** Root, or passwordless sudo (the GitHub-hosted runner of the Tests workflow). Never skipped: no root, no pass. */
@@ -51,6 +52,24 @@ describe("our machines: the slot sandbox and the metadata block (real, as root)"
       const r = spawnSync("shellcheck", ["-s", "bash", ...["fenvix-slot", "fenvix-imds-block", "fenvix-job-started"].map((f) => join(FILES, f)), ISOLATION], { encoding: "utf8" });
       assert.equal(r.status, 0, r.stdout);
     }
+  });
+});
+
+describe("our machines: the image installs the TRUNK engine by its pin, fail closed (G-0186)", () => {
+  it("pinned: installed and its version recorded; no pin, another checksum, a bad archive, another runner: the build stops, nothing installed", { timeout: 180_000 }, () => {
+    const r = asRoot(["bash", IMAGE_INSTALL]);
+    for (const c of ["ok", "nopin", "badsum", "badlayout", "badrunner"]) assert.ok(r.out.split("\n").some((l) => l.startsWith(`ok ${c} `)), `${c}:\n${r.out}`);
+    assert.equal(r.status, 0, r.out);
+  });
+
+  it("the job log prints the engine version and the run mode (fenvix-job-started)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fenvix-started-"));
+    writeFileSync(join(dir, "hook"), read("fenvix-job-started").replace("/opt/fenvix/ENGINE", join(dir, "ENGINE")));
+    writeFileSync(join(dir, "ENGINE"), "0.4.0-r17.abc1234 sha256=" + "c".repeat(64) + "\n");
+    const r = spawnSync("bash", [join(dir, "hook")], { encoding: "utf8", env: { PATH: process.env.PATH!, FENVIX_MODE: "shadow", FENVIX_SKIP: "0", FENVIX_REGION: "eu" } });
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /^fenvix: engine 0\.4\.0-r17\.abc1234 sha256=c{64}$/m);
+    assert.match(r.stdout, /mode shadow, skip with proof 0, region eu/);
   });
 });
 

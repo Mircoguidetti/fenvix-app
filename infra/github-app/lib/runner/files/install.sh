@@ -1,60 +1,77 @@
 #!/usr/bin/env bash
-# fenvix runner machine: install everything a runner needs, start nothing (root; safe to run again). Used by EC2 Image
-# Builder to bake the runner image (lib/runner-fleet.ts). The build machine cannot read any of our SSM parameters.
-#   1. tools (git, curl, strace, build tools, python3, iptables, the GitHub runner's libraries; no AWS CLI);
-#   2. users: `fenvix` runs the GitHub runner and the customers' jobs; `fenvix-post` holds the machine's summary
-#      credential and sends run summaries, so job code can never read it;
-#   3. instance metadata (the user data holds the machine's credentials) blocked for both users;
-#   4. runner/bootstrap.sh install (fenvix-engine-cli at a pinned commit) as `fenvix`;
-#   5. the job hooks (summary.json to the spool when a job ends; a marker when a job starts).
-# The services (demo: fenvix-runner + poster; one machine per job: fenvix-job.target) start from the user data.
-# Log: /var/log/fenvix-runner-setup.log
+# fenvix machine image (our machines, the design of 2026-11-20): install everything, start nothing (root; safe to run
+# again). Run by EC2 Image Builder (lib/runner-fleet.ts). The build machine cannot read any of our SSM parameters.
+#   1. tools (git, curl, strace, build tools, python3 and venv, iptables, iproute2, util-linux; the GitHub runner's
+#      libraries by name); no AWS CLI;
+#   2. the slot users fenvix-s1..s16 (uid 20001..20016): each job of the machine's one customer runs as one of them,
+#      in its own sandbox (fenvix-slot);
+#   3. the instance metadata service for root only (fenvix-imds-block);
+#   4. the GitHub runner, pinned by version and sha256, as a root-owned template copied into each slot per job;
+#   5. the engine: the fenvix-engine-cli TRUNK artifact, fetched by version and checked by sha256 (fail closed: no pin,
+#      a download error or another checksum stops the image build; audit G-0186), installed into /opt/fenvix; its
+#      version is written to /opt/fenvix/ENGINE (the agent reports it at hello, every job prints it in its log);
+#   6. the agent (fenvix-agent.service, enabled): it starts at every boot and reads the machine's settings itself.
+# Log: /var/log/fenvix-machine-setup.log
 set -euo pipefail
-exec > >(tee -a /var/log/fenvix-runner-setup.log) 2>&1
+exec > >(tee -a /var/log/fenvix-machine-setup.log) 2>&1
 log() { printf '[fenvix-setup %s] %s\n' "$(date -u +%FT%TZ)" "$*"; }
 
 # shellcheck source=/dev/null
-. /etc/fenvix/runner.env
-: "${FENVIX_ENGINE_CLI_COMMIT:?}" "${AWS_DEFAULT_REGION:?}"
-RUNNER_HOME=/home/fenvix
-ENGINE_DIR=$RUNNER_HOME/engine-cli
-FENVIX_HOME=$RUNNER_HOME/fenvix
-SPOOL=/var/spool/fenvix-summaries
+. "${FENVIX_IMAGE_ENV:-/etc/fenvix/runner.env}"
+: "${FENVIX_RUNNER_VERSION:?}" "${FENVIX_RUNNER_SHA256:?}"
+die() { log "STOP: $*"; exit 1; }
 
-log "1/5 tools"
+log "1/6 tools"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-# The GitHub runner's own libraries are installed here, by name, as root. Its installdependencies.sh is never run:
-# by step 4 it is a file the `fenvix` user owns, and code from step 4's downloads could have rewritten it (R-012 F5).
-apt-get install -y -qq git curl tar strace build-essential python3 iptables ca-certificates \
-  libicu74 libkrb5-3 liblttng-ust1t64 libssl3t64 zlib1g >/dev/null
+# The GitHub runner's own libraries, by name (its installdependencies.sh is never run as root).
+apt-get install -y -qq git curl tar strace build-essential python3 python3-venv python3-pip iptables iproute2 util-linux \
+  procps ca-certificates libicu74 libkrb5-3 liblttng-ust1t64 libssl3t64 zlib1g >/dev/null
 
-log "2/5 users"
-id fenvix >/dev/null 2>&1 || useradd --create-home --home-dir "$RUNNER_HOME" --shell /bin/bash fenvix
-id fenvix-post >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin fenvix-post
-install -d -m 0730 -o fenvix-post -g fenvix "$SPOOL"
-install -d -m 0700 -o fenvix -g fenvix "$RUNNER_HOME/.fenvix"
-
-log "3/5 instance metadata blocked for the job user; ptrace of a process's own children allowed (strace -f)"
-systemctl daemon-reload
-systemctl enable --now fenvix-imds-block.service
+log "2/6 slot users"
+for n in $(seq 1 16); do
+  u="fenvix-s$n"; uid=$((20000 + n))
+  id "$u" >/dev/null 2>&1 || useradd --uid "$uid" --user-group --no-create-home --home-dir "/srv/fenvix/slot/$n" --shell /bin/bash "$u"
+done
+install -d -m 0755 -o root -g root /srv/fenvix /srv/fenvix/slot
+# ptrace of a process's own children only (strace -f inside a job works; nothing across slots).
 printf 'kernel.yama.ptrace_scope = 1\n' >/etc/sysctl.d/60-fenvix-ptrace.conf
-sysctl -q --system
 
-log "4/5 fenvix-engine-cli at $FENVIX_ENGINE_CLI_COMMIT, runner/bootstrap.sh install (builds the engine: several minutes)"
-if [ ! -d "$ENGINE_DIR/.git" ]; then
-  runuser -u fenvix -- git clone -q https://github.com/Mircoguidetti/fenvix-engine-cli.git "$ENGINE_DIR"
-fi
-runuser -u fenvix -- git -C "$ENGINE_DIR" fetch -q origin "$FENVIX_ENGINE_CLI_COMMIT" || true
-runuser -u fenvix -- git -C "$ENGINE_DIR" -c advice.detachedHead=false checkout -q --detach "$FENVIX_ENGINE_CLI_COMMIT"
-runuser -u fenvix -- env HOME="$RUNNER_HOME" FENVIX_HOME="$FENVIX_HOME" bash "$ENGINE_DIR/runner/bootstrap.sh" install
-# Nothing below runs, as root, a file the `fenvix` user owns or could have written.
-
-log "5/5 job hooks: summary.json to the spool when a job ends (the poster sends it); a marker when a job starts"
-# Written as `fenvix`, never by root: a file in the job user's directory may be a symlink by now (R-012 F5).
-# shellcheck disable=SC2016 # expanded by the inner sh, on purpose
-runuser -u fenvix -- env SPOOL="$SPOOL" ENV_FILE="$FENVIX_HOME/actions-runner/.env" sh -c '
-  grep -q "^ACTIONS_RUNNER_HOOK_JOB_COMPLETED=" "$ENV_FILE" 2>/dev/null || printf "ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/opt/fenvix/bin/fenvix-job-completed\nACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/fenvix/bin/fenvix-job-started\nFENVIX_SPOOL=%s\n" "$SPOOL" >>"$ENV_FILE"'
+log "3/6 instance metadata for root only"
 systemctl daemon-reload
-log "fenvix runner install done"
+systemctl enable fenvix-imds-block.service
 
+log "4/6 GitHub runner ${FENVIX_RUNNER_VERSION} (pinned sha256)"
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+curl -fsSL --proto '=https' --retry 3 -o "$tmp/runner.tgz" \
+  "https://github.com/actions/runner/releases/download/v${FENVIX_RUNNER_VERSION}/actions-runner-linux-x64-${FENVIX_RUNNER_VERSION}.tar.gz" \
+  || die "the GitHub runner download failed"
+[ "$(sha256sum "$tmp/runner.tgz" | cut -d' ' -f1)" = "$FENVIX_RUNNER_SHA256" ] || die "the GitHub runner's sha256 is not the pinned one"
+rm -rf /opt/fenvix/actions-runner && install -d -m 0755 /opt/fenvix/actions-runner
+tar -xzf "$tmp/runner.tgz" -C /opt/fenvix/actions-runner
+chown -R root:root /opt/fenvix/actions-runner && chmod -R go-w /opt/fenvix/actions-runner
+
+log "5/6 the engine (trunk artifact, pinned)"
+[ -n "${FENVIX_ENGINE_URL:-}" ] && [ -n "${FENVIX_ENGINE_SHA256:-}" ] && [ -n "${FENVIX_ENGINE_VERSION:-}" ] \
+  || die "no engine pinned (settings engineVersion, engineUrl, engineSha256): no image without the trunk engine"
+[[ "$FENVIX_ENGINE_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "engineSha256 is not a sha256"
+case "$FENVIX_ENGINE_URL" in https://*) ;; *) die "engineUrl must be https://" ;; esac
+curl -fsSL --proto '=https' --retry 3 -o "$tmp/engine.tgz" "$FENVIX_ENGINE_URL" || die "engine download failed: $FENVIX_ENGINE_URL"
+got="$(sha256sum "$tmp/engine.tgz" | cut -d' ' -f1)"
+[ "$got" = "$FENVIX_ENGINE_SHA256" ] || die "engine checksum mismatch: expected $FENVIX_ENGINE_SHA256, got $got (nothing installed)"
+top="$(tar -tzf "$tmp/engine.tgz" | cut -d/ -f1 | sort -u)"
+[ "$(printf '%s\n' "$top" | wc -l)" -eq 1 ] && [[ "$top" == "fenvix-engine-${FENVIX_ENGINE_VERSION}"* ]] || die "unexpected engine archive layout: $top"
+if tar -tzf "$tmp/engine.tgz" | grep -qE '(^/|(^|/)\.\.(/|$))'; then die "engine archive has absolute or parent paths"; fi
+tar -xzf "$tmp/engine.tgz" -C "$tmp"
+# Its own Python environment (Ubuntu's python3 is externally managed): the pytest plugin, the runners, `fenvix`.
+python3 -m venv /opt/fenvix/venv
+PYTHON=/opt/fenvix/venv/bin/python bash "$tmp/$top/install.sh" /opt/fenvix || die "the engine's install.sh failed"
+ln -sf /opt/fenvix/venv/bin/fenvix /usr/local/bin/fenvix 2>/dev/null || true
+printf '%s sha256=%s\n' "$FENVIX_ENGINE_VERSION" "$FENVIX_ENGINE_SHA256" >/opt/fenvix/ENGINE
+chmod 0644 /opt/fenvix/ENGINE
+log "engine: $(cat /opt/fenvix/ENGINE)"
+
+log "6/6 the agent"
+systemctl daemon-reload
+systemctl enable fenvix-agent.service
+log "fenvix machine install done"

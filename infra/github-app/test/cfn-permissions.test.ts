@@ -16,7 +16,7 @@ import { App } from "aws-cdk-lib";
 import { Template } from "aws-cdk-lib/assertions";
 import { FenvixDashboardStack } from "../lib/dashboard.ts";
 import { synthesizer } from "../lib/synthesizer.ts";
-import { DEMO, NO_APP, PER_JOB, settings, synth } from "./helpers.ts";
+import { NO_APP, PER_JOB, settings, synth } from "./helpers.ts";
 
 type Stmt = { Sid?: string; Effect: "Allow" | "Deny"; Action: string | string[]; Resource: string | string[]; Condition?: Record<string, Record<string, unknown>> };
 type Perms = { create: string[]; update: string[]; delete: string[]; read: string[]; tagging: string[]; taggable: boolean; tagOnCreate: boolean; notIamActions: string[] };
@@ -219,7 +219,7 @@ async function templates(): Promise<Synth[]> {
     // Resources the template gives tags: CloudFormation tags them on create, with the service's tag action.
     tagged: new Set(res(t).filter((r) => TAG_PROPS.some((k) => r.Properties?.[k] !== undefined) || JSON.stringify(r.Properties?.LaunchTemplateData ?? {}).includes("TagSpecifications")).map((r) => r.Type)),
   });
-  for (const [name, over] of Object.entries({ "per-job": PER_JOB, demo: DEMO, "no GitHub App": NO_APP, "alarm email": { alarmEmail: "alerts@fenvix.dev" } })) {
+  for (const [name, over] of Object.entries({ pool: PER_JOB, "no GitHub App": NO_APP, "alarm email": { alarmEmail: "alerts@fenvix.dev" } })) {
     out.push({ stack: "app", name, ...typesOf((await synth(over)).template) });
   }
   for (const [name, over] of Object.entries<Record<string, string>>({ "with certificate": { dashboardCertificateArn: CERT }, "without certificate": {} })) {

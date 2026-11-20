@@ -1,6 +1,0 @@
-[Unit]
-Description=fenvix: power off a per-job machine that never got its job
-
-[Service]
-Type=oneshot
-ExecStart=/opt/fenvix/bin/fenvix-idle-watchdog

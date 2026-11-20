@@ -18,12 +18,13 @@ describe("the shared cache service (vendored, pinned)", () => {
     const sha = createHash("sha256").update(readFileSync(FILE)).digest("hex");
     assert.equal(sha, "2b93cd9aac59ba160bc28ae0e9c4b725b0abd29ec6784e5ed910f479eeea33a8");
     assert.match(readFileSync(new URL("../lib/cache/PROVENANCE.md", import.meta.url), "utf8"), new RegExp(sha));
-    assert.match(readFileSync(new URL("../cdk.json", import.meta.url), "utf8"), /"engineCliCommit": "a20b93d7f840b23f71c73c03efdaee3d6a233252"/);
+    // It is the protocol of the engine commit PROVENANCE.md names; the machines run the trunk artifact (engineVersion), whose
+    // cache client must speak it (docs/REPORT-our-machines.md, G-1742).
   });
 
   it("serves with per-job signed tokens only: own organization, read-only for pull requests, expiry, signature (R-012 F3)", async () => {
     // The tokens are made by the App's own signer (the worker), the key file by the stack's own code.
-    const s = await settings({ runnerMode: "per-job" });
+    const s = await settings();
     const data = mkdtempSync(join(tmpdir(), "fenvix-cache-"));
     const keyFile = join(data, "signing-key.json");
     writeFileSync(keyFile, cacheKeyJson(s));
@@ -91,7 +92,7 @@ describe("the shared cache service (vendored, pinned)", () => {
   });
 
   it("the cache machine's user data: the public key only, both service files, the wrapper as the service", async () => {
-    const s = await settings({ runnerMode: "per-job" });
+    const s = await settings();
     const ud = cacheUserData(s);
     assert.match(ud, /\/opt\/fenvix-cache\/fenvix_cache_auth\.py/);
     assert.match(ud, /\/etc\/fenvix-cache\/signing-key\.json/);

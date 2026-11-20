@@ -114,6 +114,11 @@ class Agent:
             time.sleep(2)
 
     def start_slot(self, lease: dict) -> None:
+        if lease.get("kind") != "job":
+            # A warm-up needs the engine's warm-up executor (runner/warmup.sh), which the trunk engine does not ship yet:
+            # the lease ends at once and says so (the service then times the warm-up out as unsupported).
+            self.event({"type": "finished", "leaseId": lease["leaseId"], "detail": f"unsupported: no {lease.get('kind')} executor in this engine"})
+            return
         used = {v["slot"] for v in self.slots.values()}
         n = lease["slot"]
         if n in used:

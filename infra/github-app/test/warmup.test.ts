@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { appPrefix, cacheParameters } from "../lib/parameters.ts";
-import { IMAGE_FILES } from "../lib/runner.ts";
-import { resources, settings, synth, DEMO } from "./helpers.ts";
+import { resources, settings, synth } from "./helpers.ts";
+import { readFileSync } from "node:fs";
 
 type Stmt = { Effect: string; Action: string | string[]; Resource: unknown; Sid?: string; Condition?: Record<string, Record<string, unknown>> };
 const arr = <T,>(x: T | T[]): T[] => (Array.isArray(x) ? x : [x]);
 const json = (x: unknown) => JSON.stringify(x);
 
-describe("warm-up runs (per-job mode): the warm-up scheduler function, its schedule and rights", async () => {
-  const { template: t, nagErrors } = await synth({ runnerMode: "per-job" });
+describe("warm-up runs (our machines): the warm-up scheduler function, its schedule and rights", async () => {
+  const { template: t, nagErrors } = await synth();
   const fns = resources(t, "AWS::Lambda::Function");
   const policies = resources(t, "AWS::IAM::Policy");
   const statementsOf = (roleId: string): Stmt[] => policies
@@ -32,20 +32,21 @@ describe("warm-up runs (per-job mode): the warm-up scheduler function, its sched
     for (const who of ["worker", "warmup"]) {
       const e = fnEnv(who);
       assert.deepEqual({ en: e.WARMUP_ENABLED, cap: e.WARMUP_DAILY_CAP, conc: e.WARMUP_ORG_CONCURRENCY, res: e.WARMUP_RESERVE, grace: e.WARMUP_GRACE_SECONDS, tick: e.WARMUP_TICK_SECONDS },
-        { en: "true", cap: "6", conc: "1", res: "1", grace: "180", tick: "0" }, who);
+        { en: "false", cap: "6", conc: "1", res: "1", grace: "180", tick: "0" }, who);
     }
-    assert.equal(fnEnv("warmup").RUNNER_MODE, "per-job");
+    // Off until the trunk engine ships a warm-up executor (G-1731): no machine is started for a warm-up that cannot run.
+    assert.equal(fnEnv("warmup").RUNNER_MODE, "pool");
     assert.match(json(fnEnv("warmup").RUNNER_PLACEMENT), /FleetLaunchTemplate/, "placement by the organization's region");
     for (const k of Object.keys(fnEnv("warmup"))) if (!k.endsWith("_PARAM")) assert.doesNotMatch(k, /SECRET|PRIVATE_KEY|DATABASE_URL|SIGNING/, k);
   });
 
-  it("it may start only tagged job machines from our template, and terminate only warm-up machines", () => {
+  it("it may start only tagged pool machines from our template, and manage only pool machines", () => {
     const st = statementsOf(fnRole("warmup"));
     const tagged = st.find((x) => x.Sid === "OnlyTaggedJobMachines")!;
-    assert.deepEqual(tagged.Condition!.StringEquals, { "aws:RequestTag/fenvix:role": "runner-job", "ec2:InstanceType": "c6i.large" });
+    assert.deepEqual(tagged.Condition!.StringEquals, { "aws:RequestTag/fenvix:role": "runner-pool", "ec2:InstanceType": ["c7a.2xlarge", "c7a.xlarge"] });
     const term = st.filter((x) => arr(x.Action).includes("ec2:TerminateInstances"));
     assert.equal(term.length, 1);
-    assert.deepEqual(term[0]!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job", "aws:ResourceTag/fenvix:kind": "warmup" } });
+    assert.deepEqual(term[0]!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-pool" } });
     assert.ok(!st.some((x) => arr(x.Action).some((a) => a.startsWith("sqs:") || a.startsWith("s3:"))), "neither queue nor bucket");
   });
 
@@ -54,23 +55,15 @@ describe("warm-up runs (per-job mode): the warm-up scheduler function, its sched
     assert.deepEqual(reads, [`${appPrefix("prod")}/database-url`, `${appPrefix("prod")}/private-key`, `${appPrefix("prod")}/runner-token`, ...cacheParameters("prod").map((p) => p.name)].sort());
   });
 
-  it("the runner image carries the warm-up machine's units and scripts", () => {
-    const dests = IMAGE_FILES.map(([, d]) => d);
-    for (const d of ["/etc/systemd/system/fenvix-warmup.target", "/etc/systemd/system/fenvix-warmup.service", "/opt/fenvix/bin/fenvix-warmup",
-      "/opt/fenvix/bin/fenvix-warmup-prepare", "/opt/fenvix/bin/fenvix-warmup-done", "/opt/fenvix/bin/fenvix-warmup-report"]) assert.ok(dests.includes(d), d);
-  });
-
-  it("demo mode: no warm-up function, warm-ups off", async () => {
-    const demo = await synth(DEMO);
-    const names = resources(demo.template, "AWS::Lambda::Function").map(([, f]) => f.Properties.FunctionName as string);
-    assert.ok(!names.some((n) => n.endsWith("-warmup")));
-    const worker = resources(demo.template, "AWS::Lambda::Function").find(([, f]) => (f.Properties.FunctionName as string).endsWith("-worker"))![1];
-    assert.equal((worker.Properties.Environment as { Variables: Record<string, unknown> }).Variables.WARMUP_ENABLED, "false");
+  it("a warm-up lease on our machines ends at once as unsupported until the engine ships its warm-up executor (G-1731)", () => {
+    const agent = readFileSync(new URL("../lib/runner/files/fenvix-agent", import.meta.url), "utf8");
+    assert.match(agent, /if lease.get\("kind"\) != "job":/);
+    assert.match(agent, /unsupported: no .* executor in this engine/);
   });
 
   it("settings: the reserve must stay below the fleet's limit; warmupEnabled is true or false", async () => {
-    await assert.rejects(settings({ runnerMode: "per-job", warmupReserve: "4" }), /warmupReserve/);
-    await assert.rejects(settings({ runnerMode: "per-job", warmupEnabled: "yes" }), /warmupEnabled/);
-    assert.equal((await settings({ runnerMode: "per-job", warmupEnabled: "false" })).warmupEnabled, false);
+    await assert.rejects(settings({ warmupReserve: "8" }), /warmupReserve/);
+    await assert.rejects(settings({ warmupEnabled: "yes" }), /warmupEnabled/);
+    assert.equal((await settings({ warmupEnabled: "false" })).warmupEnabled, false);
   });
 });

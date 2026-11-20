@@ -8,6 +8,18 @@ import type { RunnerNetwork } from "./network.ts";
 import { imageBuildScript, UBUNTU_2404_AMI_PARAMETER } from "./runner.ts";
 import type { Settings } from "./settings.ts";
 
+/** What an image must pass before it is distributed (the "test" phase of the component). */
+export const IMAGE_TEST = [
+  "set -euo pipefail",
+  "test -s /opt/fenvix/ENGINE && echo \"engine: $(cat /opt/fenvix/ENGINE)\"",
+  "/opt/fenvix/venv/bin/python -c 'import detpy' && echo 'engine: the Python package loads'",
+  "test -x /opt/fenvix/actions-runner/run.sh && test -x /opt/fenvix/bin/fenvix-slot && test -x /opt/fenvix/bin/fenvix-agent",
+  "python3 -I -c \"import ast,sys; ast.parse(open('/opt/fenvix/bin/fenvix-agent').read())\"",
+  "systemctl is-enabled fenvix-agent.service fenvix-imds-block.service",
+  "for n in $(seq 1 16); do id fenvix-s$n >/dev/null; done",
+  "echo 'fenvix machine image: ok'",
+].join("\n") + "\n";
+
 /** EC2 Image Builder caps a component's document at 16,000 characters. */
 export const COMPONENT_LIMIT = 16_000;
 
@@ -27,6 +39,17 @@ export function componentDocument(s: Settings): string {
     "      commands:",
     "      - |",
     script,
+    // Image tests (G-1745): on a machine started from the NEW image, the engine, the agent, the slot tool and the runner
+    // must be there and start; otherwise the image is not distributed and the newest good image stays in use.
+    "- name: test",
+    "  steps:",
+    "  - name: FenvixMachineStarts",
+    "    action: ExecuteBash",
+    "    timeoutSeconds: 600",
+    "    inputs:",
+    "      commands:",
+    "      - |",
+    ...IMAGE_TEST.trimEnd().split("\n").map((l) => `        ${l}`),
     "",
   ].join("\n");
 }
@@ -47,6 +70,8 @@ export class RunnerFleet extends Construct {
   readonly pipeline: imagebuilder.CfnImagePipeline;
   /** The recipe's version: an image built from this recipe is current (the deploy pipeline builds one when missing). */
   readonly imageVersion: string;
+  /** The engine version the image installs ("none": no pin, no image is built). */
+  readonly engineVersion: string;
 
   constructor(scope: Construct, id: string, s: Settings, net: RunnerNetwork) {
     super(scope, id);
@@ -58,6 +83,7 @@ export class RunnerFleet extends Construct {
     const doc = componentDocument(s);
     if (doc.length > COMPONENT_LIMIT) throw new Error(`the image component is ${doc.length} characters (limit ${COMPONENT_LIMIT})`);
     const version = contentVersion(doc + s.runnerVolumeGb);
+    this.engineVersion = s.engineVersion || "none";
     this.imageVersion = version;
     const component = new imagebuilder.CfnComponent(this, "Component", {
       name: name("runner"), platform: "Linux", version, data: doc,
@@ -109,7 +135,10 @@ export class RunnerFleet extends Construct {
       imageRecipeArn: recipe.attrArn,
       infrastructureConfigurationArn: infra.attrArn,
       distributionConfigurationArn: dist.attrArn,
-      imageTestsConfiguration: { imageTestsEnabled: false },
+      imageTestsConfiguration: { imageTestsEnabled: true, timeoutMinutes: 60 },
+      // Weekly, so the OS packages and the GitHub runner do not age (G-1744): only when the recipe or its parent
+      // image changed (a new Ubuntu image) does a build run.
+      schedule: { scheduleExpression: "cron(17 3 ? * SUN *)", pipelineExecutionStartCondition: "EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE" },
       status: "ENABLED",
     });
 

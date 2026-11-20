@@ -4,12 +4,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { Annotations, Match } from "aws-cdk-lib/assertions";
-import { resources, synth, DEMO } from "./helpers.ts";
+import { resources, synth } from "./helpers.ts";
 
 type Stmt = { Effect: string; Action: string | string[]; Resource: unknown; Sid?: string; Condition?: Record<string, Record<string, unknown>> };
 const arr = <T,>(x: T | T[]): T[] => (Array.isArray(x) ? x : [x]);
 const json = (x: unknown) => JSON.stringify(x);
-const PER_JOB = { runnerMode: "per-job", cacheTokenSha256Write: "a".repeat(64), cacheTokenSha256Read: "b".repeat(64) };
+const PER_JOB: Record<string, string> = {};
+const DEMO = PER_JOB; // demo mode was retired (2026-11-20): the checks run on the pool stack
 
 /** Every statement attached to a role (inline policies of the template). */
 async function statementsOfRole(over: Record<string, string>, roleMatch: RegExp): Promise<Stmt[]> {
@@ -46,7 +47,7 @@ describe("R-012 review: IAM", () => {
   });
 
   it("F7 a function that may start machines may start only the launch template's machine (instance type, launch template)", async () => {
-    for (const [mode, role] of [[DEMO, /^DemoRole/], [PER_JOB, /^WorkerRole/]] as const) {
+    for (const [mode, role] of [[PER_JOB, /^WorkerRole/], [PER_JOB, /^WarmupRole/], [PER_JOB, /^SweepRole/]] as const) {
       const st = await statementsOfRole(mode, role);
       const onInstances = st.filter((x) => x.Effect === "Allow" && arr(x.Action).includes("ec2:RunInstances") && json(x.Resource).includes(":instance/"));
       assert.ok(onInstances.length > 0);

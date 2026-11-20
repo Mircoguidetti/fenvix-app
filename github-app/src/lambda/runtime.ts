@@ -5,7 +5,12 @@ import { SSMClient } from "@aws-sdk/client-ssm";
 import { buildApp, buildCore, type App, type Core } from "../app.ts";
 import { type Config, loadConfig } from "../config.ts";
 import { type BlobPort, s3Port, SqsWorkQueue, sqsPort } from "../queue/sqs.ts";
-import { Ec2Launcher, placementsFromEnv, type RunnerLauncher } from "../runners/launcher.ts";
+import { Ec2Launcher, newestRunnerImage, placementsFromEnv, type Region, type RunnerLauncher } from "../runners/launcher.ts";
+import type { Db } from "../db.ts";
+import { Ec2Driver, type MachineDriver } from "../machines/driver.ts";
+import { PoolLauncher } from "../machines/launcher.ts";
+import { MachinePool } from "../machines/pool.ts";
+import { parsePool } from "../machines/settings.ts";
 import type { Logger } from "../service.ts";
 import { githubAppConfigured, notConfiguredHttp } from "../not-configured.ts";
 import { jsonLogger } from "../work.ts";
@@ -38,7 +43,11 @@ export async function httpApp(env: Env): Promise<Pick<App, "fastify" | "close">>
   const cfg = await lambdaConfig(env, "all");
   if (!env.WORK_QUEUE_URL) throw new Error("WORK_QUEUE_URL is required");
   const queue = new SqsWorkQueue({ queue: sqsPort(new SQSClient({}), env.WORK_QUEUE_URL), blobs: overflowBlobs(env) });
-  return buildApp({ cfg, queue });
+  // Our machines: the HTTP function answers their hello, poll and events (it never calls EC2).
+  const machines = env.RUNNER_MODE === "pool"
+    ? (() => { const f = poolFrom({ ...env, RUNNER_TOKEN: cfg.runnerTokens[0], RUNNER_TOKEN_PREVIOUS: cfg.runnerTokens[1] }, jsonLogger(cfg.logLevel), () => new EC2Client({}), false); return (db: Db) => f(db).pool; })()
+    : undefined;
+  return buildApp({ cfg, queue, ...(machines ? { machines } : {}) });
 }
 
 /** The plain settings a per-job machine gets in its user data (the infra sets them as FENVIX_MACHINE_<NAME>). */
@@ -52,7 +61,8 @@ export function machineEnv(env: Env): Record<string, string> {
  * RUNNER_MODE=per-job: the launcher of runner machines (the worker only). RUNNER_PLACEMENT places each organization's
  * machines in its region (src/runners/launcher.ts placementsFromEnv); RUNNER_LAUNCH_TEMPLATE_ID alone is the "us" one.
  */
-export function launcherFrom(env: Env, log: Logger, ec2: EC2Client = new EC2Client({})): RunnerLauncher | null {
+export function launcherFrom(env: Env, log: Logger, ec2: EC2Client = new EC2Client({})): RunnerLauncher | ((db: Db) => RunnerLauncher) | null {
+  if (env.RUNNER_MODE === "pool") return poolFrom(env, log, (awsRegion) => (awsRegion ? new EC2Client({ region: awsRegion }) : ec2));
   if (env.RUNNER_MODE !== "per-job") return null;
   const placements = placementsFromEnv(env, (awsRegion) => (awsRegion ? new EC2Client({ region: awsRegion }) : ec2));
   if (!Object.keys(placements).length) throw new Error("RUNNER_LAUNCH_TEMPLATE_ID (or RUNNER_PLACEMENT) is required with RUNNER_MODE=per-job");
@@ -63,13 +73,47 @@ export function launcherFrom(env: Env, log: Logger, ec2: EC2Client = new EC2Clie
   return new Ec2Launcher({ placements, maxRunning: max, machineEnv: machineEnv(env), tags, log });
 }
 
+/**
+ * RUNNER_MODE=pool: our machines (src/machines/). The pool's EC2 driver uses each placement's client and launch
+ * template; the newest runner image of the region is looked up at most every 5 minutes.
+ */
+export function poolFrom(env: Env, log: Logger, ec2For: (awsRegion: string | undefined) => EC2Client, cloud = true): (db: Db) => PoolLauncher {
+  const placements = placementsFromEnv(env, ec2For);
+  const regions = Object.keys(placements) as Region[];
+  if (!regions.length) throw new Error("RUNNER_PLACEMENT (or RUNNER_LAUNCH_TEMPLATE_ID) is required with RUNNER_MODE=pool");
+  if (!env.FENVIX_API_URL) throw new Error("FENVIX_API_URL is required with RUNNER_MODE=pool (the machines call it)");
+  const settings = parsePool(env.FENVIX_POOL);
+  const tags: Record<string, string> = { project: "fenvix", ...(env.FENVIX_ENV ? { env: env.FENVIX_ENV } : {}) };
+  const images = new Map<Region, { id: string; at: number }>();
+  const imageOf = async (region: Region) => {
+    const have = images.get(region);
+    if (have && Date.now() - have.at < 5 * 60_000) return have.id;
+    const id = await newestRunnerImage(placements[region]!.ec2);
+    images.set(region, { id, at: Date.now() });
+    return id;
+  };
+  const driver: MachineDriver = cloud ? new Ec2Driver(Object.fromEntries(regions.map((r) => [r, { ec2: placements[r]!.ec2, launchTemplateId: placements[r]!.launchTemplateId }])), imageOf, tags) : NO_CLOUD;
+  const me = machineEnv(env);
+  const keys = [env.RUNNER_TOKEN ?? "", env.RUNNER_TOKEN_PREVIOUS ?? ""].filter(Boolean);
+  return (db: Db) => new PoolLauncher(new MachinePool(db, driver, settings, { keys, apiUrl: env.FENVIX_API_URL!, machineEnv: me, regions, log }), me);
+}
+
+/** The HTTP function's pool: it answers the machines (hello, poll, events) and never calls EC2. */
+const NO_CLOUD: MachineDriver = {
+  launch: async () => { throw new Error("the HTTP function does not start machines"); },
+  start: async () => { throw new Error("the HTTP function does not start machines"); },
+  stop: async () => { throw new Error("the HTTP function does not stop machines"); },
+  terminate: async () => { throw new Error("the HTTP function does not terminate machines"); },
+  list: async () => [],
+};
+
 /** The worker's and the sweep's service (no HTTP secrets). Only the worker starts runner machines. */
 export async function workerCore(env: Env, opts: { launches?: boolean } = {}): Promise<Core & { log: Logger; blobs: BlobPort | null; close(): Promise<void> }> {
-  const launches = !!opts.launches && env.RUNNER_MODE === "per-job";
+  const launches = !!opts.launches && (env.RUNNER_MODE === "per-job" || env.RUNNER_MODE === "pool");
   const cfg = await lambdaConfig(env, launches ? "launcher" : "worker");
   const log = jsonLogger(cfg.logLevel);
   if (launches && !cfg.runnerTokens.length) throw new Error("RUNNER_TOKEN is required to start machines (each gets its own summary credential)");
-  const core = buildCore(cfg, log, launches ? launcherFrom(env, log) : null);
+  const core = buildCore(cfg, log, launches ? launcherFrom({ ...env, RUNNER_TOKEN: cfg.runnerTokens[0], RUNNER_TOKEN_PREVIOUS: cfg.runnerTokens[1] }, log) : null);
   return { ...core, log, blobs: overflowBlobs(env), close: () => core.db.close() };
 }
 

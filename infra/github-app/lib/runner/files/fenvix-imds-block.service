@@ -1,7 +1,7 @@
 [Unit]
-Description=fenvix: block instance metadata for the job and poster users
+Description=fenvix: instance metadata for root only
 After=network-pre.target
-Before=fenvix-runner.service fenvix-summary-poster.service
+Before=fenvix-agent.service
 
 [Service]
 Type=oneshot

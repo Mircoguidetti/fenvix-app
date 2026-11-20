@@ -146,9 +146,6 @@ jobs:
         working-directory: infra/github-app
         env:
           FENVIX_ALARM_EMAIL: ${{ vars.FENVIX_ALARM_EMAIL }}
-          # Optional, off by default: demo mode (one machine per demo, docs/DEPLOY-AWS.md) instead of per-job.
-          FENVIX_RUNNER_MODE: ${{ vars.FENVIX_RUNNER_MODE }}
-          FENVIX_DEMO_REPOSITORY: ${{ vars.FENVIX_DEMO_REPOSITORY }}
         run: |
           # The API's certificate is step 7c's (issued): the stack uses it by ARN and never waits for DNS.
           [ -n "${FENVIX_API_CERTIFICATE_ARN:-}" ] || { echo "::error::no API certificate from step 7c"; exit 1; }
@@ -178,19 +175,38 @@ jobs:
           aws s3 sync dist "s3://$bucket" --exclude "assets/*" --delete --cache-control "no-cache" --only-show-errors
           aws cloudfront create-invalidation --distribution-id "$dist" --paths "/*" --query Invalidation.Id --output text
 
-      - name: 11. Runner image (built when its recipe changed; does not wait)
+      # The machine image of our machines: built when its recipe changed (the engine pin is part of it), and WAITED FOR:
+      # a failed build or a failed image test (the engine and the agent must start on it) fails the deploy (G-1713,
+      # G-1745). Without an engine pin (cdk.json engineVersion/engineUrl/engineSha256) no image is built: the pool
+      # starts no machine and jobs wait, and the summary says why (fail closed, G-0186).
+      - name: 11. Machine image (built when its recipe changed; waited for)
+        timeout-minutes: 90
         run: |
           out=infra/github-app/cdk-outputs.json
           arn="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-github-app'].ImagePipelineArn")"
           ver="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-github-app'].RunnerImageVersion")"
-          states="$(aws imagebuilder list-image-pipeline-images --image-pipeline-arn "$arn" \
-                    --query "imageSummaryList[?starts_with(version, '$ver/')].state.status" --output text)"
-          if printf '%s' "$states" | grep -Eq 'AVAILABLE|PENDING|CREATING|BUILDING|TESTING|DISTRIBUTING|INTEGRATING'; then
-            echo "runner image $ver: $states"
-          else
-            aws imagebuilder start-image-pipeline-execution --image-pipeline-arn "$arn" --query imageBuildVersionArn --output text
-            echo "runner image $ver: build started (30-45 minutes; jobs wait for it)" | tee -a "$GITHUB_STEP_SUMMARY"
+          engine="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-github-app'].EngineVersion")"
+          if [ "$engine" = "none" ]; then
+            echo "::warning::no engine pinned in cdk.json: no machine image is built, our machines start nothing" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          status() { aws imagebuilder list-image-pipeline-images --image-pipeline-arn "$arn" \
+                     --query "imageSummaryList[?starts_with(version, '$ver/')].state.status" --output text; }
+          states="$(status)"
+          if ! printf '%s' "$states" | grep -Eq 'AVAILABLE|PENDING|CREATING|BUILDING|TESTING|DISTRIBUTING|INTEGRATING'; then
+            aws imagebuilder start-image-pipeline-execution --image-pipeline-arn "$arn" --query imageBuildVersionArn --output text
+            echo "machine image $ver (engine $engine): build started" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          for _ in $(seq 1 85); do
+            states="$(status)"
+            case "$states" in
+              *AVAILABLE*) echo "machine image $ver (engine $engine): available" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0 ;;
+              *FAILED*|*CANCELLED*) [ -n "$(printf '%s' "$states" | grep -Eo 'PENDING|CREATING|BUILDING|TESTING|DISTRIBUTING|INTEGRATING')" ] || {
+                echo "::error::machine image $ver failed ($states): see the Image Builder log; the previous image stays in use"; exit 1; } ;;
+            esac
+            sleep 60
+          done
+          echo "::error::machine image $ver not available after 85 minutes ($states)"; exit 1
 
       - name: 12. Check the deployed hosts
         run: node deploy/cli.mjs smoke --minutes 10

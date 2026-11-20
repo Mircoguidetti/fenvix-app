@@ -17,10 +17,10 @@ export function applySuppressions(stack: Stack): void {
     },
     {
       id: "AwsSolutions-IAM5",
-      reason: "Per-job machines: the instance, volume and network interface ids exist only once RunInstances creates them, so those ARNs end in *; each statement is narrowed by a condition (launch template, own images via ec2:Owner, the request tag fenvix:role=runner-job, ec2:CreateAction=RunInstances, and for the reaper the resource tag; for the worker and the warm-up scheduler the resource tags fenvix:role=runner-job and fenvix:kind=warmup). DescribeImages and DescribeInstances support no resource-level permission.",
+      reason: "Pool machines: the instance, volume, network interface and spot request ids exist only once RunInstances creates them, so those ARNs end in *; each statement is narrowed by a condition (launch template, own images via ec2:Owner, the request tag fenvix:role=runner-pool and the pool's instance types, ec2:CreateAction=RunInstances; start, stop, modify and terminate by the resource tag fenvix:role=runner-pool). The spot request is created by the same RunInstances call that those conditions already narrow. DescribeImages and DescribeInstances support no resource-level permission.",
       appliesTo: [
         "Resource::*",
-        { regex: "/^Resource::arn:(aws|<AWS::Partition>):ec2:[a-z0-9-]+:\\d{12}:(instance|volume|network-interface)\\/\\*$/g" },
+        { regex: "/^Resource::arn:(aws|<AWS::Partition>):ec2:[a-z0-9-]+:\\d{12}:(instance|volume|network-interface|spot-instances-request)\\/\\*$/g" },
         { regex: "/^Resource::arn:(aws|<AWS::Partition>):ec2:[a-z0-9-]+::image\\/\\*$/g" },
       ],
     },
@@ -28,7 +28,7 @@ export function applySuppressions(stack: Stack): void {
       id: "AwsSolutions-IAM5",
       reason: "Log streams are created per Lambda container under the function's own log group (`<group arn>:*`), and overflow objects have random keys under work/ in our own bucket. Each is scoped to one resource of this stack.",
       appliesTo: [
-        { regex: "/^Resource::<(Http|DashboardApi|Worker|Sweep|Reaper|Demo|Warmup)Logs[0-9A-F]+\\.Arn>:\\*$/g" },
+        { regex: "/^Resource::<(Http|DashboardApi|Worker|Sweep|Reaper|Warmup)Logs[0-9A-F]+\\.Arn>:\\*$/g" },
         "Resource::<Overflow8C2F862D.Arn>/work/*",
       ],
     },

@@ -1,14 +1,9 @@
 // Review R-012 (docs/REVIEW-R-012.md): failing tests for defects of the App side of the AWS deploy kit.
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
-import { DescribeImagesCommand, DescribeInstancesCommand, RunInstancesCommand, TerminateInstancesCommand } from "@aws-sdk/client-ec2";
 import type pg from "pg";
-import { GitHubApp } from "../../src/github/client.ts";
-import { demoDown, demoUp, type DemoDeps } from "../../src/runners/demo.ts";
 import { jobUserData, RetryLater, type RunnerLaunch, type RunnerLauncher } from "../../src/runners/launcher.ts";
-import { FakeGitHub } from "../helpers/fake-github.ts";
 import { ACCOUNT, CI_YAML, Harness, INSTALLATION_ID, installationCreated, makeOrg, REPOS, resetDb, RUNNER_TOKEN, workflowJob } from "../helpers/harness.ts";
 
 class FakeLauncher implements RunnerLauncher {
@@ -71,30 +66,6 @@ describe("R-012 review: per-job runner credentials", () => {
   });
 });
 
-/** EC2 in memory; terminating a demo machine takes its runner offline on GitHub (as the real runner stops). */
-class FakeEc2 {
-  instances: { InstanceId: string; State: { Name: string }; LaunchTime: Date; Tags: { Key: string; Value: string }[] }[] = [];
-  private readonly onTerminate: (name: string) => void;
-  constructor(onTerminate: (name: string) => void) { this.onTerminate = onTerminate; }
-  async send(c: unknown): Promise<unknown> {
-    if (c instanceof DescribeImagesCommand) return { Images: [{ ImageId: "ami-runner", CreationDate: "2026-11-18T00:00:00Z" }] };
-    if (c instanceof DescribeInstancesCommand) {
-      const f = Object.fromEntries((c.input.Filters ?? []).map((x) => [x.Name, x.Values]));
-      return { Reservations: [{ Instances: this.instances.filter((i) => (f["instance-state-name"] ?? []).includes(i.State.Name)) }] };
-    }
-    if (c instanceof RunInstancesCommand) {
-      const id = `i-${this.instances.length + 1}`;
-      this.instances.push({ InstanceId: id, State: { Name: "running" }, LaunchTime: new Date(), Tags: c.input.TagSpecifications![0]!.Tags as { Key: string; Value: string }[] });
-      return { Instances: [{ InstanceId: id }] };
-    }
-    if (c instanceof TerminateInstancesCommand) {
-      for (const i of this.instances) if (c.input.InstanceIds!.includes(i.InstanceId)) { i.State.Name = "terminated"; this.onTerminate(i.Tags.find((t) => t.Key === "Name")!.Value); }
-      return {};
-    }
-    throw new Error("unexpected EC2 command");
-  }
-}
-
 describe("R-012 review: the shared cache (per-job mode)", () => {
   it("F3 two customers' jobs never get the same cache credential (one cache organization lets any PR read every customer's entries and runs)", () => {
     const env = {
@@ -111,42 +82,3 @@ describe("R-012 review: the shared cache (per-job mode)", () => {
   });
 });
 
-describe("R-012 review: demo-down", () => {
-  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  const gh = new FakeGitHub(4242, publicKey);
-  let d: DemoDeps;
-  let ec2: FakeEc2;
-
-  before(async () => {
-    await gh.start();
-    gh.addInstallation({ id: 77, account: { login: "acme", id: 9001, type: "Organization" }, repos: [70001], selection: "selected" });
-    gh.addRepo({ id: 70001, fullName: "acme/demo", ownerId: 9001, files: {} });
-    ec2 = new FakeEc2((name) => { for (const r of gh.repos.get("acme/demo")!.runners) if (r.name === name) { r.status = "offline"; r.busy = false; } });
-    d = { gh: new GitHubApp({ apiUrl: gh.url, appId: 4242, privateKey }), ec2, launchTemplateId: "lt-demo", machineEnv: { AWS_DEFAULT_REGION: "eu-west-1" }, now: () => new Date("2026-11-18T15:04:00Z") };
-  });
-  after(async () => { await gh.stop(); });
-
-  it("F13 the demo function registers runners only on the demo repository, never on a customer's repository", async () => {
-    // demoUp takes any repository the App is installed on. Whoever may invoke the function (the deploy identity) can
-    // put our runner on a customer's repository and receive its fenvix jobs, their GITHUB_TOKEN and secrets.
-    gh.addInstallation({ id: 78, account: { login: "customer", id: 9002, type: "Organization" }, repos: [80001], selection: "selected" });
-    gh.addRepo({ id: 80001, fullName: "customer/app", ownerId: 9002, files: {} });
-    const scoped = { ...d, allowedRepositories: ["acme/demo"] } as DemoDeps;
-    try {
-      await assert.rejects(demoUp(scoped, "customer/app"), /not the demo repository|not allowed/);
-    } finally {
-      await demoDown(d, "customer/app");
-    }
-  });
-
-  it("F6 demo-down during a job: the machine is terminated AND the runner registration is gone", async () => {
-    const up = await demoUp(d, "acme/demo");
-    gh.repos.get("acme/demo")!.runners.push({ id: 601, name: up.runnerName, status: "online", busy: true });
-    const r = await demoDown(d, "acme/demo");
-    assert.deepEqual(r.terminated, [up.instanceId]);
-    // A non-ephemeral runner is not removed by GitHub when its machine stops (it stays, offline, for 14 days): deregister
-    // after the machine is gone (it is no longer busy then), not before.
-    assert.deepEqual(gh.repos.get("acme/demo")!.runners.map((x) => `${x.name} ${x.status}`), [],
-      `still registered after demo-down: ${r.problems.join("; ")}`);
-  });
-});

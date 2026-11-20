@@ -9,28 +9,11 @@ const FILES_DIR = new URL("./runner/files/", import.meta.url);
 export const RUNNER_FILES: [string, string, string][] = [
   ["install.sh", "/opt/fenvix/install.sh", "0755"],
   ["fenvix-imds-block", "/opt/fenvix/bin/fenvix-imds-block", "0755"],
-  ["fenvix-register", "/opt/fenvix/bin/fenvix-register", "0755"],
-  ["fenvix-summary-credential", "/opt/fenvix/bin/fenvix-summary-credential", "0755"],
-  ["fenvix-job-completed", "/opt/fenvix/bin/fenvix-job-completed", "0755"],
-  ["fenvix-job-started", "/opt/fenvix/bin/fenvix-job-started", "0755"],
-  ["fenvix-summary-poster", "/opt/fenvix/bin/fenvix-summary-poster", "0755"],
-  ["fenvix-jit-prepare", "/opt/fenvix/bin/fenvix-jit-prepare", "0755"],
-  ["fenvix-job-done", "/opt/fenvix/bin/fenvix-job-done", "0755"],
-  ["fenvix-idle-watchdog", "/opt/fenvix/bin/fenvix-idle-watchdog", "0755"],
   ["fenvix-imds-block.service", "/etc/systemd/system/fenvix-imds-block.service", "0644"],
-  ["fenvix-runner.service", "/etc/systemd/system/fenvix-runner.service", "0644"],
-  ["fenvix-summary-poster.service", "/etc/systemd/system/fenvix-summary-poster.service", "0644"],
-  ["fenvix-runner-jit.service", "/etc/systemd/system/fenvix-runner-jit.service", "0644"],
-  ["fenvix-job.target", "/etc/systemd/system/fenvix-job.target", "0644"],
-  ["fenvix-idle-watchdog.service", "/etc/systemd/system/fenvix-idle-watchdog.service", "0644"],
-  ["fenvix-idle-watchdog.timer", "/etc/systemd/system/fenvix-idle-watchdog.timer", "0644"],
-  // Warm-up machines (per-job): the test job of one default-branch commit, outside GitHub Actions (github-app/src/warmup/).
-  ["fenvix-warmup-prepare", "/opt/fenvix/bin/fenvix-warmup-prepare", "0755"],
-  ["fenvix-warmup", "/opt/fenvix/bin/fenvix-warmup", "0755"],
-  ["fenvix-warmup-done", "/opt/fenvix/bin/fenvix-warmup-done", "0755"],
-  ["fenvix-warmup-report", "/opt/fenvix/bin/fenvix-warmup-report", "0755"],
-  ["fenvix-warmup.service", "/etc/systemd/system/fenvix-warmup.service", "0644"],
-  ["fenvix-warmup.target", "/etc/systemd/system/fenvix-warmup.target", "0644"],
+  ["fenvix-agent", "/opt/fenvix/bin/fenvix-agent", "0755"],
+  ["fenvix-agent.service", "/etc/systemd/system/fenvix-agent.service", "0644"],
+  ["fenvix-slot", "/opt/fenvix/bin/fenvix-slot", "0755"],
+  ["fenvix-job-started", "/opt/fenvix/bin/fenvix-job-started", "0755"],
 ];
 
 export const IMAGE_FILES = RUNNER_FILES;
@@ -73,7 +56,7 @@ export function unbundle(line: string): Record<string, { text: string; mode: str
 
 export function envLines(path: string, env: Record<string, string>): string[] {
   const lines = Object.entries(env).map(([k, v]) => {
-    if (!/^[A-Za-z0-9_./:@-]*$/.test(v)) throw new Error(`machine setting ${k} has characters the env file does not allow`);
+    if (!/^[A-Za-z0-9_./:@+-]*$/.test(v)) throw new Error(`machine setting ${k} has characters the env file does not allow`);
     return `${k}=${v}`;
   });
   return [`cat >${path} <<'FENVIX_ENV'`, ...lines, "FENVIX_ENV", `chmod 0644 ${path}`];
@@ -83,7 +66,6 @@ export function envLines(path: string, env: Record<string, string>): string[] {
 export function commonMachineEnv(s: Settings): Record<string, string> {
   return {
     AWS_DEFAULT_REGION: s.region,
-    FENVIX_ENGINE_CLI_COMMIT: s.engineCliCommit,
     FENVIX_SUMMARIES_URL: `https://${s.domainName}/v1/runner/summaries`,
   };
 }
@@ -93,7 +75,6 @@ export function commonMachineEnv(s: Settings): Record<string, string> {
 export function perJobMachineEnv(s: Settings): Record<string, string> {
   return {
     ...commonMachineEnv(s),
-    FENVIX_IDLE_MINUTES: String(s.runnerIdleMinutes),
     // The worker appends the job's cache organization (gh-<installation id>) and signs a token for it.
     FENVIX_CACHE_URL: `http://${s.cachePrivateIp}:8787`,
   };
@@ -101,8 +82,19 @@ export function perJobMachineEnv(s: Settings): Record<string, string> {
 
 const DIRS = "install -d -m 0755 /etc/fenvix /opt/fenvix/bin /etc/systemd/system";
 
+/** The GitHub runner the image carries, pinned (MEASURED sha256 of the release asset, docs/REPORT-our-machines.md). */
+export const GITHUB_RUNNER = { version: "2.338.2", sha256: "baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40" };
+
+/** What the image build needs: the runner pin and the engine pin (empty engine pin: the build stops, fail closed). */
+export function imageEnv(s: Settings): Record<string, string> {
+  return {
+    FENVIX_RUNNER_VERSION: GITHUB_RUNNER.version, FENVIX_RUNNER_SHA256: GITHUB_RUNNER.sha256,
+    FENVIX_ENGINE_VERSION: s.engineVersion, FENVIX_ENGINE_URL: s.engineUrl, FENVIX_ENGINE_SHA256: s.engineSha256,
+  };
+}
+
 /** The image build (EC2 Image Builder component): the files and install.sh; the settings file is removed after. */
 export function imageBuildScript(s: Settings): string {
-  return ["set -euo pipefail", DIRS, ...envLines("/etc/fenvix/runner.env", commonMachineEnv(s)), bundleLine(IMAGE_FILES),
-    "bash /opt/fenvix/install.sh", "rm -f /etc/fenvix/runner.env", "rm -rf /var/log/fenvix-runner-setup.log"].join("\n") + "\n";
+  return ["set -euo pipefail", DIRS, ...envLines("/etc/fenvix/runner.env", imageEnv(s)), bundleLine(IMAGE_FILES),
+    "bash /opt/fenvix/install.sh", "rm -f /etc/fenvix/runner.env", "rm -rf /var/log/fenvix-machine-setup.log"].join("\n") + "\n";
 }
