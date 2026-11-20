@@ -23,7 +23,15 @@ export interface Settings {
   /** True when githubAppId, githubAppSlug and githubClientId are set. */
   githubConfigured: boolean;
   // ---------------------------------------------------------------- the dashboard (S3 + CloudFront, lib/dashboard.ts)
-  /** The dashboard's host (CloudFront; DNS on Cloudflare). dashboardUrl is https://<this>. */
+  /**
+   * Whether this app includes the AWS dashboard stack (fenvix-<env>-dashboard, S3 + CloudFront). Default false: the
+   * dashboard is hosted on Vercel (docs/DEPLOY-VERCEL.md) because the AWS account cannot create CloudFront resources
+   * until AWS verifies it. Off, `cdk deploy --all` plans the API stack only. The deploy workflow sets it from the
+   * repository variable FENVIX_DASHBOARD_ON_AWS ("true" turns the AWS dashboard back on, with its certificate, upload
+   * and DNS steps).
+   */
+  dashboardOnAws: boolean;
+  /** The dashboard's host (CloudFront or Vercel; DNS on Cloudflare). dashboardUrl is https://<this>. */
   dashboardDomain: string;
   /**
    * The ACM certificate of dashboardDomain, in us-east-1 (CloudFront takes certificates from there only). The deploy
@@ -118,7 +126,7 @@ type Ctx = (key: string) => unknown;
 const ENV: Record<keyof Settings, string> = {
   account: "FENVIX_ACCOUNT", region: "FENVIX_REGION", env: "FENVIX_ENV", domainName: "FENVIX_GITHUB_APP_DOMAIN",
   githubAppId: "GITHUB_APP_ID", githubAppSlug: "GITHUB_APP_SLUG", githubClientId: "GITHUB_CLIENT_ID", githubConfigured: "",
-  dashboardDomain: "FENVIX_DASHBOARD_DOMAIN", dashboardCertificateArn: "FENVIX_DASHBOARD_CERTIFICATE_ARN", dashboardUrl: "DASHBOARD_URL",
+  dashboardOnAws: "FENVIX_DASHBOARD_ON_AWS", dashboardDomain: "FENVIX_DASHBOARD_DOMAIN", dashboardCertificateArn: "FENVIX_DASHBOARD_CERTIFICATE_ARN", dashboardUrl: "DASHBOARD_URL",
   supabaseUrl: "SUPABASE_URL", runsOnLabel: "FENVIX_RUNS_ON", summaryWaitSeconds: "SUMMARY_WAIT_SECONDS", sweepMinutes: "FENVIX_SWEEP_MINUTES",
   logRetentionDays: "FENVIX_LOG_RETENTION_DAYS", alarmEmail: "FENVIX_ALARM_EMAIL", apiCorsOrigins: "FENVIX_API_CORS_ORIGINS",
   fenvixRegion: "FENVIX_RUNNER_REGION", secondFenvixRegion: "FENVIX_SECOND_RUNNER_REGION", secondAwsRegion: "FENVIX_SECOND_AWS_REGION",
@@ -163,6 +171,7 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
   const s: Settings = {
     account: need("account"), region: need("region"), env: need("env"), domainName: need("domainName"),
     githubAppId: get("githubAppId"), githubAppSlug: get("githubAppSlug"), githubClientId: get("githubClientId"), githubConfigured: false,
+    dashboardOnAws: (get("dashboardOnAws") || "false") === "true",
     dashboardDomain: need("dashboardDomain"), dashboardCertificateArn: get("dashboardCertificateArn"),
     dashboardUrl: https("dashboardUrl"), supabaseUrl: https("supabaseUrl"), runsOnLabel: need("runsOnLabel"),
     summaryWaitSeconds: int("summaryWaitSeconds", 60, 86_400), sweepMinutes: int("sweepMinutes", 1, 60),
@@ -192,6 +201,7 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
   if (s.githubAppId && !/^\d+$/.test(s.githubAppId)) throw new Error('Setting "githubAppId" must be the numeric App ID');
   if (s.githubAppSlug && !/^[a-z0-9][a-z0-9-]{0,33}$/.test(s.githubAppSlug)) throw new Error('Setting "githubAppSlug" must be the App\'s URL name');
   if (s.githubClientId && !/^[A-Za-z0-9._-]{1,100}$/.test(s.githubClientId)) throw new Error('Setting "githubClientId" must be the App\'s Client ID');
+  if (!["true", "false"].includes(get("dashboardOnAws") || "false")) throw new Error('Setting "dashboardOnAws" must be true or false');
   if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(s.dashboardDomain)) throw new Error('Setting "dashboardDomain" must be a host name like console.fenvix.dev');
   if (s.dashboardCertificateArn && !/^arn:aws:acm:us-east-1:\d{12}:certificate\/[0-9a-f-]{36}$/.test(s.dashboardCertificateArn)) {
     throw new Error('Setting "dashboardCertificateArn" must be an ACM certificate ARN in us-east-1 (CloudFront takes certificates from there only)');

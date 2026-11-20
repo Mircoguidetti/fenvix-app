@@ -1,5 +1,11 @@
 # Deploy on merge to main (docs/DEPLOY-AWS.md): every test (test.yml), then the database, the secrets, the API and the
-# runners (CDK, infra/github-app), the dashboard (S3 + CloudFront) and the DNS records. Nobody runs anything by hand.
+# runners (CDK, infra/github-app) and the API's DNS record. Nobody runs anything by hand.
+#
+# The dashboard is hosted on Vercel (docs/DEPLOY-VERCEL.md), which builds it from this repository by itself: the AWS
+# account cannot create CloudFront resources until AWS verifies it. The AWS dashboard (stack fenvix-<env>-dashboard:
+# its us-east-1 certificate, S3 + CloudFront, the upload, its DNS record) stays in the code behind ONE switch, the
+# repository variable FENVIX_DASHBOARD_ON_AWS: unset or anything but "true" (the default) skips steps 6 and 10, leaves
+# the dashboard stack out of the CDK app (CDK setting dashboardOnAws) and leaves console.<zone> in Cloudflare alone.
 #
 # AWS access: OpenID Connect, no stored AWS key. The AWS role trusts exactly the token GitHub issues to a job of this
 # file running on the branch main of this repository (sub = repo:Mircoguidetti@17613795/fenvix-app@1434576189:ref:
@@ -55,6 +61,8 @@ jobs:
       id-token: write # OpenID Connect token for AWS (main of this file only): no AWS key is stored anywhere
     env:
       FENVIX_ENV: prod
+      # The one switch of the AWS dashboard (see the top of this file): "true" or "false", never empty.
+      FENVIX_DASHBOARD_ON_AWS: ${{ vars.FENVIX_DASHBOARD_ON_AWS == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
@@ -102,7 +110,8 @@ jobs:
       - name: 5. GitHub App (configured last, in SSM; deployed without it until then)
         run: node deploy/cli.mjs github-app
 
-      - name: 6. Dashboard certificate (us-east-1, for CloudFront)
+      - name: 6. Dashboard certificate (us-east-1, for CloudFront; only with FENVIX_DASHBOARD_ON_AWS)
+        if: env.FENVIX_DASHBOARD_ON_AWS == 'true'
         env:
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
         run: node deploy/cli.mjs dashboard-certificate --wait-minutes 30
@@ -123,7 +132,8 @@ jobs:
       - name: 7b. Clear a failed first create (a stack in ROLLBACK_COMPLETE, its empty retained bucket)
         run: node deploy/cli.mjs recover-failed-creates
 
-      - name: 8. API, runners and dashboard hosting (CDK)
+      # FENVIX_DASHBOARD_ON_AWS (job env) is the CDK setting dashboardOnAws: off, `--all` is the API stack only.
+      - name: 8. API, runners (and the AWS dashboard hosting only with FENVIX_DASHBOARD_ON_AWS) (CDK)
         working-directory: infra/github-app
         env:
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
@@ -149,7 +159,8 @@ jobs:
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
         run: node deploy/cli.mjs dns --outputs infra/github-app/cdk-outputs.json
 
-      - name: 10. Dashboard (build, upload, refresh the cache)
+      - name: 10. Dashboard on AWS (build, upload, refresh the cache; only with FENVIX_DASHBOARD_ON_AWS)
+        if: env.FENVIX_DASHBOARD_ON_AWS == 'true'
         env:
           VITE_API_URL: https://github.fenvix.dev
         run: |
