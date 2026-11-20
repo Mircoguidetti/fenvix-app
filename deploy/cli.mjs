@@ -6,11 +6,13 @@
 //   db-roles               passwords of fenvix_github_app and fenvix_api, their connection strings in SSM
 //   secrets                generated secrets in SSM; exports FENVIX_CACHE_SIGNING_PUBLIC_KEY (public)
 //   github-app             the GitHub App's values (SSM, typed by the founder): checked; exports the public ones
-//   dashboard-certificate  the us-east-1 certificate of the dashboard's host; exports its ARN once issued
+//   dashboard-certificate  the us-east-1 certificate of the dashboard's host; exports its ARN once issued (only with
+//                          FENVIX_DASHBOARD_ON_AWS=true; otherwise it does nothing)
 //   recover-failed-creates before CDK: deletes a stack left in ROLLBACK_COMPLETE by a failed first create, and the
 //                          dashboard bucket it left behind if no stack holds it and it is empty (lib/recover.mjs)
 //   watch-certificate      while the stack deploys: puts the API certificate's validation record in Cloudflare
-//   dns                    github.<zone> and console.<zone> → AWS (Cloudflare), from the stacks' outputs
+//   dns                    github.<zone> → AWS (Cloudflare), from the stacks' outputs; console.<zone> → CloudFront only
+//                          with FENVIX_DASHBOARD_ON_AWS=true (otherwise it is Vercel's record, never touched here)
 //   smoke                  checks the deployed hosts answer
 // Nothing secret is printed by any of them. Exit code 1 with a "STOP:" line names what to do.
 //
@@ -41,6 +43,12 @@ const API_DOMAIN = CDK.domainName;
 const APP_DOMAIN = CDK.dashboardDomain;
 const ZONE = process.env.FENVIX_DNS_ZONE || "fenvix.dev";
 const local = process.env.FENVIX_DEPLOY_LOCAL_DB === "1";
+/**
+ * The AWS dashboard switch (deploy.yml: the repository variable FENVIX_DASHBOARD_ON_AWS; the CDK setting
+ * dashboardOnAws). Off (the default) the dashboard is on Vercel (docs/DEPLOY-VERCEL.md): no step here requests its
+ * certificate or writes console.<zone> in Cloudflare (the founder points it at Vercel).
+ */
+const DASHBOARD_ON_AWS = process.env.FENVIX_DASHBOARD_ON_AWS === "true";
 
 const args = process.argv.slice(3);
 const arg = (name, fallback) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : fallback; };
@@ -132,6 +140,7 @@ const steps = {
   },
 
   async "dashboard-certificate"() {
+    if (!DASHBOARD_ON_AWS) { info(`FENVIX_DASHBOARD_ON_AWS is off: the dashboard is on Vercel, no certificate for ${APP_DOMAIN} is requested.`); return; }
     const acm = new ACMClient({ region: "us-east-1" });
     const cf = await cloudflare();
     let d = await ensureCertificate(acm, APP_DOMAIN);
@@ -189,8 +198,10 @@ const steps = {
     const dash = outputs[`fenvix-${ENV}-dashboard`]?.DashboardDnsTarget;
     const cf = await cloudflare();
     const records = [[API_DOMAIN, api, "the API"]];
-    // console.<zone> only once CloudFront serves it with its certificate (else browsers would get a certificate error).
-    if (process.env.FENVIX_DASHBOARD_CERTIFICATE_ARN) records.push([APP_DOMAIN, dash, "the dashboard"]);
+    // console.<zone> only once CloudFront serves it with its certificate (else browsers would get a certificate error),
+    // and never while the dashboard is on Vercel: that record is Vercel's (docs/DEPLOY-VERCEL.md).
+    if (!DASHBOARD_ON_AWS) info(`${APP_DOMAIN}: the dashboard is on Vercel (FENVIX_DASHBOARD_ON_AWS is off); its DNS record is left as it is.`);
+    else if (process.env.FENVIX_DASHBOARD_CERTIFICATE_ARN) records.push([APP_DOMAIN, dash, "the dashboard"]);
     else warning(`${APP_DOMAIN} is not pointed at CloudFront yet (its certificate is not issued).`);
     for (const [name, target, why] of records) {
       if (!target) throw new Error(`no DNS target for ${name} in the stack outputs`);
@@ -205,7 +216,7 @@ const steps = {
       { url: `https://${API_DOMAIN}/healthz`, ok: (r) => r.status === 200 },
       { url: `https://${API_DOMAIN}/v1/me`, ok: (r) => r.status === 401 },
     ];
-    if (process.env.FENVIX_DASHBOARD_CERTIFICATE_ARN) checks.push({ url: `https://${APP_DOMAIN}/`, ok: (r) => r.status === 200 });
+    if (DASHBOARD_ON_AWS && process.env.FENVIX_DASHBOARD_CERTIFICATE_ARN) checks.push({ url: `https://${APP_DOMAIN}/`, ok: (r) => r.status === 200 });
     const strict = cloudflareManaged();
     for (const c of checks) {
       let last = "";

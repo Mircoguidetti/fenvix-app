@@ -9,6 +9,14 @@ values in AWS Parameter Store, a Cloudflare token, and two Supabase addresses. N
 is private on GitHub Free). The GitHub App comes last (section C): until it exists, everything else is deployed and
 works, and the App's routes answer "not configured".
 
+> **The dashboard is on Vercel for now** (decision of 2026-11-20): the AWS account cannot create CloudFront resources
+> until AWS verifies it. The founder's setup is `docs/DEPLOY-VERCEL.md`. Everything on this page about the dashboard's
+> hosting (its us-east-1 certificate, S3 + CloudFront, the upload, the `console` DNS record) is off behind ONE switch,
+> the repository variable `FENVIX_DASHBOARD_ON_AWS` (GitHub → Settings → Secrets and variables → Actions → Variables):
+> unset or `false` (the default) the deploy creates and updates the API stack only and never touches
+> `console.fenvix.dev` in Cloudflare; `true` brings the AWS dashboard back (take the domain off Vercel first). The API,
+> its CORS origin (`https://console.fenvix.dev`) and the Supabase URLs are the same either way.
+
 Account `865859654353`, region `eu-west-1` (Ireland). The dashboard's certificate is the only thing in `us-east-1`
 (CloudFront takes certificates from there only).
 

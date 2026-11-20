@@ -4,6 +4,9 @@
   "description": "FENVIX customer dashboard",
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "vite",
     "build": "npm run api:check && tsc --noEmit && vite build",

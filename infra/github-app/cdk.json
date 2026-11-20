@@ -20,6 +20,7 @@
     "githubAppId": "",
     "githubAppSlug": "",
     "githubClientId": "",
+    "dashboardOnAws": "false",
     "dashboardUrl": "https://console.fenvix.dev",
     "dashboardDomain": "console.fenvix.dev",
     "dashboardCertificateArn": "",
