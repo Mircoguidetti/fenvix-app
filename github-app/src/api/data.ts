@@ -105,9 +105,31 @@ export const listProjects: Handler = async (ctx) => {
   return { items: all.map((p) => projectRow(p, rs, open, ctx.now)) };
 };
 
+/** A project's default branch is read again from GitHub when it was last read longer ago than this. */
+export const DEFAULT_BRANCH_MAX_AGE_MS = 5 * 60_000;
+
+/** True when the repository's row (default branch included) was last written longer ago than DEFAULT_BRANCH_MAX_AGE_MS. */
+export function defaultBranchIsStale(checkedAt: unknown, now: Date): boolean {
+  return !(checkedAt instanceof Date) || now.getTime() - checkedAt.getTime() >= DEFAULT_BRANCH_MAX_AGE_MS;
+}
+
+/**
+ * A project page that loads with a default branch last stored more than a few minutes ago (gh_repositories.updated_at) asks the App's worker
+ * to read it again (the worker holds the installation's token; the API does not). The page shows the stored branch now
+ * and the fresh one on its next load. Never fails the request.
+ */
+async function refreshStaleDefaultBranch(ctx: Ctx, ws: string, projectId: string): Promise<void> {
+  const repo = await ctx.t.one<Row>("select repository_id, updated_at from public.gh_repositories where workspace_id = $1 and project_id = $2 and removed_at is null order by repository_id limit 1", [ws, projectId]);
+  if (!repo) return;
+  if (!defaultBranchIsStale(repo.updated_at, ctx.now)) return;
+  const repositoryId = Number(repo.repository_id);
+  ctx.afterCommit(() => ctx.queue.enqueue({ kind: "refresh_default_branch", repositoryId }));
+}
+
 export const getProject: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const p = await project(ctx.t, ws, ctx.params.projectId);
+  await refreshStaleDefaultBranch(ctx, ws, p.id);
   const open = await defects(ctx.t, ws, "and state = 'open' and project_id = $2", [p.id], [p]);
   return projectRow(p, await rowRuns(ctx.t, ws, ctx.now, p.id), open, ctx.now);
 };

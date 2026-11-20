@@ -81,7 +81,7 @@ interface RunValues { startedAt: Date; completedAt: Date | null; durationMs: num
 interface RepoRow {
   repository_id: number; installation_id: number; workspace_id: string | null; full_name: string; default_branch: string | null;
   project_id: string | null; onboarding_state: string; setup_pr_number: number | null; setup_pr_url: string | null;
-  detected_language: string | null; detected_test_runner: string | null;
+  detected_language: string | null; detected_test_runner: string | null; removed_at?: Date | null;
 }
 
 const sha256Hex = (v: string) => createHash("sha256").update(v).digest("hex");
@@ -158,6 +158,7 @@ export class GitHubService {
     switch (event) {
       case "installation": await this.onInstallation(p); return true;
       case "installation_repositories": await this.onInstallationRepositories(p); return true;
+      case "repository": return this.onRepository(p);
       case "push": return this.onPush(p);
       case "pull_request": await this.onPullRequest(p); return true;
       case "workflow_job": return this.onWorkflowJob(p);
@@ -324,6 +325,42 @@ export class GitHubService {
   async syncInstallation(installationId: number): Promise<void> {
     const repos = await this.db.q<RepoRow>("select * from gh_repositories where installation_id = $1 and removed_at is null order by repository_id", [installationId]);
     for (const r of repos) if (r.workspace_id) await this.db.tx(r.workspace_id, (c) => this.syncProject(c, r, null));
+  }
+
+  /** `repository.edited` with `changes.default_branch`: the repository's new default branch replaces the stored one. */
+  private async onRepository(p: Record<string, unknown>): Promise<boolean> {
+    const repo = p.repository as { id?: number; default_branch?: string } | undefined;
+    const changes = p.changes as { default_branch?: unknown } | undefined;
+    if (p.action !== "edited" || !changes || !("default_branch" in changes) || !repo?.id || !repo.default_branch) return false;
+    await this.storeDefaultBranch(repo.id, repo.default_branch);
+    return true;
+  }
+
+  /** Writes a repository's default branch (and its project's) and when it was read; false for a repository we do not know. */
+  private async storeDefaultBranch(repositoryId: number, branch: string): Promise<boolean> {
+    const [row] = await this.db.q<RepoRow>(
+      "update gh_repositories set default_branch = $2, updated_at = now() where repository_id = $1 returning *",
+      [repositoryId, branch]);
+    if (!row) return false;
+    if (row.project_id && row.workspace_id) {
+      await this.db.tx(row.workspace_id, (c) => c.query("update ci_projects set default_branch = $2 where id = $1 and workspace_id = public.cp_workspace()", [row.project_id, branch]));
+    }
+    return true;
+  }
+
+  /**
+   * The worker (work kind "refresh_default_branch", queued by the dashboard API when a project page loads with a default
+   * branch older than a few minutes): reads the repository from GitHub with the installation's token. A repository that
+   * was touched in the last minute (gh_repositories.updated_at, which every write here sets) is not read again: several
+   * page loads queue several messages.
+   */
+  async refreshDefaultBranch(repositoryId: number): Promise<void> {
+    const repo = await this.repo(repositoryId);
+    if (!repo || repo.removed_at) return;
+    const fresh = await this.db.q("select 1 from gh_repositories where repository_id = $1 and updated_at > now() - interval '1 minute'", [repositoryId]);
+    if (fresh.length) return;
+    const r = await this.gh.installation(repo.installation_id).request<{ default_branch?: string }>("GET", `/repos/${repo.full_name}`);
+    if (r.data.default_branch) await this.storeDefaultBranch(repositoryId, r.data.default_branch);
   }
 
   private async onPush(p: Record<string, unknown>): Promise<boolean> {

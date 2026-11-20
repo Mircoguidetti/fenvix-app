@@ -27,7 +27,9 @@ export type Work =
   /** The dashboard asked for the setup pull request of one repository (by GitHub's repository id). */
   | { kind: "onboard"; repositoryId: number }
   /** The dashboard API linked an installation (POST /v1/github/installations/complete): its repositories get projects. */
-  | { kind: "installation_linked"; installationId: number };
+  | { kind: "installation_linked"; installationId: number }
+  /** A project page loaded with a default branch older than a few minutes: read it again from GitHub (by repository id). */
+  | { kind: "refresh_default_branch"; repositoryId: number };
 
 export interface WorkQueue {
   /** Resolves once the work is accepted (queued durably, or started in this process). Rejects if it was not. */
@@ -42,6 +44,7 @@ export function describeWork(w: Work): string {
     case "exploration": return `exploration ${w.repositoryId} ${w.exploration.startedAt}`;
     case "onboard": return `onboard ${w.repositoryId}`;
     case "installation_linked": return `installation_linked ${w.installationId}`;
+    case "refresh_default_branch": return `refresh_default_branch ${w.repositoryId}`;
   }
 }
 
@@ -73,6 +76,10 @@ export async function runWork(service: GitHubService, w: Work): Promise<void> {
     await service.onInstallationLinked(w.installationId);
     return;
   }
+  if (w.kind === "refresh_default_branch") {
+    await service.refreshDefaultBranch(w.repositoryId);
+    return;
+  }
   throw new Error(`unknown work kind ${(w as { kind?: unknown }).kind}`);
 }
 
@@ -102,6 +109,7 @@ export function parseWork(v: unknown): Work {
   }
   if (o?.kind === "onboard" && posInt(o.repositoryId)) return { kind: "onboard", repositoryId: o.repositoryId as number };
   if (o?.kind === "installation_linked" && posInt(o.installationId)) return { kind: "installation_linked", installationId: o.installationId as number };
+  if (o?.kind === "refresh_default_branch" && posInt(o.repositoryId)) return { kind: "refresh_default_branch", repositoryId: o.repositoryId as number };
   throw new Error("not a work message");
 }
 

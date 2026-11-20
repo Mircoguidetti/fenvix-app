@@ -3,8 +3,8 @@
 The GitHub side of fenvix, as a service (`github-app/`). What it does:
 
 1. **Webhooks** (`POST /webhooks/github`), signature checked (`X-Hub-Signature-256`, HMAC-SHA256 with the webhook
-   secret, constant-time) before anything else: `installation`, `installation_repositories`, `push`, `pull_request`,
-   `workflow_job`. Each delivery is handled once (`X-GitHub-Delivery`); the App answers `202` at once and works in the
+   secret, constant-time) before anything else: `installation`, `installation_repositories`, `repository` (a changed default branch), `push`,
+   `pull_request`, `workflow_job`. Each delivery is handled once (`X-GitHub-Delivery`); the App answers `202` at once and works in the
    background (GitHub waits 10 seconds at most).
 2. **Installation per organization.** An installation is stored when GitHub announces it and becomes an organization's
    only after the person who installed it comes back through the setup callback (signed `state`, OAuth code, and
@@ -102,6 +102,7 @@ Under **Subscribe to events**, tick:
 - **Pull request**
 - **Push**
 - **Workflow job** (the box appears once Actions is Read-only)
+- **Repository** (the box is there with Metadata: Read-only; fenvix reads `edited` with a new default branch, so the dashboard follows it)
 
 `installation` and `installation_repositories` are sent to every GitHub App without a box to tick.
 

@@ -124,6 +124,21 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     assert.deepEqual(sc.body, { path: ".github/workflows/test.yml", job: "unit", before: "runs-on: ubuntu-latest", after: "runs-on: fenvix" });
   });
 
+  it("a project page asks the worker to read the default branch again only when the stored one is older than a few minutes", async () => {
+    const ws = ownerA.workspaceId;
+    const asked = () => queue.sent.filter((w) => w.kind === "refresh_default_branch" && w.repositoryId === A.repoIds.shop).length;
+    await admin.query("update gh_repositories set updated_at = $2 where repository_id = $1", [A.repoIds.shop, new Date(NOW.getTime() - 3_600_000)]);
+    const before = asked();
+    await call(api, "getProject", { token: memberA.token, ws, params: { projectId: A.projects.shop } });
+    assert.equal(asked(), before + 1);
+    await admin.query("update gh_repositories set updated_at = $2 where repository_id = $1", [A.repoIds.shop, new Date(NOW.getTime() - 60_000)]);
+    await call(api, "getProject", { token: memberA.token, ws, params: { projectId: A.projects.shop } });
+    assert.equal(asked(), before + 1);
+    await admin.query("update gh_repositories set updated_at = $2 where repository_id = $1", [A.repoIds.shop, new Date(NOW.getTime() - 10 * 60_000)]);
+    await call(api, "getProject", { token: memberA.token, ws, params: { projectId: A.projects.shop } });
+    assert.equal(asked(), before + 2);
+  });
+
   it("runs: paging, scope, status, since", async () => {
     const base = { token: memberA.token, ws: ownerA.workspaceId, params: { projectId: A.projects.shop } };
     let r = await call(api, "listRuns", base);

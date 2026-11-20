@@ -137,3 +137,21 @@ describe("config", () => {
     assert.throws(() => loadConfig({ ...base, FENVIX_RUNS_ON: "fenvix, linux" }), /one runner label/);
   });
 });
+
+describe("default branch refresh", () => {
+  it("a default branch is stale when never written or written 5 minutes ago or more", async () => {
+    const { defaultBranchIsStale } = await import("../../src/api/data.ts");
+    const now = new Date("2026-11-20T12:00:00Z");
+    assert.equal(defaultBranchIsStale(null, now), true);
+    assert.equal(defaultBranchIsStale(undefined, now), true);
+    assert.equal(defaultBranchIsStale(new Date(now.getTime() - 4 * 60_000), now), false);
+    assert.equal(defaultBranchIsStale(new Date(now.getTime() - 5 * 60_000), now), true);
+  });
+
+  it("the refresh message crosses a queue and is checked on the way back", async () => {
+    const { parseWork } = await import("../../src/work.ts");
+    assert.deepEqual(parseWork({ kind: "refresh_default_branch", repositoryId: 7 }), { kind: "refresh_default_branch", repositoryId: 7 });
+    assert.throws(() => parseWork({ kind: "refresh_default_branch", repositoryId: "7" }), /not a work message/);
+    assert.throws(() => parseWork({ kind: "refresh_default_branch", repositoryId: 0 }), /not a work message/);
+  });
+});

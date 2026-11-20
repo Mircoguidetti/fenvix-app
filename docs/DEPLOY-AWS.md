@@ -337,7 +337,7 @@ company-owned App, in the organization's settings):
 | SSL verification | Enable |
 | Repository permissions | Actions: **Read-only** · **Administration: Read and write** · Checks: **Read and write** · Contents: **Read and write** · Metadata: Read-only · Pull requests: **Read and write** · **Workflows: Read and write** |
 | Organization / account permissions | none |
-| Subscribe to events | **Pull request**, **Push**, **Workflow job** |
+| Subscribe to events | **Pull request**, **Push**, **Workflow job**, **Repository** |
 | Where can this GitHub App be installed? | Only on this account (for now) |
 
 Click **Create GitHub App**. `docs/GITHUB-APP.md` explains the permissions. **Administration: Read and write** is the

@@ -48,7 +48,7 @@ declare module "fastify" {
   interface FastifyRequest { rawBody?: Buffer }
 }
 
-const EVENTS = new Set(["installation", "installation_repositories", "push", "pull_request", "workflow_job", "ping"]);
+const EVENTS = new Set(["installation", "installation_repositories", "repository", "push", "pull_request", "workflow_job", "ping"]);
 
 /**
  * The request log: never the Authorization or signature headers, and never the query string, since /github/setup
