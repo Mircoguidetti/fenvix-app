@@ -41,7 +41,8 @@ describe("the API's host: one setting", () => {
       let text;
       try { text = read(f); } catch { continue; } // deleted in the working tree
       if (text.includes("\0")) continue; // binary
-      const n = text.split(RETIRED).length - 1;
+      // Plain, or with its dots escaped as in a regular expression (a backslash, or [.]).
+      const n = (text.match(/github(?:\.|\\+\.|\[\.\])fenvix(?:\.|\\+\.|\[\.\])dev/g) ?? []).length;
       if (n) found[f] = n;
     }
     for (const [f, n] of Object.entries(found)) {

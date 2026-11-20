@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import { Match } from "aws-cdk-lib/assertions";
 import { appParameters } from "../lib/parameters.ts";
 import { DEMO, resources, synth } from "./helpers.ts";
 
@@ -89,6 +90,17 @@ describe("the stack, demo mode (an option)", async () => {
     assert.ok(stage.Properties.AccessLogSettings);
     t.hasResourceProperties("AWS::ApiGatewayV2::Integration", { IntegrationType: "AWS_PROXY", PayloadFormatVersion: "2.0" });
     t.hasOutput("DnsTarget", {});
+  });
+
+  it("the deploy pipeline's certificate (apiCertificateArn, P-037): used by ARN, no certificate resource, no DNS wait", async () => {
+    const arn = "arn:aws:acm:eu-west-1:865859654353:certificate/12345678-1234-1234-1234-123456789012";
+    const { template: tc } = await synth({ apiCertificateArn: arn });
+    assert.equal(resources(tc, "AWS::CertificateManager::Certificate").length, 0, "CloudFormation never waits for a DNS record");
+    tc.hasResourceProperties("AWS::ApiGatewayV2::DomainName", { DomainName: "api.fenvix.dev", DomainNameConfigurations: [Match.objectLike({ CertificateArn: arn })] });
+    tc.hasOutput("CertificateArn", { Value: arn });
+    tc.hasOutput("CustomDomain", { Value: "api.fenvix.dev" });
+    tc.hasOutput("WebhookUrl", { Value: "https://api.fenvix.dev/webhooks/github" });
+    tc.hasOutput("SetupUrl", { Value: "https://api.fenvix.dev/github/setup" });
   });
 
   it("logs: every log group kept 14 days", () => {

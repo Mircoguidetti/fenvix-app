@@ -45,14 +45,14 @@ credentials; the founder never needs them (docs/DEPLOY-AWS.md, sections B and E)
 | `bin/app.ts` | the app: settings, both stacks, cdk-nag (AwsSolutions) |
 | `lib/dashboard.ts` | the dashboard: private S3 bucket, CloudFront (origin access control, the us-east-1 certificate the pipeline requests, TLS 1.2+, security headers, client routes to `index.html`) |
 | `lib/synthesizer.ts` | deploy through the one-click template's roles and bucket (qualifier `fenvix`) |
-| `lib/stack.ts` | Lambdas (http, api, worker, sweep, reaper, demo) bundled from `../../github-app/src/lambda/` (the api bundle also takes the dashboard's `src/data/ci.ts` and `ci-rows.ts`), SQS + dead-letter queue, S3 overflow, EventBridge Scheduler, API Gateway HTTP API on the custom domain (routes: `/v1/*` → api, `/v1/runner/*` and the rest → http), ACM, logs, alarm; the worker's `RUNNER_PLACEMENT` (us / eu fleets, settings `fenvixRegion` and `second*`) |
+| `lib/stack.ts` | Lambdas (http, api, worker, sweep, reaper, demo) bundled from `../../github-app/src/lambda/` (the api bundle also takes the dashboard's `src/data/ci.ts` and `ci-rows.ts`), SQS + dead-letter queue, S3 overflow, EventBridge Scheduler, API Gateway HTTP API on the custom domain (`domainName`, `api.fenvix.dev`; routes: `/v1/*` → api, `/v1/runner/*` and the rest → http) with the ACM certificate the pipeline issues before CDK (`apiCertificateArn`), logs, alarm; the worker's `RUNNER_PLACEMENT` (us / eu fleets, settings `fenvixRegion` and `second*`) |
 | `lib/network.ts` | VPC without NAT, one public subnet; the runners' and the cache's security groups |
 | `lib/runner.ts`, `lib/runner/files/` | the files baked into the runner image (install.sh, registration, metadata block, hooks, summary poster, per-job units: just-in-time runner, idle watchdog, power-off), bundled as one gzip |
 | `lib/runner-fleet.ts` | the Image Builder pipeline (the runner image; its build machine may read no /fenvix parameter), the launch template (terminate on shutdown), the machines' role (no permission) |
 | `lib/cache.ts`, `lib/cache/` | per-job: the shared cache machine and the engine's cache service, vendored at a pinned commit (`PROVENANCE.md`), behind `fenvix_cache_auth.py` (per-job signed tokens, one organization per installation) |
 | `lib/parameters.ts` | the SSM parameters (names, who reads which) |
 | Regions | the worker's `RUNNER_PLACEMENT` names this stack's fleet (`fenvixRegion`) and, optionally, another region's (`second*` settings, with its own cache URL as that placement's `machineEnv`). The reaper cleans its own AWS region only: each region's machines are reaped by the stack deployed in that region. |
-| `lib/settings.ts`, `cdk.json` | the settings (non-secret) |
+| `lib/settings.ts`, `cdk.json` | the settings (non-secret); `domainName` is the one source of the API's host (stack, runner URLs, deploy steps) |
 | `lib/nag.ts` | the cdk-nag findings that do not apply, each with its reason |
 | `deploy-policy.json` | the deploy role's permissions (`fenvix-github-deployer`, GitHub OIDC: assume the CDK deploy and publishing roles, own parameters, logs, the dashboard upload, the image build) |
 | `cfn-exec-policy-app.json`, `-edge.json`, `-fleet.json`, `-dashboard.json` | what CloudFormation may create; roles only with the boundary |
