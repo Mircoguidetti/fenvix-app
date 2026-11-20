@@ -1349,6 +1349,8 @@ a.cx-crumb-btn:hover, button.cx-crumb-btn:hover, .cx-crumb-btn[aria-expanded="tr
 .cx-rail[data-wide] .cx-rail-inner { width: 232px; box-shadow: 10px 0 32px rgba(15, 23, 42, 0.22), 1px 0 0 var(--nav-border); }
 :root[data-theme="dark"] .cx-rail[data-wide] .cx-rail-inner { box-shadow: 10px 0 32px rgba(6, 8, 14, 0.6), 1px 0 0 var(--nav-border); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .cx-rail[data-wide] .cx-rail-inner { box-shadow: 10px 0 32px rgba(6, 8, 14, 0.6), 1px 0 0 var(--nav-border); } }
+/* Collapsed rail opened over a page with a second bar: the panel is as wide as rail + second bar (56 + 232), so nothing of that bar shows. */
+.cx-rail[data-wide][data-sub]:not([data-open]) .cx-rail-inner { width: 288px; }
 .cx-rail[data-open] { flex-basis: 232px; }
 .cx-rail[data-open] .cx-rail-inner { box-shadow: none; }
 .cx-rail-link { display: flex; align-items: center; gap: 12px; width: 100%; height: 40px; flex-shrink: 0; padding: 0 11px; border: 0; border-radius: 8px; background: transparent; color: var(--nav-muted); font: 500 14px var(--font); white-space: nowrap; text-align: left; cursor: pointer; }

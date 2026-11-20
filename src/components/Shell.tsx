@@ -269,8 +269,12 @@ function readPinned() {
  */
 function Rail({ path }: { path: string }) {
   const [hover, setHover] = useState(false);
+  const [focused, setFocused] = useState(false);
+  // The open rail is an overlay; where a second bar sits beside it, the overlay covers that bar too.
+  const area = areaOf(path);
+  const hasSub = area !== null && area !== "overview";
   const [pinned, setPinned] = useState(readPinned);
-  const wide = pinned || hover;
+  const wide = pinned || hover || focused;
   const togglePin = () =>
     setPinned((p) => {
       try {
@@ -282,7 +286,7 @@ function Rail({ path }: { path: string }) {
       return !p;
     });
   return (
-    <nav className="cx-rail" aria-label="Areas" data-wide={wide || undefined} data-open={pinned || undefined} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+    <nav className="cx-rail" aria-label="Areas" data-wide={wide || undefined} data-open={pinned || undefined} data-sub={hasSub || undefined} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} onFocus={() => setFocused(true)} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}>
       <div className="cx-rail-inner">
         {AREAS.map((a) => (
           <Link key={a.key} to={a.to} className="cx-rail-link" aria-current={a.match(path) ? "page" : undefined} title={a.label}>

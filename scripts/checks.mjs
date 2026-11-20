@@ -689,6 +689,22 @@ const TESTS = {
       return el.closest(".cx-rail") ? "rail" : el.className;
     });
     assert(top === "rail", `the open rail is under ${top}`);
+    // No part of the second bar shows while the collapsed rail is open: every point of its box belongs to the rail.
+    const leaks = await page.evaluate(() => {
+      const sub = document.querySelector(".cx-sub").getBoundingClientRect();
+      const bad = [];
+      for (const x of [sub.left + 2, sub.left + sub.width / 2, sub.right - 2])
+        for (let y = sub.top + 2; y < sub.bottom; y += 24) {
+          const el = document.elementFromPoint(x, y);
+          if (!el || !el.closest(".cx-rail")) bad.push(`${Math.round(x)},${Math.round(y)} ${el ? el.className : "none"}`);
+        }
+      const rail = document.querySelector(".cx-rail-inner").getBoundingClientRect();
+      return { bad: bad.slice(0, 5), covers: rail.right >= sub.right - 0.5 };
+    });
+    assert(leaks.bad.length === 0, `the second bar shows through the open rail: ${leaks.bad.join("; ")}`);
+    assert(leaks.covers, "the open rail does not reach the second bar's right edge");
+    await page.mouse.move(900, 400);
+    await page.waitForFunction(() => !document.querySelector(".cx-rail[data-wide]"));
   },
 
   async "connect a project always offers more repositories and another GitHub account"(page, vp) {
