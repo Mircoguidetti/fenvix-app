@@ -1,4 +1,4 @@
-PARTIAL — the code, the tests and the deploy kit for our machines are done and green locally. Two things outside this session block DONE: (1) no session has AWS access, so the live end-to-end job and the MEASURED latency, cost and burst numbers wait for a deploy the founder approves; (2) the image needs the engine's trunk artifact pin (packages session) and the engine must honour FENVIX_MODE and FENVIX_SKIP (engine trunk). Of the 147 audit rows: 47 fixed, 22 out of scope, 11 founder-blocked, 13 partial, 54 not done (listed with reasons).
+PARTIAL — the code, the tests and the deploy kit for our machines are done and green locally. Two things outside this session block DONE: (1) no session has AWS access, so the live end-to-end job and the MEASURED latency, cost and burst numbers wait for a deploy the founder approves; (2) the image needs the engine's trunk artifact pin (packages session) and the engine must honour FENVIX_MODE and FENVIX_SKIP (engine trunk). Of the 147 audit rows: 48 fixed, 22 out of scope, 11 founder-blocked, 13 partial, 53 not done (listed with reasons).
 
 # Report: P-047 · Passo 3 · F-15: customer CI jobs on our machines
 
@@ -9,7 +9,7 @@ Branch `claude/our-machines` (from `main` at a3d5cd6). Written 2026-11-20. Nothi
 | Suite | Command | Result (MEASURED, this session, 2026-11-20) |
 |---|---|---|
 | GitHub App and API, unit | `cd github-app && npm test` (typecheck, unit, integration) | 147 pass, 0 fail |
-| GitHub App and API, integration (incl. the dashboard API suites on a local Supabase in Docker, 0 skipped) | same | 181 pass, 0 fail, 0 skipped |
+| GitHub App and API, integration (incl. the dashboard API suites on a local Supabase in Docker, 0 skipped) | same | 182 pass, 0 fail, 0 skipped |
 | Infrastructure (CDK synth, cdk-nag, policies, the machine scripts as root) | `cd infra/github-app && npm test` | 135 pass, 0 fail |
 | Deploy pipeline | `cd deploy && npm test` | 67 pass, 0 fail |
 | Row level security (migrations 0014-0018 twice, then the RLS scripts, incl. the new `machines-rls.sql`) | `npm run test:rls` on a scratch Postgres 16 | all OK |
@@ -17,7 +17,7 @@ Branch `claude/our-machines` (from `main` at a3d5cd6). Written 2026-11-20. Nothi
 | CI workflow lint, dependency audit | `actionlint` 1.7.12 (Docker), `npm audit --omit=dev --audit-level=high` in the four packages | clean; 0 vulnerabilities |
 | One-click AWS template | `node infra/bootstrap/build.mjs --check` | up to date |
 
-New tests written for this row: `github-app/tests/integration/machines.test.ts` (24), `github-app/tests/unit/machines.test.ts` (6), `infra/github-app/test/our-machines.test.ts` (10, two of them run real shell scripts as root: `test/sandbox/isolation.sh` I1-I6, `test/sandbox/image-install.sh`), `infra/github-app/test/pool.test.ts` (9), `infra/github-app/test/review-r012b.test.ts` (3), `supabase/tests/machines-rls.sql`, plus regression assertions in the existing suites (cache, settings, stack, warm-up, api-dashboard). The isolation test was checked against a deliberately weakened sandbox (no mount namespace, readable homes): it fails I2 as it must (MEASURED, a mutation run in this session).
+New tests written for this row: `github-app/tests/integration/machines.test.ts` (25), `github-app/tests/unit/machines.test.ts` (6), `infra/github-app/test/our-machines.test.ts` (10, two of them run real shell scripts as root: `test/sandbox/isolation.sh` I1-I6, `test/sandbox/image-install.sh`), `infra/github-app/test/pool.test.ts` (9), `infra/github-app/test/review-r012b.test.ts` (3), `supabase/tests/machines-rls.sql`, plus regression assertions in the existing suites (cache, settings, stack, warm-up, api-dashboard). The isolation test was checked against a deliberately weakened sandbox (no mount namespace, readable homes): it fails I2 as it must (MEASURED, a mutation run in this session).
 
 ## 2. Final design (what the code does)
 
@@ -55,6 +55,7 @@ New tests written for this row: `github-app/tests/integration/machines.test.ts` 
 9. **Budget (G-1766):** AWS console → Billing and Cost Management → Budgets → https://us-east-1.console.aws.amazon.com/billing/home#/budgets → **Create budget** → Monthly cost budget → amount (e.g. $400) → your email → Create.
 10. **Database backups (G-1767):** Supabase → Project Settings → Add-ons / Billing: confirm a plan with daily backups (Pro) and, for customers, point-in-time recovery.
 11. **Legal (G-0623, G-0624):** privacy policy, terms, DPA and the subprocessor list must be issued by the company.
+12. **Least privilege for runners (G-1796):** GitHub → Settings → Developer settings → GitHub Apps → fenvix → **Permissions & events** → Organization permissions → **Self-hosted runners: Read and write** → **Save changes**. Organization owners then approve it on their installation; until they do, their runners stay repository-level.
 
 ## 5. Every audit row of this scope
 
@@ -168,7 +169,7 @@ New tests written for this row: `github-app/tests/integration/machines.test.ts` 
 | G-1793 | Service / Security | DEGRADES | False claim on the landing security page: 'What we keep: ... defect bundles with the test order and traces'. The service stores no trace and no bundle file; a defect r… | **OUT OF REPOSITORY** | Landing page text. |  |
 | G-1794 | Service / Security | DEGRADES | False claim on the landing security page: skip receipts are marked 'Today' ('Every skipped test lists the functions, files, environment variables ... with hashes'). On… | **OUT OF REPOSITORY** | Landing page text. |  |
 | G-1795 | Service / Security | DEGRADES | The landing security page promises retention 'set per plan, published at launch'. No retention mechanism exists for run data at all (rows are kept forever, the roles c… | **OUT OF REPOSITORY** | Landing page text. |  |
-| G-1796 | Service / Security | DEGRADES | The GitHub App asks for Administration: Read and write on customer repositories only to mint just-in-time runners. That permission also allows changing repository sett… | **NOT DONE (decision)** | Repository-level just-in-time runners need Administration: write. Organization accounts could use the organization permission Self-hosted runners instead (not available for user accounts). Founder decision. |  |
+| G-1796 | Service / Security | DEGRADES | The GitHub App asks for Administration: Read and write on customer repositories only to mint just-in-time runners. That permission also allows changing repository sett… | **FIXED in code; founder adds the permission** | Agreed with P-048 (G-1726): an organization installation with the organization permission Self-hosted runners: write registers each job's runner in the organization, in a runner group only that repository may use (`fenvix-<repository id>`); personal accounts, or organizations whose plan has no runner groups, keep the repository-level call (Administration: write). Founder step 12 adds the permission in the App settings. | github-app/tests/integration/machines.test.ts "least privilege (G-1796, G-1726)"; docs/GITHUB-APP.md section 2 |
 | G-1797 | Service / Security | DEGRADES | The runner image that every customer's job runs on is built by piping two unpinned installers from the internet into a shell (uv from astral.sh, rustup from sh.rustup.… | **FIXED** | No piped installers: the GitHub runner and the engine are pinned by sha256; Ubuntu packages from apt. | infra/github-app/test/our-machines.test.ts badrunner/badsum cases; pool.test.ts no rustup/astral |
 | G-1798 | Service / Security | DEGRADES | Invitations are not sent: 'invite by e-mail' creates a link that the inviting person must copy and deliver themselves. The service has no mail provider at all. | **NOT DONE** | No mail provider. |  |
 | G-1799 | Service / Security | DEGRADES | The 'e-mail notices' setting of an organization is stored and used by nothing: the service sends no e-mail for a new defect, a failing nightly, a trial about to end or… | **NOT DONE** | No mail provider. |  |

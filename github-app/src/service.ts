@@ -621,6 +621,38 @@ export class GitHubService {
     return true;
   }
 
+  /**
+   * The organization-level runner group of one repository (created once, `fenvix-<repository id>`, visibility: that
+   * repository only), or the repository itself. Organization level needs the installation's organization permission
+   * "Self-hosted runners: write"; a plan without extra runner groups (GitHub answers 403/422) falls back to the
+   * repository.
+   */
+  private async runnerTarget(installationId: number, repo: RepoFull): Promise<{ base: string; groupId: number; level: "organization" | "repository" }> {
+    const repoTarget = { base: repoPath(repo.full_name), groupId: 1, level: "repository" as const };
+    const [inst] = await this.db.q<{ account_type: string; account_login: string; permissions: Record<string, string> | null }>(
+      "select account_type, account_login, permissions from gh_installations where installation_id = $1", [installationId]);
+    if (!inst || inst.account_type !== "Organization" || inst.permissions?.organization_self_hosted_runners !== "write") return repoTarget;
+    const org = `/orgs/${encodeURIComponent(inst.account_login)}`;
+    const [known] = await this.db.q<{ group_id: number }>("select group_id from gh_runner_groups where installation_id = $1 and repository_id = $2", [installationId, repo.id]);
+    if (known) return { base: org, groupId: known.group_id, level: "organization" };
+    const gh = this.gh.installation(installationId);
+    const name = `fenvix-${repo.id}`;
+    const made = await gh.request<{ id: number }>("POST", `${org}/actions/runner-groups`, {
+      body: { name, visibility: "selected", selected_repository_ids: [repo.id], allows_public_repositories: true }, allow: [403, 409, 422],
+    });
+    let groupId: number | null = made.status === 201 ? made.data.id : null;
+    if (made.status === 409) {
+      const list = await gh.request<{ runner_groups: { id: number; name: string }[] }>("GET", `${org}/actions/runner-groups`, { query: { per_page: "100" } });
+      groupId = list.data.runner_groups.find((g) => g.name === name)?.id ?? null;
+    }
+    if (!groupId) {
+      this.log.warn({ installation: installationId, repository: repo.full_name, status: made.status }, "no organization runner group (plan or permission): the runner is registered in the repository");
+      return repoTarget;
+    }
+    await this.db.q("insert into gh_runner_groups (installation_id, repository_id, group_id) values ($1, $2, $3) on conflict do nothing", [installationId, repo.id, groupId]);
+    return { base: org, groupId, level: "organization" };
+  }
+
   /** Jobs waiting for a slot, oldest first (every free slot and every tick). */
   async dispatchPending(limit = 20): Promise<number> {
     if (!this.pool) return 0;
@@ -728,20 +760,26 @@ export class GitHubService {
     // The runner carries the job's fenvix labels (`fenvix`, and `fenvix-<size>` when it asked for a size): GitHub gives a
     // runner only a job whose every label it has.
     const runnerLabels = [this.s.runsOnLabel, ...(row.labels ?? []).filter((l) => l.startsWith(`${this.s.runsOnLabel}-`)).slice(0, 1)];
+    // Where the runner is registered (G-1796 / G-1726, least privilege): an organization installation with the
+    // organization permission "Self-hosted runners" registers it in the organization, in a runner group that only THIS
+    // repository may use (so it can never take another repository's job, and its credentials, bound to this repository,
+    // always match); otherwise (a personal account, or an organization whose plan has no extra runner groups) in the
+    // repository, which needs the repository permission "Administration".
+    const target = await this.runnerTarget(installationId, repo);
     let runnerName = `fenvix-j${jobId}`;
-    let jit = await gh.request<Jit>("POST", `${base}/actions/runners/generate-jitconfig`, {
-      body: { name: runnerName, runner_group_id: 1, labels: runnerLabels, work_folder: "_work" }, allow: [409],
+    let jit = await gh.request<Jit>("POST", `${target.base}/actions/runners/generate-jitconfig`, {
+      body: { name: runnerName, runner_group_id: target.groupId, labels: runnerLabels, work_folder: "_work" }, allow: [409],
     });
     if (jit.status === 409) {
       runnerName = `fenvix-j${jobId}-${Date.now().toString(36)}`;
-      jit = await gh.request<Jit>("POST", `${base}/actions/runners/generate-jitconfig`, {
-        body: { name: runnerName, runner_group_id: 1, labels: runnerLabels, work_folder: "_work" },
+      jit = await gh.request<Jit>("POST", `${target.base}/actions/runners/generate-jitconfig`, {
+        body: { name: runnerName, runner_group_id: target.groupId, labels: runnerLabels, work_folder: "_work" },
       });
     }
     const unregister = async (why: string) => {
       const id = jit.data.runner?.id;
       if (!id) return;
-      await gh.request("DELETE", `${base}/actions/runners/${id}`, { allow: [404, 422] })
+      await gh.request("DELETE", `${target.base}/actions/runners/${id}`, { allow: [404, 422] })
         .catch((e: unknown) => this.log.warn({ job: jobId, runner: runnerName, err: e instanceof Error ? e.message : String(e) }, "could not delete an unused just-in-time runner"));
       this.log.info({ job: jobId, runner: runnerName, why }, "unused just-in-time runner deleted");
     };

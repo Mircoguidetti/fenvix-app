@@ -191,6 +191,16 @@ create table if not exists public.gh_replays (
 );
 create index if not exists gh_replays_waiting on public.gh_replays (created_at) where status = 'waiting';
 
+-- 7b. The organization runner group of each repository (G-1796): an organization-level just-in-time runner is
+--     registered in a group only that repository may use.
+create table if not exists public.gh_runner_groups (
+  installation_id bigint not null,
+  repository_id bigint not null,
+  group_id bigint not null,
+  created_at timestamptz not null default now(),
+  primary key (installation_id, repository_id)
+);
+
 -- 8. Webhook deliveries GitHub could not deliver (our API was down): asked for again once each (audit G-1771).
 create table if not exists public.gh_redeliveries (
   github_delivery_id bigint primary key,
@@ -201,6 +211,11 @@ create table if not exists public.gh_redeliveries (
 );
 
 -- ---------------------------------------------------------------- row level security
+alter table public.gh_runner_groups enable row level security;
+revoke all on public.gh_runner_groups from public, anon, authenticated;
+grant select, insert, update, delete on public.gh_runner_groups to fenvix_github_app;
+drop policy if exists gh_runner_groups_github_app on public.gh_runner_groups;
+create policy gh_runner_groups_github_app on public.gh_runner_groups for all to fenvix_github_app using (true) with check (true);
 alter table public.gh_replays enable row level security;
 revoke all on public.gh_replays from public, anon, authenticated;
 grant select, insert, update on public.gh_replays to fenvix_github_app;

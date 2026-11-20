@@ -345,6 +345,28 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
     }
   });
 
+  it("least privilege (G-1796, G-1726): an organization with \"Self-hosted runners\" gets an organization runner in a group only that repository may use; without groups, the repository", async () => {
+    await admin.query(`update gh_installations set permissions = permissions || '{"organization_self_hosted_runners": "write"}'::jsonb where installation_id in ($1, $2)`, [INSTALLATION_ID, GLOBEX.installation]);
+    await admin.query("update workspaces set max_concurrent_jobs = 50, max_machines = 20 where id in ($1, $2)", [acme.workspaceId, globex.workspaceId]);
+    const repoJitBefore = h.gh.repos.get("acme/shop")!.jitRunners.length;
+    for (const [id, run] of [[1101, 9501], [1102, 9502]] as const) {
+      h.gh.addRun("acme/shop", run, { event: "pull_request", headSha: "5".repeat(40), headBranch: "feature", message: "pr" });
+      await h.send("workflow_job", workflowJob("queued", { id, runId: run, sha: "5".repeat(40), branch: "feature" }));
+    }
+    const groups = h.gh.orgRunnerGroups.filter((g) => g.org === ACCOUNT.login);
+    assert.deepEqual(groups.map((g) => ({ name: g.name, visibility: g.visibility, repos: g.repos })), [{ name: `fenvix-${REPOS.shop.id}`, visibility: "selected", repos: [REPOS.shop.id] }], "one group, this repository only, made once");
+    const runners = h.gh.orgJitRunners.filter((r) => r.name === "fenvix-j1101" || r.name === "fenvix-j1102");
+    assert.equal(runners.length, 2);
+    for (const r of runners) assert.equal(r.groupId, groups[0]!.id);
+    assert.equal(h.gh.repos.get("acme/shop")!.jitRunners.length, repoJitBefore, "no repository-level runner: Administration is not needed");
+    // An organization whose plan has no extra runner groups: the repository-level runner, as before.
+    h.gh.refuseRunnerGroups = true;
+    h.gh.addRun("globex/api", 8800 + 2101, { event: "pull_request", headSha: "c".repeat(40), headBranch: "feature", message: "pr" });
+    await h.send("workflow_job", globexJob("queued", 2101));
+    assert.ok(h.gh.repos.get("globex/api")!.jitRunners.some((r) => r.name === "fenvix-j2101"));
+    h.gh.refuseRunnerGroups = false;
+  });
+
   it("spot for bursts: above spotAbove running machines new machines are spot; an interruption re-runs the job", async () => {
     await admin.query("update gh_machines set state = 'gone' where state <> 'gone'");
     await admin.query("update gh_leases set state = 'done' where state in ('offered', 'running')");
