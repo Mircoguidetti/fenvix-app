@@ -695,6 +695,13 @@ the summary, the rest of the machine time as other steps).
 
 ### 6. Replays and explorations on our machines (task machines)
 
+> **Founder rule (2026-11-20): no machine before go-live except through P-047's master switch** (`RUNNER_MODE`, off by
+> default), and each run approved. The App's own EC2 launcher no longer starts task machines (`launchTask` removed).
+> Replays run as leases of P-047's machine pool (`gh_replays`, linked to `ci_replays`), so only when the pool is on.
+> Without it, a replay or an exploration waits, and its `detail` says it is waiting for a fenvix machine. Scheduled
+> explorations have no pool path yet (P-047's pool has the exploration hook, not scheduled). The task-credential routes
+> below stay for that.
+
 Replays (asked for from the dashboard, the API with a key that has the `replay` scope, the remote MCP server or the pull
 request comment's link) and explorations (the nightly exploration of every project that has it on, at its hour (UTC),
 under its time cap and seed budget, targeting all tests or only the unstable ones; and ones asked for by hand or for a

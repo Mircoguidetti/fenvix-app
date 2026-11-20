@@ -400,29 +400,9 @@ export class Ec2Launcher implements RunnerLauncher {
     return ids;
   }
 
-  async launchTask(t: TaskLaunch): Promise<{ instanceId: string | null; already: boolean }> {
-    const p = this.placement(t.region);
-    const n = await this.running(t.region);
-    if (n >= this.o.maxRunning) throw new RetryLater(`${n} fenvix machines are running in ${t.region} (limit ${this.o.maxRunning}); ${t.kind} ${t.taskId} waits`);
-    const imageId = await this.imageId(t.region);
-    const tags = [
-      ...Object.entries(this.o.tags ?? {}).map(([Key, Value]) => ({ Key, Value })),
-      { Key: ROLE_TAG, Value: ROLE_VALUE }, { Key: KIND_TAG, Value: t.kind }, { Key: TASK_TAG, Value: t.taskId },
-      { Key: "fenvix:repository", Value: t.repositoryFullName }, { Key: "fenvix:region", Value: t.region }, { Key: "Name", Value: t.runnerName },
-    ];
-    try {
-      const r = await p.ec2.send(new RunInstancesCommand({
-        LaunchTemplate: { LaunchTemplateId: p.launchTemplateId, Version: "$Latest" }, ImageId: imageId, MinCount: 1, MaxCount: 1,
-        ClientToken: `fenvix-${t.kind}-${t.taskId}-${t.attempt}`.slice(0, 64),
-        UserData: Buffer.from(taskUserData(t, { ...this.o.machineEnv, ...(p.machineEnv ?? {}) })).toString("base64"),
-        TagSpecifications: [{ ResourceType: "instance", Tags: tags }, { ResourceType: "volume", Tags: tags }],
-      }));
-      return { instanceId: r.Instances?.[0]?.InstanceId ?? null, already: false };
-    } catch (e) {
-      if ((e as { name?: string }).name === "IdempotentParameterMismatch") return { instanceId: null, already: true };
-      throw e;
-    }
-  }
+  // No launchTask here (founder rule, 2026-11-20): no machine starts before go-live except through P-047's pool behind
+  // its master switch (RUNNER_MODE, off by default). Replays run as pool leases (Service.poolReplay after the merge);
+  // without the pool, a replay or an exploration waits and says so.
 
   private async terminateBy(region: Region, filters: { Name: string; Values: string[] }[]): Promise<string[]> {
     const p = this.placement(region);

@@ -295,6 +295,14 @@ Status words: **FIXED** (with the regression test), **OUT OF SCOPE** (with the s
 | G-1632 | FIXED | Audit log (see G-1805). | `backend.test.ts` "5." |
 | G-2309 | FIXED | Retention (see G-1816). | retention test |
 
+### Founder rule: no machine before go-live except through the master switch (coordinator, 2026-11-20)
+
+Audit of this branch: every EC2 start goes through the launcher, and the launcher exists only when `RUNNER_MODE` (P-047's
+switch) is set; unset, there is none (MEASURED: `runners.test.ts` "founder rule"). The one start path this branch had
+added, the EC2 launcher's `launchTask` (task machines for replays and explorations), is **removed**. Replays now reach a
+machine only as P-047's pool leases (the scratch merge's `Service.poolReplay`). Scheduled explorations wait until
+P-047's pool schedules its exploration hook.
+
 ### Rows handed over by P-047 (coordinator, 2026-11-20)
 
 Split: API and back end here; `src/` and `vercel.json` to P-049 (G-2285, and the screens for G-2325, G-2329, G-1790,
