@@ -30,6 +30,7 @@ export class PoolLauncher implements RunnerLauncher {
       FENVIX_RUN_ID: String(l.runId),
       FENVIX_REPOSITORY_ID: String(l.repositoryId),
       FENVIX_CACHE_ACCESS: l.cacheAccess,
+      ...(l.testCommand ? { FENVIX_TEST_COMMAND: l.testCommand.replace(/[\r\n]+/g, " ").slice(0, 500) } : {}),
     };
     if (this.machineEnv.FENVIX_CACHE_URL && l.cacheToken) {
       const org = cacheOrgOf(l.installationId, l.repositoryId);

@@ -436,6 +436,7 @@ Every step of the job sees these variables (the slot's runner `.env`):
 | | `shadow` (the organization's 30-day trial) | run EVERY test, reuse nothing, and report per test `wouldSkip` (results) and `wouldSkipTests`/`wouldSaveMs` (summary): what enforce would have skipped |
 | `FENVIX_SKIP` | `1` (default) | skip-with-proof allowed (enforce only) |
 | | `0` (the project's "skip with proof" is off) | never skip and never consult the shared cache for reuse; still run deterministically |
+| `FENVIX_TEST_COMMAND` | the project's test command (dashboard setting), when set | the command the engine wraps when the job asks it to run the project's tests |
 | `FENVIX_OUT` | the slot's output directory | write `summary.json` there (the machine reads it as the slot user and sends it with the job's credential) |
 | `FENVIX_CACHE_URL`, `FENVIX_CACHE_ACCESS` | the repository's own cache organization | write only when `FENVIX_CACHE_ACCESS=write` |
 | `FENVIX_HOME` | `/opt/fenvix` | the installed trunk artifact (`fenvix` on `PATH`) |

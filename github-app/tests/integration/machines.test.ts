@@ -157,7 +157,7 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
   });
 
   it("the same customer's second job shares the machine, in its own slot", async () => {
-    await admin.query("update ci_projects set skip_with_proof = false where full_name = 'acme/shop'");
+    await admin.query("update ci_projects set skip_with_proof = false, test_command = 'pytest -q tests' where full_name = 'acme/shop'");
     h.gh.addRun("acme/shop", 9402, { event: "pull_request", headSha: "b".repeat(40), headBranch: "feature", message: "pr" });
     await h.send("workflow_job", workflowJob("queued", { id: 1002, runId: 9402, sha: "b".repeat(40), branch: "feature" }));
     const [a, b] = [await leaseOfJob(1001), await leaseOfJob(1002)];
@@ -167,6 +167,7 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
     const p = await poll(acmeToken, [a.id]);
     const w = (p.body.leases as { work: { env: Record<string, string> } }[])[0]!.work;
     assert.equal(w.env.FENVIX_SKIP, "0", "the project's skip-with-proof switch, off, reaches the machine (audit G-0191, G-1732)");
+    assert.equal(w.env.FENVIX_TEST_COMMAND, "pytest -q tests", "and its test command (G-1732)");
   });
 
   let globexMachine = 0;

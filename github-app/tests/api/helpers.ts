@@ -30,6 +30,8 @@ export function localSupabase(): { supabaseUrl: string; dbUrl: string; apiDbUrl:
 }
 
 export const LOCAL = localSupabase();
+// In CI the local Supabase is part of the run (test.yml): its absence is a failure, never a silent skip (G-2344).
+if (!LOCAL && process.env.CI === "true") throw new Error("CI: no local Supabase (LOCAL_SUPABASE_URL, LOCAL_DB_URL, LOCAL_API_DATABASE_URL): the dashboard API suites must run, not skip");
 /** Why the integration tests are skipped, or false. */
 export const SKIP = LOCAL ? false : "no local Supabase: run bash scripts/local-supabase/up.sh (Docker) first";
 

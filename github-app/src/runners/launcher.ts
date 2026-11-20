@@ -38,6 +38,8 @@ export interface RunnerLaunch {
   size?: string;
   /** The project's "skip with proof" switch (ci_projects.skip_with_proof); false gives the job FENVIX_SKIP=0 (G-0191). */
   skipWithProof?: boolean;
+  /** The project's test command (ci_projects.test_command), given to the job as FENVIX_TEST_COMMAND (G-1732). */
+  testCommand?: string;
 }
 
 /**

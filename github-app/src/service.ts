@@ -596,8 +596,10 @@ export class GitHubService {
     // The machine runs in the organization's region, or not at all: an EU organization's job never runs in the US.
     const org = await this.db.tx(inst.workspace_id, (c) => this.orgContext(c));
     // The project's "skip with proof" switch reaches the machine (audit G-0191, G-1732): off means FENVIX_SKIP=0.
-    const skipWithProof = (await this.db.tx(inst.workspace_id, (c) => c.query<{ skip_with_proof: boolean }>(
-      `select p.skip_with_proof from ci_projects p join gh_repositories r on r.project_id = p.id where r.repository_id = $1`, [repo.id]))).rows[0]?.skip_with_proof !== false;
+    const project = (await this.db.tx(inst.workspace_id, (c) => c.query<{ skip_with_proof: boolean; test_command: string }>(
+      `select p.skip_with_proof, p.test_command from ci_projects p join gh_repositories r on r.project_id = p.id where r.repository_id = $1`, [repo.id]))).rows[0];
+    const skipWithProof = project?.skip_with_proof !== false;
+    const testCommand = project?.test_command?.trim() || undefined;
     const size = this.pool ? sizeOfLabels(row.labels ?? [], this.s.runsOnLabel, this.pool.pool.s) : null;
     if (this.pool && !size) {
       await this.db.q("update gh_jobs set dispatch_state = 'none', dispatch_detail = $2 where job_id = $1", [jobId,
@@ -679,7 +681,7 @@ export class GitHubService {
       res = await this.launcher!.launch({
         jobId, runId: row.run_id, repositoryId: repo.id, repositoryFullName: repo.full_name, installationId, runnerName,
         jitConfig: jit.data.encoded_jit_config, cacheAccess, summaryToken, ...(cacheToken ? { cacheToken } : {}), region: org.region, mode: org.mode,
-        workspaceId: inst.workspace_id, skipWithProof, ...(size ? { size } : {}),
+        workspaceId: inst.workspace_id, skipWithProof, ...(testCommand ? { testCommand } : {}), ...(size ? { size } : {}),
       });
     } catch (e) {
       await unregister(e instanceof RetryLater ? "the fleet is full" : "the machine did not start");
