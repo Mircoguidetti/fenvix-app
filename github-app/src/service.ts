@@ -934,7 +934,9 @@ export class GitHubService {
        order by j.job_id desc limit 1`,
       [o.repositoryId, o.runId, o.runAttempt, o.runnerName]);
     if (!j?.workspace_id) return "no_run";
+    let fired = false;
     const updated = await this.db.tx(j.workspace_id, async (c) => {
+      const armed = (await c.query<{ s: string | null }>("select stop_state as s from ci_runs where id = $1", [j.ci_run_id])).rows[0]?.s === "armed";
       const u = await c.query(
         `update ci_runs set progress = $2::jsonb, progress_at = now()
          where id = $1 and status = 'running' and coalesce((progress->>'seq')::bigint, -1) < $3`,
@@ -942,9 +944,13 @@ export class GitHubService {
       // The tests finished since the last record (the live view), whatever the order the records came in.
       const running = (await c.query("select 1 from ci_runs where id = $1 and status = 'running'", [j.ci_run_id])).rowCount;
       if (running && o.progress.finished?.length) await storeLiveTests(c, j.ci_run_id, o.progress.finished);
-      if (running && o.progress.failed > 0) await armedStopFires(c, j.ci_run_id);
+      if (running && (o.progress.failed > 0 || o.progress.finished?.some((t) => t.outcome === "failed"))) await armedStopFires(c, j.ci_run_id);
+      // Fired by this record (here, or by storeLiveTests storing the first failed test).
+      fired = armed && (await c.query<{ s: string | null }>("select stop_state as s from ci_runs where id = $1", [j.ci_run_id])).rows[0]?.s === "requested";
       return u;
     });
+    // A stop armed for the first failure: the GitHub run is cancelled and the machine's slot ended now, not at the sweep.
+    if (fired) await this.tasks.cancelRun(j.workspace_id, j.ci_run_id).catch((e: unknown) => this.log.warn({ run: j.ci_run_id, err: e instanceof Error ? e.message : String(e) }, "first-failure stop failed (the sweep tries again)"));
     return updated.rowCount ? "stored" : "stale";
   }
 

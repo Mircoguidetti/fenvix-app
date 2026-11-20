@@ -164,6 +164,8 @@ exception when duplicate_object then null; end $$;
 alter table public.ci_runs add column if not exists stop_when text check (stop_when is null or stop_when in ('now', 'first_failure'));
 alter table public.ci_runs add column if not exists stop_state text check (stop_state is null or stop_state in ('armed', 'requested', 'done', 'failed'));
 alter table public.ci_runs add column if not exists stop_requested_at timestamptz;
+-- When the App last sent the stop (GitHub cancel, machine ended): the sweep sends it again only 2 minutes later.
+alter table public.ci_runs add column if not exists stop_sent_at timestamptz;
 alter table public.ci_runs add column if not exists stop_requested_by uuid references auth.users (id) on delete set null;
 alter table public.ci_runs add column if not exists stop_detail text not null default '' check (char_length(stop_detail) <= 500);
 -- The GitHub job behind the run (a matrix or several test jobs give several runs of one commit).
@@ -698,7 +700,8 @@ create or replace function public.gh_cancel_requests()
 returns table (run_id uuid, workspace_id uuid)
 language sql stable security definer set search_path = public, pg_temp as $$
   select r.id, r.workspace_id from public.ci_runs r where r.status = 'running' and r.stop_state = 'requested'
-   and r.stop_requested_at > now() - interval '1 day' limit 50
+   and r.stop_requested_at > now() - interval '1 day'
+   and (r.stop_sent_at is null or r.stop_sent_at < now() - interval '2 minutes') limit 50
 $$;
 
 do $$
@@ -1020,3 +1023,15 @@ begin
 end $$;
 revoke all on function public.gh_repo_access_forget(bigint, bigint, bigint) from public, anon, authenticated;
 grant execute on function public.gh_repo_access_forget(bigint, bigint, bigint) to fenvix_github_app;
+
+-- ================================================================ 14. replays on our machines (with P-047's 0018)
+
+-- A replay the API asked for (ci_replays) runs on our machines as gh_replays (0018) leases: the link, and the commit
+-- the replay names (a defect's replay may be on a later commit than the run's). Only where 0018 made gh_replays.
+do $$ begin
+  if to_regclass('public.gh_replays') is not null then
+    alter table public.gh_replays add column if not exists ci_replay_id uuid references public.ci_replays (id) on delete cascade;
+    alter table public.gh_replays add column if not exists commit_sha text check (commit_sha is null or commit_sha ~ '^[0-9a-f]{40}$');
+    create index if not exists gh_replays_ci_replay on public.gh_replays (ci_replay_id) where ci_replay_id is not null;
+  end if;
+end $$;

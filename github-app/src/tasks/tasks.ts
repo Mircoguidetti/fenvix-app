@@ -50,6 +50,12 @@ export class Tasks {
 
   get canLaunch(): boolean { return !!this.launcher?.launchTask && !!this.s.summaryKey; }
 
+  /**
+   * Our machines (P-047's pool): a replay runs as a lease of kind "replay" on a machine of the same customer
+   * (Service.poolReplay, gh_replays), not as a task machine. Set by the service when the pool is on.
+   */
+  poolReplay: ((o: { id: string; ws: string; runId: string | null; defectId: string | null; testId: string; commitSha: string | null; repositoryId: number; attempt: number }) => Promise<boolean>) | null = null;
+
   // ---------------------------------------------------------------- scheduling
 
   /**
@@ -99,6 +105,10 @@ export class Tasks {
       return { row, repo, region, bundle };
     });
     if (!t) return false;
+    if (kind === "replay" && this.poolReplay) {
+      return this.poolReplay({ id, ws, runId: (t.row as { run_id?: string | null }).run_id ?? null, defectId: t.row.defect_id ?? null, testId: t.row.test_id!,
+        commitSha: t.row.commit_sha, repositoryId: t.repo.repository_id, attempt: t.row.attempts + 1 });
+    }
     if (!this.canLaunch || (this.launcher!.canPlace && !this.launcher!.canPlace(t.region))) {
       await this.db.tx(ws, (c) => c.query(`update ${kind === "replay" ? "ci_replays" : "ci_exploration_jobs"} set detail = $2 where id = $1 and detail = ''`,
         [id, `waiting for a fenvix machine in ${t.region.toUpperCase()}`]));
@@ -153,22 +163,20 @@ export class Tasks {
         return "stored";
       }
       const status = r.outcome === "error" ? "error" : r.outcome === "passed" ? "passed" : "failed";
-      await c.query(
-        `update ci_replays set status = $2, runs = $3, fails = $4, fingerprint = $5, identical_fingerprint = $6, detail = $7,
-           command = coalesce($8, command), finished_at = now() where id = $1`,
-        [r.replayId, status, r.runs ?? null, r.fails ?? null, r.fingerprint ?? null, r.identicalFingerprint ?? null, (r.detail ?? "").slice(0, 2000), r.command ?? null]);
-      if (row.defect_id) {
-        await c.query("update ci_defects set last_replay_id = $2 where id = $1", [row.defect_id, r.replayId]);
-        // The contract's rule: fixed once the minimal order passes 10 of 10 on a later commit than the last sighting.
-        if (status === "passed" && (r.runs ?? 0) >= 10 && (r.fails ?? 1) === 0) {
-          await c.query(
-            `update ci_defects d set state = 'fixed', state_changed_at = now(), state_reason = $3, fixed_commit_sha = $2
-             where d.id = $1 and d.state = 'open' and not exists (
-               select 1 from ci_defect_occurrences o where o.defect_id = d.id and o.commit_sha = $2)`,
-            [row.defect_id, row.commit_sha, `the minimal order passed ${r.runs} of ${r.runs} on ${row.commit_sha.slice(0, 7)}`]);
-        }
-      }
+      await finishReplay(c, { id: r.replayId, defectId: row.defect_id, commitSha: row.commit_sha }, { status, runs: r.runs ?? null, fails: r.fails ?? null,
+        fingerprint: r.fingerprint ?? null, identicalFingerprint: r.identicalFingerprint ?? null, detail: r.detail ?? "", command: r.command ?? null });
       return "stored";
+    });
+  }
+
+  /** A replay that ran as a lease on our machines (P-047's pool) ended: the same outcome, verdict and "fixed" rule. */
+  async finishPoolReplay(ws: string, id: string, o: { done: number; fails: number; identicalFingerprint: boolean; detail: string; error: string | null }): Promise<void> {
+    await this.db.tx(ws, async (c) => {
+      const row = (await c.query<{ status: string; defect_id: string | null; commit_sha: string }>("select status, defect_id, commit_sha from ci_replays where id = $1 for update", [id])).rows[0];
+      if (!row || !["dispatched", "running"].includes(row.status)) return;
+      const status = o.error !== null || o.done === 0 ? "error" : o.fails === 0 ? "passed" : "failed";
+      await finishReplay(c, { id, defectId: row.defect_id, commitSha: row.commit_sha }, { status, runs: o.done, fails: o.fails, fingerprint: null,
+        identicalFingerprint: o.done ? o.identicalFingerprint : null, detail: o.error ?? o.detail, command: null });
     });
   }
 
@@ -217,6 +225,7 @@ export class Tasks {
          where j.ci_run_id = $1`, [runId])).rows[0] ?? ("unknown" as const);
     });
     if (typeof job === "string") return job;
+    await this.db.tx(ws, (c) => c.query("update ci_runs set stop_sent_at = now() where id = $1", [runId]));
     const gh = this.gh.installation(job.installation_id);
     const r = await gh.request("POST", `/repos/${job.full_name}/actions/runs/${job.run_id}/cancel`, { allow: [403, 404, 409] }).catch(() => ({ status: 0 }));
     if (r.status === 403) this.log.warn({ run: runId }, "the GitHub job could not be cancelled: the App lacks Actions: Read and write (the machine is ended)");
@@ -228,5 +237,23 @@ export class Tasks {
     }
     this.log.info({ run: runId, job: job.job_id, github: r.status }, "run stopped from the dashboard");
     return "cancelled";
+  }
+}
+
+/** A replay's outcome on its row and its defect: fixed once the minimal order passes 10 of 10 on a later commit than the last sighting. */
+async function finishReplay(c: { query: (sql: string, params?: unknown[]) => Promise<unknown> }, row: { id: string; defectId: string | null; commitSha: string },
+  r: { status: "passed" | "failed" | "error"; runs: number | null; fails: number | null; fingerprint: string | null; identicalFingerprint: boolean | null; detail: string; command: string | null }): Promise<void> {
+  await c.query(
+    `update ci_replays set status = $2, runs = $3, fails = $4, fingerprint = $5, identical_fingerprint = $6, detail = $7,
+       command = coalesce($8, command), finished_at = now() where id = $1`,
+    [row.id, r.status, r.runs, r.fails, r.fingerprint, r.identicalFingerprint, r.detail.slice(0, 2000), r.command]);
+  if (!row.defectId) return;
+  await c.query("update ci_defects set last_replay_id = $2 where id = $1", [row.defectId, row.id]);
+  if (r.status === "passed" && (r.runs ?? 0) >= 10 && (r.fails ?? 1) === 0) {
+    await c.query(
+      `update ci_defects d set state = 'fixed', state_changed_at = now(), state_reason = $3, fixed_commit_sha = $2
+       where d.id = $1 and d.state = 'open' and not exists (
+         select 1 from ci_defect_occurrences o where o.defect_id = d.id and o.commit_sha = $2)`,
+      [row.defectId, row.commitSha, `the minimal order passed ${r.runs} of ${r.runs} on ${row.commitSha.slice(0, 7)}`]);
   }
 }

@@ -1,4 +1,4 @@
-PARTIAL
+PARTIAL (founder steps only): (1) approve the merge, which deploys; (2) App permission "Actions: Read and write"; (3) organization permission "Self-hosted runners: Read and write" (G-1726); (4) mail provider credential (G-1756, G-2310); (5) DNS record and certificate for mcp.fenvix.dev; optional (6): the Member, Organization, Membership and Team events plus "Members: Read-only" (G-1631 revocations at once).
 
 # P-048 · Passo 3 · Service back-end, PR comment, remote MCP (F-12, F-14, F-19 API side, F-13 data side)
 
@@ -8,20 +8,25 @@ Branch `claude/service-backend` of fenvix-app. Written 2026-11-20. Scope: the 13
 Multi-language, Tests, Config (P-047/P-049) and Billing, Other platforms, Any runner (out of the go-live scope), plus
 G-0187 (named in the task).
 
-**Why PARTIAL and not DONE.** Everything the service side can do is built and tested locally (numbers below). Three
-things outside this session block "DONE" as the founder defines it:
+**What PARTIAL means here.** Everything else is built, and it is green locally (MEASURED, below), including the end-to-end path on a
+scratch merge with P-047's branch and the REAL machine agent (`fenvix-agent`). The founder steps above are the only blocks
+on this branch's side:
 
-1. **One real run on our machines** (the task's "Done means"): the runner side does not send results, progress or
-   bundles yet, and the task machines' executor (`fenvix-task.target`) does not exist yet. Owner: **P-047**
-   (branch `claude/our-machines`, not on the remote when this was written). The contract they need is in
-   `docs/data-contract.md` ("2b. Defect bundles", "6. Replays and explorations on our machines", "Skip with proof
-   off, or paused", the shadow-mode note). The end-to-end test uses the fake GitHub and fake machines instead.
-2. **CI round on GitHub**: the tests are green locally (below); the pull request's CI run is what proves them in CI.
-   It runs when the coordinator's PR check runs; I push once.
-3. **Founder settings** (the coordinator collects them): the DECIDE rows are decided (G-1631 built; G-0599, G-0618,
-   G-0625, G-1723, G-2299 out of scope; G-1726 done with P-047), the App permission "Actions: Read and write" (needed for the Re-run button and for Stop to cancel the GitHub job; the
-   code works without it and says so), a mail provider credential (G-1756, G-2310), and the DNS record + certificate
-   for `mcp.fenvix.dev` (infra/deploy: the MCP server answers at `https://api.fenvix.dev/v1/mcp` today).
+1. Approve the merge (it deploys to AWS).
+2. App permission "Actions: Read and write": the check run's Re-run button, and Stop cancelling the GitHub job. The
+   code works without it and says so.
+3. Organization permission "Self-hosted runners: Read and write" (G-1726, P-047's runner groups). Personal accounts keep
+   repository Administration.
+4. A mail provider credential (G-1756, G-2310).
+5. DNS record and certificate for `mcp.fenvix.dev`. The MCP server answers at `https://api.fenvix.dev/v1/mcp` today.
+6. Optional: tick the events Member, Organization, Membership and Team, with "Members: Read-only", so G-1631
+   revocations apply at once instead of within 10 minutes.
+
+**Not a founder step, and not in either repository (said plainly).** Nothing sends progress, results chunks or defect
+bundles yet: the engine (fenvix-engine-cli) is the sender of those records. `fenvix-agent` sends the job's summary and
+the replay outcomes. Until the engine sends them, a defect in production comes from the summary's `flaky[]`. It is
+`reported`, with its replay command, but has no divergent event and no bundle, and the live test view has no per-test
+rows. The contract the engine needs is `docs/data-contract.md` "1b", "2b" and "Run progress".
 
 ## What is now true (the goal, item by item)
 
@@ -70,6 +75,56 @@ things outside this session block "DONE" as the founder defines it:
   bytes); `/bundle` answers the signed link since round 2, so the old command would have fed JSON to `tar`.
 - **Out of scope with the rule**: G-0599, G-0618, G-0625, G-1723, G-2299.
 - **G-1726**: agreed with P-047. They implemented the runner side; this branch implemented what the user is told (row above).
+
+## Round 4 (scratch merge with P-047's claude/our-machines; the real agent end to end)
+
+Coordinator, 2026-11-20: merge the two branches as a scratch merge, run the end-to-end path with the real sender, and
+make the two PRs merge cleanly. The merge commit is local (`scratch/merge-047`, f28c534). It is pushed nowhere, because
+this session pushes only to its own branch. Every suite is green on it (MEASURED, local): App unit **147/147**,
+integration **225/225** (local Postgres + local Supabase migrated with 0018 + 0019), RLS **7/7** on scratch Postgres and
+on the Supabase image (`machines-rls.sql` included), infra **135/135** (P-047's root sandbox tests ran, with iproute2
+installed), deploy **87/87**, dashboard 73 + build + API lint.
+
+**The end-to-end test with the real sender** (`github-app/tests/integration/real-agent.test.ts`, in the merge). The App
+is served over HTTP, and the real `fenvix-agent` (Python) runs as each machine of the pool. GitHub and EC2 are the fakes,
+and the slot sandbox is a stand-in that plays the job (it writes the engine's summary, or a replay's outcome). Nothing
+stands in for the agent. Steps: the pool starts a machine, and the agent says hello with its boot secret. A pull
+request's fenvix job is leased to the machine; the agent runs it in a slot and sends the summary with the JOB's
+credential. GitHub completes the job: the PR comment and the check run name the flaky test, the API and MCP show the
+same defect. A replay asked through MCP becomes a pool lease on that customer's machine; the agent runs it and sends the
+outcome with the machine's session, and the API's replay and the defect's `lastReplay` show it. 5/5 green.
+
+**The resolution, so the two PRs merge cleanly.**
+
+- `service.ts`, the jit conflict: P-047's `runnerTarget` (organization runner group or repository) with
+  `allow: [403, 409]`. A 403 gives the check run naming the permission for the account type (G-1726, this branch).
+- Dispatch: P-047's machine sizes and project test command, plus this branch's skip pause (G-1757). `FENVIX_SKIP=0` and
+  no cache credential when skip with proof is off **or paused**.
+- **One stop**: the API's `ci_runs.stop_*`. P-047's `Service.stopRun` (Work `stop_run`) now writes the same rows. A stop
+  armed for the first failure fires on the progress record that carries it (GitHub run cancelled, the job's slot lease
+  ended at once), and the sweep resends only after 2 minutes (`ci_runs.stop_sent_at`). `gh_jobs.stop_*` (0018) is no
+  longer used; P-047 may drop it.
+- **One replay path**: the API's `ci_replays` (dashboard, key, MCP, PR link) run as P-047's `gh_replays` leases, linked
+  by `gh_replays.ci_replay_id` (0019 section 14, applied only where 0018 made the table). The replay's own commit is
+  used (`gh_replays.commit_sha`). The agent's outcome comes back to `ci_replays` with the same "fixed on 10 of 10" rule
+  (`Tasks.finishPoolReplay`), and a lease lost with its machine fails the API's replay with the reason.
+- **One `POST /v1/runner/replays`**: both registered it, and Fastify refuses a duplicate. The single route serves a
+  machine session (`fxm1.`, the agent) and a task credential (`fxr1.`).
+- Stop on the pool: `PoolLauncher.terminateRunner` ends the job's lease (the agent wipes the slot at its next poll).
+- Shadow mode is on with the pool (P-047 runs it: `FENVIX_MODE`, and no cache credential until the engine honours it).
+  Without the pool it stays off unless `SHADOW_MODE=true` (G-0187).
+- **One webhook redelivery**: P-047's `redeliverFailed` (deduplicated in `gh_redeliveries`), now also skipping a delivery
+  GitHub delivered later. This branch's lost-job readback calls it, so a failed delivery gets one new attempt, not two.
+- Progress parsing: this branch's fields (`output`, `finishedAt`, worker `state`), with P-047's redaction (G-1787)
+  applied to the divergence description and events and to test output, plus a rule for `fxk_` API keys.
+- Scripts and docs: migrations 0018 then 0019 in `prepare-test-db.sh` and `run-local.sh`, both RLS checks, and both
+  change logs.
+- P-047's live-view test asserts the unified stop (`ci_runs`, `ci_test_results`) instead of `gh_jobs.stop_*`.
+
+The parts that do not need P-047's code are already on this branch: the immediate first-failure stop, `stop_sent_at`, the
+shared replay finish and the pool hook in `Tasks`, and 0019 section 14. The rest is the merge commit. Proposed order: PR
+#23 merges first, then this branch merges `main` with this resolution (re-run green before pushing), and PR #22 then
+merges with no conflict.
 
 ## Numbers
 
@@ -242,7 +297,7 @@ Status words: **FIXED** (with the regression test), **OUT OF SCOPE** (with the s
 
 ## What is not true yet
 
-- No production data: the runner does not send anything but summaries yet (P-047).
+- No per-test production data yet: progress, results chunks and bundles have no sender (the engine, fenvix-engine-cli); fenvix-agent sends summaries and replay outcomes (round 4).
 - `mcp.fenvix.dev` is not a host yet; the MCP server is at `https://api.fenvix.dev/v1/mcp`.
 - The OPEN rows above (G-1629, G-1630, G-1728, G-1758, G-1759, G-1815, G-1817, G-2232, G-2233, G-2292, G-2293,
   G-2294, G-2311, G-2312, G-2316, G-2333, G-2334, G-2335) are BUILD-LATER/MINOR rows not reached in this session.

@@ -356,6 +356,8 @@ describe("service back-end: runner → API stores → PR comment + check runs + 
     assert.deepEqual((await call("listLiveTests", `/v1/runs/${runId}/tests/live?afterSeq=2`, { auth: t, ws: org.workspaceId })).json().items, []);
     const detail = (await call("getRun", `/v1/runs/${runId}`, { auth: t, ws: org.workspaceId })).json().run;
     assert.deepEqual([detail.stop.state, detail.progress.workers[0].id, detail.job.name, detail.githubJobId], ["requested", "gw0", "test", 94001]);
+    // Ended at the first failure itself (not at the next sweep), and sent once: the sweep does not send it again.
+    assert.deepEqual(launcher.ended, ["fenvix-j94001"]);
     await h.app.service.sweep();
     assert.deepEqual(launcher.ended, ["fenvix-j94001"]);
     // The coding agent's view of it: the failure with its log excerpt and the full log.

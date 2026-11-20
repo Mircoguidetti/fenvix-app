@@ -386,10 +386,11 @@ export async function applyExploration(c: Client, projectId: string, language: s
 }
 
 /** A stop armed for the first failed test (stop_when first_failure) is requested: the sweep cancels the job. */
-export async function armedStopFires(c: Client, runId: string): Promise<void> {
-  await c.query(
+export async function armedStopFires(c: Client, runId: string): Promise<boolean> {
+  const r = await c.query(
     `update ci_runs set stop_state = 'requested', stop_detail = 'the first test failed' where id = $1 and status = 'running'
        and stop_state = 'armed' and stop_when = 'first_failure'`, [runId]);
+  return (r.rowCount ?? 0) > 0;
 }
 
 /**
