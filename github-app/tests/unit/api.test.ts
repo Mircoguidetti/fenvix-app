@@ -50,7 +50,7 @@ describe("the contract inside the bundle", () => {
     const noOrg = dashboardOperations().filter((o) => !o.workspace).map((o) => o.operationId).sort();
     // completeGitHubInstall: the organization comes from the completion (the install link's signed state), and the
     // database links only for the person that state names (review R-016 F2).
-    // deleteMe: the person's own account (0018), whatever organization.
+    // deleteMe: the person's own account (0019), whatever organization.
     assert.deepEqual(noOrg, ["acceptInvitation", "completeGitHubInstall", "createOrganization", "deleteMe", "getMe", "listOrganizations"]);
   });
 });

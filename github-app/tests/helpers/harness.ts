@@ -52,9 +52,9 @@ export async function resetDb(): Promise<pg.Client> {
   if (!(await admin.query("select to_regclass('public.gh_warmups') as t")).rows[0].t) {
     execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0017_warm_cache.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
   }
-  // A database prepared before migration 0018 (the service back-end).
+  // A database prepared before migration 0019 (the service back-end).
   if (!(await admin.query("select to_regclass('public.ci_api_keys') as t")).rows[0].t) {
-    execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0018_service_backend.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
+    execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0019_service_backend.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
   }
   await admin.query(`truncate gh_install_completions, ci_trial_accounts, gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_warmups, gh_repositories,
     gh_installations, ci_test_results, ci_skip_receipts, ci_audit_reruns, ci_defect_occurrences, ci_defect_bundles, ci_replays, ci_exploration_jobs, ci_api_keys,

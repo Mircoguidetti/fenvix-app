@@ -119,7 +119,7 @@ begin
       select id, 99, repeat('9', 40), 'main', 'push', 'passed', now(), now() from public.ci_projects where workspace_id = r.w;
     assert false, 'the API can insert runs';
   exception when insufficient_privilege then null; end;
-  -- A member may fix, mute or reopen a defect of W (0018), nothing else of it, and nothing of another organization.
+  -- A member may fix, mute or reopen a defect of W (0019), nothing else of it, and nothing of another organization.
   begin
     update public.ci_defects set test_id = 'renamed';
     assert false, 'the API can change a defect beyond its state';

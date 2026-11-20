@@ -65,7 +65,7 @@ describe("migrations: the founder's database (0001-0010 by the earlier product, 
       const [r2, out2] = await captured(() => migrate(c, files));
       assert.deepEqual([r2.found, r2.applied], [[], []]);
       assert.match(out2, /database up to date/);
-      // The deploy after this one: the migrations written since (0018, the service back-end) run once, in order.
+      // The deploy after this one: the migrations written since (0019, the service back-end) run once, in order.
       const [r3] = await captured(() => migrate(c, ALL));
       assert.deepEqual([r3.found, r3.applied], [[], LATER]);
       assert.notEqual((await c.query("select to_regclass('public.ci_api_keys') as t")).rows[0].t, null);

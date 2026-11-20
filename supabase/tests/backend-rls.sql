@@ -1,5 +1,5 @@
--- Row level security of the service back-end (0018) and isolation between organizations on EVERY customer table.
--- Run AFTER 0001 to 0018. One transaction, rolled back; a failed assertion stops the script naming the check; a clean
+-- Row level security of the service back-end (0019) and isolation between organizations on EVERY customer table.
+-- Run AFTER 0001 to 0019. One transaction, rolled back; a failed assertion stops the script naming the check; a clean
 -- run ends with "BACKEND RLS OK".
 --
 --   Organization A (owner OA) and organization B (owner OB). Each has a linked installation, a project, a run, a test

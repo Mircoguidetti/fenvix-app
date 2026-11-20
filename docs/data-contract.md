@@ -215,7 +215,7 @@ A flaky test turned into a reproducible defect. Taken from `bundle.json` (24 key
 | `language` | `"python"` \| `"node"` | the bundle's, else the project's |
 | `replayCommand` | string \| null | the engine's own command, as the runner sent it with the bundle (`command` of `bundle.json`); null: the dashboard builds it, see below |
 
-**One defect per flaky test** (2026-11-20, migration 0018). A defect is keyed by (project, test id): the same flaky
+**One defect per flaky test** (2026-11-20, migration 0019). A defect is keyed by (project, test id): the same flaky
 test across runs, commits and pull requests is ONE defect, whatever its fingerprint, the engine version or the order.
 The newest bundle's facts are the defect's; every sighting is a **Defect occurrence** (`ci_defect_occurrences`): `source`
 (`run` | `exploration`), `runId`, `runNumber`, `explorationId`, `commitSha`, `branch`, `pullRequest`, `fingerprint`,
@@ -783,7 +783,7 @@ database directly.
 
 ## Changes
 
-- 2026-11-20 (P-048, migration 0018, docs/REPORT-service-backend.md): **one defect per flaky test** with its history
+- 2026-11-20 (P-048, migration 0019, docs/REPORT-service-backend.md): **one defect per flaky test** with its history
   (Defect occurrence), defects from the summary's `flaky[]` without a bundle (`reported`), more causes, defect state
   (`fixed`, `muted`), **defect bundles** (`POST /v1/runner/bundles`, `GET /v1/defects/{id}/bundle`), **replays and
   explorations on our machines** (task machines, `POST /v1/runner/replays`, scheduled explorations), **stopping a run**,

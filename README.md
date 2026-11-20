@@ -59,8 +59,8 @@ Vite bakes these in when it builds, so change them and build again. If one of `V
 ## Set up Supabase
 
 1. **Create the schema.** Supabase dashboard → SQL editor → New query. Run every file in `supabase/migrations/` in
-   order, `0001` to `0018` (the deploy pipeline does this on every merge). 0011 holds the CI dashboard's tables and plans;
-   0014 removes the earlier product's tables; 0018 is the service back-end (defect history, bundles, replays, API keys,
+   order, `0001` to `0019` (the deploy pipeline does this on every merge). 0011 holds the CI dashboard's tables and plans;
+   0014 removes the earlier product's tables; 0018 is the machines (P-047), 0019 the service back-end (defect history, bundles, replays, API keys,
    exploration jobs, deleting and retention).
 2. **Auth URLs.** Authentication → URL Configuration. Set *Site URL* to the production address and add
    every address the app is served from to *Redirect URLs*, each with a trailing slash: for example

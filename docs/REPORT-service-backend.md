@@ -49,7 +49,7 @@ things outside this session block "DONE" as the founder defines it:
   local run are in the last section.
 - Bundle size limit 4 MB decoded: ESTIMATED from API Gateway/Lambda's 6 MB request cap (base64 adds 4/3: 4 MB → 5.3 MB).
 - Rate limits 600 requests/minute per person, 300 per key: DECLARED in `github-app/src/api/server.ts` (`RATE_LIMITS`).
-- Retention DECLARED in migration 0018: per-test results, receipts, audit reruns 180 days after the run; runs 400
+- Retention DECLARED in migration 0019: per-test results, receipts, audit reruns 180 days after the run; runs 400
   days; webhook delivery records 30 days; everything of an installation 30 days after its uninstall.
 
 ## Per row
@@ -170,11 +170,11 @@ Status words: **FIXED** (with the regression test), **OUT OF SCOPE** (with the s
 | G-1816 | FIXED | Retention (see Numbers). | `backend-gaps.test.ts` retention |
 | G-1817 | OPEN | Supabase project settings not as code (needs the founder's project; BUILD-LATER). | — |
 | G-2333 | OPEN | Trial accounts unreadable by support (MINOR). | — |
-| G-2334, G-2335 | OPEN | Old migrations not repeatable / no squashed baseline (MINOR). README now names 0001–0018. | — |
+| G-2334, G-2335 | OPEN | Old migrations not repeatable / no squashed baseline (MINOR). README now names 0001–0019. | — |
 | G-2336 | BLOCKED | Not changed. GitHub's billing reference lists Linux 2-core at $0.006/min, other GitHub pages still say $0.008 (DECLARED, conflicting, checked 2026-11-20). Founder confirms before the comparison is shown. | sources below |
 | G-2337 | FIXED | Deliveries pruned after 30 days, index on received_at. | retention test |
-| G-2338 | FIXED | Indexes added (runs by commit/PR/branch, jobs unpublished/installation/run, results/receipts by org, usage by project). | migration 0018 |
-| G-2339 | FIXED | Foreign keys to auth.users. | migration 0018 |
+| G-2338 | FIXED | Indexes added (runs by commit/PR/branch, jobs unpublished/installation/run, results/receipts by org, usage by project). | migration 0019 |
+| G-2339 | FIXED | Foreign keys to auth.users. | migration 0019 |
 | G-2341 | FIXED | `backend-rls.sql` also runs on the real Supabase image in CI. | `.github/workflows/test.yml` |
 | G-2342 | FIXED | Default privileges of anon/authenticated revoked for the migrating role; a later table is not readable by the browser. | `backend-rls.sql` (also on the Supabase image) |
 | G-2343 | FIXED | Trigger `other`. | `backend-gaps.test.ts` "G-2343" |

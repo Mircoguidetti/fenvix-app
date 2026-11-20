@@ -1,5 +1,5 @@
 -- fenvix: the service back-end of Passo 3 (P-048, docs/REPORT-service-backend.md). Safe to run more than once. Run it
--- AFTER 0017.
+-- AFTER 0017 (and 0018, P-047's machines, where it exists).
 --
 --  1. Defects: ONE defect per flaky test of a project (G-1701, G-1808), whatever its fingerprint, the engine version or
 --     the order; every sighting is kept in ci_defect_occurrences (run, commit, branch, pull request, fingerprint, first

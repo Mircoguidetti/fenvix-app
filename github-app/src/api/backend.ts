@@ -2,7 +2,7 @@
  * The service back-end's operations (P-048): a defect's history, state, bundle and replays; replays of one test; stopping
  * a run; exploration settings and jobs; resuming skip with proof; API keys; deleting a project, the organization or
  * one's own account; unlinking a GitHub installation; the organization's export. Rows are read and written as
- * fenvix_api inside the request's transaction, so row level security (0018) checks the organization again.
+ * fenvix_api inside the request's transaction, so row level security (0019) checks the organization again.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { type Ctx, type Handler, mayAdminister, orgOf, Reply } from "./context.ts";
