@@ -52,15 +52,16 @@ tar -xzf "$tmp/runner.tgz" -C /opt/fenvix/actions-runner
 chown -R root:root /opt/fenvix/actions-runner && chmod -R go-w /opt/fenvix/actions-runner
 
 log "5/6 the engine (trunk artifact, pinned)"
-[ -n "${FENVIX_ENGINE_URL:-}" ] && [ -n "${FENVIX_ENGINE_SHA256:-}" ] && [ -n "${FENVIX_ENGINE_VERSION:-}" ] \
-  || die "no engine pinned (settings engineVersion, engineUrl, engineSha256): no image without the trunk engine"
+if [ -z "${FENVIX_ENGINE_URL:-}" ] || [ -z "${FENVIX_ENGINE_SHA256:-}" ] || [ -z "${FENVIX_ENGINE_VERSION:-}" ]; then
+  die "no engine pinned (settings engineVersion, engineUrl, engineSha256): no image without the trunk engine"
+fi
 [[ "$FENVIX_ENGINE_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "engineSha256 is not a sha256"
 case "$FENVIX_ENGINE_URL" in https://*) ;; *) die "engineUrl must be https://" ;; esac
 curl -fsSL --proto '=https' --retry 3 -o "$tmp/engine.tgz" "$FENVIX_ENGINE_URL" || die "engine download failed: $FENVIX_ENGINE_URL"
 got="$(sha256sum "$tmp/engine.tgz" | cut -d' ' -f1)"
 [ "$got" = "$FENVIX_ENGINE_SHA256" ] || die "engine checksum mismatch: expected $FENVIX_ENGINE_SHA256, got $got (nothing installed)"
 top="$(tar -tzf "$tmp/engine.tgz" | cut -d/ -f1 | sort -u)"
-[ "$(printf '%s\n' "$top" | wc -l)" -eq 1 ] && [[ "$top" == "fenvix-engine-${FENVIX_ENGINE_VERSION}"* ]] || die "unexpected engine archive layout: $top"
+if [ "$(printf '%s\n' "$top" | wc -l)" -ne 1 ] || [[ "$top" != "fenvix-engine-${FENVIX_ENGINE_VERSION}"* ]]; then die "unexpected engine archive layout: $top"; fi
 if tar -tzf "$tmp/engine.tgz" | grep -qE '(^/|(^|/)\.\.(/|$))'; then die "engine archive has absolute or parent paths"; fi
 tar -xzf "$tmp/engine.tgz" -C "$tmp"
 # Its own Python environment (Ubuntu's python3 is externally managed): the pytest plugin, the runners, `fenvix`.

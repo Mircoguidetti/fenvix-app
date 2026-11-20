@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# The stubs and the inner bash expand their own variables (single quotes on purpose).
+# shellcheck disable=SC2016
 # The image install (lib/runner/files/install.sh) against stand-ins for the network and the system tools, as root in a
 # private mount namespace (/opt/fenvix, /srv, /etc/sysctl.d are tmpfs: the host is not touched). Cases:
 #   ok        the pinned engine and runner: installed, /opt/fenvix/ENGINE names the version and sha256

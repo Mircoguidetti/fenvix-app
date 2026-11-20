@@ -13,6 +13,8 @@
 #   fenvix-slot run N                  the runner for exactly one job, in the sandbox (waits for it to end)
 #   fenvix-slot read N RELPATH         prints a file of the slot AS THE SLOT USER (root never follows a slot's path)
 #   fenvix-slot wipe N                 kills every process of the slot and deletes its files
+# The slot user's sh expands "$1" (single quotes on purpose).
+# shellcheck disable=SC2016
 set -euo pipefail
 cmd="${1:-}"; n="${2:-}"
 [[ "$n" =~ ^([1-9]|1[0-6])$ ]] || { echo "fenvix-slot: slot must be 1 to 16" >&2; exit 2; }

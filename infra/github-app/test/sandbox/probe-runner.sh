@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# ps on purpose: what the job sees inside its PID namespace.
+# shellcheck disable=SC2009
 # A stand-in for GitHub's runner inside a slot (test only): `run.sh --jitconfig WORD` does what WORD says and writes
 # its findings to $PROBE_OUT (the test's world-writable output directory, given in the job settings).
 set -u

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# ok and bad always succeed, so "check && ok || bad" is a plain if-else here.
+# shellcheck disable=SC2015
 # The isolation test of our machines, on THIS host, as root (the CI runner uses sudo). It runs the real fenvix-slot
 # and fenvix-imds-block with a stand-in GitHub runner (probe-runner.sh) and checks, with real processes, mounts and
 # packets:
@@ -21,6 +23,7 @@ ok() { echo "ok $*"; }
 # A check whose job wrote nothing proves nothing: it fails.
 ran() { [ -s "$work/out/$1" ] || { bad "$2: the job in the slot did not run (no output)"; return 1; }; }
 bad() { echo "FAIL $*"; fails=$((fails + 1)); }
+# shellcheck disable=SC2317 # called by the EXIT trap
 cleanup() {
   for n in 1 2; do FENVIX_SLOT_BASE="$work/slot" "$files/fenvix-slot" wipe "$n" >/dev/null 2>&1 || true; done
   [ -n "${imds_pid:-}" ] && kill "$imds_pid" 2>/dev/null

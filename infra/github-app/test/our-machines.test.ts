@@ -49,7 +49,7 @@ describe("our machines: the slot sandbox and the metadata block (real, as root)"
   it("scripts parse (shellcheck in CI)", () => {
     for (const f of ["fenvix-slot", "fenvix-imds-block", "fenvix-job-started"]) assert.equal(spawnSync("bash", ["-n", join(FILES, f)]).status, 0, f);
     if (spawnSync("shellcheck", ["--version"]).status === 0) {
-      const r = spawnSync("shellcheck", ["-s", "bash", ...["fenvix-slot", "fenvix-imds-block", "fenvix-job-started"].map((f) => join(FILES, f)), ISOLATION], { encoding: "utf8" });
+      const r = spawnSync("shellcheck", ["-s", "bash", ...["fenvix-slot", "fenvix-imds-block", "fenvix-job-started", "install.sh"].map((f) => join(FILES, f)), ISOLATION, IMAGE_INSTALL, fileURLToPath(new URL("./sandbox/probe-runner.sh", import.meta.url))], { encoding: "utf8" });
       assert.equal(r.status, 0, r.stdout);
     }
   });
