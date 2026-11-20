@@ -1,3 +1,5 @@
+import type { SignInMethod } from "./methods";
+
 export type AuthProvider = "github" | "google";
 
 export interface SessionUser {
@@ -24,6 +26,15 @@ export interface SessionClient {
   /** Signs in with the token from the emailed link. The mock accepts any token for the last requested address. */
   completeEmailLink(token: string): Promise<SessionUser>;
   signOut(): Promise<void>;
+  /** The signed-in account's sign-in methods (GitHub, Google, email link). */
+  listSignInMethods(): Promise<SignInMethod[]>;
+  /**
+   * Attaches another provider to the signed-in account (so signing in with it opens this account, not a new one).
+   * Providers that redirect navigate away and come back to Settings.
+   */
+  connectProvider(provider: AuthProvider): Promise<void>;
+  /** Removes one sign-in method; the account keeps at least one. */
+  disconnect(methodId: string): Promise<void>;
   /** Calls back whenever the session changes, in this tab or another. Returns an unsubscribe. */
   subscribe?(onChange: (user: SessionUser | null) => void): () => void;
 }

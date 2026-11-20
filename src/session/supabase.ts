@@ -3,6 +3,7 @@ import { configError, redirectTarget } from "../lib/env";
 import { getSupabase } from "../lib/supabaseClient";
 import { lastRedirectError } from "./redirect";
 import type { AuthProvider, SessionClient, SessionUser } from "./client";
+import { connectProblem, toMethods } from "./methods";
 
 function nameOf(user: User): string {
   const meta = user.user_metadata ?? {};
@@ -64,6 +65,37 @@ export const supabaseSession: SessionClient = {
     const user = toUser(data.session?.user);
     if (!user) throw new Error("This sign-in link has expired. Request a new one.");
     return user;
+  },
+
+  async listSignInMethods() {
+    const { data, error } = await getSupabase().auth.getUserIdentities();
+    if (error) throw new Error(error.message);
+    return toMethods(data?.identities ?? []);
+  },
+
+  /** Hands the browser to the provider; it comes back to /settings. Needs "manual linking" allowed in Supabase. */
+  async connectProvider(provider: AuthProvider) {
+    const { data, error } = await getSupabase().auth.linkIdentity({
+      provider,
+      options: { redirectTo: redirectTarget("/settings"), skipBrowserRedirect: true },
+    });
+    if (error) throw new Error(connectProblem((error as { code?: string }).code, error.message));
+    if (!data?.url) throw new Error("The provider did not return a sign-in address.");
+    window.location.assign(data.url);
+    return new Promise<void>(() => {});
+  },
+
+  async disconnect(methodId: string) {
+    const sb = getSupabase();
+    const { data, error } = await sb.auth.getUserIdentities();
+    if (error) throw new Error(error.message);
+    const all = data?.identities ?? [];
+    const identity = all.find((i) => i.identity_id === methodId);
+    if (!identity) throw new Error("That sign-in method is no longer connected.");
+    if (all.length < 2) throw new Error(connectProblem("single_identity_not_deletable", null));
+    const { error: e2 } = await sb.auth.unlinkIdentity(identity);
+    if (e2) throw new Error(connectProblem((e2 as { code?: string }).code, e2.message));
+    await sb.auth.refreshSession();
   },
 
   async signOut() {

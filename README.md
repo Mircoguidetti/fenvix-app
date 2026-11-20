@@ -64,7 +64,8 @@ Vite bakes these in when it builds, so change them and build again. If one of `V
 2. **Auth URLs.** Authentication → URL Configuration. Set *Site URL* to the production address and add
    every address the app is served from to *Redirect URLs*, each with a trailing slash: for example
    `https://console.fenvix.dev/` and `http://localhost:5173/`. Vercel previews build with `VITE_DATA_BACKEND=mock`
-   and need no entry. The app asks the provider to return to the root of the site.
+   and need no entry. The app asks the provider to return to the root of the site (to `/settings` when connecting
+   another provider), so `https://console.fenvix.dev/**` is the entry to use in production.
 3. **Providers.** Authentication → Sign In / Providers:
    - **Google**: create an OAuth client (type *Web application*) in Google Cloud Console, add
      `https://<project-ref>.supabase.co/auth/v1/callback` as an authorised redirect URI, paste its
@@ -74,6 +75,9 @@ Vite bakes these in when it builds, so change them and build again. If one of `V
    - **Email**: enable it. The link is a magic link; for real use set up a custom SMTP server
      (Authentication → Emails → SMTP), because Supabase's built-in sender is limited to a few emails an hour.
    - Keep *Allow new users to sign up* on.
+   - Turn on *Allow manual linking* (Authentication → Sign In / Providers → User Signups). Settings → *Sign-in
+     methods* connects GitHub and Google to one account with it: Supabase links a second provider on its own only
+     when that provider reports a verified email the account already has, otherwise it creates a separate account.
    The secrets go into the Supabase dashboard only, never into this repository.
 4. **First sign-in.** Open the site and sign in once as `mircoguidetti1994@gmail.com`. The first sign-in
    creates a personal workspace for that account.
