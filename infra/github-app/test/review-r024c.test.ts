@@ -78,6 +78,7 @@ describe("review R-024c", () => {
         writeFileSync(join(dir, ".github/workflows/deploy.yml"), d);
         writeFileSync(join(dir, ".github/workflows/test.yml"), t);
         cpSync(join(root, "infra/github-app/test/workflows.test.ts"), join(dir, "infra/github-app/test/workflows.test.ts"));
+        cpSync(join(root, ".github/dependabot.yml"), join(dir, ".github/dependabot.yml"));
         const r = spawnSync(process.execPath, ["--test", "--test-reporter=tap", join(dir, "infra/github-app/test/workflows.test.ts")], { encoding: "utf8" });
         assert.notEqual(r.status, 0, `workflows.test.ts passed on a workflow that ${name}`);
       } finally { rmSync(dir, { recursive: true, force: true }); }

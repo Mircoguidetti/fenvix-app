@@ -85,6 +85,8 @@ const ARN: Record<string, string> = {
   "AWS::Lambda::Function": `arn:aws:lambda:${R}:${A}:function:fenvix-prod-github-app-http`,
   "AWS::Lambda::Permission": `arn:aws:lambda:${R}:${A}:function:fenvix-prod-github-app-http`,
   "AWS::Logs::LogGroup": `arn:aws:logs:${R}:${A}:log-group:/aws/lambda/fenvix-prod-github-app-http`,
+  // A metric filter has no ARN of its own: IAM authorizes it on its log group (G-1762).
+  "AWS::Logs::MetricFilter": `arn:aws:logs:${R}:${A}:log-group:/aws/lambda/fenvix-prod-github-app-http`,
   "app AWS::S3::Bucket": `arn:aws:s3:::fenvix-prod-github-app-overflowabc-1a2b3c`,
   "app AWS::S3::BucketPolicy": `arn:aws:s3:::fenvix-prod-github-app-overflowabc-1a2b3c`,
   "dashboard AWS::S3::Bucket": `arn:aws:s3:::fenvix-prod-dashboard-${A}`,
@@ -114,7 +116,7 @@ const CREATE: Record<string, string[]> = {
   "AWS::ImageBuilder::ImagePipeline": ["imagebuilder:CreateImagePipeline"], "AWS::ImageBuilder::ImageRecipe": ["imagebuilder:CreateImageRecipe"],
   "AWS::ImageBuilder::InfrastructureConfiguration": ["imagebuilder:CreateInfrastructureConfiguration"],
   "AWS::Lambda::EventSourceMapping": ["lambda:CreateEventSourceMapping"], "AWS::Lambda::Function": ["lambda:CreateFunction"], "AWS::Lambda::Permission": ["lambda:AddPermission"],
-  "AWS::Logs::LogGroup": ["logs:CreateLogGroup"], "AWS::S3::Bucket": ["s3:CreateBucket"], "AWS::S3::BucketPolicy": ["s3:PutBucketPolicy"],
+  "AWS::Logs::LogGroup": ["logs:CreateLogGroup"], "AWS::Logs::MetricFilter": ["logs:PutMetricFilter"], "AWS::S3::Bucket": ["s3:CreateBucket"], "AWS::S3::BucketPolicy": ["s3:PutBucketPolicy"],
   "AWS::SNS::Subscription": ["sns:Subscribe"], "AWS::SNS::Topic": ["sns:CreateTopic"], "AWS::SNS::TopicPolicy": ["sns:SetTopicAttributes"],
   "AWS::SQS::Queue": ["sqs:CreateQueue"], "AWS::SQS::QueuePolicy": ["sqs:SetQueueAttributes"], "AWS::Scheduler::Schedule": ["scheduler:CreateSchedule"],
 };

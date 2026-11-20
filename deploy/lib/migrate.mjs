@@ -24,7 +24,38 @@ export function readMigrations(dir = MIGRATIONS_DIR) {
   }
   const seen = new Set();
   for (const m of out) { if (seen.has(m.version)) throw new Stop(`two migrations numbered ${m.version}`); seen.add(m.version); }
+  for (const m of out) {
+    const bad = m.version > LAST_UNCHECKED ? contractSteps(m.sql) : [];
+    if (bad.length && !CONTRACT_MARK.test(m.sql)) {
+      throw new Stop(`supabase/migrations/${m.name}: removes or changes what the running code may still use (${bad.join("; ")}). Migrations run before the functions are deployed and a roll back keeps the schema (docs/DEPLOY-AWS.md "Roll back"), so they only add. Ship the code that stops using it first; remove it in a later migration marked "-- fenvix: contract step approved by the founder on YYYY-MM-DD".`);
+    }
+  }
   return out;
+}
+
+/**
+ * Expand-only migrations (audit G-1705). They run before CDK (step 2 before step 8), with no down migration: if CDK
+ * then fails, or the deploy is rolled back, the PREVIOUS code runs on the NEW schema. That is safe only while a
+ * migration adds (tables, columns with defaults, functions, policies) and never drops, renames, retypes or deletes
+ * what that code reads. Migrations up to 0018 are history (the earlier product was removed while nothing ran on it).
+ */
+export const LAST_UNCHECKED = "0018";
+export const CONTRACT_MARK = /^-- fenvix: contract step approved by the founder on \d{4}-\d{2}-\d{2}$/m;
+
+/** The statements of `sql` that take something away (comments and $$-quoted function bodies left out). */
+export function contractSteps(sql) {
+  const top = sql.replace(/\$([A-Za-z_]*)\$[\s\S]*?\$\1\$/g, " ").replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
+  const found = [];
+  for (const raw of top.split(";")) {
+    const st = raw.replace(/\s+/g, " ").trim().toLowerCase();
+    if (!st) continue;
+    if (/^drop (table|type|schema|sequence|materialized view|domain)\b/.test(st)
+      || /^alter table .* drop column\b/.test(st)
+      || /^alter table .* rename\b/.test(st)
+      || /^alter table .* alter column .* (type|set not null)\b/.test(st)
+      || /^(truncate|delete from)\b/.test(st)) found.push(st.slice(0, 80));
+  }
+  return found;
 }
 
 const pol = (table, name) => `exists (select 1 from pg_policies where schemaname = 'public' and tablename = '${table}' and policyname = '${name}')`;

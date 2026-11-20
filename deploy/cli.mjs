@@ -38,6 +38,7 @@ import { exportEnv, info, mask, notice, Stop, summary, warning } from "./lib/log
 import { migrate, readMigrations } from "./lib/migrate.mjs";
 import { recoverFailedCreates } from "./lib/recover.mjs";
 import { ensureRoles, syncDatabaseCa } from "./lib/roles.mjs";
+import { smokeVerdict } from "./lib/smoke.mjs";
 import { ensureGenerated } from "./lib/secrets.mjs";
 import { adminClientConfig, checkAnonKey, parseAdminUrl, parseCaCert } from "./lib/supabase.mjs";
 
@@ -254,8 +255,8 @@ const steps = {
         } catch (e) { last = /** @type {Error} */ (e).cause?.code ?? /** @type {Error} */ (e).message; }
         if (Date.now() > deadline) {
           const msg = `${c.url} does not answer as expected yet (${last}).`;
-          if (strict) throw new Stop(`${msg} The deploy finished; look at the API's log (docs/DEPLOY-AWS.md, "When something fails").`);
-          warning(`${msg} If the DNS records in the summary are not added yet, that is expected.`);
+          if (smokeVerdict({ strict, last }) === "stop") throw new Stop(`${msg} The deploy finished; look at the API's log (docs/DEPLOY-AWS.md, "When something fails").`);
+          warning(`${msg} The name does not resolve yet: if the DNS records in the summary were just added, that is expected.`);
           break;
         }
         await new Promise((r) => setTimeout(r, 15_000));

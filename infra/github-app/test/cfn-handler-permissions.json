@@ -1208,6 +1208,26 @@
     "s3:REST.PUT.OBJECT"
    ]
   },
+  "AWS::Logs::MetricFilter": {
+   "create": [
+    "logs:DescribeMetricFilters",
+    "logs:PutMetricFilter"
+   ],
+   "update": [
+    "logs:DescribeMetricFilters",
+    "logs:PutMetricFilter"
+   ],
+   "delete": [
+    "logs:DeleteMetricFilter"
+   ],
+   "read": [
+    "logs:DescribeMetricFilters"
+   ],
+   "taggable": false,
+   "tagOnCreate": false,
+   "tagging": [],
+   "notIamActions": []
+  },
   "AWS::S3::Bucket": {
    "create": [
     "iam:PassRole",

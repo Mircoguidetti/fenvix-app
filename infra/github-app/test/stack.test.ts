@@ -87,6 +87,17 @@ describe("the stack (shared properties)", async () => {
       assert.match(json(a[1].Properties.AlarmActions), /Alerts/, `${n} notifies the topic`);
     }
     for (const [, g] of resources(t, "AWS::Logs::LogGroup")) assert.equal(g.Properties.RetentionInDays, 90, "logs kept 90 days (G-1763)");
+    // Error reporting and traces (G-1762): every function traced by X-Ray; a logged error (App "error", Fastify 50) of
+    // any function is an alarm on the same topic.
+    for (const [, f] of resources(t, "AWS::Lambda::Function")) assert.deepEqual(f.Properties.TracingConfig, { Mode: "Active" }, String(f.Properties.FunctionName));
+    const filters = resources(t, "AWS::Logs::MetricFilter");
+    assert.equal(filters.length, 5);
+    for (const [, f] of filters) assert.equal(f.Properties.FilterPattern, '{ ($.level = "error") || ($.level >= 50) }');
+    for (const n of ["http", "worker", "sweep", "warmup", "api"]) {
+      const a = alarms.find(([, x]) => x.Properties.AlarmName === `fenvix-prod-github-app-${n}-logged-errors`);
+      assert.ok(a, n);
+      assert.match(json(a[1].Properties.AlarmActions), /Alerts/);
+    }
     // The sweep redrives dead-lettered work once (G-1736): it may receive and delete on the DLQ and send to the work queue.
     const sweepFn = resources(t, "AWS::Lambda::Function").find(([, f]) => String(f.Properties.FunctionName).endsWith("-sweep"))![1];
     const sweepEnv = (sweepFn.Properties.Environment as { Variables: Record<string, unknown> }).Variables;
@@ -145,7 +156,7 @@ describe("the stack (shared properties)", async () => {
     const reads = st.filter((x) => arr(x.Action).some((a) => a.startsWith("ssm:"))).flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]).sort();
     assert.deepEqual(reads, ["parameter/fenvix/prod/github-app/api-database-url", "parameter/fenvix/prod/github-app/database-ca-cert", "parameter/fenvix/prod/github-app/state-signing-key"], "no App key, webhook or client secret, no runner token");
     const actions = st.flatMap((x) => arr(x.Action)).sort();
-    assert.deepEqual([...new Set(actions)], ["logs:CreateLogStream", "logs:PutLogEvents", "sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:SendMessage", "ssm:GetParameters"]);
+    assert.deepEqual([...new Set(actions)], ["logs:CreateLogStream", "logs:PutLogEvents", "sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:SendMessage", "ssm:GetParameters", "xray:PutTelemetryRecords", "xray:PutTraceSegments"]);
     // The App's functions never read the API's database URL.
     for (const who of ["http", "worker", "sweep", "warmup", "reaper"]) assert.doesNotMatch(json(statementsOf(fnRole(who))), /api-database-url/, who);
   });

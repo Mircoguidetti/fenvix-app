@@ -111,6 +111,15 @@
               ]
             },
             {
+              "Sid": "FunctionsTraces",
+              "Effect": "Allow",
+              "Action": [
+                "xray:PutTraceSegments",
+                "xray:PutTelemetryRecords"
+              ],
+              "Resource": "*"
+            },
+            {
               "Sid": "OwnParametersAndUbuntuImages",
               "Effect": "Allow",
               "Action": [
@@ -483,7 +492,10 @@
                 "logs:TagLogGroup",
                 "logs:DescribeLogGroups",
                 "logs:GetDataProtectionPolicy",
-                "logs:DescribeIndexPolicies"
+                "logs:DescribeIndexPolicies",
+                "logs:PutMetricFilter",
+                "logs:DeleteMetricFilter",
+                "logs:DescribeMetricFilters"
               ],
               "Resource": [
                 "arn:aws:logs:eu-west-1:865859654353:log-group:/aws/lambda/fenvix-prod-github-app-*",

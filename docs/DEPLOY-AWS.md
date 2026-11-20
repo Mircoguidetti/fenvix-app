@@ -223,7 +223,7 @@ workflow"): first the same tests, then the job **Deploy to production**, only on
    the objects each of 0011 to 0017 creates, records 0001 to 0017 as already applied ("found") and runs none of them
    again. Each probe checks a migration's first objects **and its last effects**: a migration that ran only partly
    (first there, last missing) stops the deploy, changing nothing, as does a database where a later migration's
-   objects exist but an earlier one's do not. An applied migration whose file changes stops the deploy too: a change goes in a new migration file.
+   objects exist but an earlier one's do not. An applied migration whose file changes stops the deploy too: a change goes in a new migration file. From 0019 on a migration may only **add** (G-1705): it runs before the functions are deployed, and a failed deploy or a roll back runs the previous code on the new schema, so a file that drops, renames, retypes or deletes stops the deploy unless it carries the line `-- fenvix: contract step approved by the founder on YYYY-MM-DD` (shipped only after the code that stopped using it).
 5. **Database roles** (`deploy/lib/roles.mjs`): logs in as `fenvix_github_app` (pooler, session mode, port 5432) and
    `fenvix_api` (pooler, transaction mode, port 6543) with the connection strings stored in SSM. The first time (none
    stored), or if the database answers "wrong password" (SQLSTATE 28P01) to the stored string four times in a row
@@ -436,8 +436,26 @@ shift, so a roll back replaces all functions at once (ESTIMATED: tests plus depl
 | every dashboard call answers **500** / **503** | the API log (`password authentication failed`, `timeout`) | run the workflow: the role check sets a new password when the stored one is refused |
 | a GitHub delivery shows **503** `github_not_configured` | | section C is not finished (C5) |
 | a GitHub delivery shows **401** | the App's webhook secret vs `/fenvix/prod/github-app/webhook-secret` | make them equal (C1, C2), then redeliver |
-| a fenvix job stays **Queued**; the worker logs `the installation is not linked` / `no runner image yet` / `limit 4` | `/aws/lambda/fenvix-prod-github-app-worker` | link the installation from the dashboard / wait for the image build (EC2 Image Builder → Images) / 4 machines busy (retried for about an hour) |
+| a fenvix job stays **Queued**; the job's `dispatch_detail` (table `gh_jobs`) or the worker log says `the installation is not linked` / `no runner image yet` / a cap | `/aws/lambda/fenvix-prod-github-app-worker`, `-sweep` | link the installation from the dashboard / wait for the image build (EC2 Image Builder → Images) / the customer's or the region's cap is reached: the job waits in the database and gets the next free slot (the sweep, every minute) |
 | the dead-letter alarm fires | `/aws/lambda/fenvix-prod-github-app-worker` | the sweep already put each dead-lettered work message back once (at most every 15 minutes, G-1736); what is still there failed again after that, or is a failed schedule call. Fix the cause, then SQS → `fenvix-prod-github-app-dead-letters` → **Start DLQ redrive** |
+
+### Alarms: what each one means and what to do first (G-1765)
+
+Every alarm mails the address in the repository variable `FENVIX_ALARM_EMAIL` (topic `fenvix-prod-github-app-alerts`).
+Today the founder is the only person on call; the mail is the page. For each: open CloudWatch → Alarms → the alarm (its
+graph shows when), then the log group named here (CloudWatch → Log groups → **Search all log streams**, filter
+`{ ($.level = "error") || ($.level >= 50) }`), then the X-Ray traces of that function (CloudWatch → X-Ray traces) for slow
+calls. Write what happened, when it started, what you did and when it ended in a GitHub issue labelled `incident`.
+
+| Alarm (`fenvix-prod-github-app-…`) | What it means | First steps |
+|---|---|---|
+| `http-errors`, `http-logged-errors`, `http-throttles`, `api-5xx` | webhooks, machine calls or the dashboard got errors | log `/aws/lambda/fenvix-prod-github-app-http`. Database errors: the "500 / 503" row above. Throttles: many deliveries at once; GitHub retries nothing, the sweep asks GitHub again for failed deliveries (G-1771) |
+| `worker-errors`, `worker-logged-errors`, `worker-throttles` | queued work (webhooks, results) failed; it is retried 5 times, then dead-lettered | log `-worker`; a GitHub API error names the call. Fix, then the dead letters are redriven by the sweep |
+| `dead-letters` | work failed 5 times and once more after its redrive, or a schedule call failed | the dead-letter row above |
+| `sweep-errors`, `sweep-logged-errors` | the machine pool's minute fails: waiting jobs are not dispatched, idle machines not retired | log `-sweep`; EC2 errors name the call (`InsufficientInstanceCapacity`: AWS has no machines of that type; `VcpuLimitExceeded`: the quota, founder step 4). While it fails, check EC2 → Instances for machines tagged `fenvix:role = runner-pool` older than 6 hours: terminate them |
+| `warmup-errors`, `warmup-logged-errors` | the warm-up scheduler fails (warm-ups are off today) | log `-warmup` |
+| `api-errors`, `api-logged-errors` | the dashboard API fails | log `-api`; database errors: the "500 / 503" row above |
+| `cache-machine` | the shared cache machine fails its status checks: jobs cannot use the shared cache (how the engine behaves then is UNKNOWN until G-1742's check) | EC2 → Instances → the cache machine → **Instance state → Reboot**; if it stays failed, **Stop** then **Start** |
 
 ### Rotating a secret (AWS console → Systems Manager → Parameter Store)
 
@@ -453,9 +471,15 @@ Every function reloads its secrets every **5 minutes**, so a rotation needs no d
   between fail with 401 and can be redelivered.
 - **state-signing-key**: delete it and run the workflow. An install link made with the old key fails (ask for a new
   link).
-- **The App's private key or client secret:** generate a new one on the App's page, then Parameter Store →
-  `/fenvix/prod/github-app/private-key` (or `client-secret`) → **Edit** → paste → **Save changes**. The functions load
-  it within 5 minutes; no deploy needed.
+- **The App's private key** (G-2321; every 6 months, and at once if it may have leaked): GitHub accepts every key the
+  App has, so there is no gap. 1. The App's page (github.com → Settings → Developer settings → GitHub Apps → fenvix →
+  **General** → **Private keys**) → **Generate a private key** (a `.pem` downloads). 2. Parameter Store →
+  `/fenvix/prod/github-app/private-key` → **Edit** → paste the whole `.pem` → **Save changes**. 3. Wait **10 minutes**
+  (every function reloads within 5). 4. Back on the App's page, **Delete** the OLD key (the one not created today).
+  5. Delete the `.pem` from your computer. If something fails after step 4, the new key is not in SSM: redo step 2.
+- **The App's client secret:** generate a new one on the App's page, then Parameter Store →
+  `/fenvix/prod/github-app/client-secret` → **Edit** → paste → **Save changes**, wait 10 minutes, delete the old one on
+  the App's page.
 - **Cache signing key:** delete `/fenvix/prod/cache/signing-public-key` and run the workflow: a new pair is made, the
   cache machine is replaced and the shared cache starts empty.
 - **Supabase's database password** (the one in `supabase-db-url`): reset it in Supabase, then Parameter Store →

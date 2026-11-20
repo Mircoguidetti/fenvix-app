@@ -157,4 +157,15 @@ describe("workflows: who may ask GitHub for the AWS deploy token", () => {
     assert.deepEqual(w.permissions, { contents: "read" });
     for (const [n, j] of Object.entries(jobsOf(w))) assert.equal(j.uses, undefined, `test.yml: job ${n} calls a workflow`);
   });
+
+  it("dependencies (G-2287, G-2328): CI audits all four lock files, build tools included; Dependabot proposes updates for them and the actions", () => {
+    const steps = (jobsOf(parse("test.yml")).test?.steps ?? Object.values(jobsOf(parse("test.yml")))[0]!.steps) as Obj[];
+    const audit = String(steps.find((x) => String(x.name).startsWith("Dependency audit"))!.run);
+    assert.match(audit, /for d in \. github-app deploy infra\/github-app; do/);
+    assert.match(audit, /npm audit --audit-level=high/);
+    assert.doesNotMatch(audit, /--omit=dev/, "the build and deploy tools are audited too");
+    const dep = YAML.parse(readFileSync(new URL("../dependabot.yml", dir), "utf8")) as { updates: { "package-ecosystem": string; directories?: string[] }[] };
+    assert.deepEqual(dep.updates.find((u) => u["package-ecosystem"] === "npm")!.directories, ["/", "/github-app", "/deploy", "/infra/github-app"]);
+    assert.ok(dep.updates.some((u) => u["package-ecosystem"] === "github-actions"));
+  });
 });

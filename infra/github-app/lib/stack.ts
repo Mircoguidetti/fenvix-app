@@ -102,9 +102,11 @@ export class FenvixGitHubAppStack extends Stack {
       DASHBOARD_URL: s.dashboardUrl, SUPABASE_URL: s.supabaseUrl, FENVIX_RUNS_ON: s.runsOnLabel,
       SUMMARY_WAIT_SECONDS: String(s.summaryWaitSeconds), SWEEP_SECONDS: "0", DB_POOL_MAX: "2", OVERFLOW_BUCKET: overflow.bucketName,
     };
+    const logGroups: Record<string, logs.ILogGroup> = {};
     const fn = (id: string, entry: string, o: { timeout: Duration; memory: number; extraEnv?: Record<string, string>; reads: string[]; description: string; baseEnv?: Record<string, string>; short?: string }) => {
       const short = o.short ?? id.toLowerCase();
       const logGroup = new logs.LogGroup(this, `${id}Logs`, { logGroupName: `/aws/lambda/${name(short)}`, retention: s.logRetentionDays, removalPolicy: RemovalPolicy.RETAIN });
+      logGroups[id] = logGroup;
       // Own role, no managed policy: write to its own log group, read its own parameters.
       const role = new iam.Role(this, `${id}Role`, { assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"), description: `fenvix GitHub App: ${id} function` });
       role.addToPolicy(new iam.PolicyStatement({ sid: "OwnLogGroup", actions: ["logs:CreateLogStream", "logs:PutLogEvents"], resources: [logGroup.logGroupArn, `${logGroup.logGroupArn}:*`] }));
@@ -122,6 +124,8 @@ export class FenvixGitHubAppStack extends Stack {
         timeout: o.timeout,
         role,
         logGroup,
+        // X-Ray (G-1762): each invocation's time in Lambda, SSM, SQS and the rest, in the X-Ray console.
+        tracing: lambda.Tracing.ACTIVE,
         environment: { ...(o.baseEnv ?? env), ...(o.extraEnv ?? {}) },
         bundling: {
           format: OutputFormat.ESM,
@@ -363,6 +367,20 @@ export class FenvixGitHubAppStack extends Stack {
       metric: f.metricErrors({ period: Duration.minutes(5), statistic: "Sum" }), threshold: 0,
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     }));
+    // Error reporting (G-1762): an error the code logged (and handled: no failed invocation) is mailed too. The App's
+    // logger writes level "error", Fastify's level 50.
+    const loggedErrorsOf = (id: string, fnId: string, what: string) => {
+      const mf = new logs.MetricFilter(this, `${id}LoggedErrors`, {
+        logGroup: logGroups[fnId]!, metricNamespace: "fenvix", metricName: `${id}LoggedErrors`, metricValue: "1", defaultValue: 0,
+        filterPattern: logs.FilterPattern.any(logs.FilterPattern.stringValue("$.level", "=", "error"), logs.FilterPattern.numberValue("$.level", ">=", 50)),
+      });
+      alarms.push(new cloudwatch.Alarm(this, `${id}LoggedErrorsAlarm`, {
+        alarmName: name(`${id.toLowerCase()}-logged-errors`), alarmDescription: `The ${what} function logged an error: its log group, filter level = error or level >= 50 (docs/DEPLOY-AWS.md, 'When something fails').`,
+        metric: mf.metric({ period: Duration.minutes(5), statistic: "Sum" }), threshold: 0,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      }));
+    };
+    for (const [id, fnId, what] of [["Http", "Http", "HTTP"], ["Worker", "Worker", "worker"], ["Sweep", "Sweep", "sweep"], ["Warmup", "Warmup", "warm-up scheduler"], ["Api", "DashboardApi", "dashboard API"]] as const) loggedErrorsOf(id, fnId, what);
     errorsOf("Http", http, "HTTP (webhooks, machines' hello and poll)");
     errorsOf("Worker", worker, "worker (dispatcher)");
     errorsOf("Sweep", sweep, "sweep (the machine pool's minute)");

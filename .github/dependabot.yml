@@ -1,0 +1,13 @@
+# Update proposals as pull requests (G-2287, G-2328): the npm packages of the four lock files and the pinned actions.
+# Each proposal goes through the Tests workflow like any pull request; nothing is merged or deployed by Dependabot.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directories: ["/", "/github-app", "/deploy", "/infra/github-app"]
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch: { update-types: [minor, patch] }
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: { interval: weekly }
