@@ -34,6 +34,13 @@ pubblica per costruzione (finisce comunque nel browser di chiunque apra il sito)
 
 ## Passi
 
+> **Il progetto Vercel esiste già** (`fenvix-app`, nel team Vercel `fenvix`: costruisce già le anteprime dei pull
+> request). Allora **salta i passi 1-3**: apri <https://vercel.com/fenvix/fenvix-app> → **Settings** → **Environment
+> Variables** e controlla che ci siano `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (tutti gli
+> ambienti) con i valori della tabella sopra; aggiungi quelli che mancano, poi continua dal passo 4 usando il progetto
+> `fenvix-app` dove sotto c'è scritto `fenvix-console`. Controlla anche **Settings** → **Build and Deployment**: i
+> campi Build Command, Output Directory e Install Command devono essere vuoti o senza **Override** (decide `vercel.json`).
+
 1. **Crea l'account Vercel.** Vai su <https://vercel.com/signup> → scegli **Hobby** → **Continue with GitHub** → accedi
    con il tuo account GitHub (Mircoguidetti) → **Authorize Vercel**. Se hai già un account Vercel, accedi e basta.
 
