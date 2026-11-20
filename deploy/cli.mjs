@@ -49,9 +49,10 @@ const ZONE = process.env.FENVIX_DNS_ZONE || "fenvix.dev";
 const API_DOMAIN = CDK.domainName;
 /**
  * Names the API answered on before; the dns step removes their CNAME while it still points at API Gateway (so nothing
- * dangles), and leaves them alone otherwise. github.<zone> until 2026-11-20 (P-037).
+ * dangles), and leaves them alone otherwise. github.<zone> until 2026-11-20 (P-037); prod only: a staging deploy
+ * (FENVIX_ENV, its own domainName) never touches it.
  */
-const RETIRED_API_DOMAINS = [`github.${ZONE}`].filter((d) => d !== CDK.domainName);
+const RETIRED_API_DOMAINS = ENV === "prod" ? [`github.${ZONE}`].filter((d) => d !== API_DOMAIN) : []; // prod's old name only
 const API_GATEWAY_TARGET = /\.execute-api\.[a-z0-9-]+\.amazonaws\.com$/;
 const APP_DOMAIN = CDK.dashboardDomain;
 const local = process.env.FENVIX_DEPLOY_LOCAL_DB === "1";
