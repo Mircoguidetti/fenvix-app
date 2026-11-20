@@ -31,6 +31,8 @@ export interface Config {
   privateKey: KeyObject;
   /** The webhook secret set on the App. Secret. */
   webhookSecret: string;
+  /** During a rotation (G-2322): deliveries signed with the previous secret are still accepted. */
+  webhookSecretPrevious: string;
   /** OAuth client of the App, used once per installation to confirm who installed it. The secret is a secret. */
   clientId: string;
   clientSecret: string;
@@ -194,6 +196,7 @@ export function loadConfig(env: Env = process.env, opts: { surface?: "all" | "wo
     appSlug,
     privateKey: parsePrivateKey(secret(env, "GITHUB_APP_PRIVATE_KEY")),
     webhookSecret: http ? secret(env, "GITHUB_WEBHOOK_SECRET", { required: true, minLength: 20 }) : "",
+    webhookSecretPrevious: http ? secret(env, "GITHUB_WEBHOOK_SECRET_PREVIOUS", { required: false }) : "",
     clientId: required(env, "GITHUB_CLIENT_ID"),
     clientSecret: http ? secret(env, "GITHUB_CLIENT_SECRET") : "",
     apiUrl: httpsUrl(env, "GITHUB_API_URL", "https://api.github.com", nodeEnv),

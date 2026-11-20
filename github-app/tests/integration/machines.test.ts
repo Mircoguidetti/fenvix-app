@@ -53,7 +53,7 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
   before(async () => {
     admin = await resetDb();
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-    await h.start({ CACHE_SIGNING_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString() }, { launcher: (db: Db) => {
+    await h.start({ CACHE_SIGNING_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(), GITHUB_WEBHOOK_SECRET_PREVIOUS: "previous-webhook-secret-0123456789" }, { launcher: (db: Db) => {
       pool = new MachinePool(db, driver, POOL, { keys: ["runner-token-for-tests-0123456789abcdef"], apiUrl: API, machineEnv, regions: ["eu"] });
       return new PoolLauncher(pool, machineEnv);
     } });
@@ -410,6 +410,17 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
     assert.deepEqual(h.gh.redeliveryRequests, [501]);
     assert.equal(await h.app.service.redeliverFailed(), 0, "asked once only");
     assert.deepEqual(h.gh.redeliveryRequests, [501]);
+  });
+
+  it("webhook secret rotation (G-2322): a delivery signed with the previous secret is accepted; with any other, 401", async () => {
+    const ping = { zen: "Design for failure.", hook_id: 1 };
+    assert.equal((await h.send("ping", ping, { secret: "previous-webhook-secret-0123456789" })).statusCode, 200);
+    assert.equal((await h.send("ping", ping, { secret: "some-other-secret-0123456789abc" })).statusCode, 401);
+  });
+
+  it("/readyz: 200 when the database answers (G-1707: the deploy's smoke test)", async () => {
+    const r = await h.app.fastify.inject({ method: "GET", url: "/readyz" });
+    assert.deepEqual([r.statusCode, r.json()], [200, { ok: true, database: true }]);
   });
 
   it("machine API input: a bad body is 400, a missing credential 401", async () => {

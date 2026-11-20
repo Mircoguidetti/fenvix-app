@@ -55,3 +55,29 @@ describe("our machines: settings, sealed leases, machine credentials, stop", () 
     assert.throws(() => parseWork({ kind: "replay", runId: id, testId: "", times: 5 }), /not a work message/);
   });
 });
+
+describe("failure text is redacted before it is stored (G-1787)", () => {
+  it("tokens, keys, credentials in URLs, key=value secrets, private keys, JWTs and e-mails go; the rest stays", async () => {
+    const { redact } = await import("../../src/results/redact.ts");
+    const { parseResults } = await import("../../src/results/runner-records.ts");
+    const msg = [
+      "AssertionError: login failed for alice@example.com",
+      "token ghp_" + "a".repeat(36) + " and AKIAABCDEFGHIJKLMNOP",
+      "db postgresql://app:hunter2@db.internal:5432/x",
+      "headers {'Authorization': 'Bearer abcdefghijklmnopqrstuvwxyz'}",
+      "password=s3cretValue api_key: \"k-123456789\"",
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----",
+      "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+      "expected 3 == 4 at tests/test_x.py:12",
+    ].join("\n");
+    const r = redact(msg);
+    for (const leak of ["alice@example.com", "ghp_aaaa", "AKIAABCDEFGHIJKLMNOP", "hunter2", "abcdefghijklmnopqrstuvwxyz", "s3cretValue", "k-123456789", "MIIEow", "eyJhbGci"]) {
+      assert.ok(!r.includes(leak), `${leak} leaked: ${r}`);
+    }
+    assert.match(r, /expected 3 == 4 at tests\/test_x\.py:12/);
+    assert.match(r, /postgresql:\/\/app:\[redacted\]@db\.internal/);
+    // Applied where the runner's records are read: per-test failures.
+    const rec = parseResults({ runId: 1, chunk: 0, chunks: 1, tests: [{ testId: "t", outcome: "failed", durationMs: 1, failure: { kind: "real", message: "token ghs_" + "b".repeat(36) } }] });
+    assert.equal(rec.tests![0]!.failure!.message, "token [redacted GitHub token]");
+  });
+});

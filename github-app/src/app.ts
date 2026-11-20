@@ -102,6 +102,15 @@ export async function buildApp(deps: Deps): Promise<App> {
   };
 
   fastify.get("/healthz", async () => ({ ok: true }));
+  // Ready: the secrets loaded (this function started) AND the database answers (G-1707: the deploy's smoke test reads it).
+  fastify.get("/readyz", async (_req, reply) => {
+    try {
+      await db.q("select 1");
+      return { ok: true, database: true };
+    } catch {
+      return reply.code(503).send({ ok: false, database: false });
+    }
+  });
 
   // ---------------------------------------------------------------- our machines: hello, poll, events
   // src/machines/pool.ts. A machine boots with a single-use boot secret, exchanges it for its session credential, then
@@ -157,7 +166,8 @@ export async function buildApp(deps: Deps): Promise<App> {
     const event = String(req.headers["x-github-event"] ?? "");
     const delivery = String(req.headers["x-github-delivery"] ?? "");
     if (!req.rawBody) return fail(reply, 415, "unsupported_media_type", "Set the webhook's content type to application/json.");
-    if (!verifySignature(cfg.webhookSecret, req.rawBody, req.headers["x-hub-signature-256"] as string | undefined)) {
+    const sig = req.headers["x-hub-signature-256"] as string | undefined;
+    if (!verifySignature(cfg.webhookSecret, req.rawBody, sig) && !(cfg.webhookSecretPrevious && verifySignature(cfg.webhookSecretPrevious, req.rawBody, sig))) {
       return fail(reply, 401, "bad_signature", "The X-Hub-Signature-256 header does not match the body.");
     }
     if (!event || !delivery || delivery.length > 100) return fail(reply, 400, "bad_request", "X-GitHub-Event and X-GitHub-Delivery are required.");

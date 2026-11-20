@@ -58,9 +58,10 @@ Vite bakes these in when it builds, so change them and build again. If one of `V
 
 ## Set up Supabase
 
-1. **Create the schema.** Supabase dashboard → SQL editor → New query. Run every file in `supabase/migrations/` in
-   order, `0001` to `0014`. 0011 holds the CI dashboard's tables and plans; 0014 removes the earlier product's tables
-   and must run after all the others.
+1. **The schema.** In production the deploy pipeline applies `supabase/migrations/` (step 2 of `.github/workflows/deploy.yml`,
+   `node deploy/cli.mjs migrate`): every file once, in order, recorded as applied; a changed or out-of-order file stops
+   the deploy (docs/DEPLOY-AWS.md). Never paste migrations into the production SQL editor. For a scratch or local
+   project only, `bash scripts/local-supabase/up.sh` applies them the same way.
 2. **Auth URLs.** Authentication → URL Configuration. Set *Site URL* to the production address and add
    every address the app is served from to *Redirect URLs*, each with a trailing slash: for example
    `https://console.fenvix.dev/` and `http://localhost:5173/`. Vercel previews build with `VITE_DATA_BACKEND=mock`
@@ -118,7 +119,7 @@ After a provider or email sign-in the user lands on `/overview`, not on the page
 | `npm run check` | Builds with the mock and serves it, then: behaviour checks on desktop and phone (`scripts/checks.mjs`: every page, the trial gate met and not met, the live run view and that its polling stops once the run finishes or the page is hidden, the Connect flow and each `?github=` return, audit reruns, units, billing, region for owners, API keys coming soon), organization checks (`scripts/orgs-checks.mjs`: members see the region and everything else read-only, invitations), status colours (`scripts/status-colors-checks.mjs`), and the screenshots with axe and layout checks (`scripts/screenshots.mjs`) | Playwright and Chromium |
 | `npm run screenshots` | Every page at 1440 and 390 px, light and dark, into `docs/screenshots/` | a preview server on :4173 |
 | `node scripts/ui-shots.mjs` | Every page at six widths: no sideways scroll, 44 px touch targets on a phone, axe | a preview server on :4173 |
-| `npm run test:rls` | Runs the migrations twice each and the row level security tests in `supabase/tests/` | A scratch Postgres 15+ |
+| `npm run test:rls` | Applies the migrations to a scratch database (0001-0013 once, 0014 and later twice each: they must be safe to repeat) and runs the row level security tests in `supabase/tests/` | A scratch Postgres 15+ |
 
 `npm run test:rls` takes `TEST_DATABASE_URL`, the address of an **empty, disposable** Postgres database, for example:
 

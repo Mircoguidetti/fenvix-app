@@ -25,6 +25,8 @@ export function notConfiguredHttp(logLevel = "info"): { fastify: FastifyInstance
   fastify.removeAllContentTypeParsers();
   fastify.addContentTypeParser("*", (_req, _payload, done) => done(null, undefined));
   fastify.get("/healthz", async () => ({ ok: true, github: "not_configured" }));
+  // Not ready for GitHub (no App yet); the deploy's smoke test accepts exactly this answer.
+  fastify.get("/readyz", async (_req, reply) => reply.code(503).send({ ok: false, github: "not_configured" }));
   fastify.setNotFoundHandler(async (_req, reply) => reply.code(503).header("retry-after", "3600").send({ error: { code: NOT_CONFIGURED_CODE, message: NOT_CONFIGURED_MESSAGE } }));
   return { fastify, close: () => fastify.close() };
 }

@@ -201,7 +201,7 @@ jobs:
             states="$(status)"
             case "$states" in
               *AVAILABLE*) echo "machine image $ver (engine $engine): available" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0 ;;
-              *FAILED*|*CANCELLED*) [ -n "$(printf '%s' "$states" | grep -Eo 'PENDING|CREATING|BUILDING|TESTING|DISTRIBUTING|INTEGRATING')" ] || {
+              *FAILED*|*CANCELLED*) printf '%s' "$states" | grep -Eq 'PENDING|CREATING|BUILDING|TESTING|DISTRIBUTING|INTEGRATING' || {
                 echo "::error::machine image $ver failed ($states): see the Image Builder log; the previous image stays in use"; exit 1; } ;;
             esac
             sleep 60

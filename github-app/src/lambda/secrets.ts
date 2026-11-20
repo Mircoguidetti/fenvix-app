@@ -7,6 +7,7 @@ import { GetParametersCommand, type SSMClient } from "@aws-sdk/client-ssm";
  *   <prefix>/database-url            GITHUB_APP_DATABASE_URL   all functions
  *   <prefix>/private-key             GITHUB_APP_PRIVATE_KEY    all functions
  *   <prefix>/webhook-secret          GITHUB_WEBHOOK_SECRET     HTTP only
+ *   <prefix>/webhook-secret-previous GITHUB_WEBHOOK_SECRET_PREVIOUS  HTTP only, optional (during a rotation)
  *   <prefix>/client-secret           GITHUB_CLIENT_SECRET      HTTP only
  *   <prefix>/state-signing-key       STATE_SIGNING_KEY         HTTP and the dashboard API (signs the install link)
  *   <prefix>/runner-token            RUNNER_TOKEN              HTTP (verifies), the per-job worker and the demo
@@ -34,6 +35,7 @@ export const SECRET_PARAMETERS: Record<string, { env: string; surfaces: Surface[
   "database-url": { env: "GITHUB_APP_DATABASE_URL", surfaces: ["all", "launcher", "worker"], required: true },
   "private-key": { env: "GITHUB_APP_PRIVATE_KEY", surfaces: ["all", "launcher", "worker"], required: true },
   "webhook-secret": { env: "GITHUB_WEBHOOK_SECRET", surfaces: ["all"], required: true },
+  "webhook-secret-previous": { env: "GITHUB_WEBHOOK_SECRET_PREVIOUS", surfaces: ["all"], required: false },
   "client-secret": { env: "GITHUB_CLIENT_SECRET", surfaces: ["all"], required: true },
   "state-signing-key": { env: "STATE_SIGNING_KEY", surfaces: ["all", "api"], required: true },
   "runner-token": { env: "RUNNER_TOKEN", surfaces: ["all", "launcher"], required: true },

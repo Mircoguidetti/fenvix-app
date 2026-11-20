@@ -40,6 +40,13 @@ jobs:
           (cd github-app && npm ci --no-audit --no-fund)
           (cd infra/github-app && npm ci --no-audit --no-fund)
           (cd deploy && npm ci --no-audit --no-fund)
+      # Known advisories in what ships (production dependencies), high or critical, fail the run (G-2287).
+      - name: Dependency audit (production dependencies)
+        run: |
+          npm audit --omit=dev --audit-level=high
+          (cd github-app && npm audit --omit=dev --audit-level=high)
+          (cd deploy && npm audit --omit=dev --audit-level=high)
+          (cd infra/github-app && npm audit --omit=dev --audit-level=high)
       - name: Lint this workflow (actionlint)
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
       - name: The one-click AWS template matches the policy files

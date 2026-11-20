@@ -1,3 +1,4 @@
+import { redact } from "./redact.ts";
 /**
  * What fenvix machines send besides the run summary (openapi/fenvix-api.yaml, tag `runner`; docs/data-contract.md
  * "What the runner sends"): live progress, per-test results in chunks, and nightly explorations. The request schemas
@@ -173,7 +174,7 @@ function failure(v: unknown, path: string): RunnerFailure {
     kind: oneOf(need(o, "kind", path), at(path, "kind"), ["real", "flaky_defect"] as const),
     phase: opt(o, "phase", path, (x, p) => text(x, p)),
     exceptionType: opt(o, "exceptionType", path, (x, p) => text(x, p)),
-    message: opt(o, "message", path, (x, p) => text(x, p, 4000)),
+    message: opt(o, "message", path, (x, p) => redact(text(x, p, 4000))),
     location: opt(o, "location", path, (x, p) => text(x, p)),
     defectFingerprint: opt(o, "defectFingerprint", path, (x, p) => text(x, p, undefined, HEX32)),
   });
@@ -227,6 +228,7 @@ export function parseDefect(v: unknown, path: string): RunnerDefect {
   const rp = at(path, "replay");
   const exception = fields(["type", "phase", "message", "location"])(need(o, "exception", path), at(path, "exception"));
   if (exception.message.length > 4000) throw new RecordError(at(path, "exception.message"), "must be at most 4000 characters");
+  exception.message = redact(exception.message);
   return def({
     testId: text(need(o, "testId", path), at(path, "testId"), 2000),
     status: oneOf(need(o, "status", path), at(path, "status"), ["reproduced", "replay_unstable"] as const),
@@ -246,7 +248,7 @@ export function parseDefect(v: unknown, path: string): RunnerDefect {
     exception,
     divergence: opt(o, "divergence", path, orNull((x, p) => {
       const d = obj(x, p);
-      return { index: int(need(d, "index", p), at(p, "index")), reason: text(need(d, "reason", p), at(p, "reason")), description: text(need(d, "description", p), at(p, "description")) };
+      return { index: int(need(d, "index", p), at(p, "index")), reason: text(need(d, "reason", p), at(p, "reason")), description: redact(text(need(d, "description", p), at(p, "description"))) };
     })),
     engineVersion: opt(o, "engineVersion", path, (x, p) => text(x, p)),
     language: opt(o, "language", path, (x, p) => oneOf(x, p, ["python", "node"] as const)),
