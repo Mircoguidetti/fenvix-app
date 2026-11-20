@@ -76,6 +76,10 @@
             "c6i.xlarge",
             "m6i.large",
             "m6i.xlarge",
+            "c7a.large",
+            "c7a.xlarge",
+            "c7a.2xlarge",
+            "c7a.4xlarge",
             "t4g.nano",
             "t4g.micro",
             "t4g.small"

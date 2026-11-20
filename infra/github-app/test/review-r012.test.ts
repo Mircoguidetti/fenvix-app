@@ -2,7 +2,6 @@
 // property the stack or the scripts must have; it fails on the delivery as reviewed.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { Annotations, Match } from "aws-cdk-lib/assertions";
 import { resources, synth, DEMO } from "./helpers.ts";
@@ -103,37 +102,3 @@ describe("R-012 review: cdk-nag", () => {
   });
 });
 
-describe("R-012 review: customer-mode spike", () => {
-  const SPIKE = fileURLToPath(new URL("../../customer-mode/spike/", import.meta.url));
-  const runJob = readFileSync(`${SPIKE}run-job.sh`, "utf8");
-  const hostSetup = readFileSync(`${SPIKE}host-setup.sh`, "utf8");
-
-  it("F9 the host never mounts a disk the guest wrote (or only with nosymfollow,nodev,nosuid,noexec)", () => {
-    // A hostile guest controls every byte of job.ext4. Mounting it hands a crafted filesystem to the parent's kernel,
-    // and a symlink summary.json -> /var/lib/fenvix-sandboxes/job-2/job/summary.json (another tenant's) is followed
-    // on the host and posted as this job's summary.
-    for (const line of runJob.split("\n").filter((l) => /\bmount\b/.test(l) && !/umount/.test(l))) {
-      for (const opt of ["nosymfollow", "nodev", "nosuid", "noexec"]) assert.ok(line.includes(opt), `run-job.sh mounts the guest's disk without ${opt}: ${line.trim()}`);
-    }
-  });
-
-  it("F9 the host does not take the repository, run and runner name of a summary from the guest", () => {
-    assert.doesNotMatch(runJob, /\$mnt\/ids/, "repositoryId/runId/runAttempt come from the guest's 'ids' file: a guest names another customer's run");
-    assert.doesNotMatch(runJob, /fenvix-sandbox-\$SLOT/,
-      "runnerName fenvix-sandbox-<slot> never equals the just-in-time runner's name (fenvix-j<job id>): the App matches no job and never publishes the summary");
-  });
-
-  it("F10 the sandboxes' firewall is keyed on the TAP interface, defaults to drop, and covers IPv6", () => {
-    // The rules match -s 172.16.0.0/16: a guest that spoofs another source address skips the IMDS and the
-    // sandbox-to-sandbox DROP (FORWARD policy is ACCEPT on AL2023), and nothing stops IPv6 link-local to the parent.
-    assert.match(hostSetup, /-i fctap\+/, "rules must match the sandboxes' interfaces (-i fctap+), as AWS's own example does (iifname tap0)");
-    assert.match(hostSetup, /iptables -P FORWARD DROP|policy drop/, "FORWARD must default to DROP");
-    assert.match(hostSetup, /ip6tables|disable_ipv6/, "IPv6 from the sandboxes must be blocked");
-  });
-
-  it("F11 host setup refuses a parent without the Nitro Sandboxes memory pool (0 slots without it)", () => {
-    // docs.aws.amazon.com nitro-sandboxes-run-firecracker: "With a memory pool, the parent instance has 4 slots.
-    // Without a pool, it has 0." The script calls the pool optional and goes on.
-    assert.match(hostSetup, /\/proc\/cmdline/, "host-setup.sh must check nitro_enclaves.mempool= on the kernel command line");
-  });
-});

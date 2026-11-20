@@ -95,14 +95,59 @@
       "Action": [
         "ec2:RunInstances",
         "ec2:CreateTags",
-        "ec2:TerminateInstances",
         "ec2:DescribeInstances",
-        "ec2:DescribeImages"
+        "ec2:DescribeImages",
+        "ec2:DescribeSpotPriceHistory"
       ],
       "Resource": "*",
       "Condition": {
         "StringEquals": {
           "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "RunnerMachineLifecycle",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:TerminateInstances",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:ModifyInstanceAttribute"
+      ],
+      "Resource": "arn:aws:ec2:eu-west-1:865859654353:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        },
+        "StringLike": {
+          "aws:ResourceTag/fenvix:role": "runner-*"
+        }
+      }
+    },
+    {
+      "Sid": "RunnerMachineSizesOnly",
+      "Effect": "Deny",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:eu-west-1:865859654353:instance/*",
+      "Condition": {
+        "StringNotEquals": {
+          "ec2:InstanceType": [
+            "t3.medium",
+            "t3.large",
+            "t3.xlarge",
+            "c6i.large",
+            "c6i.xlarge",
+            "m6i.large",
+            "m6i.xlarge",
+            "c7a.large",
+            "c7a.xlarge",
+            "c7a.2xlarge",
+            "c7a.4xlarge",
+            "t4g.nano",
+            "t4g.micro",
+            "t4g.small"
+          ]
         }
       }
     },

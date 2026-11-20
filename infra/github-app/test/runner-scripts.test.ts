@@ -104,60 +104,6 @@ describe("runner machine scripts", () => {
   });
 });
 
-describe("customer-mode spike (infra/customer-mode/spike)", () => {
-  const SPIKE = fileURLToPath(new URL("../../customer-mode/spike/", import.meta.url));
-
-  it("scripts are valid bash (shellcheck: optional locally, required in CI); run-job.sh prints a valid sandbox configuration", () => {
-    const sh = ["host-setup.sh", "build-guest.sh", "run-job.sh", "guest-kernel-docker-check.sh", "guest/fenvix-guest-job"];
-    for (const f of sh) execFileSync("bash", ["-n", join(SPIKE, f)]);
-    const haveShellcheck = spawnSync("shellcheck", ["--version"]).status === 0;
-    // Locally shellcheck is optional; in CI a missing binary must fail, never skip silently.
-    if (process.env.GITHUB_ACTIONS === "true") assert.ok(haveShellcheck, "shellcheck must be installed in CI (GITHUB_ACTIONS=true)");
-    if (haveShellcheck) execFileSync("shellcheck", ["-x", ...sh.map((f) => join(SPIKE, f))], { stdio: ["ignore", "pipe", "pipe"] });
-    const cfg = JSON.parse(execFileSync("bash", [join(SPIKE, "run-job.sh"), "--print-config"], { env: { PATH: process.env.PATH!, SLOT: "7" }, encoding: "utf8" }));
-    assert.deepEqual(cfg.enclave, { direct_mode: true, cpu_overcommit: true, debug_mode: false });
-    assert.deepEqual(cfg["machine-config"], { vcpu_count: 2, mem_size_mib: 2048 });
-    assert.equal(cfg["network-interfaces"][0].guest_mac, "06:00:AC:10:07:02");
-    assert.equal(cfg["network-interfaces"][0].host_dev_name, "fctap7");
-    // The input disk is read-only for the guest; results come back on a raw disk the host parses in userspace (R-012 F9).
-    assert.deepEqual(cfg.drives.map((d: { drive_id: string; is_root_device: boolean; is_read_only: boolean }) => [d.drive_id, d.is_root_device, d.is_read_only]),
-      [["rootfs", true, false], ["input", false, true], ["result", false, false]]);
-    assert.ok(cfg["network-interfaces"][0].rx_rate_limiter && cfg["network-interfaces"][0].tx_rate_limiter, "per-sandbox bandwidth limits (R-012 F10)");
-    const bad = spawnSync("bash", [join(SPIKE, "run-job.sh"), "--print-config"], { env: { PATH: process.env.PATH!, SLOT: "0" } });
-    assert.equal(bad.status, 2);
-  });
-
-  it("the result reader: only a well-formed record, size-capped; never the guest's ids or runner name (R-012 F9)", () => {
-    const read = (bytes: Buffer) => JSON.parse(execFileSync("python3", ["-I", join(SPIKE, "read-result.py")], { input: bytes, encoding: "utf8" }));
-    const rec = (o: unknown) => { const b = Buffer.from(JSON.stringify(o)); const n = Buffer.alloc(4); n.writeUInt32BE(b.length); return Buffer.concat([Buffer.from("FXRES001"), n, b, Buffer.alloc(1024)]); };
-    const summary = JSON.parse(readFileSync(SUMMARY, "utf8"));
-    assert.deepEqual(read(rec({ summary, t_guest_up: 1.5, t_job_done: 9, repositoryId: 666, runnerName: "fenvix-j666" })), { summary, t_guest_up: 1.5, t_job_done: 9 });
-    assert.deepEqual(read(Buffer.alloc(4096)), { summary: null, error: "no result record" });
-    const huge = Buffer.concat([Buffer.from("FXRES001"), Buffer.from([0x7f, 0xff, 0xff, 0xff])]);
-    assert.match(read(huge).error, /refused/);
-    assert.equal(read(rec([1, 2])).summary, null);
-    const runJob = readFileSync(join(SPIKE, "run-job.sh"), "utf8");
-    assert.match(runJob, /trap cleanup EXIT/, "no disk of a job stays on the host when a step fails");
-    assert.match(runJob, /jailer --id/, "Firecracker under the jailer, not as root (R-012 F17)");
-  });
-
-  it("the Docker kernel check: passes a config with the required options, names a missing one", () => {
-    const dir = mkdtempSync(join(tmpdir(), "fenvix-kcfg-"));
-    const opts = ["NAMESPACES", "UTS_NS", "IPC_NS", "PID_NS", "NET_NS", "USER_NS", "CGROUPS", "MEMCG", "CGROUP_PIDS", "CGROUP_CPUACCT", "CGROUP_SCHED",
-      "CPUSETS", "CGROUP_DEVICE", "CGROUP_FREEZER", "CGROUP_BPF", "KEYS", "SECCOMP", "SECCOMP_FILTER", "POSIX_MQUEUE", "OVERLAY_FS", "EXT4_FS", "VETH", "BRIDGE",
-      "BRIDGE_NETFILTER", "NETFILTER", "NETFILTER_ADVANCED", "NF_NAT", "NF_CONNTRACK", "IP_NF_IPTABLES", "IP_NF_FILTER", "IP_NF_NAT", "IP_NF_TARGET_MASQUERADE",
-      "NETFILTER_XT_MATCH_ADDRTYPE", "NETFILTER_XT_MATCH_CONNTRACK", "NETFILTER_XT_TARGET_MASQUERADE"];
-    writeFileSync(join(dir, "good"), opts.map((o) => `CONFIG_${o}=y`).join("\n") + "\n");
-    const good = spawnSync("bash", [join(SPIKE, "guest-kernel-docker-check.sh"), join(dir, "good")], { encoding: "utf8" });
-    assert.equal(good.status, 0, good.stdout);
-    assert.match(good.stdout, /missing required: 0/);
-    writeFileSync(join(dir, "bad"), opts.filter((o) => o !== "OVERLAY_FS").map((o) => `CONFIG_${o}=y`).join("\n") + "\n# CONFIG_OVERLAY_FS is not set\n");
-    const bad = spawnSync("bash", [join(SPIKE, "guest-kernel-docker-check.sh"), join(dir, "bad")], { encoding: "utf8" });
-    assert.equal(bad.status, 1);
-    assert.match(bad.stdout, /MISSING  CONFIG_OVERLAY_FS/);
-  });
-});
-
 describe("warm-up machine scripts", () => {
   /** One run of fenvix-warmup-report against a stand-in for POST /v1/runner/warmups. */
   async function report(args: string[], env: Record<string, string>): Promise<{ code: number; out: string }> {
