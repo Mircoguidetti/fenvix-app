@@ -19,7 +19,7 @@ things outside this session block "DONE" as the founder defines it:
 2. **CI round on GitHub**: the tests are green locally (below); the pull request's CI run is what proves them in CI.
    It runs when the coordinator's PR check runs; I push once.
 3. **Founder settings** (the coordinator collects them): the DECIDE rows are decided (G-1631 built; G-0599, G-0618,
-   G-0625, G-1723, G-2299 out of scope; G-1726 with P-047), the App permission "Actions: Read and write" (needed for the Re-run button and for Stop to cancel the GitHub job; the
+   G-0625, G-1723, G-2299 out of scope; G-1726 done with P-047), the App permission "Actions: Read and write" (needed for the Re-run button and for Stop to cancel the GitHub job; the
    code works without it and says so), a mail provider credential (G-1756, G-2310), and the DNS record + certificate
    for `mcp.fenvix.dev` (infra/deploy: the MCP server answers at `https://api.fenvix.dev/v1/mcp` today).
 
@@ -69,12 +69,12 @@ things outside this session block "DONE" as the founder defines it:
 - **The bundle pull command** in the PR comment and the API now downloads `/v1/defects/{id}/bundle/download` (the
   bytes); `/bundle` answers the signed link since round 2, so the old command would have fed JSON to `tar`.
 - **Out of scope with the rule**: G-0599, G-0618, G-0625, G-1723, G-2299.
-- **G-1726**: proposal to P-047 (row above).
+- **G-1726**: agreed with P-047. They implemented the runner side; this branch implemented what the user is told (row above).
 
 ## Numbers
 
 - Tests, MEASURED on this branch, locally (`npm test` in `github-app`, local Postgres 16 + local Supabase from
-  `scripts/local-supabase/up.sh`, 2026-11-20): unit **141/141**, integration **206/206** (on `main`: 141 + 136 with the two local-Supabase API suites skipped,
+  `scripts/local-supabase/up.sh`, 2026-11-20): unit **141/141**, integration **207/207** (on `main`: 141 + 136 with the two local-Supabase API suites skipped,
   MEASURED the same way before any change). New: `backend.test.ts` (13 steps), `backend-gaps.test.ts` (23),
   `api-dashboard.test.ts` +1 test and +11 matrix rows.
 - Row level security, MEASURED: `npm run test:rls` 6/6 files OK on scratch Postgres 16, and `backend-rls.sql` OK on the
@@ -153,7 +153,7 @@ Status words: **FIXED** (with the regression test), **OUT OF SCOPE** (with the s
 | G-0598 | BLOCKED | The App exists (App ID 5846807, DECLARED in the task). A real-GitHub run needs P-047's machines. | — |
 | G-0599 | OUT OF SCOPE | GitHub Enterprise Server. Rule: go-live scope: github.com only, Linux x86_64 only, GitHub Actions only, jobs only on our machines, no billing (coordinator, 2026-11-20). | — |
 | G-1725 | FIXED | A 403 from `generate-jitconfig` gives an `action_required` check run naming the permission, no silent retries. | `backend-gaps.test.ts` "G-1725" |
-| G-1726 | HANDED TO P-047 | Decision (coordinator, 2026-11-20): least privilege. Organization installations use the organization permission "Self-hosted runners: Read and write"; repository "Administration: Read and write" is used only where GitHub offers nothing narrower (personal accounts), and the user is told at install. P-047 owns the runner code (`generate-jitconfig` in `github-app/src/service.ts`), so this branch does not change it, to avoid conflicting edits. Proposal sent to P-047 (2026-11-20): one fenvix runner group per repository (`POST /orgs/{org}/actions/runner-groups`, visibility `selected`, that repository only), then `POST /orgs/{org}/actions/runners/generate-jitconfig` into it, so no organization runner takes another repository's job; personal accounts keep the repository endpoint; the 403 check run names the permission for the account type; `docs/GITHUB-APP.md` lists both permissions. P-047 had not answered at push time; their report holds the outcome. | — |
+| G-1726 | FIXED (with P-047) | Decision (coordinator, 2026-11-20): least privilege. Agreed with P-047, who owns the runner code. **P-047** (claude/our-machines, PR #23, commit 10e9b33b): an organization installation with the organization permission "Self-hosted runners: Read and write" registers each job's runner through `POST /orgs/{org}/actions/runners/generate-jitconfig` into a runner group `fenvix-<repository id>` that only that repository can use (so no organization runner takes another repository's job). A personal account, or an organization without that permission, keeps the repository endpoint, which needs repository "Administration: Read and write". docs/GITHUB-APP.md section 2 lists both; their test is `machines.test.ts` "least privilege (G-1796, G-1726)". **P-048** (this branch): what the user is told. The onboarding pull request says which permission runs the machines and why (organization: Self-hosted runners, no Administration; personal account: Administration, because GitHub offers nothing narrower), and a refused runner registration gives a check run naming the permission for the account type. Founder action: add the organization permission in the App settings (the coordinator collects it). The dashboard's connect page wording is P-049's. | `backend-gaps.test.ts` "G-1725", "G-1726" |
 | G-1727 | FIXED | The GitHub client reads `retry-after` / `x-ratelimit-*`, waits up to 10 s once, else fails with when to retry. | `backend-gaps.test.ts` "G-1727" |
 | G-2293 | OPEN | No App manifest (MINOR); the missing-permission case is now visible (G-1725). | — |
 | G-2294 | OPEN | "All repositories" still needs a click per repository (MINOR). | — |

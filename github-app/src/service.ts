@@ -296,8 +296,9 @@ export class GitHubService {
   async onboard(repositoryId: number): Promise<OnboardingResult> {
     const [repo] = await this.db.q<RepoRow>("select * from gh_repositories where repository_id = $1", [repositoryId]);
     if (!repo) throw new Error(`repository ${repositoryId} is not known`);
+    const [inst] = await this.db.q<{ account_type: "User" | "Organization" | "Enterprise" }>("select account_type from gh_installations where installation_id = $1", [repo.installation_id]);
     const res = await onboardRepository(this.gh.installation(repo.installation_id), repo.full_name, {
-      label: this.s.runsOnLabel, branch: this.s.onboardingBranch, dashboardUrl: this.s.dashboardUrl,
+      label: this.s.runsOnLabel, branch: this.s.onboardingBranch, dashboardUrl: this.s.dashboardUrl, ...(inst ? { accountType: inst.account_type } : {}),
     });
     // A pull request that is already open (or merged) keeps its state when the repository is added again.
     await this.db.q(
@@ -814,7 +815,12 @@ export class GitHubService {
     // The installation has not accepted a permission the App needs (Administration: write, added after the first
     // installs): no retries into the dead-letter queue, but a check run that says what to accept (G-1725).
     if (jit.status === 403) {
-      await this.noMachine(jobId, "the fenvix GitHub App lacks the repository permission \"Administration: Read and write\" here; an owner of the account accepts the App's new permissions on GitHub (Settings → GitHub Apps → fenvix)");
+      // G-1726: the permission to name depends on the account (organization: Self-hosted runners; personal: Administration).
+      const [acct] = await this.db.q<{ account_type: string }>("select account_type from gh_installations where installation_id = $1", [installationId]);
+      const needs = acct?.account_type === "User"
+        ? "the repository permission \"Administration: Read and write\" (on a personal account GitHub offers nothing narrower to register a one-job runner)"
+        : "the organization permission \"Self-hosted runners: Read and write\" (or, without it, the repository permission \"Administration: Read and write\")";
+      await this.noMachine(jobId, `the fenvix GitHub App lacks ${needs} here; an owner of the account accepts the App's new permissions on GitHub (Settings → GitHub Apps → fenvix)`);
       return;
     }
     if (jit.status === 409) {

@@ -20,6 +20,19 @@ export interface OnboardingOptions {
   dashboardUrl: string;
   /** At most this many workflow files are read. */
   maxFiles?: number;
+  /** The installation's account type: the pull request says which GitHub permission runs its machines (G-1726). */
+  accountType?: "User" | "Organization" | "Enterprise";
+}
+
+/**
+ * G-1726, least privilege: why the App holds the permission it uses to register one runner per job. An organization:
+ * the organization permission "Self-hosted runners", in a runner group only this repository can use. A personal
+ * account: GitHub offers nothing narrower than the repository permission "Administration".
+ */
+export function permissionNote(accountType: OnboardingOptions["accountType"]): string {
+  return accountType === "User"
+    ? "**Permissions.** On a personal account, fenvix registers each job's machine as a one-job (just-in-time) runner of this repository. GitHub offers no narrower permission for that than the repository permission **Administration: Read and write**, which is why the fenvix App asks for it. fenvix uses it for nothing else."
+    : "**Permissions.** On an organization, fenvix registers each job's machine as a one-job (just-in-time) runner in a runner group that only this repository can use, with the organization permission **Self-hosted runners: Read and write**. It does not need the repository permission Administration for that.";
 }
 
 interface ContentFile { type: string; name: string; path: string; sha: string; content?: string; encoding?: string; size?: number }
@@ -27,7 +40,7 @@ interface ContentFile { type: string; name: string; path: string; sha: string; c
 const MAX_WORKFLOW_BYTES = 512 * 1024;
 
 /** The pull request body: what changes, the diff, what happens next, how to undo it. */
-export function pullRequestBody(o: { job: JobAnalysis; diff: string; others: JobAnalysis[]; label: string; dashboardUrl: string; note?: string }): string {
+export function pullRequestBody(o: { job: JobAnalysis; diff: string; others: JobAnalysis[]; label: string; dashboardUrl: string; note?: string; accountType?: OnboardingOptions["accountType"] }): string {
   const L = [
     `This pull request moves the test job \`${o.job.jobId}\` in \`${o.job.file}\` to fenvix machines: one line, \`runs-on: ${o.label}\`.`,
     "",
@@ -56,6 +69,8 @@ export function pullRequestBody(o: { job: JobAnalysis; diff: string; others: Job
     "",
     "Merge it when you are ready. The first run on fenvix starts cold; from the second run on, unchanged tests are skipped with proof.",
     `Runs, receipts and defects: ${o.dashboardUrl}/projects`,
+    "",
+    permissionNote(o.accountType),
     "",
     `To go back, change \`runs-on: ${o.label}\` back to the previous value.`,
     "",
@@ -169,7 +184,7 @@ export async function onboardRepository(gh: GitHubHttp, fullName: string, o: Onb
         branch: o.branch,
       },
     });
-    const body = pullRequestBody({ job, diff, others: choice.others, label: o.label, dashboardUrl: o.dashboardUrl, note: job.runsOn.ok ? job.runsOn.note : undefined });
+    const body = pullRequestBody({ job, diff, others: choice.others, label: o.label, dashboardUrl: o.dashboardUrl, note: job.runsOn.ok ? job.runsOn.note : undefined, accountType: o.accountType });
     const pr = await gh.request<{ number: number; html_url: string }>("POST", `${base}/pulls`, {
       body: { title: `Run the tests on fenvix (runs-on: ${o.label})`, head: o.branch, base: defaultBranch, body },
     });

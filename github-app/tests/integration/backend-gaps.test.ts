@@ -20,7 +20,7 @@ import { SessionVerifier } from "../../src/auth.ts";
 import { loadApiConfig } from "../../src/api/config.ts";
 import { type Api, buildApi } from "../../src/api/server.ts";
 import { rateLimitWait } from "../../src/github/client.ts";
-import { engineRuns } from "../../src/onboarding/onboard.ts";
+import { engineRuns, permissionNote } from "../../src/onboarding/onboard.ts";
 import { signSummaryCredential } from "../../src/runners/credentials.ts";
 import type { Region, RunnerLaunch, RunnerLauncher, TaskLaunch } from "../../src/runners/launcher.ts";
 import {
@@ -223,7 +223,8 @@ describe("service back-end: the audit rows, one regression test per family", () 
     await h.send("workflow_job", workflowJob("queued", { id: 96003, runId: 61003, sha, branch: "main" }));
     const check = [...shop().checkRuns.values()].find((c) => c.head_sha === sha)!;
     assert.deepEqual([check.conclusion, (check.output as Row).title], ["action_required", "No fenvix machine for this job"]);
-    assert.match(String((check.output as Row).summary), /Administration: Read and write/);
+    // G-1726: an organization's check run names the organization permission first.
+    assert.match(String((check.output as Row).summary), /organization permission "Self-hosted runners: Read and write" \(or, without it, the repository permission "Administration: Read and write"\)/);
     h.gh.extra.length = 0;
   });
 
@@ -234,6 +235,15 @@ describe("service back-end: the audit rows, one regression test per family", () 
     assert.equal(rateLimitWait(res(403, {})), null, "a 403 that is no rate limit");
     assert.equal(rateLimitWait(res(429, {})), 60);
     assert.equal(rateLimitWait(res(200, { "retry-after": "5" })), null);
+  });
+
+  it("G-1726: the onboarding pull request says which permission runs the machines: Self-hosted runners for an organization, Administration only for a personal account", () => {
+    assert.match(permissionNote("Organization"), /organization permission \*\*Self-hosted runners: Read and write\*\*.*does not need the repository permission Administration/);
+    assert.match(permissionNote("User"), /personal account.*no narrower permission.*\*\*Administration: Read and write\*\*/);
+    // The onboarding pull request the App opened on acme/shop (acme is an organization).
+    const pr = shop().pulls.find((p) => p.body.includes("<!-- fenvix:onboarding -->"));
+    assert.ok(pr, "the onboarding pull request was opened");
+    assert.match(pr.body, /\*\*Permissions\.\*\* On an organization.*Self-hosted runners: Read and write/);
   });
 
   // ---------------------------------------------------------------- onboarding (G-0617)
