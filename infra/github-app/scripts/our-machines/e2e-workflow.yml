@@ -1,0 +1,32 @@
+# The end-to-end check of our machines (docs/REPORT-our-machines.md, "Founder steps", step 6). Put this file at
+# .github/workflows/fenvix-e2e.yml of a SCRATCH repository of yours (not fenvix-engine-cli), with the fenvix App
+# installed on it and the installation linked to your organization in the dashboard. Each run is one real customer
+# job on our machines; `burst.mjs` starts many at once.
+name: fenvix-e2e
+on:
+  workflow_dispatch:
+    inputs:
+      tag: { description: "a label for the measurement", required: false, default: "e2e" }
+  push:
+    branches: [main]
+jobs:
+  test:
+    runs-on: fenvix
+    steps:
+      - uses: actions/checkout@v4
+      - name: The machine and its engine
+        run: |
+          cat /opt/fenvix/ENGINE
+          fenvix version || /opt/fenvix/venv/bin/fenvix version
+          echo "mode=$FENVIX_MODE skip=$FENVIX_SKIP region=$FENVIX_REGION user=$(id -un) host=$(hostname)"
+      - name: Isolation probes (they must all say refused / nothing)
+        run: |
+          if curl -s -m 3 http://169.254.169.254/latest/meta-data/ >/dev/null; then echo "FAIL: metadata service reachable"; exit 1; else echo "metadata: refused"; fi
+          ls /srv/fenvix/slot/ 2>&1 | sed 's/^/slots visible: /'
+          if ls /var/lib/fenvix-agent/* /etc/fenvix/* 2>/dev/null | grep -q .; then echo "FAIL: agent state visible"; exit 1; else echo "agent state: not visible"; fi
+          echo "processes visible: $(ps -e --no-headers | wc -l)"
+      - name: Tests on the trunk engine
+        run: |
+          python3 -m venv .venv && . .venv/bin/activate && pip install -q pytest
+          mkdir -p tests && printf 'def test_one():\n    assert 1 + 1 == 2\n\ndef test_two():\n    assert "fenvix".upper() == "FENVIX"\n' > tests/test_e2e.py
+          fenvix python -q tests || /opt/fenvix/venv/bin/fenvix python -q tests
