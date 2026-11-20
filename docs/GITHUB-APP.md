@@ -42,7 +42,7 @@ creates the App and runs the service.
 
 Before you start, decide two addresses (they can be changed later on the App's settings page):
 
-- `APP_HOST`: where the service will answer, e.g. `https://github.fenvix.dev` (must be https, reachable by GitHub).
+- `APP_HOST`: where the service will answer, e.g. `https://api.fenvix.dev` (must be https, reachable by GitHub).
 - `DASHBOARD_URL`: the dashboard, e.g. `https://console.fenvix.dev`.
 
 Generate the webhook secret on your machine and keep it in your password manager (never in a chat or in git):

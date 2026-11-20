@@ -35,7 +35,7 @@ describe("the stack, per-job mode", async () => {
     assert.match(json(e.RUNNER_LAUNCH_TEMPLATE_ID), /FleetLaunchTemplate/);
     // The worker appends the job's installation (gh-<id>) and signs that job's cache token.
     assert.equal(e.FENVIX_MACHINE_FENVIX_CACHE_URL, "http://10.42.0.10:8787");
-    assert.equal(e.FENVIX_MACHINE_FENVIX_SUMMARIES_URL, "https://github.fenvix.dev/v1/runner/summaries");
+    assert.equal(e.FENVIX_MACHINE_FENVIX_SUMMARIES_URL, "https://api.fenvix.dev/v1/runner/summaries");
     assert.equal(e.FENVIX_MACHINE_FENVIX_IDLE_MINUTES, "20");
     assert.equal(e.CACHE_SIGNING_KEY_PARAM, "/fenvix/prod/cache/signing-key");
     for (const k of Object.keys(e)) assert.doesNotMatch(k, /^FENVIX_MACHINE_.*TOKEN/, "no machine reads a parameter");

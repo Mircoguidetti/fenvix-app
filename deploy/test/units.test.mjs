@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, it } from "node:test";
 import { Cloudflare } from "../lib/cloudflare.mjs";
+import { waitForCname } from "../lib/dns-check.mjs";
 import { syncGitHubApp } from "../lib/github-app.mjs";
 import { adminClientConfig, parseAdminUrl, roleUrl, ROLES } from "../lib/supabase.mjs";
 import { captured, MemorySsm } from "./helpers.mjs";
@@ -112,11 +113,11 @@ describe("Cloudflare records", () => {
       { id: "o1", type: "CNAME", name: "www.fenvix.dev", content: "elsewhere.example", proxied: true },
     ]);
     const cf = new Cloudflare({ token: "tok", zone: "fenvix.dev", fetch: api.fetch });
-    const [r1] = await captured(() => cf.upsertCname("github.fenvix.dev", "d-abc.execute-api.eu-west-1.amazonaws.com."));
+    const [r1] = await captured(() => cf.upsertCname("api.fenvix.dev", "d-abc.execute-api.eu-west-1.amazonaws.com."));
     assert.equal(r1, "created");
-    const [r2] = await captured(() => cf.upsertCname("github.fenvix.dev", "d-abc.execute-api.eu-west-1.amazonaws.com"));
+    const [r2] = await captured(() => cf.upsertCname("api.fenvix.dev", "d-abc.execute-api.eu-west-1.amazonaws.com"));
     assert.equal(r2, "kept");
-    const [r3] = await captured(() => cf.upsertCname("github.fenvix.dev", "d-new.execute-api.eu-west-1.amazonaws.com"));
+    const [r3] = await captured(() => cf.upsertCname("api.fenvix.dev", "d-new.execute-api.eu-west-1.amazonaws.com"));
     assert.equal(r3, "updated");
     const [r4] = await captured(() => cf.upsertCname("console.fenvix.dev", "d123.cloudfront.net"));
     assert.equal(r4, "created");
@@ -125,8 +126,37 @@ describe("Cloudflare records", () => {
     await assert.rejects(cf.upsertCname("github.example.com", "x"), /not in the zone/);
   });
 
+  it("a TXT/MX (or any non-address record) at the name stops with what to remove; nothing is changed", async () => {
+    const api = fakeApi([{ id: "t1", type: "TXT", name: "api.fenvix.dev", content: "\"verify=1\"", proxied: false }]);
+    const cf = new Cloudflare({ token: "tok", zone: "fenvix.dev", fetch: api.fetch });
+    await assert.rejects(cf.upsertCname("api.fenvix.dev", "d-abc.execute-api.eu-west-1.amazonaws.com"), /TXT "verify=1" already exists at this name, and a CNAME cannot sit beside it\. Nothing was changed/);
+    assert.deepEqual(api.records.map((r) => r.id), ["t1"]);
+  });
+
+  it("removeCnameTo: removes the retired name only while it is a CNAME to API Gateway", async () => {
+    const GW = /\.execute-api\.[a-z0-9-]+\.amazonaws\.com$/;
+    const api = fakeApi([
+      { id: "g1", type: "CNAME", name: "github.fenvix.dev", content: "d-h3eqk8udlf.execute-api.eu-west-1.amazonaws.com", proxied: false },
+      { id: "o1", type: "CNAME", name: "other.fenvix.dev", content: "somewhere.example", proxied: false },
+    ]);
+    const cf = new Cloudflare({ token: "tok", zone: "fenvix.dev", fetch: api.fetch });
+    assert.equal((await captured(() => cf.removeCnameTo("github.fenvix.dev", GW)))[0], "removed");
+    assert.equal((await captured(() => cf.removeCnameTo("github.fenvix.dev", GW)))[0], "absent");
+    assert.match((await captured(() => cf.removeCnameTo("other.fenvix.dev", GW)))[0], /^kept/);
+    assert.deepEqual(api.records.map((r) => r.id), ["o1"]);
+    await assert.rejects(cf.removeCnameTo("github.example.com", GW), /not in the zone/);
+  });
+
+  it("waitForCname: true once public DNS shows the target (case and trailing dot ignored), false when time is up", async () => {
+    let n = 0;
+    const lookup = async () => (++n < 3 ? null : "D-ABC.execute-api.eu-west-1.amazonaws.com");
+    assert.equal(await waitForCname("api.fenvix.dev", "d-abc.execute-api.eu-west-1.amazonaws.com.", { timeoutMs: 1000, everyMs: 1, lookup }), true);
+    assert.equal(await waitForCname("api.fenvix.dev", "d-abc.execute-api.eu-west-1.amazonaws.com", { timeoutMs: 5, everyMs: 1, lookup: async () => "old.example" }), false);
+    assert.equal(await waitForCname("api.fenvix.dev", "x", { timeoutMs: 0, everyMs: 1, lookup: async () => { throw new Error("SERVFAIL"); } }), false);
+  });
+
   it("a refused token says which permissions it needs", async () => {
     const cf = new Cloudflare({ token: "tok", zone: "fenvix.dev", fetch: async () => ({ ok: false, status: 403, json: async () => ({ success: false, errors: [{ code: 10000, message: "Authentication error" }] }) }) });
-    await assert.rejects(cf.upsertCname("github.fenvix.dev", "x.example"), /HTTP 403 .*Zone · DNS · Edit/);
+    await assert.rejects(cf.upsertCname("api.fenvix.dev", "x.example"), /HTTP 403 .*Zone · DNS · Edit/);
   });
 });

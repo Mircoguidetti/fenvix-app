@@ -9,8 +9,20 @@ export interface Settings {
   region: string;
   /** Part of every name and of the SSM paths: /fenvix/<env>/... */
   env: string;
-  /** The App's public host. API Gateway serves it with an ACM certificate; DNS stays on Cloudflare. */
+  /**
+   * The API's public host (api.fenvix.dev in prod): the dashboard API (/v1), the GitHub App (webhooks, /github/setup),
+   * the runner and warm-up reports (/v1/runner/*) and /healthz. The ONE source of every URL that names the API: the
+   * stack, the runner machines' configuration and the deploy pipeline (deploy/cli.mjs) all read it from here. API
+   * Gateway serves it with an ACM certificate; DNS stays on Cloudflare.
+   */
   domainName: string;
+  /**
+   * The ACM certificate of domainName, in this stack's region. The deploy pipeline requests it and has it validated
+   * before CDK runs (deploy/cli.mjs api-certificate), so a missing DNS record stops the run with the record to add
+   * instead of leaving CloudFormation waiting. Empty (a stack deployed without the pipeline): the stack requests the
+   * certificate itself and CloudFormation waits for its DNS validation.
+   */
+  apiCertificateArn: string;
   // ---------------------------------------------------------------- the App (plain settings of src/config.ts)
   /**
    * The GitHub App's id, URL name and OAuth client id: all three, or none. None (the default until the App is created:
@@ -124,7 +136,7 @@ export interface Settings {
 type Ctx = (key: string) => unknown;
 
 const ENV: Record<keyof Settings, string> = {
-  account: "FENVIX_ACCOUNT", region: "FENVIX_REGION", env: "FENVIX_ENV", domainName: "FENVIX_GITHUB_APP_DOMAIN",
+  account: "FENVIX_ACCOUNT", region: "FENVIX_REGION", env: "FENVIX_ENV", domainName: "FENVIX_API_DOMAIN", apiCertificateArn: "FENVIX_API_CERTIFICATE_ARN",
   githubAppId: "GITHUB_APP_ID", githubAppSlug: "GITHUB_APP_SLUG", githubClientId: "GITHUB_CLIENT_ID", githubConfigured: "",
   dashboardOnAws: "FENVIX_DASHBOARD_ON_AWS", dashboardDomain: "FENVIX_DASHBOARD_DOMAIN", dashboardCertificateArn: "FENVIX_DASHBOARD_CERTIFICATE_ARN", dashboardUrl: "DASHBOARD_URL",
   supabaseUrl: "SUPABASE_URL", runsOnLabel: "FENVIX_RUNS_ON", summaryWaitSeconds: "SUMMARY_WAIT_SECONDS", sweepMinutes: "FENVIX_SWEEP_MINUTES",
@@ -169,7 +181,7 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
   };
 
   const s: Settings = {
-    account: need("account"), region: need("region"), env: need("env"), domainName: need("domainName"),
+    account: need("account"), region: need("region"), env: need("env"), domainName: need("domainName"), apiCertificateArn: get("apiCertificateArn"),
     githubAppId: get("githubAppId"), githubAppSlug: get("githubAppSlug"), githubClientId: get("githubClientId"), githubConfigured: false,
     dashboardOnAws: (get("dashboardOnAws") || "false") === "true",
     dashboardDomain: need("dashboardDomain"), dashboardCertificateArn: get("dashboardCertificateArn"),
@@ -191,7 +203,10 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
   if (!/^\d{12}$/.test(s.account)) throw new Error('Setting "account" must be a 12-digit AWS account id');
   if (!/^[a-z]{2}-[a-z]+-\d$/.test(s.region)) throw new Error('Setting "region" is not an AWS region');
   if (!/^[a-z0-9-]{1,12}$/.test(s.env)) throw new Error('Setting "env" must be lowercase letters, digits, dashes');
-  if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(s.domainName)) throw new Error('Setting "domainName" must be a host name like github.fenvix.dev');
+  if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(s.domainName)) throw new Error('Setting "domainName" must be a host name like api.fenvix.dev');
+  if (s.apiCertificateArn && !new RegExp(`^arn:aws:acm:${s.region}:${s.account}:certificate/[0-9a-f-]{36}$`).test(s.apiCertificateArn)) {
+    throw new Error(`Setting "apiCertificateArn" must be an ACM certificate ARN of account ${s.account} in ${s.region} (API Gateway takes a regional API's certificate from its own region)`);
+  }
   const app = [s.githubAppId, s.githubAppSlug, s.githubClientId];
   if (app.some(Boolean) && !app.every(Boolean)) {
     const missing = (["githubAppId", "githubAppSlug", "githubClientId"] as const).filter((k) => !s[k]);

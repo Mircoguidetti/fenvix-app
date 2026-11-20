@@ -51,8 +51,8 @@ export function allowed(action: string, arn?: string): boolean {
 /** Each resource as it is named in prod (the stacks' names: fenvix-prod-github-app-*, fenvix-prod-dashboard-*). */
 const ARN: Record<string, string> = {
   "AWS::ApiGatewayV2::Api": `arn:aws:apigateway:${R}::/apis/a1b2c3`,
-  "AWS::ApiGatewayV2::ApiMapping": `arn:aws:apigateway:${R}::/domainnames/github.fenvix.dev/apimappings/m1`,
-  "AWS::ApiGatewayV2::DomainName": `arn:aws:apigateway:${R}::/domainnames/github.fenvix.dev`,
+  "AWS::ApiGatewayV2::ApiMapping": `arn:aws:apigateway:${R}::/domainnames/api.fenvix.dev/apimappings/m1`,
+  "AWS::ApiGatewayV2::DomainName": `arn:aws:apigateway:${R}::/domainnames/api.fenvix.dev`,
   "AWS::ApiGatewayV2::Integration": `arn:aws:apigateway:${R}::/apis/a1b2c3/integrations/i1`,
   "AWS::ApiGatewayV2::Route": `arn:aws:apigateway:${R}::/apis/a1b2c3/routes/r1`,
   "AWS::ApiGatewayV2::Stage": `arn:aws:apigateway:${R}::/apis/a1b2c3/stages/$default`,

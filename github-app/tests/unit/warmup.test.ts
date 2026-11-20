@@ -13,7 +13,7 @@ import { Ec2Launcher, KIND_TAG, RetryLater, WARMUP_TAG, type WarmupLaunch, warmu
 import { DEFAULT_WARMUP, decide, type DispatchContext, warmupRunnerName } from "../../src/warmup/policy.ts";
 
 const KEY = "runner-token-for-tests-0123456789abcdef";
-const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://github.fenvix.dev/v1/runner/summaries", FENVIX_CACHE_URL: "http://10.42.0.10:8787", FENVIX_IDLE_MINUTES: "20" };
+const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://api.fenvix.dev/v1/runner/summaries", FENVIX_CACHE_URL: "http://10.42.0.10:8787", FENVIX_IDLE_MINUTES: "20" };
 const exp = () => Math.floor(Date.now() / 1000) + 3600;
 const warm = (o: Partial<WarmupLaunch> = {}): WarmupLaunch => ({
   warmupId: 17, attempt: 1, repositoryId: 70001, repositoryFullName: "acme/shop", installationId: 4242, commitSha: "a".repeat(40), ref: "refs/heads/main",
@@ -97,7 +97,7 @@ describe("warm-up machine: user data", () => {
     const ud = warmupUserData(warm(), MACHINE);
     for (const line of ["FENVIX_MACHINE=per-job", "FENVIX_KIND=warmup", "FENVIX_MODE=enforce", "FENVIX_REGION=us", "FENVIX_RUNNER_NAME=fenvix-w17",
       "FENVIX_WARMUP_ID=17", "FENVIX_CACHE_ACCESS=write", "FENVIX_CACHE_URL=http://10.42.0.10:8787/gh-4242", "FENVIX_CACHE_ORG=gh-4242",
-      "FENVIX_WARMUPS_URL=https://github.fenvix.dev/v1/runner/warmups"]) assert.match(ud, new RegExp(`^${line.replace(/[./]/g, "\\$&")}$`, "m"), line);
+      "FENVIX_WARMUPS_URL=https://api.fenvix.dev/v1/runner/warmups"]) assert.match(ud, new RegExp(`^${line.replace(/[./]/g, "\\$&")}$`, "m"), line);
     const spec = JSON.parse(Buffer.from(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d >\/etc\/fenvix\/warmup\.json/.exec(ud)![1]!, "base64").toString());
     assert.deepEqual(spec, { v: 1, warmupId: 17, attempt: 1, repository: { id: 70001, fullName: "acme/shop" }, installationId: 4242, commitSha: "a".repeat(40), ref: "refs/heads/main", workflowPath: ".github/workflows/ci.yml", job: "test" });
     assert.match(ud, /^umask 077$/m);

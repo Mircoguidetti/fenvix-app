@@ -9,7 +9,7 @@ const launch: RunnerLaunch = {
   jobId: 601, runId: 9001, repositoryId: 70001, repositoryFullName: "acme/shop", installationId: 4242, runnerName: "fenvix-j601",
   jitConfig: Buffer.from('{"runner":"jit"}').toString("base64"), cacheAccess: "read",
 };
-const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://github.fenvix.dev/v1/runner/summaries" };
+const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://api.fenvix.dev/v1/runner/summaries" };
 
 /** An EC2 client in memory: images, running machines, the calls made. */
 function fakeEc2(o: { running?: number; images?: { ImageId: string; CreationDate: string }[]; runError?: string; instances?: { InstanceId: string; LaunchTime: Date }[] } = {}) {

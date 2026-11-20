@@ -78,11 +78,11 @@ describe("the stack, demo mode (an option)", async () => {
     assert.match(json(sch.Properties.Target), /Sweep/);
   });
 
-  it("HTTPS only on github.fenvix.dev: ACM certificate validated by DNS, the execute-api URL off, throttled, access logs", () => {
-    t.hasResourceProperties("AWS::CertificateManager::Certificate", { DomainName: "github.fenvix.dev", ValidationMethod: "DNS" });
+  it("HTTPS only on api.fenvix.dev: ACM certificate validated by DNS, the execute-api URL off, throttled, access logs", () => {
+    t.hasResourceProperties("AWS::CertificateManager::Certificate", { DomainName: "api.fenvix.dev", ValidationMethod: "DNS" });
     const [, cert] = resources(t, "AWS::CertificateManager::Certificate")[0]!;
     assert.equal(cert.Properties.DomainValidationOptions, undefined, "no Route 53 zone: the record goes to Cloudflare by hand");
-    t.hasResourceProperties("AWS::ApiGatewayV2::DomainName", { DomainName: "github.fenvix.dev" });
+    t.hasResourceProperties("AWS::ApiGatewayV2::DomainName", { DomainName: "api.fenvix.dev" });
     t.hasResourceProperties("AWS::ApiGatewayV2::Api", { ProtocolType: "HTTP", DisableExecuteApiEndpoint: true });
     t.hasResourceProperties("AWS::ApiGatewayV2::Stage", { StageName: "$default", AutoDeploy: true, DefaultRouteSettings: { ThrottlingRateLimit: 50, ThrottlingBurstLimit: 100 } });
     const [, stage] = resources(t, "AWS::ApiGatewayV2::Stage")[0]!;
@@ -121,7 +121,7 @@ describe("the stack, demo mode (an option)", async () => {
     assert.deepEqual(st.find((x) => x.Sid === "TerminateOnlyTheseMachines")!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-demo" } });
     const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-demo")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
     assert.equal(vars.DEMO_REPOSITORY, "Mircoguidetti/fenvix-demo");
-    assert.equal(vars.FENVIX_MACHINE_FENVIX_SUMMARIES_URL, "https://github.fenvix.dev/v1/runner/summaries");
+    assert.equal(vars.FENVIX_MACHINE_FENVIX_SUMMARIES_URL, "https://api.fenvix.dev/v1/runner/summaries");
     assert.equal(vars.FENVIX_MACHINE_FENVIX_CACHE_URL, undefined, "no shared cache in a demo");
     // The worker never starts machines in demo mode.
     assert.ok(!statementsOf(fnRole("worker")).some((x) => arr(x.Action).includes("ec2:RunInstances")));
@@ -162,7 +162,7 @@ describe("the stack, demo mode (an option)", async () => {
     assert.match(fnOf(routes["ANY /v1/runner/{proxy+}"]!), /"Http[0-9A-F]+"/);
     assert.match(fnOf(routes.$default!), /"Http[0-9A-F]+"/);
     assert.equal(resources(t, "AWS::ApiGatewayV2::Api")[0]![1].Properties.CorsConfiguration, undefined, "no API Gateway CORS: preflights reach the API, which allows the dashboard's origin only");
-    t.hasOutput("DashboardApiUrl", { Value: "https://github.fenvix.dev/v1" });
+    t.hasOutput("DashboardApiUrl", { Value: "https://api.fenvix.dev/v1" });
   });
 
   it("every role carries the permissions boundary the execution policy requires (R-012 F4)", () => {

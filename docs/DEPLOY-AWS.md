@@ -30,10 +30,10 @@ GitHub (push to main) ──▶ GitHub Actions "Deploy": tests, then OpenID Conn
                           (no AWS key stored anywhere), Supabase (migrations, role passwords), Cloudflare (DNS)
 
 browser ──HTTPS──▶ console.fenvix.dev   (CloudFront, certificate in us-east-1) ──▶ private S3 bucket: the dashboard build
-browser ──HTTPS──▶ github.fenvix.dev/v1/*  (API Gateway HTTP API, ACM certificate)
+browser ──HTTPS──▶ api.fenvix.dev/v1/*  (API Gateway HTTP API, ACM certificate)
                     └▶ Lambda "api": the dashboard API (openapi/fenvix-api.yaml): checks the Supabase session, the
                        membership and the role, reads and writes Postgres as fenvix_api (pooler, transaction mode)
-GitHub ──HTTPS──▶ github.fenvix.dev  (webhooks, /github/setup, /healthz, /v1/runner/*)
+GitHub ──HTTPS──▶ api.fenvix.dev  (webhooks, /github/setup, /healthz, /v1/runner/*)
                     └▶ Lambda "http": checks the signature or the machine's summary credential, puts the work on SQS,
                        answers 202. Without the GitHub App: /healthz answers, everything else 503 github_not_configured
                  SQS "work" queue  (failed 5 times → "dead-letters" queue + alarm; payloads over 200 KB go via S3)
@@ -127,8 +127,9 @@ fetching it would need a Supabase management token, which can do far more than a
 
 ### Step 3. Cloudflare: an API token for the DNS records (then into Parameter Store)
 
-The pipeline creates and keeps four DNS records in the zone `fenvix.dev`: `github` and `console` (CNAMEs to AWS) and
-the two certificate validation CNAMEs. It touches no other record.
+The pipeline creates and keeps four DNS records in the zone `fenvix.dev`: `api` and `console` (CNAMEs to AWS) and
+the two certificate validation CNAMEs; it removes the API's retired name `github` only while that is still a CNAME to
+API Gateway. It touches no other record.
 
 1. <https://dash.cloudflare.com/profile/api-tokens> → **Create Token** → template **Edit zone DNS** → **Use template**.
 2. **Permissions:** the first row is already `Zone` · `DNS` · `Edit`. Click **+ Add more** and set `Zone` · `Zone` ·
@@ -138,8 +139,9 @@ the two certificate validation CNAMEs. It touches no other record.
 5. In Parameter Store (the link of step 2) → **Create parameter**: Name `/fenvix/prod/bootstrap/cloudflare-api-token`,
    Tier Standard, Type **SecureString**, Value = the token → **Create parameter**.
 
-(Without a token the pipeline still deploys, and lists the records to add by hand in the summary of each workflow run.
-The token is what makes it hands-off.)
+(Without a token the pipeline still deploys: it lists each record to add by hand in the run's summary, waits up to 20
+minutes for it, and if it is not there it stops with a red line naming the exact record. Add it, then **Run workflow**
+again: that run finds it and goes on. The token is what makes it hands-off.)
 
 ### Step 4. Supabase: the dashboard's address for sign-in links
 
@@ -236,25 +238,82 @@ workflow"): first the same tests, then the job **Deploy to production**, only on
    there, without it; half set stops the deploy, naming the missing parameters.
 8. **Dashboard certificate:** requested in us-east-1 for `console.fenvix.dev` (once), its validation record put in
    Cloudflare, waited for (first run only).
-9. **CDK deploy** of both stacks: `fenvix-prod-github-app` (API Gateway, Lambdas, SQS, schedules, runner image
-   pipeline, launch template, cache machine) and `fenvix-prod-dashboard` (S3, CloudFront). On the first run
-   CloudFormation waits for the API's certificate while the pipeline puts its validation record in Cloudflare.
-10. **DNS:** `github.fenvix.dev` → API Gateway, `console.fenvix.dev` → CloudFront (CNAMEs, DNS only).
-11. **Dashboard:** built with `VITE_API_URL=https://github.fenvix.dev`, the Supabase URL and the anon key, uploaded
+9. **API certificate** (`node deploy/cli.mjs api-certificate`): requested in eu-west-1 for the API's host (once; the
+   host is `infra/github-app/cdk.json` `domainName`, `api.fenvix.dev`), its validation record put in Cloudflare (or,
+   without a token, listed in the summary), waited for up to 20 minutes. Not issued by then: the run **stops here**
+   with the exact record to add, having changed nothing else; the next run finds the certificate and goes on.
+   CloudFormation therefore never waits for DNS.
+10. **CDK deploy** of both stacks: `fenvix-prod-github-app` (API Gateway with the certificate of step 9, Lambdas, SQS,
+   schedules, runner image pipeline, launch template, cache machine) and `fenvix-prod-dashboard` (S3, CloudFront).
+11. **DNS:** `api.fenvix.dev` → API Gateway, `console.fenvix.dev` → CloudFront (CNAMEs, DNS only); the retired
+    `github.fenvix.dev` CNAME is removed while it still points at API Gateway. Without a token: the record is listed,
+    waited for in public DNS up to 20 minutes, and the run stops with the exact record if it is not there (the stacks
+    are deployed by then; the next run finishes).
+12. **Dashboard:** built with `VITE_API_URL` = the stack's output `DashboardApiUrl` (`https://api.fenvix.dev/v1`), the Supabase URL and the anon key, uploaded
     to the bucket (hashed files cached a year, `index.html` never), CloudFront's cache refreshed.
-12. **Runner image:** if no image of the current recipe exists, its build is started (30 to 45 minutes; the deploy
+13. **Runner image:** if no image of the current recipe exists, its build is started (30 to 45 minutes; the deploy
     does not wait; jobs queued meanwhile wait for it).
-13. **Check:** `https://github.fenvix.dev/healthz` answers 200, `/v1/me` answers 401, `https://console.fenvix.dev/`
+14. **Check:** `https://api.fenvix.dev/healthz` answers 200, `/v1/me` answers 401, `https://console.fenvix.dev/`
     answers 200.
 
 Runs never overlap: a push during a deploy waits for it. Only runs on `main` are in the deploy queue: a "Run workflow"
 started on another branch deploys nothing and can neither cancel nor replace a deploy waiting there; pull requests run
 in the other workflow (Tests).
 
+## B2. L'API passa da `github.fenvix.dev` a `api.fenvix.dev` (una volta, 2026-11-20)
+
+Per il founder, in italiano. L'API (webhook di GitHub, API della dashboard, report dei runner) cambia solo **nome**:
+da `github.fenvix.dev` a `api.fenvix.dev`. È come cambiare l'insegna del negozio: il negozio (lo stack AWS
+`fenvix-prod-github-app`, le funzioni, le code, i log) resta lo stesso, con lo stesso nome interno. Il vecchio nome
+`github.fenvix.dev` viene **tolto** (nessuno lo usa ancora). Senza il token Cloudflare i record DNS li aggiungi tu;
+la pipeline ti dice quali, li aspetta 20 minuti e, se non ci sono, si ferma con il record esatto in rosso: lo aggiungi
+e rilanci. Fai i passi in quest'ordine, uno alla volta.
+
+1. **Aggiorna lo stack `fenvix-bootstrap`** (dà al deploy il permesso di chiedere il certificato di `api.fenvix.dev`
+   in eu-west-1). Scarica il file: <https://github.com/Mircoguidetti/fenvix-app/blob/claude/api-domain/infra/bootstrap/fenvix-bootstrap.json>
+   → icona **Download raw file** (in alto a destra del file). Poi
+   <https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks> → clicca `fenvix-bootstrap`
+   → **Update** (o **Update stack** → **Make a direct update**) → **Replace existing template** → **Upload a template
+   file** → **Choose file** → il file scaricato → **Next** → **Next** (parametri invariati) → **Next** → in fondo spunta
+   **"I acknowledge that AWS CloudFormation might create IAM resources with custom names."** → **Submit**. Aspetta
+   **UPDATE_COMPLETE** (circa 1 minuto).
+2. **Cloudflare: libera il nome `api`.** <https://dash.cloudflare.com> → `fenvix.dev` → **DNS** → **Records** → nella
+   ricerca scrivi `api`. Se c'è un record il cui **Name** è esattamente `api` (di qualunque tipo: A, AAAA, CNAME, TXT…),
+   aprilo con **Edit** → **Delete** → conferma. Se non c'è, vai avanti.
+3. **Cloudflare: controlla i CAA.** Stessa pagina, nella ricerca scrivi `CAA`. Se **non** c'è nessun record di tipo
+   `CAA`, vai avanti. Se ce n'è almeno uno: **Add record** → **Type** `CAA` → **Name** `@` → **Tag** `Only allow
+   specific hostnames` → **CA domain name** `amazon.com` → **Save** (senza questo AWS non può emettere il certificato).
+4. **Il coordinatore fa il merge** del pull request `claude/api-domain` (con il tuo OK). Parte da solo il workflow
+   **Deploy**: <https://github.com/Mircoguidetti/fenvix-app/actions/workflows/deploy.yml> → apri l'esecuzione in alto.
+5. **Record di convalida del certificato.** Quando il passo **7c. API certificate** è in corso, nel suo log (e in un
+   avviso giallo nella pagina dell'esecuzione) compare una riga `Add in Cloudflare (fenvix.dev → DNS → Add record):
+   CNAME, Name _….api, Target _….acm-validations.aws, Proxy status DNS only`. In Cloudflare → `fenvix.dev` → **DNS** →
+   **Records** → **Add record** → **Type** `CNAME` → **Name** = quel `_….api` → **Target** = quel `_….acm-validations.aws`
+   → **Proxy status**: clicca la nuvola finché è **grigia** (**DNS only**) → **Save**. Se il passo si ferma in rosso
+   prima ("The certificate of api.fenvix.dev is PENDING_VALIDATION … Add it: …"), aggiungi lo stesso record e rilancia:
+   pagina del workflow **Deploy** → **Run workflow** → branch `main` → **Run workflow**.
+6. **Record `api`.** Quando il passo **9. DNS records** è in corso compare un'altra riga: `CNAME, Name api, Target
+   d-….execute-api.eu-west-1.amazonaws.com`. In Cloudflare → **Add record** → **Type** `CNAME` → **Name** `api` →
+   **Target** = quel `d-….execute-api.eu-west-1.amazonaws.com` (copialo esatto) → nuvola **grigia** (**DNS only**) →
+   **Save**. Se il passo si è già fermato in rosso ("api.fenvix.dev is not a CNAME to … yet"), aggiungi il record e
+   rilancia come al passo 5: la nuova esecuzione trova tutto pronto e finisce.
+7. **Cloudflare: togli il vecchio nome.** In **DNS** → **Records**, ricerca `github`: cancella (**Edit** → **Delete**)
+   il CNAME con Name `github` (Target `d-h3eqk8udlf.execute-api.eu-west-1.amazonaws.com`) e il CNAME il cui Name
+   comincia con `_` e finisce con `.github` (Target `….acm-validations.aws`). Non toccare altri record.
+8. **Vercel: il nuovo indirizzo dell'API.** <https://vercel.com/fenvix/fenvix-app> → **Settings** → **Environment
+   Variables** → riga `VITE_API_URL` → **⋯** → **Edit** → **Value** `https://api.fenvix.dev/v1` (tutti gli ambienti)
+   → **Save**. Poi **Deployments** → l'ultimo deploy di **Production** → **⋯** → **Redeploy** → **Redeploy**.
+9. **Controllo.** Apri <https://api.fenvix.dev/healthz>: deve rispondere `{"ok":true,…}`. Apri
+   <https://console.fenvix.dev>, accedi: devi arrivare alla dashboard senza "could not reach the server".
+   <https://github.fenvix.dev/healthz> non risponde più: è giusto.
+
+Il GitHub App non è ancora creato: quando lo crei (sezione C) usa già `https://api.fenvix.dev/...` (la tabella C2 è
+aggiornata).
+
 ## C. Connecting the GitHub App (last; browser only)
 
 Until this is done the API and the dashboard work; "Connect GitHub" in the dashboard says that GitHub is not connected
-yet, and `github.fenvix.dev`'s GitHub routes answer 503 `github_not_configured`.
+yet, and `api.fenvix.dev`'s GitHub routes answer 503 `github_not_configured`.
 
 **C1.** Copy the webhook secret the pipeline generated: AWS console →
 <https://eu-west-1.console.aws.amazon.com/systems-manager/parameters/?region=eu-west-1> → `/fenvix/prod/github-app/webhook-secret`
@@ -267,13 +326,13 @@ company-owned App, in the organization's settings):
 |---|---|
 | GitHub App name | `fenvix` (if taken: `fenvix-ci`) |
 | Homepage URL | `https://console.fenvix.dev` |
-| Callback URL | `https://github.fenvix.dev/github/setup` |
+| Callback URL | `https://api.fenvix.dev/github/setup` |
 | Expire user authorization tokens | on |
 | Request user authorization (OAuth) during installation | **on** |
 | Enable Device Flow | off |
 | Redirect on update | on |
 | Webhook: Active | on |
-| Webhook URL | `https://github.fenvix.dev/webhooks/github` |
+| Webhook URL | `https://api.fenvix.dev/webhooks/github` |
 | Webhook secret | the value from C1 |
 | SSL verification | Enable |
 | Repository permissions | Actions: **Read-only** · **Administration: Read and write** · Checks: **Read and write** · Contents: **Read and write** · Metadata: Read-only · Pull requests: **Read and write** · **Workflows: Read and write** |
@@ -361,7 +420,10 @@ variables and run the workflow to go back to per-job.
 | **Database roles**: "logging in through the pooler still fails" | the step's log | run the workflow again (the pooler can take a moment to see a new password) |
 | **GitHub App**: "half configured" | the step's log (it names what is missing) | add the missing parameters (section C4), or delete all five |
 | **CDK deploy** stops: `... is not authorized to perform: <action>` | the step's log; CloudFormation → the stack → Events | add the action to the matching `infra/github-app/cfn-exec-policy-*.json` in a pull request; the policies are updated by updating the `fenvix-bootstrap` stack (section A, step 2, last paragraph) |
-| **CDK deploy** waits on `Certificate` for over 30 minutes | the run's summary (records to add) | without a Cloudflare token: add the listed CNAME in Cloudflare, DNS only. With one: the token lacks `Zone · DNS · Edit` on fenvix.dev |
+| **API certificate** stops: "The certificate of api.fenvix.dev is PENDING_VALIDATION" | the step's red line (it names the record) | without a Cloudflare token: add that CNAME in Cloudflare, DNS only, then **Run workflow**. With one: wait 10 minutes and run it again; if it repeats, the token lacks `Zone · DNS · Edit` on fenvix.dev |
+| **API certificate** stops: "The deploy role may not request the certificate" | the step's log | the `fenvix-bootstrap` stack is older than this code: update it (section A, step 1, last paragraph), then **Run workflow** |
+| **DNS records** stops: "api.fenvix.dev is not a CNAME to ... yet" | the step's red line (it names the record) | add or edit the `api` record in Cloudflare exactly as named (CNAME, DNS only), then **Run workflow** |
+| **DNS records** stops: "... already exists at this name, and a CNAME cannot sit beside it" | the step's log | another record (TXT, MX, ...) holds that name in Cloudflare: delete it if nothing uses it, then **Run workflow** |
 | the dashboard says "could not reach the server"; the browser console shows a CORS error | CloudWatch → Log groups → `/aws/lambda/fenvix-prod-github-app-api` | the dashboard's origin must be `https://console.fenvix.dev` (`dashboardUrl`) |
 | every dashboard call answers **401** | the API log | `supabase-db-url` and `supabase-anon-key` must be of the same Supabase project (checked for an anon JWT; a publishable key carries no project, so it is not) |
 | every dashboard call answers **500** / **503** | the API log (`password authentication failed`, `timeout`) | run the workflow: the role check sets a new password when the stored one is refused |
@@ -401,7 +463,7 @@ Every function reloads its secrets every **5 minutes**, so a rotation needs no d
    (`fenvix-prod-dashboard-865859654353`) is kept on purpose: empty it and delete it in S3.
 4. EC2 → AMIs: deregister the runner images, then delete their snapshots.
 5. CloudFormation: **Delete** `fenvix-bootstrap` last (it keeps its assets bucket `cdk-fenvix-assets-...`: empty and
-   delete it in S3). The SSM parameters and the ACM certificate in us-east-1 stay; delete them by hand (including `/fenvix/prod/bootstrap/*`). Remove the four records in Cloudflare.
+   delete it in S3). The SSM parameters and the ACM certificates (the API's in eu-west-1, the dashboard's in us-east-1) stay; delete them by hand (including `/fenvix/prod/bootstrap/*`). Remove the four records in Cloudflare.
 
 ## The dashboard API
 

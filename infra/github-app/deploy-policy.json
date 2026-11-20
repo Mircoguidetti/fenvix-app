@@ -54,11 +54,13 @@
       }
     },
     {
-      "Sid": "PrintCertificateValidationRecord",
+      "Sid": "ApiCertificate",
       "Effect": "Allow",
       "Action": [
+        "acm:RequestCertificate",
+        "acm:DescribeCertificate",
         "acm:ListCertificates",
-        "acm:DescribeCertificate"
+        "acm:AddTagsToCertificate"
       ],
       "Resource": "*",
       "Condition": {

@@ -52,6 +52,6 @@ test("docs/DEPLOY-VERCEL.md names every VITE_ variable the app reads, and the pr
   const read = new Set(files("src").filter((f) => /\.(ts|tsx)$/.test(f) && !f.endsWith(".d.ts")).flatMap((f) => readFileSync(f, "utf8").match(/VITE_[A-Z_]+/g) ?? []));
   assert.deepEqual([...read].sort(), ["VITE_API_URL", "VITE_DATA_BACKEND", "VITE_STYLEGUIDE", "VITE_SUPABASE_ANON_KEY", "VITE_SUPABASE_URL"]);
   for (const v of read) assert.ok(guide.includes(`\`${v}\``), v);
-  assert.ok(guide.includes("`https://github.fenvix.dev/v1`"));
+  assert.ok(guide.includes("`https://api.fenvix.dev/v1`"));
   assert.ok(guide.includes("console.fenvix.dev"));
 });

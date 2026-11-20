@@ -8,11 +8,15 @@
 //   github-app             the GitHub App's values (SSM, typed by the founder): checked; exports the public ones
 //   dashboard-certificate  the us-east-1 certificate of the dashboard's host; exports its ARN once issued (only with
 //                          FENVIX_DASHBOARD_ON_AWS=true; otherwise it does nothing)
+//   api-certificate        the API host's certificate (cdk.json domainName, the stack's region), requested and validated
+//                          BEFORE CDK; exports FENVIX_API_CERTIFICATE_ARN once issued. Without a Cloudflare token it
+//                          prints the validation record, waits for it, and stops with that record if it is not there
 //   recover-failed-creates before CDK: deletes a stack left in ROLLBACK_COMPLETE by a failed first create, and the
 //                          dashboard bucket it left behind if no stack holds it and it is empty (lib/recover.mjs)
-//   watch-certificate      while the stack deploys: puts the API certificate's validation record in Cloudflare
-//   dns                    github.<zone> → AWS (Cloudflare), from the stacks' outputs; console.<zone> → CloudFront only
-//                          with FENVIX_DASHBOARD_ON_AWS=true (otherwise it is Vercel's record, never touched here)
+//   dns                    api.<zone> → AWS (Cloudflare), from the stacks' outputs; removes the retired github.<zone>
+//                          CNAME to API Gateway; console.<zone> → CloudFront only with FENVIX_DASHBOARD_ON_AWS=true
+//                          (otherwise it is Vercel's record, never touched here). Without a Cloudflare token it prints
+//                          the record, waits for it in public DNS, and stops with that record if it is not there
 //   smoke                  checks the deployed hosts answer
 // Nothing secret is printed by any of them. Exit code 1 with a "STOP:" line names what to do.
 //
@@ -25,8 +29,9 @@ import { CloudFormationClient } from "@aws-sdk/client-cloudformation";
 import { S3Client } from "@aws-sdk/client-s3";
 import { SSMClient } from "@aws-sdk/client-ssm";
 import pg from "pg";
-import { describe, ensureCertificate, findCertificate, waitIssued } from "./lib/certificates.mjs";
+import { apiCertificate, ensureCertificate, waitIssued } from "./lib/certificates.mjs";
 import { Cloudflare } from "./lib/cloudflare.mjs";
+import { cnameOf, waitForCname } from "./lib/dns-check.mjs";
 import { syncGitHubApp } from "./lib/github-app.mjs";
 import { readFounderValue } from "./lib/bootstrap.mjs";
 import { exportEnv, info, mask, notice, Stop, summary, warning } from "./lib/log.mjs";
@@ -39,9 +44,16 @@ import { adminClientConfig, checkAnonKey, parseAdminUrl, parseCaCert } from "./l
 const CDK = JSON.parse(readFileSync(new URL("../infra/github-app/cdk.json", import.meta.url), "utf8")).context;
 const ENV = process.env.FENVIX_ENV || CDK.env;
 const REGION = CDK.region;
-const API_DOMAIN = CDK.domainName;
-const APP_DOMAIN = CDK.dashboardDomain;
 const ZONE = process.env.FENVIX_DNS_ZONE || "fenvix.dev";
+/** The API's host: cdk.json domainName, the one source of truth (infra/github-app/lib/settings.ts). */
+const API_DOMAIN = CDK.domainName;
+/**
+ * Names the API answered on before; the dns step removes their CNAME while it still points at API Gateway (so nothing
+ * dangles), and leaves them alone otherwise. github.<zone> until 2026-11-20 (P-037).
+ */
+const RETIRED_API_DOMAINS = [`github.${ZONE}`].filter((d) => d !== CDK.domainName);
+const API_GATEWAY_TARGET = /\.execute-api\.[a-z0-9-]+\.amazonaws\.com$/;
+const APP_DOMAIN = CDK.dashboardDomain;
 const local = process.env.FENVIX_DEPLOY_LOCAL_DB === "1";
 /**
  * The AWS dashboard switch (deploy.yml: the repository variable FENVIX_DASHBOARD_ON_AWS; the CDK setting
@@ -88,6 +100,12 @@ function manualRecord(why, name, value) {
   const rel = name === ZONE ? "@" : name.replace(new RegExp(`\\.${ZONE.replace(/\./g, "\\.")}$`), "");
   summary(`| ${why} | CNAME | \`${rel}\` | \`${value}\` | DNS only |`);
   notice(`Add in Cloudflare (${ZONE} → DNS → Add record): CNAME, Name ${rel}, Target ${value}, Proxy status DNS only (${why}).`);
+}
+
+/** The record as one line for a STOP message: what to add, exactly. */
+function recordLine(name, value) {
+  const rel = name === ZONE ? "@" : name.replace(new RegExp(`\\.${ZONE.replace(/\./g, "\\.")}$`), "");
+  return `Cloudflare → ${ZONE} → DNS → Records → Add record (or Edit the existing \`${rel}\` record): Type CNAME, Name ${rel}, Target ${value}, Proxy status DNS only (grey cloud), TTL Auto`;
 }
 
 const steps = {
@@ -159,6 +177,15 @@ const steps = {
     }
   },
 
+  async "api-certificate"() {
+    const d = await apiCertificate(new ACMClient({ region: REGION }), API_DOMAIN, {
+      region: REGION, cf: await cloudflare(), waitMs: Number(arg("wait-minutes", "20")) * 60_000,
+      manual: (name, value) => manualRecord(`certificate of ${API_DOMAIN}`, name, value), recordLine,
+    });
+    exportEnv("FENVIX_API_CERTIFICATE_ARN", d.arn);
+    info(`certificate of ${API_DOMAIN}: issued (${d.arn})`);
+  },
+
   async "recover-failed-creates"() {
     const account = CDK.account;
     const stacks = [`fenvix-${ENV}-github-app`, `fenvix-${ENV}-dashboard`];
@@ -170,43 +197,36 @@ const steps = {
     if (acted.length) summary(`**Failed first create cleared:** deleted ${acted.join(", ")} (left by an earlier deploy's rollback), so CDK creates them again.`);
   },
 
-  async "watch-certificate"() {
-    const domain = arg("domain", API_DOMAIN);
-    const acm = new ACMClient({ region: arg("region", REGION) });
-    const cf = await cloudflare();
-    const end = Date.now() + Number(arg("timeout-minutes", "90")) * 60_000;
-    let placed = false;
-    while (Date.now() < end) {
-      const arn = await findCertificate(acm, domain);
-      if (arn) {
-        const d = await describe(acm, arn);
-        if (d.record && !placed) {
-          if (cf) await cf.upsertCname(d.record.name, d.record.value);
-          else manualRecord(`certificate of ${domain}`, d.record.name, d.record.value);
-          placed = true;
-        }
-        if (d.status === "ISSUED" && placed) { info(`certificate of ${domain}: issued`); return; }
-      }
-      await new Promise((r) => setTimeout(r, 10_000));
-    }
-    warning(`certificate of ${domain}: not issued within the wait`);
-  },
-
   async dns() {
     const outputs = JSON.parse(readFileSync(arg("outputs", "../infra/github-app/cdk-outputs.json"), "utf8"));
     const api = outputs[`fenvix-${ENV}-github-app`]?.DnsTarget;
     const dash = outputs[`fenvix-${ENV}-dashboard`]?.DashboardDnsTarget;
     const cf = await cloudflare();
     const records = [[API_DOMAIN, api, "the API"]];
+    // The API's retired names: their CNAME to API Gateway goes (the custom domain behind it is deleted by this deploy).
+    for (const old of RETIRED_API_DOMAINS) {
+      if (cf) await cf.removeCnameTo(old, API_GATEWAY_TARGET);
+      else if (API_GATEWAY_TARGET.test((await cnameOf(old).catch(() => null)) ?? "")) summary(`\n**Remove** the CNAME \`${old.replace(`.${ZONE}`, "")}\` in Cloudflare if it is still there (the API moved to \`${API_DOMAIN}\`; \`${old}\` no longer answers), and the certificate validation CNAME whose name ends in \`.${old.replace(`.${ZONE}`, "")}\`.`);
+    }
     // console.<zone> only once CloudFront serves it with its certificate (else browsers would get a certificate error),
     // and never while the dashboard is on Vercel: that record is Vercel's (docs/DEPLOY-VERCEL.md).
     if (!DASHBOARD_ON_AWS) info(`${APP_DOMAIN}: the dashboard is on Vercel (FENVIX_DASHBOARD_ON_AWS is off); its DNS record is left as it is.`);
     else if (process.env.FENVIX_DASHBOARD_CERTIFICATE_ARN) records.push([APP_DOMAIN, dash, "the dashboard"]);
     else warning(`${APP_DOMAIN} is not pointed at CloudFront yet (its certificate is not issued).`);
+    for (const [name, target] of records) if (!target) throw new Error(`no DNS target for ${name} in the stack outputs`);
+    if (cf) { for (const [name, target] of records) await cf.upsertCname(name, target); return; }
+    // No token: the founder adds them by hand. All listed first; then each waited for in public DNS; the run stops with
+    // the exact records still missing.
+    for (const [name, target, why] of records) manualRecord(why, name, target);
+    const end = Date.now() + Number(arg("wait-minutes", "20")) * 60_000;
+    const missing = [];
     for (const [name, target, why] of records) {
-      if (!target) throw new Error(`no DNS target for ${name} in the stack outputs`);
-      if (cf) await cf.upsertCname(name, target);
-      else manualRecord(why, name, target);
+      info(`${name}: waiting for the CNAME to ${target} in public DNS (until ${new Date(end).toISOString()})`);
+      if (await waitForCname(name, target, { timeoutMs: Math.max(0, end - Date.now()) })) info(`DNS ${name} → ${target}: present`);
+      else missing.push([name, target, why]);
+    }
+    if (missing.length) {
+      throw new Stop(`${missing.map(([n, t, w]) => `${n} is not a CNAME to ${t} yet (${w})`).join("; ")}. The stacks are deployed; only DNS is missing. Add: ${missing.map(([n, t]) => recordLine(n, t)).join("; ")}. Then run the deploy again (Actions → Deploy → Run workflow, branch main): it finds everything in place and finishes.`);
     }
   },
 
