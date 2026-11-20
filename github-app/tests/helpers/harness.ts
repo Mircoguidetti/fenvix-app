@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type CryptoKey } from "jose";
 import pg from "pg";
 import { buildApp, type App } from "../../src/app.ts";
+import type { Db } from "../../src/db.ts";
 import { SessionVerifier } from "../../src/auth.ts";
 import { type Config, loadConfig } from "../../src/config.ts";
 import { sign } from "../../src/github/signature.ts";
@@ -52,7 +53,7 @@ export async function resetDb(): Promise<pg.Client> {
   if (!(await admin.query("select to_regclass('public.gh_warmups') as t")).rows[0].t) {
     execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0017_warm_cache.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
   }
-  await admin.query(`truncate gh_install_completions, ci_trial_accounts, gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_warmups, gh_repositories,
+  await admin.query(`truncate gh_leases, gh_machines, gh_install_completions, ci_trial_accounts, gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_warmups, gh_repositories,
     gh_installations, ci_test_results, ci_skip_receipts, ci_audit_reruns, ci_defects, ci_explorations, ci_runs, ci_projects, ci_subscriptions cascade`);
   await admin.query("delete from auth.users where email like '%@gh.fenvix.invalid'");
   await admin.query("delete from public.workspaces w where not exists (select 1 from public.workspace_members m where m.workspace_id = w.id)");
@@ -234,7 +235,7 @@ export class Harness {
   private n = 0;
 
   /** `queue`: where the app hands checked work (default: this process, as the node server does). */
-  async start(env: Record<string, string> = {}, opts: { queue?: WorkQueue; launcher?: RunnerLauncher } = {}): Promise<void> {
+  async start(env: Record<string, string> = {}, opts: { queue?: WorkQueue; launcher?: RunnerLauncher | ((db: Db) => RunnerLauncher) } = {}): Promise<void> {
     const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
     this.gh = new FakeGitHub(APP_ID, publicKey);
     await this.gh.start();

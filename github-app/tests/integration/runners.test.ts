@@ -50,7 +50,7 @@ describe("one machine per job: workflow_job.queued starts a runner machine", () 
     assert.equal(launcher.launches.length, 1);
     const l = launcher.launches[0]!;
     // In the organization's region; shadow mode: linking the installation started the 30-day trial.
-    assert.deepEqual({ ...l, jitConfig: "", summaryToken: "" }, { jobId: 901, runId: 9301, repositoryId: REPOS.shop.id, repositoryFullName: "acme/shop", installationId: INSTALLATION_ID, runnerName: "fenvix-j901", jitConfig: "", cacheAccess: "write", summaryToken: "", region: "eu", mode: "shadow" });
+    assert.deepEqual({ ...l, jitConfig: "", summaryToken: "" }, { jobId: 901, runId: 9301, repositoryId: REPOS.shop.id, repositoryFullName: "acme/shop", installationId: INSTALLATION_ID, runnerName: "fenvix-j901", jitConfig: "", cacheAccess: "write", summaryToken: "", region: "eu", mode: "shadow", workspaceId: org.workspaceId, skipWithProof: true });
     // The region and the mode the machine gets are recorded on the job: the run's mode is this one (review R-016 F4).
     assert.deepEqual((await admin.query("select region, mode from gh_jobs where job_id = 901")).rows[0], { region: "eu", mode: "shadow" });
     // The machine's own summary credential: this runner, this repository, this run (R-012 F1), this attempt (R-016 F7).

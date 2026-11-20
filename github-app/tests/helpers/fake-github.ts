@@ -40,6 +40,8 @@ let seq = 1000;
 const nextId = () => ++seq;
 
 export class FakeGitHub {
+  /** Jobs re-run (POST /repos/{o}/{r}/actions/jobs/{id}/rerun). */
+  jobReruns: { repo: string; jobId: number }[] = [];
   readonly exchanges: Exchange[] = [];
   readonly repos = new Map<string, FakeRepo>();
   readonly installations = new Map<number, FakeInstallation>();
@@ -334,6 +336,10 @@ export class FakeGitHub {
       if (repo.runners[i]!.busy) return [422, { message: "Bad request - Runner \"x\" is still running a job\"", documentation_url: "https://docs.github.com/rest", status: "422" }];
       repo.runners.splice(i, 1);
       return [204, null];
+    }
+    if (method === "POST" && (m = /^\/actions\/jobs\/(\d+)\/rerun$/.exec(rest))) {
+      this.jobReruns.push({ repo: repo.fullName, jobId: Number(m[1]) });
+      return [201, {}];
     }
     if (method === "POST" && rest === "/actions/runners/generate-jitconfig") {
       const b = body as { name: string; runner_group_id: number; labels: string[]; work_folder?: string };

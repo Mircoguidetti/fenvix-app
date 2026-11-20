@@ -92,7 +92,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     const head = h.gh.repos.get("acme/shop")!.branches.get("main")!.sha;
     assert.deepEqual({ ...l, checkoutToken: "", summaryToken: "", cacheToken: undefined }, {
       warmupId: l.warmupId, attempt: 1, repositoryId: REPOS.shop.id, repositoryFullName: "acme/shop", installationId: INSTALLATION_ID, commitSha: head, ref: "refs/heads/main",
-      workflowPath: ".github/workflows/ci.yml", job: "test", runnerName: `fenvix-w${l.warmupId}`, checkoutToken: "", summaryToken: "", cacheToken: undefined, region: "eu",
+      workflowPath: ".github/workflows/ci.yml", job: "test", runnerName: `fenvix-w${l.warmupId}`, checkoutToken: "", summaryToken: "", cacheToken: undefined, region: "eu", workspaceId: org.workspaceId,
     });
     // The machine's App credential names this warm-up only.
     const scope = verifySummaryCredential([RUNNER_TOKEN], `Bearer ${l.summaryToken}`)!;

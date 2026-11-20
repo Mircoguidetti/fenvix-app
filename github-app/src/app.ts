@@ -6,8 +6,10 @@ import { GitHubApp, GitHubError } from "./github/client.ts";
 import { verifySignature } from "./github/signature.ts";
 import { parseExploration, parseProgress, parseResults, parseWarmupReport, RecordError, type RunnerJob, type RunnerWarmupReport } from "./results/runner-records.ts";
 import { SummaryError, parseSummary, trimSummary } from "./results/summary.ts";
-import { verifySummaryCredential } from "./runners/credentials.ts";
+
 import type { RunnerLauncher } from "./runners/launcher.ts";
+import type { MachinePool } from "./machines/pool.ts";
+import { verifyMachineCredential, verifySummaryCredential } from "./runners/credentials.ts";
 import { GitHubService, type Logger } from "./service.ts";
 import { describeWork, InProcessQueue, type Work, type WorkQueue } from "./work.ts";
 
@@ -27,14 +29,17 @@ export interface Deps {
   /** Where checked webhooks and runner summaries go. Default: this process, in the background (node server mode). */
   queue?: WorkQueue;
   /** "One machine per job": started for each queued fenvix job (in Lambda mode only the worker has one). */
-  launcher?: RunnerLauncher;
+  launcher?: RunnerLauncher | ((db: Db) => RunnerLauncher);
+  /** Our machines' API (hello, poll, events) on a server with no launcher (the HTTP function). */
+  machines?: (db: Db) => MachinePool;
 }
 
 export interface Core { service: GitHubService; db: Db; gh: GitHubApp }
 
 /** The database, the GitHub client and the service: what the HTTP side, the worker and the sweep share. */
-export function buildCore(cfg: Config, log: Logger, launcher: RunnerLauncher | null = null): Core {
+export function buildCore(cfg: Config, log: Logger, launcherOrFactory: RunnerLauncher | ((db: Db) => RunnerLauncher) | null = null): Core {
   const db = new Db(cfg.databaseUrl, cfg.dbPoolMax);
+  const launcher = typeof launcherOrFactory === "function" ? launcherOrFactory(db) : launcherOrFactory;
   const gh = new GitHubApp({ apiUrl: cfg.apiUrl, appId: cfg.appId, privateKey: cfg.privateKey, timeoutMs: cfg.githubTimeoutMs });
   const service = new GitHubService(db, gh, {
     runsOnLabel: cfg.runsOnLabel, onboardingBranch: cfg.onboardingBranch, onboardAllRepositories: cfg.onboardAllRepositories,
@@ -97,6 +102,40 @@ export async function buildApp(deps: Deps): Promise<App> {
   };
 
   fastify.get("/healthz", async () => ({ ok: true }));
+
+  // ---------------------------------------------------------------- our machines: hello, poll, events
+  // src/machines/pool.ts. A machine boots with a single-use boot secret, exchanges it for its session credential, then
+  // fetches the work offered to its own slots. docs/data-contract.md "Our machines".
+  const machines: MachinePool | null = service.pool?.pool ?? deps.machines?.(db) ?? null;
+  if (machines) {
+    fastify.post("/v1/runner/machine/hello", { bodyLimit: 4 * 1024 }, async (req, reply) => {
+      const b = (req.body ?? {}) as { machineId?: unknown; bootSecret?: unknown; engineVersion?: unknown };
+      if (typeof b.machineId !== "number" || typeof b.bootSecret !== "string") return fail(reply, 400, "bad_request", "machineId and bootSecret are required.");
+      const ev = typeof b.engineVersion === "string" && /^[\x20-\x7e]{1,200}$/.test(b.engineVersion) ? b.engineVersion : null;
+      const r = await machines.hello(b.machineId, b.bootSecret, ev);
+      if (!r) return fail(reply, 401, "unauthorized", "Unknown machine, or its boot secret was already used.");
+      return reply.send(r);
+    });
+    fastify.post("/v1/runner/machine/poll", { bodyLimit: 4 * 1024 }, async (req, reply) => {
+      const scope = verifyMachineCredential(cfg.runnerTokens, req.headers.authorization);
+      if (!scope) return fail(reply, 401, "unauthorized", "This machine's session credential is required.");
+      const b = (req.body ?? {}) as { holding?: unknown };
+      const holding = Array.isArray(b.holding) ? b.holding.filter((x): x is number => typeof x === "number") : [];
+      const r = await machines.poll(scope, holding);
+      if (!r) return fail(reply, 401, "unauthorized", "This session ended: say hello again (or retire).");
+      return reply.header("cache-control", "no-store").send(r);
+    });
+    fastify.post("/v1/runner/machine/events", { bodyLimit: 8 * 1024 }, async (req, reply) => {
+      const scope = verifyMachineCredential(cfg.runnerTokens, req.headers.authorization);
+      if (!scope) return fail(reply, 401, "unauthorized", "This machine's session credential is required.");
+      const b = (req.body ?? {}) as { type?: unknown; leaseId?: unknown; detail?: unknown };
+      if (b.type !== "finished" && b.type !== "prepared" && b.type !== "interrupted") return fail(reply, 400, "bad_request", "type is finished, prepared or interrupted.");
+      if (b.leaseId !== undefined && (typeof b.leaseId !== "number" || !Number.isSafeInteger(b.leaseId))) return fail(reply, 400, "bad_request", "leaseId is a number.");
+      const ok = await machines.event(scope, { type: b.type, ...(typeof b.leaseId === "number" ? { leaseId: b.leaseId } : {}), ...(typeof b.detail === "string" ? { detail: b.detail } : {}) });
+      if (!ok) return fail(reply, 401, "unauthorized", "This session ended.");
+      return reply.code(202).send({ ok: true });
+    });
+  }
 
   // ---------------------------------------------------------------- GitHub webhooks
   // GitHub caps webhook payloads at 25 MB (an installation on "All repositories" lists every repository).

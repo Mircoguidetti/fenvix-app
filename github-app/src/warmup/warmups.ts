@@ -519,7 +519,7 @@ export class Warmups {
       const res = await this.launcher!.launchWarmup!({
         warmupId: row.id, attempt, repositoryId: repo.repository_id, repositoryFullName: repo.full_name, installationId: repo.installation_id,
         commitSha: row.commit_sha, ref: row.ref, workflowPath: repo.onboarding_workflow_path!, job: repo.onboarding_job!, runnerName,
-        checkoutToken: tok.data.token, summaryToken, ...(cacheToken ? { cacheToken } : {}), region,
+        checkoutToken: tok.data.token, summaryToken, ...(cacheToken ? { cacheToken } : {}), region, ...(repo.workspace_id ? { workspaceId: repo.workspace_id } : {}),
       });
       await this.db.q("update gh_warmups set instance_id = $2 where id = $1", [row.id, res.instanceId]);
       slot!.running++;

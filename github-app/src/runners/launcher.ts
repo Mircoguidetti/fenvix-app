@@ -33,6 +33,11 @@ export interface RunnerLaunch {
   region?: Region;
   /** The organization's mode, given to the machine as FENVIX_MODE (default "enforce"). */
   mode?: RunMode;
+  /** Our machines (src/machines/): the customer (affinity, caps) and the machine size the job asked for. */
+  workspaceId?: string;
+  size?: string;
+  /** The project's "skip with proof" switch (ci_projects.skip_with_proof); false gives the job FENVIX_SKIP=0 (G-0191). */
+  skipWithProof?: boolean;
 }
 
 /**
@@ -61,6 +66,8 @@ export interface WarmupLaunch {
   /** Shared-cache token, write access (the default branch of the repository itself is a trusted ref). */
   cacheToken?: string;
   region: Region;
+  /** Our machines: the repository's organization (a warm-up runs only on that customer's machines). */
+  workspaceId?: string;
 }
 
 export interface RunnerLauncher {

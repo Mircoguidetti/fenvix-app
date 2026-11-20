@@ -9,6 +9,8 @@ import { projectStack, type Stack } from "./results/detect.ts";
 import { parseResults, progressRecord, type RunnerExploration, type RunnerProgress, type RunnerResults } from "./results/runner-records.ts";
 import { signCacheToken, signSummaryCredential } from "./runners/credentials.ts";
 import { type Region, RetryLater, type RunMode, type RunnerLauncher } from "./runners/launcher.ts";
+import type { PoolLauncher } from "./machines/launcher.ts";
+import { sizeOfLabels } from "./machines/settings.ts";
 import { DEFAULT_WARMUP, type WarmupSettings } from "./warmup/policy.ts";
 import { Warmups } from "./warmup/warmups.ts";
 
@@ -444,7 +446,11 @@ export class GitHubService {
          updated_at = now()`,
       [job.id, repo.id, installationId, job.run_id, job.run_attempt ?? 1, job.workflow_name ?? "", job.name, job.head_sha, job.head_branch ?? null,
         job.labels, job.runner_name || null, status, job.conclusion ?? null, job.created_at ?? null, job.started_at ?? null, job.completed_at ?? null]);
-    if (status === "queued" && p.action === "queued" && this.launcher) await this.launchRunner(job.id, installationId, repo);
+    if (status === "queued" && p.action === "queued" && this.launcher) {
+      await this.db.q("update gh_jobs set queued_at = coalesce(queued_at, now()) where job_id = $1", [job.id]);
+      await this.launchRunner(job.id, installationId, repo);
+    }
+    if (status === "completed" && this.pool) await this.onPooledJobCompleted(job.id, job.conclusion ?? null);
     if (status === "in_progress") {
       await this.startRun(job.id);
       await this.startCheckRun(job.id, job.html_url ?? null);
@@ -520,9 +526,67 @@ export class GitHubService {
    * "Administration: Read and write"), then the machine. Only for installations linked to an organization, so a
    * stranger installing the App cannot start machines; only while the job is still queued.
    */
+  /** Our machines (src/machines/), when the launcher is the pool. */
+  get pool(): PoolLauncher | null {
+    const l = this.launcher as (RunnerLauncher & { pooled?: true }) | null;
+    return l?.pooled ? (l as unknown as PoolLauncher) : null;
+  }
+
+  /**
+   * A pooled job ended (GitHub's workflow_job completed): its slot is free, the machine it ran on goes into its usage
+   * event (metering), and the jobs waiting for a slot are dispatched now. A job whose spot machine was taken back is
+   * re-run once by GitHub (a deterministic run gives the same result).
+   */
+  private async onPooledJobCompleted(jobId: number, conclusion: string | null): Promise<void> {
+    const m = await this.pool!.pool.jobCompleted(jobId);
+    if (m?.interrupted && conclusion && conclusion !== "success") {
+      const [j] = await this.db.q<{ installation_id: number; repository_id: number; interrupted_reruns: number }>(
+        "update gh_jobs set interrupted_reruns = interrupted_reruns + 1 where job_id = $1 and interrupted_reruns < 2 returning installation_id, repository_id, interrupted_reruns", [jobId]);
+      const repo = j ? await this.repo(j.repository_id) : null;
+      if (j && repo) {
+        await this.gh.installation(j.installation_id).request("POST", `${repoPath(repo.full_name)}/actions/jobs/${jobId}/rerun`, { allow: [403, 409, 422] })
+          .then(() => this.log.info({ job: jobId }, "job re-run after a spot interruption"))
+          .catch((e: unknown) => this.log.warn({ job: jobId, err: e instanceof Error ? e.message : String(e) }, "could not re-run a job after a spot interruption"));
+      }
+    }
+    await this.dispatchPending();
+  }
+
+  /** Jobs waiting for a slot, oldest first (every free slot and every tick). */
+  async dispatchPending(limit = 20): Promise<number> {
+    if (!this.pool) return 0;
+    const due = await this.db.q<{ job_id: number; installation_id: number; repository_id: number }>(
+      `select job_id, installation_id, repository_id from gh_jobs where dispatch_state = 'pending' and status = 'queued'
+        order by queued_at nulls last, job_id limit $1`, [limit]);
+    let leased = 0;
+    for (const j of due) {
+      const r = await this.repo(j.repository_id);
+      if (!r) continue;
+      try {
+        await this.launchRunner(j.job_id, j.installation_id, { id: r.repository_id, full_name: r.full_name, default_branch: r.default_branch ?? undefined } as RepoFull);
+        const [s] = await this.db.q<{ dispatch_state: string | null }>("select dispatch_state from gh_jobs where job_id = $1", [j.job_id]);
+        if (s?.dispatch_state === "leased") leased++;
+        else break; // the next one would wait for the same reason (FIFO)
+      } catch (e) {
+        this.log.warn({ job: j.job_id, err: e instanceof Error ? e.message : String(e) }, "a pending job could not be dispatched");
+      }
+    }
+    return leased;
+  }
+
+  /** The machine pool's minute: machines retired and topped up, then waiting jobs dispatched. */
+  async poolTick(): Promise<{ retired: number; lost: number; orphans: number; started: number; launched: number; leased: number }> {
+    if (!this.pool) return { retired: 0, lost: 0, orphans: 0, started: 0, launched: 0, leased: 0 };
+    const t = await this.pool.pool.tick();
+    // Jobs GitHub already finished or cancelled while they waited never get a slot.
+    await this.db.q("update gh_jobs set dispatch_state = 'none', dispatch_detail = 'GitHub ended the job before it got a machine' where dispatch_state = 'pending' and status <> 'queued'");
+    return { ...t, leased: await this.dispatchPending() };
+  }
+
   private async launchRunner(jobId: number, installationId: number, repo: RepoFull): Promise<void> {
-    const [row] = await this.db.q<{ status: string; run_id: number; run_attempt: number; head_sha: string }>("select status, run_id, run_attempt, head_sha from gh_jobs where job_id = $1", [jobId]);
-    if (!row || row.status !== "queued") return;
+    const [row] = await this.db.q<{ status: string; run_id: number; run_attempt: number; head_sha: string; labels: string[]; dispatch_state: string | null }>(
+      "select status, run_id, run_attempt, head_sha, labels, dispatch_state from gh_jobs where job_id = $1", [jobId]);
+    if (!row || row.status !== "queued" || row.dispatch_state === "leased") return;
     const [inst] = await this.db.q<{ workspace_id: string | null; suspended_at: Date | null; deleted_at: Date | null }>(
       "select workspace_id, suspended_at, deleted_at from gh_installations where installation_id = $1", [installationId]);
     if (!inst?.workspace_id || inst.suspended_at || inst.deleted_at) {
@@ -531,6 +595,17 @@ export class GitHubService {
     }
     // The machine runs in the organization's region, or not at all: an EU organization's job never runs in the US.
     const org = await this.db.tx(inst.workspace_id, (c) => this.orgContext(c));
+    // The project's "skip with proof" switch reaches the machine (audit G-0191, G-1732): off means FENVIX_SKIP=0.
+    const skipWithProof = (await this.db.tx(inst.workspace_id, (c) => c.query<{ skip_with_proof: boolean }>(
+      `select p.skip_with_proof from ci_projects p join gh_repositories r on r.project_id = p.id where r.repository_id = $1`, [repo.id]))).rows[0]?.skip_with_proof !== false;
+    const size = this.pool ? sizeOfLabels(row.labels ?? [], this.s.runsOnLabel, this.pool.pool.s) : null;
+    if (this.pool && !size) {
+      await this.db.q("update gh_jobs set dispatch_state = 'none', dispatch_detail = $2 where job_id = $1", [jobId,
+        `unknown machine size in runs-on (${(row.labels ?? []).join(", ")}); sizes: ${Object.keys(this.pool.pool.s.sizes).map((s) => `${this.s.runsOnLabel}-${s}`).join(", ")}`]);
+      this.log.warn({ job: jobId, labels: row.labels }, "no machine: the job asks for an unknown size");
+      return;
+    }
+    if (size) await this.db.q("update gh_jobs set size = $2 where job_id = $1", [jobId, size]);
     // The mode the machine gets (FENVIX_MODE) is the run's mode, whatever the job later reports (review R-016 F4).
     await this.db.q("update gh_jobs set region = $2, mode = $3 where job_id = $1", [jobId, org.region, org.mode]);
     if (this.launcher!.canPlace && !this.launcher!.canPlace(org.region)) {
@@ -558,16 +633,29 @@ export class GitHubService {
       });
       if (!freed || !(await this.launcher!.hasCapacity(org.region))) throw new RetryLater(`the fleet is full; job ${jobId} waits`);
     }
+    // Our machines: no just-in-time runner is registered for a job that would get no slot (customer caps, region full).
+    if (this.pool && (this.s.summaryKey !== undefined)) {
+      const busy = await this.pool.pool.db.q<{ n: number; cap: number | null }>(
+        `select count(*)::int as n, (select max_concurrent_jobs from public.workspaces where id = $1) as cap
+           from gh_leases where workspace_id = $1 and state in ('offered', 'running')`, [inst.workspace_id]);
+      if (busy[0] && busy[0].n >= (busy[0].cap ?? this.pool.pool.s.jobsPerCustomer)) {
+        await this.db.q("update gh_jobs set dispatch_state = 'pending', dispatch_detail = $2 where job_id = $1", [jobId, `this organization already runs ${busy[0].n} jobs at once`]);
+        return;
+      }
+    }
     // A retry after a partial failure finds the first name taken (409): a fresh one; EC2 still starts one machine.
     type Jit = { encoded_jit_config: string; runner?: { id?: number } };
+    // The runner carries the job's fenvix labels (`fenvix`, and `fenvix-<size>` when it asked for a size): GitHub gives a
+    // runner only a job whose every label it has.
+    const runnerLabels = [this.s.runsOnLabel, ...(row.labels ?? []).filter((l) => l.startsWith(`${this.s.runsOnLabel}-`)).slice(0, 1)];
     let runnerName = `fenvix-j${jobId}`;
     let jit = await gh.request<Jit>("POST", `${base}/actions/runners/generate-jitconfig`, {
-      body: { name: runnerName, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" }, allow: [409],
+      body: { name: runnerName, runner_group_id: 1, labels: runnerLabels, work_folder: "_work" }, allow: [409],
     });
     if (jit.status === 409) {
       runnerName = `fenvix-j${jobId}-${Date.now().toString(36)}`;
       jit = await gh.request<Jit>("POST", `${base}/actions/runners/generate-jitconfig`, {
-        body: { name: runnerName, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" },
+        body: { name: runnerName, runner_group_id: 1, labels: runnerLabels, work_folder: "_work" },
       });
     }
     const unregister = async (why: string) => {
@@ -588,12 +676,19 @@ export class GitHubService {
       res = await this.launcher!.launch({
         jobId, runId: row.run_id, repositoryId: repo.id, repositoryFullName: repo.full_name, installationId, runnerName,
         jitConfig: jit.data.encoded_jit_config, cacheAccess, summaryToken, ...(cacheToken ? { cacheToken } : {}), region: org.region, mode: org.mode,
+        workspaceId: inst.workspace_id, skipWithProof, ...(size ? { size } : {}),
       });
     } catch (e) {
       await unregister(e instanceof RetryLater ? "the fleet is full" : "the machine did not start");
+      // Our machines: the job waits in the database and is dispatched by the next free slot (no queue retry).
+      if (this.pool && e instanceof RetryLater) {
+        await this.db.q("update gh_jobs set dispatch_state = 'pending', dispatch_detail = left($2, 1000) where job_id = $1", [jobId, e.message]);
+        this.log.info({ job: jobId, why: e.message }, "job waits for a machine");
+        return;
+      }
       throw e;
     }
-    await this.db.q("update gh_jobs set launched_at = coalesce(launched_at, now()) where job_id = $1", [jobId]);
+    await this.db.q("update gh_jobs set launched_at = coalesce(launched_at, now()), dispatch_state = case when $2 then 'leased' else dispatch_state end, leased_at = case when $2 then now() else leased_at end, dispatch_detail = '' where job_id = $1", [jobId, !!this.pool]);
     // A redelivery after a partial failure: EC2 returned the first machine (same client token), which has the first
     // just-in-time configuration; this one would never be used.
     if (res.already) await unregister("the job's machine already exists");
@@ -794,6 +889,13 @@ export class GitHubService {
 
   /** Completed jobs whose summary never came (or whose publication failed) are published after the wait. */
   async sweep(): Promise<number> {
+    // Our machines: retire, reconcile, top up the reserve, dispatch waiting jobs (every minute, with the sweep).
+    if (this.pool) {
+      try {
+        const t = await this.poolTick();
+        if (t.retired || t.lost || t.orphans || t.started || t.launched || t.leased) this.log.info(t, "pool tick");
+      } catch (e) { this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "pool tick failed"); }
+    }
     // Old staged results and summaries, and old link completions go (review R-016 F7, R-016b G2, R-016 F2).
     await this.db.q("delete from gh_run_results where received_at < now() - make_interval(days => $1)", [RESULTS_KEEP_DAYS]);
     await this.db.q("delete from gh_run_summaries where received_at < now() - make_interval(days => $1)", [RESULTS_KEEP_DAYS]);
@@ -922,9 +1024,11 @@ export class GitHubService {
       }
       await c.query(
         `insert into ci_usage_events (installation_id, repository_id, repository_full_name, project_id, ci_run_id, github_job_id, github_run_id,
-           github_run_attempt, billable, reason, plan_id, conclusion, test_minutes_ran, minutes_saved, other_step_minutes, held_minutes, occurred_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, round($13::numeric, 2), round($14::numeric, 2), round($15::numeric, 2),
-           round($16::numeric, 2), $17)
+           github_run_attempt, billable, reason, plan_id, conclusion, test_minutes_ran, minutes_saved, other_step_minutes, held_minutes, occurred_at,
+           machine_size, instance_type, machine_market, machine_id)
+         select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, round($13::numeric, 2), round($14::numeric, 2), round($15::numeric, 2),
+           round($16::numeric, 2), $17, m.size, m.instance_type, m.market, m.id
+           from (select 1) one left join lateral (select machine_id from gh_leases where job_id = $6 order by id desc limit 1) l on true left join gh_machines m on m.id = l.machine_id
          on conflict (github_job_id) do nothing`,
         [job.installation_id, job.repository_id, repo.full_name, projectId, ciRunId, job.job_id, job.run_id, job.run_attempt, billable, reason,
           planId, job.conclusion, minutes.ran, minutes.saved, minutes.other, minutes.held, completedAt]);

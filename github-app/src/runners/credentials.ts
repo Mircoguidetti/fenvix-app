@@ -92,3 +92,37 @@ export function signCacheToken(key: KeyObject, t: { installationId: number; repo
   const sig = sign("sha256", Buffer.from(`fxs1.${body}`), key).toString("base64url");
   return `fxs1.${body}.${sig}`;
 }
+
+/**
+ * A machine's session credential (our machines, src/machines/): `fxm1.<payload>.<HMAC-SHA256>`, keyed with RUNNER_TOKEN.
+ * The payload names the machine and its session generation; the API also checks the generation against gh_machines,
+ * so a credential stops working the moment its machine retires or says hello again. It lets the machine fetch work
+ * for ITS OWN slots and report on them, nothing else: every job credential comes inside a lease.
+ */
+export interface MachineScope { machineId: number; gen: number; exp: number }
+const MACHINE_PREFIX = "fxm1.";
+const machineMac = (key: string, data: string) => createHmac("sha256", key).update(MACHINE_PREFIX).update(data).digest();
+
+export function signMachineCredential(key: string, s: MachineScope): string {
+  if (!key) throw new Error("no machine signing key (RUNNER_TOKEN)");
+  if (!posInt(s.machineId) || !Number.isSafeInteger(s.gen) || s.gen < 1 || !posInt(s.exp)) throw new Error("bad machine credential scope");
+  const body = Buffer.from(JSON.stringify({ m: s.machineId, g: s.gen, e: s.exp })).toString("base64url");
+  return `${MACHINE_PREFIX}${body}.${machineMac(key, body).toString("base64url")}`;
+}
+
+export function verifyMachineCredential(keys: string[], authorization: string | undefined, now = Date.now()): MachineScope | null {
+  const m = /^Bearer\s+(\S{1,600})$/i.exec(authorization ?? "");
+  if (!m || !m[1]!.startsWith(MACHINE_PREFIX)) return null;
+  const parts = m[1]!.slice(MACHINE_PREFIX.length).split(".");
+  if (parts.length !== 2) return null;
+  const [body, sig] = parts as [string, string];
+  const given = Buffer.from(sig, "base64url");
+  if (!keys.some((k) => { if (!k) return false; const w = machineMac(k, body); return w.length === given.length && timingSafeEqual(w, given); })) return null;
+  try {
+    const p = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as { m?: unknown; g?: unknown; e?: unknown };
+    if (!posInt(p.m) || !posInt(p.g) || !posInt(p.e) || p.e * 1000 < now) return null;
+    return { machineId: p.m, gen: p.g, exp: p.e };
+  } catch {
+    return null;
+  }
+}
