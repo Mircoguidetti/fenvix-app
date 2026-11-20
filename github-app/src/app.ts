@@ -213,7 +213,7 @@ export async function buildApp(deps: Deps): Promise<App> {
 
   // Written at once (no queue): the live view polls it. A record older than the stored one is ignored; a job whose
   // run row does not exist yet stores nothing. Both answer 202 like a stored one (the runner does not retry them).
-  fastify.post("/v1/runner/progress", { bodyLimit: 64 * 1024 }, async (req, reply) => {
+  fastify.post("/v1/runner/progress", { bodyLimit: 2 * 1024 * 1024 }, async (req, reply) => {
     const r = runnerBody(req, reply, parseProgress);
     if (!r) return reply;
     const p = r.body;

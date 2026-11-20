@@ -737,6 +737,40 @@ export class GitHubService {
    * than the stored one and the run is still running. "no_run": the job or its run row is not known yet (the
    * workflow_job event that starts it has not arrived, or the repository has no project): nothing is stored.
    */
+  /**
+   * Stops a running fenvix job (the dashboard's live view): "now" cancels its GitHub workflow run at once;
+   * "first_failure" arms it, and the first progress record with a failed test cancels it; "off" disarms it. The state
+   * (requested, done, failed) and the reason are on gh_jobs.stop_state and stop_detail for the API to show.
+   */
+  async stopRun(ciRunId: string, when: "now" | "first_failure" | "off"): Promise<void> {
+    const [j] = await this.db.q<{ job_id: number; status: string }>("select job_id, status from gh_jobs where ci_run_id = $1 order by job_id desc limit 1", [ciRunId]);
+    if (!j) return;
+    if (when === "off") {
+      await this.db.q("update gh_jobs set stop_when = null, stop_state = null, stop_detail = 'stop withdrawn' where job_id = $1 and stop_state is distinct from 'done'", [j.job_id]);
+      return;
+    }
+    await this.db.q("update gh_jobs set stop_when = $2, stop_state = 'requested', stop_detail = '', stop_requested_at = now() where job_id = $1 and stop_state is distinct from 'done'", [j.job_id, when]);
+    if (when === "now") await this.cancelJob(j.job_id, "stopped from the dashboard");
+  }
+
+  private async cancelJob(jobId: number, why: string): Promise<void> {
+    const [j] = await this.db.q<{ installation_id: number; repository_id: number; run_id: number; status: string }>("select installation_id, repository_id, run_id, status from gh_jobs where job_id = $1", [jobId]);
+    const repo = j ? await this.repo(j.repository_id) : null;
+    if (!j || !repo) return;
+    if (j.status === "completed") {
+      await this.db.q("update gh_jobs set stop_state = 'failed', stop_detail = 'the job had already ended' where job_id = $1", [jobId]);
+      return;
+    }
+    try {
+      const r = await this.gh.installation(j.installation_id).request("POST", `${repoPath(repo.full_name)}/actions/runs/${j.run_id}/cancel`, { allow: [409] });
+      const done = r.status !== 409;
+      await this.db.q("update gh_jobs set stop_state = $2, stop_detail = $3 where job_id = $1", [jobId, done ? "done" : "failed", done ? why : "GitHub could not cancel the run (it is ending already)"]);
+      this.log.info({ job: jobId, why, done }, "job stop requested on GitHub");
+    } catch (e) {
+      await this.db.q("update gh_jobs set stop_state = 'failed', stop_detail = left($2, 1000) where job_id = $1", [jobId, `GitHub refused the cancel: ${e instanceof Error ? e.message : String(e)}`]);
+    }
+  }
+
   async receiveProgress(o: { repositoryId: number; runId: number; runAttempt: number; runnerName: string; progress: RunnerProgress }): Promise<"stored" | "stale" | "no_run"> {
     const [j] = await this.db.q<{ ci_run_id: string; workspace_id: string | null }>(
       `select j.ci_run_id, i.workspace_id from gh_jobs j join gh_installations i on i.installation_id = j.installation_id
@@ -748,6 +782,12 @@ export class GitHubService {
       `update ci_runs set progress = $2::jsonb, progress_at = now()
        where id = $1 and status = 'running' and coalesce((progress->>'seq')::bigint, -1) < $3`,
       [j.ci_run_id, JSON.stringify(progressRecord(o.progress)), o.progress.seq]));
+    // A stop armed for the first failure fires on the first record that has one.
+    if (o.progress.failed > 0 || o.progress.finished?.some((t) => t.outcome === "failed")) {
+      const armed = await this.db.q<{ job_id: number }>(
+        "update gh_jobs set stop_when = 'now' where ci_run_id = $1 and stop_when = 'first_failure' and stop_state = 'requested' returning job_id", [j.ci_run_id]);
+      for (const a of armed) await this.cancelJob(a.job_id, "stopped at the first failed test");
+    }
     return updated.rowCount ? "stored" : "stale";
   }
 

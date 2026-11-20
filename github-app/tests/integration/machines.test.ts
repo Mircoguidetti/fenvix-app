@@ -8,7 +8,7 @@ import { MachinePool } from "../../src/machines/pool.ts";
 import { parsePool, sizeOfLabels } from "../../src/machines/settings.ts";
 import type { Db } from "../../src/db.ts";
 import { FakeDriver } from "../helpers/fake-machines.ts";
-import { ACCOUNT, CI_YAML, Harness, INSTALLATION_ID, installationCreated, makeOrg, REPOS, resetDb, workflowJob } from "../helpers/harness.ts";
+import { ACCOUNT, CI_YAML, Harness, INSTALLATION_ID, installationCreated, makeOrg, REPOS, resetDb, runnerCredential, workflowJob } from "../helpers/harness.ts";
 
 const API = "http://127.0.0.1";
 const POOL = parsePool(JSON.stringify({
@@ -109,6 +109,7 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
     await h.send("workflow_job", workflowJob("queued", { id: 1001, runId: 9401, sha: "a".repeat(40), branch: "feature" }));
     const l = await leaseOfJob(1001);
     assert.equal(l.machine_id, ready.id);
+    assert.equal(l.path, "ready", "recorded for the start-latency measurement (always-on)");
     const m = await machine(ready.id);
     assert.deepEqual({ state: m.state, ws: m.workspace_id }, { state: "bound", ws: acme.workspaceId });
     assert.equal((await admin.query("select dispatch_state from gh_jobs where job_id = 1001")).rows[0].dispatch_state, "leased");
@@ -156,6 +157,7 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
     const [a, b] = [await leaseOfJob(1001), await leaseOfJob(1002)];
     assert.equal(b.machine_id, a.machine_id);
     assert.equal(b.slot, 2);
+    assert.equal(b.path, "own");
     const p = await poll(acmeToken, [a.id]);
     const w = (p.body.leases as { work: { env: Record<string, string> } }[])[0]!.work;
     assert.equal(w.env.FENVIX_SKIP, "0", "the project's skip-with-proof switch, off, reaches the machine (audit G-0191, G-1732)");
@@ -249,6 +251,33 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
     assert.deepEqual({ size: m.size, type: m.instance_type, slots: m.slots }, { size: "large", type: "c7a.2xlarge", slots: 4 });
     const jit = h.gh.repos.get("acme/shop")!.jitRunners.find((r) => r.name === "fenvix-j1006")!;
     assert.deepEqual(jit.labels, ["fenvix", "fenvix-large"]);
+  });
+
+  it("live view: progress carries the finished tests and the workers; a stop armed for the first failure cancels the run (P-049)", async () => {
+    await h.send("workflow_job", workflowJob("in_progress", { id: 1006, runId: 9406, sha: "1".repeat(40), branch: "feature", runner: "fenvix-j1006", labels: ["fenvix", "fenvix-large"] }));
+    const ciRun = (await admin.query("select ci_run_id from gh_jobs where job_id = 1006")).rows[0].ci_run_id as string;
+    assert.ok(ciRun, "the run row exists while the job runs");
+    await h.app.service.stopRun(ciRun, "first_failure");
+    assert.deepEqual((await admin.query("select stop_when, stop_state from gh_jobs where job_id = 1006")).rows[0], { stop_when: "first_failure", stop_state: "requested" });
+    const cred = runnerCredential("fenvix-j1006", REPOS.shop.id, 9406);
+    const body = (seq: number, failed: number) => ({
+      seq, phase: "testing", testsTotal: 10, testsDone: 2, passed: 2 - failed, failed, skippedWithProof: 0, currentTest: "t3", elapsedMs: 1000, runId: 9406, runAttempt: 1,
+      finished: [{ testId: "tests/test_a.py::test_one", outcome: "passed", durationMs: 12, worker: "gw0" }, { testId: "tests/test_a.py::test_two", outcome: failed ? "failed" : "passed", durationMs: 30, worker: "gw1", ...(failed ? { failure: { kind: "real", message: "boom" } } : {}) }],
+      workers: [{ id: "gw0", currentTest: "t3", testsDone: 1 }, { id: "gw1", currentTest: null, testsDone: 1 }],
+    });
+    assert.equal((await post("/v1/runner/progress", body(1, 0), cred)).status, 202);
+    assert.equal(h.gh.runCancels.length, 0, "no failure yet");
+    const p = (await admin.query("select progress from ci_runs where id = $1", [ciRun])).rows[0].progress;
+    assert.equal(p.finished.length, 2);
+    assert.deepEqual(p.workers[0], { id: "gw0", currentTest: "t3", testsDone: 1 });
+    assert.equal((await post("/v1/runner/progress", body(2, 1), cred)).status, 202);
+    assert.deepEqual(h.gh.runCancels, [{ repo: "acme/shop", runId: 9406 }]);
+    assert.deepEqual((await admin.query("select stop_state, stop_detail from gh_jobs where job_id = 1006")).rows[0], { stop_state: "done", stop_detail: "stopped at the first failed test" });
+    // More than 500 finished tests in one record is refused, naming the field.
+    const big = { ...body(3, 0), finished: Array.from({ length: 501 }, (_, i) => ({ testId: `t${i}`, outcome: "passed", durationMs: 1 })) };
+    const r = await post("/v1/runner/progress", big, cred);
+    assert.equal(r.status, 400);
+    assert.equal((r.body.error as { field: string }).field, "finished");
   });
 
   it("spot for bursts: above spotAbove running machines new machines are spot; an interruption re-runs the job", async () => {

@@ -95,6 +95,9 @@ create table if not exists public.gh_leases (
   replay_id bigint,
   workspace_id uuid not null references public.workspaces (id) on delete cascade,
   state text not null default 'offered' check (state in ('offered', 'running', 'done', 'lost')),
+  -- How the slot was found, for the start-latency measurement: the customer's own machine, the clean running
+  -- (always-on) machine, a started reserve machine (warm start), or a new machine (cold start).
+  path text check (path is null or path in ('own', 'ready', 'reserve', 'new')),
   -- AES-256-GCM sealed JSON (src/machines/seal.ts); deleted when the machine takes it.
   payload text,
   detail text not null default '' check (char_length(detail) <= 1000),
@@ -137,6 +140,12 @@ alter table public.gh_jobs add column if not exists leased_at timestamptz;
 -- Re-runs asked after a spot interruption (a deterministic run gives the same result).
 alter table public.gh_jobs add column if not exists interrupted_reruns int not null default 0;
 create index if not exists gh_jobs_pending on public.gh_jobs (region, queued_at) where dispatch_state = 'pending';
+-- Stop a running job (the dashboard's live view, POST /runs/{runId}/stop: Work kind stop_run): now, at the first
+-- failed test, or off again. requested -> done | failed, with the reason.
+alter table public.gh_jobs add column if not exists stop_when text check (stop_when is null or stop_when in ('now', 'first_failure'));
+alter table public.gh_jobs add column if not exists stop_state text check (stop_state is null or stop_state in ('requested', 'done', 'failed'));
+alter table public.gh_jobs add column if not exists stop_detail text not null default '' check (char_length(stop_detail) <= 1000);
+alter table public.gh_jobs add column if not exists stop_requested_at timestamptz;
 
 -- 5. Per-customer caps (null: the service defaults, settings MACHINES_PER_CUSTOMER and JOBS_PER_CUSTOMER).
 alter table public.workspaces add column if not exists max_machines int check (max_machines is null or max_machines between 0 and 100);

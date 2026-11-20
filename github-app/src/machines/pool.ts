@@ -115,7 +115,7 @@ export class MachinePool {
       for (const m of own) {
         if (m.used.length >= m.slots) continue;
         const slot = firstFree(m.used, m.slots);
-        return this.lease(c, m.id, slot, r);
+        return this.lease(c, m.id, slot, r, "own");
       }
       const mine = (await c.query<{ n: number }>(
         "select count(*)::int as n from gh_machines where workspace_id = $1 and state in ('bound', 'retiring')", [r.workspaceId])).rows[0]!.n;
@@ -127,7 +127,7 @@ export class MachinePool {
         [r.region, r.size])).rows[0];
       if (ready) {
         await c.query("update gh_machines set state = 'bound', workspace_id = $2, bound_at = now(), empty_since = null where id = $1", [ready.id, r.workspaceId]);
-        return this.lease(c, ready.id, 1, r);
+        return this.lease(c, ready.id, 1, r, "ready");
       }
       // 3. A reserve machine (stopped, never used): started for this customer with a fresh boot secret.
       const reserve = (await c.query<MachineRow>(
@@ -139,7 +139,7 @@ export class MachinePool {
           "update gh_machines set state = 'bound', workspace_id = $2, bound_at = now(), empty_since = null, boot_secret_sha256 = $3, hello_at = null, launched_at = now() where id = $1",
           [reserve.id, r.workspaceId, sha256(secret)]);
         actions.push({ do: "start", machineId: reserve.id, region: r.region, instanceId: reserve.instance_id!, secret });
-        return this.lease(c, reserve.id, 1, r);
+        return this.lease(c, reserve.id, 1, r, "reserve");
       }
       // 4. A new machine, if the region has room: spot above the on-demand threshold (a burst).
       const live = (await c.query<{ n: number; running: number }>(
@@ -153,17 +153,17 @@ export class MachinePool {
          values ($1, $2, $3, $4, $5, 'bound', $6, true, now(), $7, now()) returning id`,
         [r.region, r.size, size.instanceType, market, size.slots, r.workspaceId, sha256(secret)])).rows[0]!;
       actions.push({ do: "launch", machineId: m.id, region: r.region, instanceType: size.instanceType, market, secret });
-      return this.lease(c, m.id, 1, r);
+      return this.lease(c, m.id, 1, r, "new");
     });
     await this.run(actions);
     if ("leaseId" in out) await this.ensure(r.region);
     return out;
   }
 
-  private async lease(c: Client, machineId: number, slot: number, r: AllocRequest): Promise<Alloc> {
+  private async lease(c: Client, machineId: number, slot: number, r: AllocRequest, path: "own" | "ready" | "reserve" | "new"): Promise<Alloc> {
     const l = (await c.query<{ id: number }>(
-      `insert into gh_leases (machine_id, slot, kind, job_id, warmup_id, workspace_id) values ($1, $2, $3, $4, $5, $6) returning id`,
-      [machineId, slot, r.kind, r.jobId ?? null, r.warmupId ?? null, r.workspaceId])).rows[0]!;
+      `insert into gh_leases (machine_id, slot, kind, job_id, warmup_id, workspace_id, path) values ($1, $2, $3, $4, $5, $6, $7) returning id`,
+      [machineId, slot, r.kind, r.jobId ?? null, r.warmupId ?? null, r.workspaceId, path])).rows[0]!;
     await c.query("update gh_machines set empty_since = null where id = $1", [machineId]);
     return { leaseId: l.id, machineId, slot };
   }
