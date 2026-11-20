@@ -303,6 +303,20 @@ added, the EC2 launcher's `launchTask` (task machines for replays and exploratio
 machine only as P-047's pool leases (the scratch merge's `Service.poolReplay`). Scheduled explorations wait until
 P-047's pool schedules its exploration hook.
 
+**Every path in this branch's code that can start a machine** (grep for `RunInstances`, `StartInstances`, `CreateFleet`
+and `RequestSpotInstances` over `github-app/src`, `infra/github-app/lib`, `deploy`, `scripts`; MEASURED 2026-11-20):
+
+| Path | Who wrote it | Gate |
+| --- | --- | --- |
+| `github-app/src/runners/launcher.ts` `Ec2Launcher.launch` (a customer job's machine) | before this session (main) | Only through the launcher, which `launcherFrom` builds only with `RUNNER_MODE=per-job`. With `RUNNER_MODE` unset, no launcher and no start. P-047's branch replaces it with the pool (`RUNNER_MODE=pool`). |
+| `github-app/src/runners/launcher.ts` `Ec2Launcher.launchWarmup` (a warm-up machine) | before this session (main) | The same launcher, plus `WARMUP_ENABLED`. |
+| `github-app/src/runners/demo.ts` `demoUp`, called by the `demo` Lambda through `scripts/demo-up.sh` | before this session (main) | A manual invocation by the founder, on `demoRepository` only. It does NOT depend on `RUNNER_MODE`. P-047's branch deletes the demo path, so after the merge it is gone. |
+| `Ec2Launcher.launchTask` (replay and exploration machines) | this branch | **Removed** (601a519). |
+| `Tasks.dispatch` → `poolReplay` → `MachinePool.allocate` | this branch, scratch merge only | P-047's pool, behind `RUNNER_MODE=pool`. |
+
+Nothing this branch added can start a machine outside P-047's switch. The one path outside it, `demo-up`, predates this
+session and goes away with P-047's PR #23.
+
 ### Rows handed over by P-047 (coordinator, 2026-11-20)
 
 Split: API and back end here; `src/` and `vercel.json` to P-049 (G-2285, and the screens for G-2325, G-2329, G-1790,
