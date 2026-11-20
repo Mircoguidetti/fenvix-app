@@ -20,6 +20,19 @@ export interface OnboardingOptions {
   dashboardUrl: string;
   /** At most this many workflow files are read. */
   maxFiles?: number;
+  /** The installation's account type: the pull request says which GitHub permission runs its machines (G-1726). */
+  accountType?: "User" | "Organization" | "Enterprise";
+}
+
+/**
+ * G-1726, least privilege: why the App holds the permission it uses to register one runner per job. An organization:
+ * the organization permission "Self-hosted runners", in a runner group only this repository can use. A personal
+ * account: GitHub offers nothing narrower than the repository permission "Administration".
+ */
+export function permissionNote(accountType: OnboardingOptions["accountType"]): string {
+  return accountType === "User"
+    ? "**Permissions.** On a personal account, fenvix registers each job's machine as a one-job (just-in-time) runner of this repository. GitHub offers no narrower permission for that than the repository permission **Administration: Read and write**, which is why the fenvix App asks for it. fenvix uses it for nothing else."
+    : "**Permissions.** On an organization, fenvix registers each job's machine as a one-job (just-in-time) runner in a runner group that only this repository can use, with the organization permission **Self-hosted runners: Read and write**. It does not need the repository permission Administration for that.";
 }
 
 interface ContentFile { type: string; name: string; path: string; sha: string; content?: string; encoding?: string; size?: number }
@@ -27,7 +40,7 @@ interface ContentFile { type: string; name: string; path: string; sha: string; c
 const MAX_WORKFLOW_BYTES = 512 * 1024;
 
 /** The pull request body: what changes, the diff, what happens next, how to undo it. */
-export function pullRequestBody(o: { job: JobAnalysis; diff: string; others: JobAnalysis[]; label: string; dashboardUrl: string; note?: string }): string {
+export function pullRequestBody(o: { job: JobAnalysis; diff: string; others: JobAnalysis[]; label: string; dashboardUrl: string; note?: string; accountType?: OnboardingOptions["accountType"] }): string {
   const L = [
     `This pull request moves the test job \`${o.job.jobId}\` in \`${o.job.file}\` to fenvix machines: one line, \`runs-on: ${o.label}\`.`,
     "",
@@ -57,11 +70,33 @@ export function pullRequestBody(o: { job: JobAnalysis; diff: string; others: Job
     "Merge it when you are ready. The first run on fenvix starts cold; from the second run on, unchanged tests are skipped with proof.",
     `Runs, receipts and defects: ${o.dashboardUrl}/projects`,
     "",
+    permissionNote(o.accountType),
+    "",
     `To go back, change \`runs-on: ${o.label}\` back to the previous value.`,
     "",
     "<!-- fenvix:onboarding -->",
   );
   return L.join("\n");
+}
+
+/** Whether the engine can run a job's tests: Python with pytest, Node with Vitest or Jest. */
+export function engineRuns(language: Language | null, runner: TestRunner | null): { ok: true } | { ok: false; why: string } {
+  if (language === "python" && runner === "pytest") return { ok: true };
+  if (language === "node" && (runner === "vitest" || runner === "jest")) return { ok: true };
+  if (!language) return { ok: false, why: "runs tests fenvix cannot run yet: fenvix runs pytest (Python) and Vitest or Jest (Node)" };
+  if (language === "go") return { ok: false, why: "runs go test: fenvix runs Python (pytest) and Node (Vitest, Jest) only for now" };
+  return { ok: false, why: `runs ${language} tests with ${runner ?? "a runner"}, which fenvix cannot run yet: fenvix runs pytest (Python) and Vitest or Jest (Node)` };
+}
+
+/** The test runner behind a Node job's `npm test`: package.json's scripts.test names vitest or jest, else null. */
+async function nodeRunnerOf(gh: GitHubHttp, repo: string, ref: string | null): Promise<TestRunner | null> {
+  const f = await gh.request<ContentFile>("GET", `${repoPath(repo)}/contents/package.json`, { query: ref ? { ref } : {}, allow: [404] }).catch(() => null);
+  if (!f || f.status === 404 || f.data.encoding !== "base64" || typeof f.data.content !== "string") return null;
+  try {
+    const pkg = JSON.parse(Buffer.from(f.data.content, "base64").toString("utf8")) as { scripts?: Record<string, string> };
+    const test = pkg.scripts?.test ?? "";
+    return /\bvitest\b/.test(test) ? "vitest" : /\bjest\b/.test(test) ? "jest" : null;
+  } catch { return null; }
 }
 
 async function readWorkflows(gh: GitHubHttp, repo: string, ref: string, maxFiles: number): Promise<{ files: { path: string; text: string; sha: string }[]; skipped: string[] } | null> {
@@ -112,6 +147,15 @@ export async function onboardRepository(gh: GitHubHttp, fullName: string, o: Onb
         language: choice.job.language, testRunner: choice.job.testRunner, defaultBranch };
     }
     const job = choice.job;
+    // The engine runs pytest (Python) and Vitest or Jest (Node) only, on Linux x86_64 (go-live scope). A job whose
+    // runner is anything else (Gradle, Maven, cargo, go test, mocha, node --test, Playwright, a bare `npm test` whose
+    // script is none of the two, `make test`...) would run on fenvix with no engine: no pull request (G-0617).
+    if (job.language === "node" && !job.testRunner) job.testRunner = await nodeRunnerOf(gh, fullName, defaultBranch);
+    const runs = engineRuns(job.language, job.testRunner);
+    if (!runs.ok) {
+      return { state: "unsupported", detail: `${job.file}:${job.jobId} ${runs.why}`, workflowPath: job.file, job: job.jobId,
+        language: job.language, testRunner: job.testRunner, defaultBranch };
+    }
     const found = { workflowPath: job.file, job: job.jobId, language: job.language, testRunner: job.testRunner, defaultBranch };
 
     const owner = repo.data.owner.login;
@@ -140,7 +184,7 @@ export async function onboardRepository(gh: GitHubHttp, fullName: string, o: Onb
         branch: o.branch,
       },
     });
-    const body = pullRequestBody({ job, diff, others: choice.others, label: o.label, dashboardUrl: o.dashboardUrl, note: job.runsOn.ok ? job.runsOn.note : undefined });
+    const body = pullRequestBody({ job, diff, others: choice.others, label: o.label, dashboardUrl: o.dashboardUrl, note: job.runsOn.ok ? job.runsOn.note : undefined, accountType: o.accountType });
     const pr = await gh.request<{ number: number; html_url: string }>("POST", `${base}/pulls`, {
       body: { title: `Run the tests on fenvix (runs-on: ${o.label})`, head: o.branch, base: defaultBranch, body },
     });

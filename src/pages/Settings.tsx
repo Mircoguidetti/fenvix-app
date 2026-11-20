@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { client, type Region, type Settings } from "../data";
 import { orgs } from "../data/orgs-client";
 import { ROLE_NAMES, orgNameProblem } from "../data/orgs";
-import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker, LoadError } from "../components/PageHeader";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session/SessionProvider";
 import { useOrg } from "../session/OrgProvider";
@@ -189,7 +189,7 @@ export function SettingsPage() {
 
         <Card id="workspace" title={nameHere ? "Workspace" : "Notifications"} description={readOnly ? "Only an owner or admin can change these." : "Emails FENVIX sends about this organization."}>
           {loaded.status === "loading" && <Message>Loading settings</Message>}
-          {loaded.status === "error" && <Message role="alert">{loaded.message}</Message>}
+          {loaded.status === "error" && <LoadError message={loaded.message} onRetry={loaded.reload} />}
           {form && (
             <form onSubmit={save} className="stack" noValidate>
               <fieldset disabled={readOnly} className="plain-fieldset stack">

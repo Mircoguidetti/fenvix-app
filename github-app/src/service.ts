@@ -1,16 +1,20 @@
 import type { Client, Db } from "./db.ts";
 import { GitHubError, type GitHubApp, type GitHubHttp, repoPath } from "./github/client.ts";
+import { forgetRepoAccess, refreshRepoAccess } from "./access/visibility.ts";
 import { onboardRepository, type OnboardingResult } from "./onboarding/onboard.ts";
-import { CHECK_NAME, COMMENT_MARKER, checkRunOutput, conclusionOf, prComment, type RenderContext } from "./results/render.ts";
+import { COMMENT_MARKER, checkName, checkRunOutput, conclusionOf, type RenderContext } from "./results/render.ts";
+import { combinedComment, type DefectView, type JobView } from "./results/comment.ts";
+import { pullCommand, replayCommand } from "./api/shared.js";
 import { parseSummary, type RunSummary } from "./results/summary.ts";
 import { createHash, randomBytes, type KeyObject } from "node:crypto";
-import { applyChunks, applyExploration, type JobKey } from "./results/apply.ts";
+import { applyChunks, applyExploration, armedStopFires, type JobKey, recordReportedFlaky, storeLiveTests } from "./results/apply.ts";
 import { projectStack, type Stack } from "./results/detect.ts";
 import { parseResults, progressRecord, type RunnerExploration, type RunnerProgress, type RunnerResults } from "./results/runner-records.ts";
 import { signCacheToken, signSummaryCredential } from "./runners/credentials.ts";
 import { type Region, RetryLater, type RunMode, type RunnerLauncher } from "./runners/launcher.ts";
 import { DEFAULT_WARMUP, type WarmupSettings } from "./warmup/policy.ts";
 import { Warmups } from "./warmup/warmups.ts";
+import { Tasks } from "./tasks/tasks.ts";
 
 export interface ServiceSettings {
   runsOnLabel: string;
@@ -25,6 +29,16 @@ export interface ServiceSettings {
   cacheSigningKey?: KeyObject | null;
   /** Warm-up runs (src/warmup/): they need a per-job launcher too. Absent: off. */
   warmup?: WarmupSettings;
+  /**
+   * SHADOW_MODE: the runner runs the engine in shadow mode for FENVIX_MODE=shadow (every test runs; would-skip numbers
+   * reported). Default off, because no runner does yet (G-0187): the trial's runs are then labelled what they are,
+   * enforce.
+   */
+  shadowMode?: boolean;
+  /** Repository access answers asked of GitHub per sweep (G-1631; default 200). */
+  accessBatch?: number;
+  /** The API's own address (https://api.fenvix.dev): what task machines are told to call. */
+  apiUrl?: string;
 }
 
 /**
@@ -68,6 +82,8 @@ interface JobRow {
   published_at: Date | null; publish_attempts: number; region: Region | null; cache_access: "read" | "write" | null;
   /** The run mode the App chose when the job started (its organization's: shadow during the trial), never the job's. */
   mode: RunMode | null;
+  launched_at?: Date | null;
+  no_machine?: string | null;
 }
 /** The workflow run of a job (GET /repos/{o}/{r}/actions/runs/{id}), the parts the App reads. */
 interface WorkflowRunP {
@@ -81,7 +97,7 @@ interface RunValues { startedAt: Date; completedAt: Date | null; durationMs: num
 interface RepoRow {
   repository_id: number; installation_id: number; workspace_id: string | null; full_name: string; default_branch: string | null;
   project_id: string | null; onboarding_state: string; setup_pr_number: number | null; setup_pr_url: string | null;
-  detected_language: string | null; detected_test_runner: string | null; removed_at?: Date | null;
+  detected_language: string | null; detected_test_runner: string | null; removed_at?: Date | null; disconnected_at?: Date | null;
 }
 
 const sha256Hex = (v: string) => createHash("sha256").update(v).digest("hex");
@@ -110,9 +126,12 @@ export class GitHubService {
 
   /** Warm-up runs of onboarded repositories' default branches (src/warmup/warmups.ts). */
   readonly warmups: Warmups;
+  /** Replays, explorations and stopping runs on our machines (src/tasks/tasks.ts). */
+  readonly tasks: Tasks;
 
   constructor(db: Db, gh: GitHubApp, s: ServiceSettings, log: Logger, launcher: RunnerLauncher | null = null) {
     this.db = db; this.gh = gh; this.s = s; this.log = log; this.launcher = launcher;
+    this.tasks = new Tasks(db, gh, { ...(s.summaryKey ? { summaryKey: s.summaryKey } : {}), apiUrl: s.apiUrl ?? "https://api.fenvix.dev" }, log, launcher);
     this.warmups = new Warmups(db, gh, s.warmup ?? { ...DEFAULT_WARMUP, enabled: false }, { ...(s.summaryKey ? { summaryKey: s.summaryKey } : {}), cacheSigningKey: s.cacheSigningKey ?? null }, log, launcher);
   }
 
@@ -162,6 +181,15 @@ export class GitHubService {
       case "push": return this.onPush(p);
       case "pull_request": await this.onPullRequest(p); return true;
       case "workflow_job": return this.onWorkflowJob(p);
+      case "workflow_run": return this.onWorkflowRun(p);
+      case "check_run": return this.onCheckRun(p);
+      case "check_suite": return this.onCheckSuite(p);
+      case "installation_target": return this.onInstallationTarget(p);
+      // Who can see a repository changed (G-1631): the answers it may have made wrong go; the next sweep asks again.
+      case "member": case "organization": case "membership": case "team": return this.onAccessChange(event, p);
+      // A person revoked their authorization of the App: the App keeps no person's token (the OAuth token of the setup
+      // callback is used once and dropped), so there is nothing to forget. Recorded (G-2300).
+      case "github_app_authorization": return true;
       default: return false;
     }
   }
@@ -223,7 +251,14 @@ export class GitHubService {
     }
     if (action === "unsuspend") { await this.db.q("update gh_installations set suspended_at = null where installation_id = $1", [i.id]); return; }
     if (action === "created") {
-      await this.db.q("update gh_installations set deleted_at = null, suspended_at = null where installation_id = $1", [i.id]);
+      // A captured installation.created sent again under a new delivery id must not bring back an uninstalled
+      // installation (G-2301): GitHub gives a reinstallation a new installation id, so a deleted one stays deleted.
+      const [was] = await this.db.q<{ deleted_at: Date | null }>("select deleted_at from gh_installations where installation_id = $1", [i.id]);
+      if (was?.deleted_at) {
+        this.log.warn({ installation: i.id }, "installation.created for an uninstalled installation ignored (a replay)");
+        return;
+      }
+      await this.db.q("update gh_installations set suspended_at = null where installation_id = $1", [i.id]);
       const repos = (p.repositories as RepoLite[] | undefined) ?? [];
       await this.upsertRepositories(i.id, repos);
       await this.onboardAdded(repos.map((r) => r.id), i.repository_selection === "all");
@@ -261,15 +296,16 @@ export class GitHubService {
   async onboard(repositoryId: number): Promise<OnboardingResult> {
     const [repo] = await this.db.q<RepoRow>("select * from gh_repositories where repository_id = $1", [repositoryId]);
     if (!repo) throw new Error(`repository ${repositoryId} is not known`);
+    const [inst] = await this.db.q<{ account_type: "User" | "Organization" | "Enterprise" }>("select account_type from gh_installations where installation_id = $1", [repo.installation_id]);
     const res = await onboardRepository(this.gh.installation(repo.installation_id), repo.full_name, {
-      label: this.s.runsOnLabel, branch: this.s.onboardingBranch, dashboardUrl: this.s.dashboardUrl,
+      label: this.s.runsOnLabel, branch: this.s.onboardingBranch, dashboardUrl: this.s.dashboardUrl, ...(inst ? { accountType: inst.account_type } : {}),
     });
     // A pull request that is already open (or merged) keeps its state when the repository is added again.
     await this.db.q(
       `update gh_repositories set onboarding_state = $2, onboarding_detail = $3, onboarding_workflow_path = $4, onboarding_job = $5,
          setup_pr_number = coalesce($6, setup_pr_number), setup_pr_url = coalesce($7, setup_pr_url),
          detected_language = coalesce($8, detected_language), detected_test_runner = coalesce($9, detected_test_runner),
-         default_branch = coalesce($10, default_branch), updated_at = now()
+         default_branch = coalesce($10, default_branch), disconnected_at = null, updated_at = now()
        where repository_id = $1`,
       [repositoryId, res.state, res.detail, res.workflowPath ?? null, res.job ?? null, res.pr?.number ?? null, res.pr?.url ?? null,
         res.language, res.testRunner, res.defaultBranch]);
@@ -292,6 +328,8 @@ export class GitHubService {
    * or moves to another installation of the same organization (found by gh_repositories.project_id).
    */
   private async syncProject(c: Client, repo: RepoRow, fromRun: Stack | null): Promise<string | null> {
+    // An owner disconnected it (DELETE /v1/projects/{id}): no project until its setup is asked for again.
+    if (repo.disconnected_at) return null;
     const prState = repo.onboarding_state === "merged" ? "merged" : repo.onboarding_state === "closed" ? "closed" : repo.setup_pr_number ? "open" : null;
     const setup = repo.onboarding_state === "pr_open" ? "pr_open" : "app_installed";
     if (repo.project_id) {
@@ -327,13 +365,205 @@ export class GitHubService {
     for (const r of repos) if (r.workspace_id) await this.db.tx(r.workspace_id, (c) => this.syncProject(c, r, null));
   }
 
-  /** `repository.edited` with `changes.default_branch`: the repository's new default branch replaces the stored one. */
+  /**
+   * repository events (G-2297): `edited` with a new default branch; `renamed` and `transferred` (the new name, on the
+   * repository and its project); `deleted` and `archived` (removed: no machine, no warm-up, the project keeps its
+   * history); `unarchived` (back).
+   */
   private async onRepository(p: Record<string, unknown>): Promise<boolean> {
-    const repo = p.repository as { id?: number; default_branch?: string } | undefined;
+    const repo = p.repository as { id?: number; default_branch?: string; full_name?: string } | undefined;
+    if (!repo?.id) return false;
     const changes = p.changes as { default_branch?: unknown } | undefined;
-    if (p.action !== "edited" || !changes || !("default_branch" in changes) || !repo?.id || !repo.default_branch) return false;
-    await this.storeDefaultBranch(repo.id, repo.default_branch);
+    if (p.action === "edited") {
+      if (!changes || !("default_branch" in changes) || !repo.default_branch) return false;
+      await this.storeDefaultBranch(repo.id, repo.default_branch);
+      return true;
+    }
+    if ((p.action === "renamed" || p.action === "transferred") && repo.full_name) {
+      const [row] = await this.db.q<RepoRow>("update gh_repositories set full_name = $2, updated_at = now() where repository_id = $1 returning *", [repo.id, repo.full_name]);
+      if (row?.project_id && row.workspace_id) {
+        await this.db.tx(row.workspace_id, (c) => c.query("update ci_projects set full_name = $2 where id = $1 and workspace_id = public.cp_workspace()", [row.project_id, repo.full_name]));
+      }
+      return !!row;
+    }
+    if (p.action === "deleted" || p.action === "archived") {
+      const r = await this.db.q("update gh_repositories set removed_at = coalesce(removed_at, now()), updated_at = now() where repository_id = $1 returning 1", [repo.id]);
+      await this.warmups.cancelRepositories([repo.id], p.action === "deleted" ? "the repository was deleted" : "the repository was archived");
+      return r.length > 0;
+    }
+    // Made private or public (G-1631): a public repository's project is seen by every member; a private one's only
+    // by those GitHub says can see it, asked again at the next sweep.
+    if (p.action === "privatized" || p.action === "publicized") {
+      const r = await this.db.q("update gh_repositories set private = $2, updated_at = now() where repository_id = $1 returning 1", [repo.id, p.action === "privatized"]);
+      await forgetRepoAccess(this.db, { repositoryId: repo.id });
+      return r.length > 0;
+    }
+    if (p.action === "unarchived") {
+      const r = await this.db.q("update gh_repositories set removed_at = null, updated_at = now() where repository_id = $1 returning 1", [repo.id]);
+      return r.length > 0;
+    }
+    return false;
+  }
+
+  /**
+   * G-1631: a collaborator removed from a repository (`member.removed`, or `edited` to a lower permission), a person
+   * removed from the organization (`organization.member_removed`), a team's members or repositories changed
+   * (`membership`, `team`): the kept answers they may have made wrong go at once.
+   */
+  private async onAccessChange(event: string, p: Record<string, unknown>): Promise<boolean> {
+    const installationId = (p.installation as { id?: number } | undefined)?.id;
+    if (!installationId) return false;
+    const action = String(p.action ?? "");
+    const repoId = (p.repository as { id?: number } | undefined)?.id;
+    if (event === "member") {
+      if (action !== "removed" && action !== "edited") return false;
+      const userId = (p.member as { id?: number } | undefined)?.id;
+      if (!userId) return false;
+      await forgetRepoAccess(this.db, { installationId, githubUserId: userId, ...(repoId ? { repositoryId: repoId } : {}) });
+      return true;
+    }
+    if (event === "organization") {
+      if (action !== "member_removed") return false;
+      const userId = (p.membership as { user?: { id?: number } } | undefined)?.user?.id;
+      if (!userId) return false;
+      await forgetRepoAccess(this.db, { installationId, githubUserId: userId });
+      return true;
+    }
+    if (event === "membership") {
+      if (action !== "removed") return false;
+      const userId = (p.member as { id?: number } | undefined)?.id;
+      if (!userId) return false;
+      await forgetRepoAccess(this.db, { installationId, githubUserId: userId });
+      return true;
+    }
+    // team: a repository taken from a team, a team deleted or its permissions edited: everyone's answers on it go.
+    if (!["removed_from_repository", "deleted", "edited"].includes(action)) return false;
+    await forgetRepoAccess(this.db, { installationId, ...(repoId ? { repositoryId: repoId } : {}) });
     return true;
+  }
+
+  /** installation_target.renamed (G-2298): the account's new login. */
+  private async onInstallationTarget(p: Record<string, unknown>): Promise<boolean> {
+    const id = (p.installation as { id?: number } | undefined)?.id;
+    const login = (p.account as { login?: string } | undefined)?.login;
+    if (p.action !== "renamed" || !id || !login) return false;
+    const r = await this.db.q("update gh_installations set account_login = $2, updated_at = now() where installation_id = $1 returning 1", [id, login]);
+    return r.length > 0;
+  }
+
+  /**
+   * The "Re-run" button of a fenvix check run (check_run.rerequested, G-1647) and "Re-run all checks" (check_suite
+   * .rerequested, G-2295): the job behind it is run again on GitHub (POST .../actions/jobs/{id}/rerun, which needs the
+   * App's "Actions: Read and write"; without it the check run says how to re-run it from the Actions tab).
+   */
+  private async onCheckRun(p: Record<string, unknown>): Promise<boolean> {
+    if (p.action !== "rerequested") return false;
+    const cr = p.check_run as { id?: number; external_id?: string | null; app?: { id?: number } | null } | undefined;
+    const jobId = Number(cr?.external_id ?? NaN);
+    if (!cr?.id || !Number.isInteger(jobId) || jobId <= 0) return false;
+    const [job] = await this.db.q<JobRow & { full_name: string }>(
+      "select j.*, r.full_name from gh_jobs j join gh_repositories r on r.repository_id = j.repository_id where j.job_id = $1 and j.check_run_id = $2", [jobId, cr.id]);
+    if (!job) return false;
+    await this.rerunJob(job);
+    return true;
+  }
+
+  private async onCheckSuite(p: Record<string, unknown>): Promise<boolean> {
+    if (p.action !== "rerequested") return false;
+    const cs = p.check_suite as { head_sha?: string } | undefined;
+    const repoId = (p.repository as { id?: number } | undefined)?.id;
+    if (!cs?.head_sha || !repoId) return false;
+    const jobs = await this.db.q<JobRow & { full_name: string }>(
+      `select distinct on (j.workflow_name, j.job_name) j.*, r.full_name from gh_jobs j join gh_repositories r on r.repository_id = j.repository_id
+       where j.repository_id = $1 and j.head_sha = $2 and j.status = 'completed' order by j.workflow_name, j.job_name, j.run_id desc, j.run_attempt desc`, [repoId, cs.head_sha]);
+    for (const j of jobs) await this.rerunJob(j);
+    return jobs.length > 0;
+  }
+
+  private async rerunJob(job: JobRow & { full_name: string }): Promise<void> {
+    const gh = this.gh.installation(job.installation_id);
+    const base = repoPath(job.full_name);
+    const r = await gh.request("POST", `${base}/actions/jobs/${job.job_id}/rerun`, { allow: [403, 404, 409, 422] });
+    if (r.status < 300) { this.log.info({ job: job.job_id }, "job re-run from its check run"); return; }
+    if (job.check_run_id && job.check_run_id > 0) {
+      const why = r.status === 403 ? "the fenvix App needs the \"Actions: Read and write\" permission to re-run jobs; re-run it from the job's Actions page"
+        : "GitHub did not re-run this job (it may still be running, or too old); re-run it from the job's Actions page";
+      await gh.request("PATCH", `${base}/check-runs/${job.check_run_id}`, { body: { output: { title: "Could not re-run this job", summary: why } }, allow: [404] })
+        .catch(() => undefined);
+    }
+    this.log.warn({ job: job.job_id, status: r.status }, "job not re-run");
+  }
+
+  /**
+   * workflow_run.completed (G-2296): jobs of the run the App still has as queued or running were cancelled or lost
+   * their events; each is read from GitHub and handled as its workflow_job event would have been (lost webhooks, G-1729).
+   */
+  private async onWorkflowRun(p: Record<string, unknown>): Promise<boolean> {
+    const run = p.workflow_run as { id?: number } | undefined;
+    if (p.action !== "completed" || !run?.id) return false;
+    const open = await this.db.q<{ job_id: number }>("select job_id from gh_jobs where run_id = $1 and status <> 'completed'", [run.id]);
+    for (const j of open) await this.recoverJob(j.job_id);
+    return true;
+  }
+
+  /** A job read back from GitHub (GET .../actions/jobs/{id}) and handled as its workflow_job event: lost events recovered. */
+  async recoverJob(jobId: number): Promise<"recovered" | "unchanged" | "unknown"> {
+    const [row] = await this.db.q<JobRow & { full_name: string }>(
+      "select j.*, r.full_name, r.private, r.default_branch from gh_jobs j join gh_repositories r on r.repository_id = j.repository_id where j.job_id = $1", [jobId]);
+    if (!row) return "unknown";
+    const gh = this.gh.installation(row.installation_id);
+    const r = await gh.request<JobP>("GET", `${repoPath(row.full_name)}/actions/jobs/${jobId}`, { allow: [404] });
+    if (r.status === 404) return "unknown";
+    if ((STATUS_RANK[r.data.status] ?? 0) <= (STATUS_RANK[row.status] ?? 0) && !(r.data.status === "queued" && !row.launched_at && !row.no_machine)) return "unchanged";
+    const action = r.data.status === "completed" ? "completed" : r.data.status === "in_progress" ? "in_progress" : "queued";
+    await this.onWorkflowJob({ action, workflow_job: r.data, installation: { id: row.installation_id },
+      repository: { id: row.repository_id, full_name: row.full_name, private: (row as unknown as { private: boolean }).private, default_branch: (row as unknown as { default_branch: string | null }).default_branch } });
+    return "recovered";
+  }
+
+  /**
+   * Lost webhooks (G-1729): GitHub does not send a failed delivery again by itself. Every sweep the App lists its recent
+   * deliveries (GET /app/hook/deliveries) and asks GitHub to send again the ones that failed and that it never
+   * processed (POST /app/hook/deliveries/{id}/attempts), and reads back fenvix jobs still queued with no machine after
+   * three minutes (a lost workflow_job.queued). Returns how many it asked for and recovered.
+   */
+  async recoverLostWebhooks(): Promise<{ redelivered: number; jobs: number }> {
+    let redelivered = 0;
+    const list = await this.gh.app.request<{ id: number; guid: string; status_code: number; redelivery: boolean; delivered_at: string }[]>(
+      "GET", "/app/hook/deliveries", { query: { per_page: 100 }, allow: [403, 404] }).catch(() => null);
+    if (list && list.status === 200 && Array.isArray(list.data)) {
+      const failed = list.data.filter((d) => (d.status_code === 0 || d.status_code >= 400) && Date.now() - Date.parse(d.delivered_at) < 24 * 3600_000);
+      const guids = [...new Set(failed.map((d) => d.guid))];
+      const done = new Set((await this.db.q<{ delivery_id: string }>(
+        "select delivery_id from gh_webhook_deliveries where delivery_id = any($1::text[]) and processed_at is not null", [guids])).map((r) => r.delivery_id));
+      // One new attempt per lost delivery (the newest failure of each), and none for one a later attempt delivered.
+      const ok = new Set(list.data.filter((d) => d.status_code >= 200 && d.status_code < 300).map((d) => d.guid));
+      const seen = new Set<string>();
+      for (const d of failed.sort((a, b) => Date.parse(b.delivered_at) - Date.parse(a.delivered_at))) {
+        if (done.has(d.guid) || ok.has(d.guid) || seen.has(d.guid) || redelivered >= 20) continue;
+        seen.add(d.guid);
+        const r = await this.gh.app.request("POST", `/app/hook/deliveries/${d.id}/attempts`, { allow: [404, 422] }).catch(() => null);
+        if (r && r.status < 300) redelivered++;
+      }
+    }
+    const stuck = await this.db.q<{ job_id: number }>(
+      `select job_id from gh_jobs where status = 'queued' and launched_at is null and no_machine is null
+         and coalesce(created_at, updated_at) < now() - interval '3 minutes' and coalesce(created_at, updated_at) > now() - interval '1 day'
+       order by job_id limit 20`);
+    let jobs = 0;
+    for (const j of stuck) {
+      const out = await this.recoverJob(j.job_id).catch((e: unknown) => { this.log.warn({ job: j.job_id, err: e instanceof Error ? e.message : String(e) }, "job not recovered"); return "unknown" as const; });
+      if (out === "recovered") jobs++;
+    }
+    if (redelivered || jobs) this.log.info({ redelivered, jobs }, "lost webhooks recovered");
+    return { redelivered, jobs };
+  }
+
+  /** A delivery of an event the App does not handle, recorded (G-2302). */
+  async recordIgnored(deliveryId: string, event: string, action: string | null, installationId: number | null): Promise<void> {
+    await this.db.q(
+      `insert into gh_webhook_deliveries (delivery_id, event, action, installation_id, processed_at, error) values ($1, $2, $3, $4, now(), 'ignored: not an event the App handles')
+       on conflict (delivery_id) do nothing`, [deliveryId, event, action, installationId]);
   }
 
   /** Writes a repository's default branch (and its project's) and when it was read; false for a repository we do not know. */
@@ -461,7 +691,9 @@ export class GitHubService {
     const r = (await c.query<{ region: string | null; trial: boolean | null }>(
       `select (select region from public.workspaces where id = public.cp_workspace()) as region,
               (select trial_ends_at > now() from public.ci_subscriptions where workspace_id = public.cp_workspace()) as trial`)).rows[0];
-    return { region: r?.region === "eu" ? "eu" : "us", mode: r?.trial ? "shadow" : "enforce" };
+    // Shadow mode only where the runner really runs it (G-0187): without that, a trial run would be labelled shadow while
+    // the engine skipped tests for real. Off: every run is enforce, as it really is.
+    return { region: r?.region === "eu" ? "eu" : "us", mode: r?.trial && this.s.shadowMode ? "shadow" : "enforce" };
   }
 
   private async workflowRun(gh: GitHubHttp, base: string, runId: number): Promise<WorkflowRunP | null> {
@@ -527,14 +759,29 @@ export class GitHubService {
       "select workspace_id, suspended_at, deleted_at from gh_installations where installation_id = $1", [installationId]);
     if (!inst?.workspace_id || inst.suspended_at || inst.deleted_at) {
       this.log.warn({ job: jobId, installation: installationId }, "no runner machine: the installation is not linked to an organization");
+      await this.noMachine(jobId, inst?.suspended_at ? "the fenvix GitHub App is suspended on this account"
+        : inst?.deleted_at ? "the fenvix GitHub App was uninstalled from this account"
+        : "this GitHub account is not connected to a fenvix organization yet (Projects → Connect a project)");
+      return;
+    }
+    const known = await this.repo(repo.id);
+    if (known?.disconnected_at) {
+      await this.noMachine(jobId, "this repository was disconnected from fenvix; connect it again from the dashboard to run its jobs");
       return;
     }
     // The machine runs in the organization's region, or not at all: an EU organization's job never runs in the US.
-    const org = await this.db.tx(inst.workspace_id, (c) => this.orgContext(c));
+    // Skip with proof is real (G-1757, the project's setting): off, or paused after a wrong skip, the machine gets no
+    // shared cache, so the engine has nothing to reuse and every test runs.
+    const { org, skip } = await this.db.tx(inst.workspace_id, async (c) => {
+      const p = (await c.query<{ skip_with_proof: boolean; skip_paused_at: Date | null }>(
+        "select p.skip_with_proof, p.skip_paused_at from ci_projects p join gh_repositories r on r.project_id = p.id where r.repository_id = $1", [repo.id])).rows[0];
+      return { org: await this.orgContext(c), skip: !p || (p.skip_with_proof && !p.skip_paused_at) };
+    });
     // The mode the machine gets (FENVIX_MODE) is the run's mode, whatever the job later reports (review R-016 F4).
     await this.db.q("update gh_jobs set region = $2, mode = $3 where job_id = $1", [jobId, org.region, org.mode]);
     if (this.launcher!.canPlace && !this.launcher!.canPlace(org.region)) {
       this.log.error({ job: jobId, installation: installationId, region: org.region }, "no runner machine: no placement for the organization's region (the job stays queued; GitHub times it out)");
+      await this.noMachine(jobId, `fenvix has no machines in your organization's region (${org.region.toUpperCase()}) yet; the job is not run anywhere else`);
       return;
     }
     const gh = this.gh.installation(installationId);
@@ -546,7 +793,8 @@ export class GitHubService {
     const trusted = !!run && ["push", "schedule", "workflow_dispatch", "merge_group"].includes(run.event ?? "")
       && !!defaultBranch && run.head_branch === defaultBranch && run.head_repository?.id === repo.id;
     if (!this.s.summaryKey) throw new Error("no summary signing key (RUNNER_TOKEN): no machine is started without its own credential");
-    await this.db.q("update gh_jobs set cache_access = $2 where job_id = $1", [jobId, trusted ? "write" : "read"]);
+    const cacheAccess = !skip ? "none" as const : trusted ? "write" as const : "read" as const;
+    await this.db.q("update gh_jobs set cache_access = $2 where job_id = $1", [jobId, cacheAccess === "none" ? null : cacheAccess]);
     // A trusted run of a default-branch commit fills the cache itself: its warm-up is not needed.
     if (trusted) await this.warm("covered", () => this.warmups.onTrustedJob(repo.id, row.head_sha, jobId));
     // The fleet at its limit: a warm-up gives its machine back first (customers' jobs come before warm-ups); else no
@@ -562,8 +810,19 @@ export class GitHubService {
     type Jit = { encoded_jit_config: string; runner?: { id?: number } };
     let runnerName = `fenvix-j${jobId}`;
     let jit = await gh.request<Jit>("POST", `${base}/actions/runners/generate-jitconfig`, {
-      body: { name: runnerName, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" }, allow: [409],
+      body: { name: runnerName, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" }, allow: [403, 409],
     });
+    // The installation has not accepted a permission the App needs (Administration: write, added after the first
+    // installs): no retries into the dead-letter queue, but a check run that says what to accept (G-1725).
+    if (jit.status === 403) {
+      // G-1726: the permission to name depends on the account (organization: Self-hosted runners; personal: Administration).
+      const [acct] = await this.db.q<{ account_type: string }>("select account_type from gh_installations where installation_id = $1", [installationId]);
+      const needs = acct?.account_type === "User"
+        ? "the repository permission \"Administration: Read and write\" (on a personal account GitHub offers nothing narrower to register a one-job runner)"
+        : "the organization permission \"Self-hosted runners: Read and write\" (or, without it, the repository permission \"Administration: Read and write\")";
+      await this.noMachine(jobId, `the fenvix GitHub App lacks ${needs} here; an owner of the account accepts the App's new permissions on GitHub (Settings → GitHub Apps → fenvix)`);
+      return;
+    }
     if (jit.status === 409) {
       runnerName = `fenvix-j${jobId}-${Date.now().toString(36)}`;
       jit = await gh.request<Jit>("POST", `${base}/actions/runners/generate-jitconfig`, {
@@ -580,9 +839,8 @@ export class GitHubService {
     // This machine's own credentials (R-012 F1, F3): its summaries count only for this runner, repository and run;
     // its cache token reaches only this installation's cache organization, and writes only on a trusted ref.
     const exp = Math.floor(Date.now() / 1000) + JOB_CREDENTIAL_SECONDS;
-    const cacheAccess = trusted ? "write" as const : "read" as const;
     const summaryToken = signSummaryCredential(this.s.summaryKey, { runnerName, repositoryId: repo.id, runId: row.run_id, runAttempt: row.run_attempt, exp });
-    const cacheToken = this.s.cacheSigningKey ? signCacheToken(this.s.cacheSigningKey, { installationId, write: trusted, exp, jobId }) : undefined;
+    const cacheToken = this.s.cacheSigningKey && cacheAccess !== "none" ? signCacheToken(this.s.cacheSigningKey, { installationId, write: trusted, exp, jobId }) : undefined;
     let res: { instanceId: string | null; already: boolean };
     try {
       res = await this.launcher!.launch({
@@ -600,6 +858,33 @@ export class GitHubService {
     this.log.info({ job: jobId, repository: repo.full_name, runner: runnerName, instance: res.instanceId, already: res.already, cache: cacheAccess, region: org.region, mode: org.mode }, "runner machine requested");
   }
 
+  /**
+   * A fenvix job that no machine will take (G-1648): GitHub would show it queued until it times out. It gets its check
+   * run, completed "action required" with why, and the pull request comment says it too.
+   */
+  private async noMachine(jobId: number, why: string): Promise<void> {
+    const rows = await this.db.q<JobRow & { full_name: string }>(
+      `update gh_jobs j set no_machine = $2 from gh_repositories r where j.job_id = $1 and r.repository_id = j.repository_id
+       returning j.*, r.full_name, (select no_machine from gh_jobs where job_id = $1) as previous`, [jobId, why.slice(0, 500)]);
+    const job = rows[0] as (JobRow & { full_name: string; previous: string | null }) | undefined;
+    if (!job || job.previous === why) return;
+    try {
+      const gh = this.gh.installation(job.installation_id);
+      const r = await gh.request<{ id: number; html_url: string | null }>("POST", `${repoPath(job.full_name)}/check-runs`, {
+        body: {
+          name: checkName(job.job_name), head_sha: job.head_sha, status: "completed", conclusion: "action_required", external_id: String(job.job_id),
+          completed_at: new Date().toISOString(), details_url: `${this.s.dashboardUrl}/projects/connect`,
+          output: { title: "No fenvix machine for this job", summary: `**${job.workflow_name} / ${job.job_name}** cannot run on fenvix: ${why}. It stays queued on GitHub until GitHub times it out.` },
+        },
+      });
+      await this.db.q("update gh_jobs set check_run_id = $2, check_run_url = $3 where job_id = $1", [jobId, r.data.id, r.data.html_url]);
+    } catch (e) {
+      this.log.warn({ job: jobId, err: e instanceof Error ? e.message : String(e) }, "the no-machine check run could not be written");
+    }
+    await this.refreshComments(job.repository_id, job.head_sha).catch((e: unknown) =>
+      this.log.warn({ job: jobId, err: e instanceof Error ? e.message : String(e) }, "the pull request comment could not be updated"));
+  }
+
   /** A check run "in progress" on the commit while the job runs on fenvix. */
   private async startCheckRun(jobId: number, jobUrl: string | null): Promise<void> {
     const claimed = await this.db.q<JobRow & { full_name: string }>(
@@ -612,7 +897,7 @@ export class GitHubService {
       const gh = this.gh.installation(job.installation_id);
       const r = await gh.request<{ id: number }>("POST", `${repoPath(job.full_name)}/check-runs`, {
         body: {
-          name: CHECK_NAME, head_sha: job.head_sha, status: "in_progress", external_id: String(job.job_id),
+          name: checkName(job.job_name), head_sha: job.head_sha, status: "in_progress", external_id: String(job.job_id),
           started_at: (job.started_at ?? new Date()).toISOString(), ...(jobUrl ? { details_url: jobUrl } : {}),
           output: { title: "Running on fenvix", summary: `**${job.workflow_name} / ${job.job_name}** is running on a fenvix machine.` },
         },
@@ -649,10 +934,23 @@ export class GitHubService {
        order by j.job_id desc limit 1`,
       [o.repositoryId, o.runId, o.runAttempt, o.runnerName]);
     if (!j?.workspace_id) return "no_run";
-    const updated = await this.db.tx(j.workspace_id, (c) => c.query(
-      `update ci_runs set progress = $2::jsonb, progress_at = now()
-       where id = $1 and status = 'running' and coalesce((progress->>'seq')::bigint, -1) < $3`,
-      [j.ci_run_id, JSON.stringify(progressRecord(o.progress)), o.progress.seq]));
+    let fired = false;
+    const updated = await this.db.tx(j.workspace_id, async (c) => {
+      const armed = (await c.query<{ s: string | null }>("select stop_state as s from ci_runs where id = $1", [j.ci_run_id])).rows[0]?.s === "armed";
+      const u = await c.query(
+        `update ci_runs set progress = $2::jsonb, progress_at = now()
+         where id = $1 and status = 'running' and coalesce((progress->>'seq')::bigint, -1) < $3`,
+        [j.ci_run_id, JSON.stringify(progressRecord(o.progress)), o.progress.seq]);
+      // The tests finished since the last record (the live view), whatever the order the records came in.
+      const running = (await c.query("select 1 from ci_runs where id = $1 and status = 'running'", [j.ci_run_id])).rowCount;
+      if (running && o.progress.finished?.length) await storeLiveTests(c, j.ci_run_id, o.progress.finished);
+      if (running && (o.progress.failed > 0 || o.progress.finished?.some((t) => t.outcome === "failed"))) await armedStopFires(c, j.ci_run_id);
+      // Fired by this record (here, or by storeLiveTests storing the first failed test).
+      fired = armed && (await c.query<{ s: string | null }>("select stop_state as s from ci_runs where id = $1", [j.ci_run_id])).rows[0]?.s === "requested";
+      return u;
+    });
+    // A stop armed for the first failure: the GitHub run is cancelled and the machine's slot ended now, not at the sweep.
+    if (fired) await this.tasks.cancelRun(j.workspace_id, j.ci_run_id).catch((e: unknown) => this.log.warn({ run: j.ci_run_id, err: e instanceof Error ? e.message : String(e) }, "first-failure stop failed (the sweep tries again)"));
     return updated.rowCount ? "stored" : "stale";
   }
 
@@ -733,7 +1031,7 @@ export class GitHubService {
       const out = await this.db.tx(ws, async (c) => {
         // One application at a time per run (chunks arriving together).
         const run = (await c.query<{ id: string; project_id: string; seen_at: Date; language: string; duration_ms: number | string | null }>(
-          `select r.id, r.project_id, coalesce(r.finished_at, r.started_at) as seen_at, p.language, r.duration_ms
+          `select r.id, r.project_id, coalesce(r.finished_at, r.started_at) as seen_at, coalesce(r.language, p.language) as language, r.duration_ms
            from ci_runs r join ci_projects p on p.id = r.project_id where r.id = $1 for update of r`, [ciRunId])).rows[0];
         if (!run) return null;
         const res = await applyChunks(c, { id: run.id, projectId: run.project_id, language: run.language, seenAt: run.seen_at, maxTestMs: run.duration_ms === null ? null : Number(run.duration_ms) }, key, chunks);
@@ -759,7 +1057,8 @@ export class GitHubService {
    * EXPLORATION_KEEP_NIGHTS. A second exploration the same day is dropped (logged). A CI job's credential is refused at
    * intake (src/app.ts).
    */
-  async receiveExploration(o: { repositoryId: number; runnerName: string; exploration: RunnerExploration }): Promise<"stored" | "no_project" | "dropped"> {
+  async receiveExploration(o: { repositoryId: number; runnerName: string; exploration: RunnerExploration; taskId?: string }): Promise<"stored" | "no_project" | "dropped"> {
+    if (o.taskId) return this.receiveScheduledExploration({ ...o, taskId: o.taskId });
     const repo = await this.repo(o.repositoryId);
     if (!repo?.workspace_id) {
       this.log.warn({ repositoryId: o.repositoryId, runner: o.runnerName }, "exploration dropped: the repository is not in a linked installation");
@@ -792,7 +1091,70 @@ export class GitHubService {
     return "stored";
   }
 
+  /**
+   * An exploration the App scheduled (ci_exploration_jobs), reported by its own machine: stored as that job's night,
+   * whatever else the project stored that day (G-1722: a targeted exploration for a pull request is kept too).
+   */
+  private async receiveScheduledExploration(o: { repositoryId: number; runnerName: string; exploration: RunnerExploration; taskId: string }): Promise<"stored" | "no_project"> {
+    const job = await this.tasks.explorationJob(o.taskId, o);
+    if (!job) {
+      this.log.warn({ repositoryId: o.repositoryId, runner: o.runnerName, task: o.taskId }, "exploration dropped: not this machine's exploration job");
+      return "no_project";
+    }
+    const out = await this.db.tx(job.ws, async (c) => {
+      const lang = (await c.query<{ language: string }>("select language from ci_projects where id = $1 for update", [job.projectId])).rows[0]!.language;
+      const res = await applyExploration(c, job.projectId, lang, o.exploration, o.taskId);
+      await c.query("update ci_exploration_jobs set status = 'finished', exploration_id = $2, finished_at = now(), detail = '' where id = $1", [o.taskId, res.id]);
+      await c.query(
+        `delete from ci_explorations where project_id = $1 and id not in
+           (select id from ci_explorations where project_id = $1 order by received_at desc, started_at desc limit $2)`, [job.projectId, EXPLORATION_KEEP_NIGHTS]);
+      return res;
+    });
+    this.log.info({ task: o.taskId, exploration: out.id, newDefects: out.newDefectIds.length }, "scheduled exploration stored");
+    return "stored";
+  }
+
+  /**
+   * POST /v1/runner/bundles: the replay bundle of one defect of the machine's own job (a .tar.gz of bundle.json,
+   * order.txt and the run's traces, at most BUNDLE_MAX_BYTES), stored under the organization's row level security and
+   * made the defect's current bundle. A bundle that comes before its defect's results chunk makes the defect (status
+   * reported) so the order of the records does not matter; the chunk then fills it in. "no_run": the job's run row is
+   * not there yet (the machine retries).
+   */
+  async receiveBundle(o: { repositoryId: number; runId: number; runAttempt: number; runnerName: string; testId: string; fingerprint: string | null; content: Buffer }): Promise<"stored" | "no_run"> {
+    const [j] = await this.db.q<{ ci_run_id: string; workspace_id: string | null }>(
+      `select j.ci_run_id, i.workspace_id from gh_jobs j join gh_installations i on i.installation_id = j.installation_id
+       where j.repository_id = $1 and j.run_id = $2 and j.run_attempt = $3 and j.runner_name = $4 and j.ci_run_id is not null
+       order by j.job_id desc limit 1`, [o.repositoryId, o.runId, o.runAttempt, o.runnerName]);
+    if (!j?.workspace_id) return "no_run";
+    const sha = createHash("sha256").update(o.content).digest("hex");
+    await this.db.tx(j.workspace_id, async (c) => {
+      const r = (await c.query<{ id: string; project_id: string; language: string; seen_at: Date }>(
+        `select r.id, r.project_id, coalesce(r.language, p.language) as language, coalesce(r.finished_at, r.started_at) as seen_at from ci_runs r join ci_projects p on p.id = r.project_id
+         where r.id = $1 for update of r`, [j.ci_run_id])).rows[0]!;
+      let d = (await c.query<{ id: string }>("select id from ci_defects where project_id = $1 and test_id = $2", [r.project_id, o.testId])).rows[0];
+      if (!d) {
+        await recordReportedFlaky(c, { id: r.id, projectId: r.project_id, language: r.language, seenAt: r.seen_at }, [{ nodeid: o.testId, replay: "" }]);
+        d = (await c.query<{ id: string }>("select id from ci_defects where project_id = $1 and test_id = $2", [r.project_id, o.testId])).rows[0];
+        if (!d) throw new Error("the defect of this bundle could not be made (the project's language is not one fenvix runs)");
+      }
+      const b = (await c.query<{ id: string }>(
+        `insert into ci_defect_bundles (workspace_id, defect_id, run_id, fingerprint, sha256, size_bytes, content)
+         values (public.cp_workspace(), $1, $2, $3, $4, $5, $6)
+         on conflict (defect_id, sha256) do update set received_at = now(), run_id = excluded.run_id returning id`,
+        [d.id, r.id, o.fingerprint, sha, o.content.length, o.content])).rows[0]!;
+      await c.query("update ci_defects set bundle_id = $2 where id = $1", [d.id, b.id]);
+      // A defect keeps its 5 newest bundles.
+      await c.query(
+        `delete from ci_defect_bundles where defect_id = $1 and id not in (select id from ci_defect_bundles where defect_id = $1 order by received_at desc limit 5)`, [d.id]);
+    });
+    return "stored";
+  }
+
   /** Completed jobs whose summary never came (or whose publication failed) are published after the wait. */
+  /** G-1631: ask GitHub again who sees which private project (the oldest answers first). */
+  refreshRepoAccess() { return refreshRepoAccess(this.db, this.gh, this.log, this.s.accessBatch); }
+
   async sweep(): Promise<number> {
     // Old staged results and summaries, and old link completions go (review R-016 F7, R-016b G2, R-016 F2).
     await this.db.q("delete from gh_run_results where received_at < now() - make_interval(days => $1)", [RESULTS_KEEP_DAYS]);
@@ -804,6 +1166,19 @@ export class GitHubService {
     for (const j of due) {
       try { await this.tryPublish(j.job_id, true); } catch (e) { this.log.warn({ job: j.job_id, err: e instanceof Error ? e.message : String(e) }, "sweep: publish failed"); }
     }
+    // Runs stopped from the dashboard, replays and explorations, the retention of customer data.
+    for (const r of await this.db.q<{ run_id: string; workspace_id: string }>("select run_id, workspace_id from public.gh_cancel_requests()")) {
+      await this.tasks.cancelRun(r.workspace_id, r.run_id).catch((e: unknown) => this.log.warn({ run: r.run_id, err: e instanceof Error ? e.message : String(e) }, "sweep: stop failed"));
+    }
+    // Who may see which private project (G-1631): GitHub asked again for the oldest answers.
+    await this.refreshRepoAccess().catch((e: unknown) => this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "sweep: repository access failed"));
+    await this.tasks.tick().catch((e: unknown) => this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "sweep: tasks failed"));
+    await this.recoverLostWebhooks().catch((e: unknown) => this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "sweep: webhook recovery failed"));
+    const kept = await this.db.q<{ out: Record<string, number> }>("select public.gh_retention_sweep() as out").catch((e: unknown) => {
+      this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "sweep: retention failed");
+      return [];
+    });
+    if (kept[0] && Object.values(kept[0].out).some((n) => n > 0)) this.log.info({ deleted: kept[0].out }, "retention");
     return due.length;
   }
 
@@ -903,6 +1278,11 @@ export class GitHubService {
           const mode = lock?.mode ?? (await this.orgContext(c)).mode;
           if (!lock?.mode) await c.query("update gh_jobs set mode = $2 where job_id = $1 and mode is null", [job.job_id, mode]);
           const values: RunValues = { startedAt, completedAt, durationMs, otherStepMinutes, mode, region: lock?.region ?? null };
+          if (started) {
+            // A stop that was asked for is done once GitHub reports the job over.
+            await c.query(`update ci_runs set stop_state = case when stop_state = 'requested' then 'done' when stop_state = 'armed' then null else stop_state end,
+                stop_detail = case when stop_state = 'requested' then 'the job was cancelled' else stop_detail end where id = $1`, [started.id]);
+          }
           if (started && billable) {
             await this.finishRun(c, started.id, job, summary, run, pr?.number ?? null, values);
             ciRunId = started.id;
@@ -917,6 +1297,10 @@ export class GitHubService {
             ciRunId = await this.insertRun(c, projectId, job, summary, run, pr?.number ?? null, values);
           }
           if (summary) await c.query("update ci_projects set setup_state = 'active' where id = $1", [projectId]);
+          // The run's own language and runner (G-1755): a repository with Python and TypeScript test jobs reports each in its own.
+          if (ciRunId && summary?.stack) {
+            await c.query("update ci_runs set language = $2, test_runner = $3 where id = $1", [ciRunId, summary.stack.language, summary.stack.testRunner]);
+          }
         }
         if (ciRunId) await c.query("update gh_jobs set ci_run_id = $2 where job_id = $1", [job.job_id, ciRunId]);
       }
@@ -938,6 +1322,16 @@ export class GitHubService {
       await this.applyResults(ws, ciRunId, { repositoryId: job.repository_id, runId: job.run_id, runAttempt: job.run_attempt, runnerName: job.runner_name })
         .catch((e: unknown) => this.log.error({ job: job.job_id, err: e instanceof Error ? e.message : String(e) }, "the runner's results could not be applied"));
     }
+    // Every flaky test the summary names is a defect, also without a bundle (G-0184).
+    if (ws && ciRunId && summary?.flaky.length) {
+      const flaky = summary.flaky;
+      await this.db.tx(ws, async (c) => {
+        const r = (await c.query<{ id: string; project_id: string; language: string; seen_at: Date }>(
+          `select r.id, r.project_id, coalesce(r.language, p.language) as language, coalesce(r.finished_at, r.started_at) as seen_at from ci_runs r join ci_projects p on p.id = r.project_id
+           where r.id = $1 for update of r`, [ciRunId])).rows[0];
+        if (r) await recordReportedFlaky(c, { id: r.id, projectId: r.project_id, language: r.language, seenAt: r.seen_at }, flaky);
+      }).catch((e: unknown) => this.log.error({ job: job.job_id, err: e instanceof Error ? e.message : String(e) }, "the summary's flaky tests could not be recorded"));
+    }
 
     const dashboardRunUrl = projectId && ciRunId ? `${this.s.dashboardUrl}/projects/${projectId}/runs/${ciRunId}` : null;
     const jobUrl = `${this.s.webUrl}/${repo.full_name}/actions/runs/${job.run_id}/job/${job.job_id}`;
@@ -945,11 +1339,17 @@ export class GitHubService {
       repository: repo.full_name, headSha: job.head_sha, workflowName: job.workflow_name || "workflow", jobName: job.job_name, jobUrl,
       receiptsUrl: sumRow?.receipts_url ?? dashboardRunUrl, dashboardRunUrl, jobConclusion: job.conclusion,
     };
-    const output = checkRunOutput(summary, ctx);
+    const output: ReturnType<typeof checkRunOutput> & { annotations?: unknown[] } = checkRunOutput(summary, ctx);
     if (summaryError) output.summary = `The runner's summary could not be read (${summaryError}).\n\n` + output.summary;
+    // Failures and flaky defects attached to their file and line in the pull request's diff (G-1646): from the run's
+    // per-test results and its defects (the engine's `path:line` locations), at most 50 (GitHub's limit per request).
+    if (ws && ciRunId) {
+      const ann = await this.db.tx(ws, (c) => this.annotations(c, ciRunId!)).catch(() => []);
+      if (ann.length) output.annotations = ann;
+    }
     const conclusion = conclusionOf(summary, job.conclusion);
     const checkBody = {
-      name: CHECK_NAME, status: "completed", conclusion, completed_at: completedAt.toISOString(), external_id: String(job.job_id),
+      name: checkName(job.job_name), status: "completed", conclusion, completed_at: completedAt.toISOString(), external_id: String(job.job_id),
       details_url: dashboardRunUrl ?? jobUrl, output,
     };
     let check: { id: number; html_url: string | null };
@@ -963,18 +1363,42 @@ export class GitHubService {
     }
     await this.db.q("update gh_jobs set check_run_id = $2 where job_id = $1", [job.job_id, check.id]);
 
-    if (pr && commentsOn) {
-      const body = prComment(summary, { ...ctx, checkRunUrl: check.html_url });
-      const id = await this.upsertComment(gh, base, pr.number, pr.fenvix_comment_id, body);
-      await this.db.q("update gh_pull_requests set fenvix_comment_id = $3 where repository_id = $1 and number = $2", [job.repository_id, pr.number, id]);
-    }
+    await this.db.q("update gh_jobs set check_run_url = $2 where job_id = $1", [job.job_id, check.html_url]);
+    // The pull request comment: every fenvix job of this commit, combined (G-0189).
+    if (commentsOn) await this.refreshComments(job.repository_id, job.head_sha, run);
     this.log.info({ repository: repo.full_name, job: job.job_id, conclusion, billable, pr: pr?.number ?? null }, "run published");
+  }
+
+  /** Check run annotations of a run: its flaky defects (warning) and real failures (failure) that name `path:line`. */
+  private async annotations(c: Client, runId: string): Promise<{ path: string; start_line: number; end_line: number; annotation_level: string; title: string; message: string }[]> {
+    const rows = (await c.query<{ test_id: string; kind: string; location: string | null; message: string | null; exception_type: string | null; cause: string | null; replay: string | null }>(
+      `select t.test_id, coalesce(t.failure_kind, 'real') as kind, coalesce(d.exception->>'location', t.failure_location) as location,
+         coalesce(d.exception->>'message', t.failure_message) as message, coalesce(d.exception->>'type', t.exception_type) as exception_type,
+         d.cause, d.replay_command as replay
+       from ci_test_results t left join ci_defects d on d.id = t.defect_id
+       where t.run_id = $1 and t.outcome = 'failed' order by t.test_id limit 200`, [runId])).rows;
+    const out = [];
+    for (const r of rows) {
+      const m = /^(.+?):(\d+)$/.exec(r.location ?? "");
+      if (!m || m[1]!.startsWith("/") || m[1]!.includes("..")) continue;
+      const line = Number(m[2]);
+      const flaky = r.kind === "flaky_defect";
+      out.push({
+        path: m[1]!, start_line: line, end_line: line, annotation_level: flaky ? "warning" : "failure",
+        title: `${flaky ? "Flaky (reproducible)" : "Failed"}: ${r.test_id}`.slice(0, 255),
+        message: [r.exception_type && r.message ? `${r.exception_type}: ${r.message}` : r.message ?? "", flaky && r.cause ? `cause: ${r.cause}` : "", flaky && r.replay ? `replay: ${r.replay}` : ""]
+          .filter(Boolean).join("\n").slice(0, 64_000) || r.test_id,
+      });
+      if (out.length >= 50) break;
+    }
+    return out;
   }
 
   /** The trigger, the status and the counts of a run from the job, its workflow run and the runner's summary. */
   private runFields(job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, durationMs: number | null = null) {
     const event = run?.event ?? (pr ? "pull_request" : "push");
-    const trigger = TRIGGERS.has(event) ? event : event === "pull_request_target" ? "pull_request" : "workflow_dispatch";
+    // Any other event (release, repository_dispatch, deployment, ...) is "other", never shown as a manual run (G-2343).
+    const trigger = TRIGGERS.has(event) ? event : event === "pull_request_target" ? "pull_request" : "other";
     const fails = s ? s.failed.length + s.flaky.length : 0;
     const status = job.conclusion === "cancelled" ? "cancelled" : s ? (fails || s.exit !== 0 ? "failed" : "passed") : job.conclusion === "success" ? "passed" : "failed";
     const passedRan = s ? Math.max(0, Math.min(s.ran - fails, (s.outcomeCounts.passed ?? s.ran) - s.reusedWithProof)) : 0;
@@ -995,13 +1419,13 @@ export class GitHubService {
     const r = await c.query<{ id: string }>(
       `insert into ci_runs (workspace_id, project_id, number, commit_sha, commit_message, branch, pull_request, trigger, status, pushed_at, started_at,
          finished_at, duration_ms, tests_total, tests_ran, tests_passed, tests_failed, tests_skipped, tests_flaky_defects, test_time_ran_ms,
-         test_time_skipped_ms, other_step_minutes, engine_version, skip_misses, mode, region)
+         test_time_skipped_ms, other_step_minutes, engine_version, skip_misses, mode, region, github_run_id, github_job_id, job_workflow, job_name)
        values (public.cp_workspace(), $1, (select coalesce(max(number), 0) + 1 from ci_runs where project_id = $1), $2, $3, $4, $5, $6, $7, $8, $9,
-         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, round($20::numeric, 2), $21, $22, $23, $24)
+         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, round($20::numeric, 2), $21, $22, $23, $24, $25, $26, $27, $28)
        returning id`,
       [projectId, job.head_sha, f.commitMessage, job.head_branch ?? "", pr, f.trigger, status,
         pushedAt, v.startedAt, v.completedAt, v.durationMs, ...f.tests, f.timeRanMs, f.timeSkippedMs, v.otherStepMinutes, s?.engineVersion ?? "",
-        JSON.stringify(s?.notReusedReasons ?? {}), v.mode, v.region]);
+        JSON.stringify(s?.notReusedReasons ?? {}), v.mode, v.region, job.run_id, job.job_id, job.workflow_name || null, job.job_name || null]);
     return r.rows[0]!.id;
   }
 
@@ -1018,13 +1442,17 @@ export class GitHubService {
         s?.engineVersion ?? "", JSON.stringify(s?.notReusedReasons ?? {}), v.mode]);
   }
 
-  /** One fenvix comment per pull request: updated in place; found again by its marker if our record of it is lost. */
+  /**
+   * One fenvix comment per pull request: updated in place; found again by its marker if our record of it is lost (all
+   * the pull request's comments are searched, page by page: G-2317).
+   */
   private async upsertComment(gh: GitHubHttp, base: string, number: number, known: number | null, body: string): Promise<number> {
     let id = known;
-    if (!id) {
+    for (let page = 1; !id && page <= 30; page++) {
       const list = await gh.request<{ id: number; body?: string; performed_via_github_app?: { id: number } | null; user?: { type?: string } | null }[]>(
-        "GET", `${base}/issues/${number}/comments`, { query: { per_page: 100 } });
+        "GET", `${base}/issues/${number}/comments`, { query: { per_page: 100, page } });
       id = list.data.find((cm) => cm.body?.startsWith(COMMENT_MARKER) && cm.user?.type === "Bot")?.id ?? null;
+      if (list.data.length < 100) break;
     }
     if (id) {
       const r = await gh.request<{ id: number }>("PATCH", `${base}/issues/comments/${id}`, { body: { body }, allow: [404] });
@@ -1032,6 +1460,112 @@ export class GitHubService {
     }
     const created = await gh.request<{ id: number }>("POST", `${base}/issues/${number}/comments`, { body: { body } });
     return created.data.id;
+  }
+
+  /**
+   * The comment of every open pull request whose head is this commit (G-2318), made from ALL fenvix jobs of the commit
+   * (G-0189): the latest attempt of each job (by workflow and job name: a matrix job's name carries its values). One
+   * writer per pull request at a time (an advisory lock held while it renders and writes), so a job that finished
+   * earlier never overwrites a later job's result with an older picture.
+   */
+  async refreshComments(repositoryId: number, headSha: string, run: WorkflowRunP | null = null): Promise<number> {
+    const repo = await this.repo(repositoryId);
+    if (!repo) return 0;
+    if (run?.pull_requests?.length) {
+      for (const p of run.pull_requests) {
+        if (p.head.sha !== headSha) continue;
+        await this.db.q(
+          `insert into gh_pull_requests (repository_id, number, head_sha, head_ref, base_ref, state) values ($1, $2, $3, $4, $5, 'open')
+           on conflict (repository_id, number) do update set head_sha = excluded.head_sha, updated_at = now() where gh_pull_requests.state = 'open'`,
+          [repositoryId, p.number, headSha, p.head.ref, p.base.ref]);
+      }
+    }
+    const prs = await this.db.q<{ number: number }>(
+      "select number from gh_pull_requests where repository_id = $1 and head_sha = $2 and state = 'open' order by number", [repositoryId, headSha]);
+    if (!prs.length) return 0;
+    const gh = this.gh.installation(repo.installation_id);
+    const base = repoPath(repo.full_name);
+    let written = 0;
+    for (const pr of prs) {
+      await this.db.tx(null, async (c) => {
+        await c.query("select pg_advisory_xact_lock(hashtext('pr-comment:' || $1::text || ':' || $2::text))", [repositoryId, pr.number]);
+        const view = await this.commentView(repositoryId, headSha);
+        if (!view) return;
+        const known = (await c.query<{ fenvix_comment_id: number | null }>(
+          "select fenvix_comment_id from gh_pull_requests where repository_id = $1 and number = $2", [repositoryId, pr.number])).rows[0]?.fenvix_comment_id ?? null;
+        const body = combinedComment(view.jobs, view.defects, { repository: repo.full_name, headSha, dashboardUrl: this.s.dashboardUrl, receiptsUrl: view.receiptsUrl });
+        const id = await this.upsertComment(gh, base, pr.number, known, body);
+        await c.query("update gh_pull_requests set fenvix_comment_id = $3 where repository_id = $1 and number = $2", [repositoryId, pr.number, id]);
+        written++;
+      });
+    }
+    return written;
+  }
+
+  /** What the comment of a commit shows: its fenvix jobs and the defects they saw (null: comments are off). */
+  async commentView(repositoryId: number, headSha: string): Promise<{ jobs: JobView[]; defects: DefectView[]; receiptsUrl: string | null } | null> {
+    const repo = (await this.repo(repositoryId))!;
+    const rows = await this.db.q<JobRow & { summary: Record<string, unknown> | null; check_run_url: string | null; no_machine: string | null }>(
+      `select distinct on (j.workflow_name, j.job_name) j.*, s.summary
+       from gh_jobs j left join gh_run_summaries s on s.repository_id = j.repository_id and s.run_id = j.run_id and s.run_attempt = j.run_attempt
+         and s.runner_name = j.runner_name
+       where j.repository_id = $1 and j.head_sha = $2
+       order by j.workflow_name, j.job_name, j.run_id desc, j.run_attempt desc, j.job_id desc`, [repositoryId, headSha]);
+    const [inst] = await this.db.q<{ workspace_id: string | null }>("select workspace_id from gh_installations where installation_id = $1", [repo.installation_id]);
+    const ws = inst?.workspace_id ?? null;
+    const runIds = rows.map((r) => r.ci_run_id).filter((x): x is string => !!x);
+    let projectId: string | null = null;
+    let commentsOn = true;
+    let testRunner = "pytest";
+    let defects: DefectView[] = [];
+    const runOfJob = new Map(rows.map((r) => [r.ci_run_id, `${r.workflow_name || "workflow"} / ${r.job_name}`]));
+    if (ws) {
+      await this.db.tx(ws, async (c) => {
+        const p = (await c.query<{ id: string; comment_on_pull_requests: boolean; test_runner: string }>(
+          "select p.id, p.comment_on_pull_requests, p.test_runner from ci_projects p join gh_repositories r on r.project_id = p.id where r.repository_id = $1", [repositoryId])).rows[0];
+        if (p) { projectId = p.id; commentsOn = p.comment_on_pull_requests; testRunner = p.test_runner; }
+        if (!runIds.length) return;
+        const ds = (await c.query<Record<string, unknown> & { run_ids: string[] }>(
+          `select d.*, array_agg(distinct o.run_id::text) as run_ids,
+             (select count(distinct (r2.pull_request)) from ci_defect_occurrences o2 join ci_runs r2 on r2.id = o2.run_id
+               where o2.defect_id = d.id and r2.pull_request is not null) as prs,
+             (select row_to_json(x) from (select status, runs, fails from ci_replays rp where rp.id = d.last_replay_id) x) as last_replay
+           from ci_defect_occurrences o join ci_defects d on d.id = o.defect_id
+           where o.run_id = any($1::uuid[]) group by d.id order by d.test_id`, [runIds])).rows;
+        defects = ds.map((d) => this.defectView(d, testRunner, d.run_ids.map((id) => runOfJob.get(id) ?? "").filter(Boolean)));
+      });
+    }
+    if (!commentsOn) return null;
+    const jobs: JobView[] = rows.map((r) => {
+      let summary: RunSummary | null = null;
+      if (r.summary) { try { summary = parseSummary(r.summary); } catch { summary = null; } }
+      return {
+        jobId: r.job_id, name: `${r.workflow_name || "workflow"} / ${r.job_name}`, status: r.status as JobView["status"], conclusion: r.conclusion,
+        summary, published: !!r.published_at, noMachine: r.no_machine,
+        dashboardRunUrl: projectId && r.ci_run_id ? `${this.s.dashboardUrl}/projects/${projectId}/runs/${r.ci_run_id}` : null,
+        checkRunUrl: r.check_run_url, jobUrl: `${this.s.webUrl}/${repo.full_name}/actions/runs/${r.run_id}/job/${r.job_id}`,
+      };
+    });
+    const firstRun = rows.find((r) => r.ci_run_id)?.ci_run_id;
+    return { jobs, defects, receiptsUrl: projectId && firstRun ? `${this.s.dashboardUrl}/projects/${projectId}/runs/${firstRun}` : null };
+  }
+
+  private defectView(d: Record<string, unknown>, testRunner: string, jobs: string[]): DefectView {
+    const ex = (d.exception ?? {}) as Record<string, string>;
+    const dv = d.divergence as DefectView["divergence"];
+    const shape = { id: String(d.id), seed: d.seed === null || d.seed === undefined ? null : Number(d.seed), language: d.language as "python" | "node",
+      testRunner: testRunner as "pytest", replayCommand: (d.replay_command as string | null) ?? null };
+    const lr = d.last_replay as { status: string; runs: number | null; fails: number | null } | null;
+    return {
+      id: shape.id, testId: String(d.test_id), status: d.status as DefectView["status"], state: d.state as DefectView["state"], cause: String(d.cause),
+      causeTests: (d.cause_tests as string[]) ?? [], minimalOrder: (d.minimal_order as string[]) ?? [], seed: shape.seed, divergence: dv ?? null,
+      exception: { type: ex.type ?? "", message: ex.message ?? "", location: ex.location ?? "" },
+      replays: { runs: Number(d.replay_runs ?? 0), fails: Number(d.replay_fails ?? 0) },
+      replayCommand: replayCommand(shape), pullCommand: pullCommand(shape), dashboardUrl: `${this.s.dashboardUrl}/defects/${shape.id}`,
+      occurrences: Number(d.occurrences ?? 1), pullRequests: Number(d.prs ?? 0), jobs,
+      culprit: (d.culprit as DefectView["culprit"]) ?? null, dependencyVerdict: (d.dependency_verdict as DefectView["dependencyVerdict"]) ?? null,
+      lastReplay: lr ? { status: lr.status, runs: lr.runs, fails: lr.fails } : null,
+    };
   }
 
   // ---------------------------------------------------------------- linking (called after the setup callback checks)

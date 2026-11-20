@@ -215,8 +215,28 @@ A flaky test turned into a reproducible defect. Taken from `bundle.json` (24 key
 | `language` | `"python"` \| `"node"` | the bundle's, else the project's |
 | `replayCommand` | string \| null | the engine's own command, as the runner sent it with the bundle (`command` of `bundle.json`); null: the dashboard builds it, see below |
 
+**One defect per flaky test** (2026-11-20, migration 0019). A defect is keyed by (project, test id): the same flaky
+test across runs, commits and pull requests is ONE defect, whatever its fingerprint, the engine version or the order.
+The newest bundle's facts are the defect's; every sighting is a **Defect occurrence** (`ci_defect_occurrences`): `source`
+(`run` | `exploration`), `runId`, `runNumber`, `explorationId`, `commitSha`, `branch`, `pullRequest`, `fingerprint`,
+`fingerprintChanged` (differs from the previous sighting's), `divergence`, `seed`, `engineVersion`, `status`, `seenAt`
+(`GET /v1/defects/{id}/occurrences`). `occurrences` counts runs (an exploration is not a run). A flaky test the run's summary
+names (`flaky[]`) without a bundle is a defect too: `status: "reported"`, `cause: "unknown"`, the summary's replay command;
+the bundle's facts replace the report when they arrive. A bundle's `divergence` may carry `passing` and `failing`: the
+events of a passing and of the failing run up to the first divergent one (`TraceEvent`, at most 200 each), shown side by
+side on the defect page. `state` is `open` | `fixed` | `muted` (`POST
+/v1/defects/{id}/state`, any member); a replay on our machines that passes 10 of 10 on a commit that never saw the
+defect marks it `fixed`; a fixed defect seen again in a run opens again. `cause` adds the divergent event's kinds:
+`async_order`, `thread`, `clock`, `random`, `network`, `filesystem`, `environment` (from the bundle's `kind`:
+`async-order`, `thread`, `clock`, `random`, `network`, `fs`, `env`), and `unknown`. New fields: `stateReason`,
+`stateChangedAt`, `bundle` (`{id, sha256, sizeBytes, receivedAt}` | null), `lastReplay` (Replay | null), `pullCommand`,
+`culprit` and `dependencyVerdict` (null until Passo 3's engine delivers them; the pull request comment shows them when
+set).
+
 **Replay command.** The runner sends the engine's command; when it did not, the dashboard builds one. Python: `pytest --det --det-seed=S --det-order=<bundle>/order.txt` (no `--det-seed` when the seed
-is null), after `fenvix defects pull <id>` writes the bundle to `<bundle>`. Node: the engine has no `--det-order`,
+is null), after the pull command writes the bundle to `<bundle>`: `curl -H "Authorization: Bearer $FENVIX_API_KEY"
+https://api.fenvix.dev/v1/defects/<id>/bundle/download | tar -xz -C .fenvix/defects/<id>` (an API key; the `fenvix` CLI has no
+`defects pull` command). Node: the engine has no `--det-order`,
 minimiser or bundle yet (branch `claude/node-l0`), so the command is the seed only:
 `detjs vitest run --det --det-seed=S` (or `detjs jest --det --det-seed=S`), and the dashboard says that the order is
 not replayed. The engine's own `detpy replay <bundle>` works as well and is shown next to it.
@@ -474,6 +494,38 @@ A dropped chunk is still answered `202` (it is checked after the queue) and logg
 | `defects[]` | each defect bundle the engine wrote this run (`bundle.json` + `order.txt`) with the engine's replay command (`command`, `replayCommand`) | Defect (`ci_defects`), by project, test and fingerprint: new, or seen again (`occurrences` + 1 once per run, `lastSeenAt`, `lastRunId`, reopened if it was fixed). `cause` from `kind`: `order` → polluter, `brittle` → state_setter, `fails-alone` → fails_alone; `causeTests` = `polluters` / `setters` / none; `familyKey` = them joined by `" + "`, or `"<none>"` |
 | `audit[]` | the audit reruns (5% of the tests skipped with proof, run anyway): `confirmed` or `wrong_skip`, `untrusted` when the engine stopped trusting the key | Audit rerun (`ci_audit_reruns`); the run's `audit.rerun` and `audit.wrongSkips` |
 
+### 1b. What the live view needs from the runner (P-049's "Live test view", served since 2026-11-20)
+
+The progress record (`POST /v1/runner/progress`) takes two optional lists: `finished`, the tests finished since the
+previous record (each a `RunnerTestOutcome`, plus `worker` and `finishedAt`; at most 500 per record; a test sent twice
+keeps the first), and `workers` (`{ id, currentTest, testsDone, state }`). The App stores the finished tests at once
+(passed and failed; a test skipped with proof waits for its receipt in the results chunk) with the next `seq`, so
+`GET /v1/runs/{id}/tests/live?afterSeq=N` shows them in the order they finished; the results chunks stay authoritative
+and keep `seq`, `worker` and `finishedAt`. A failed test in a progress record fires a stop armed for the first failure.
+Body at most 6 MB.
+
+**The test's output** (`output` on `RunnerTestOutcome`, at most 64 KB: what the test printed and logged) is what the
+coding agent's `get_test_log` and the last 2,000 characters of `failures_for` show. Send it for failed tests at least.
+
+**`FENVIX_SKIP`** (P-047's runner contract): the App writes `FENVIX_SKIP=0` (reuse nothing) when the run is in shadow
+mode or skip with proof is off or paused for the project, else `1`, next to `FENVIX_MODE` and `FENVIX_CACHE_ACCESS`.
+
+### 2b. Defect bundles: `POST /v1/runner/bundles`
+
+For each defect bundle the engine wrote this run (`bundle.json`, `order.txt` and the run's traces and cassettes), the
+runner sends the directory as a `.tar.gz`, base64, **at most 4 MB decoded** (API Gateway and Lambda cap a request near
+6 MB), with the job's own per-job credential, after (or before) the results chunk that names the defect:
+
+```json
+{"runId": 31000, "runAttempt": 1, "testId": "tests/test_money.py::test_default_currency_is_eur", "fingerprint": "<32 hex>",
+ "sha256": "<64 hex of the decoded content>", "content": "<base64>"}
+```
+
+`202` stored (it becomes the defect's current bundle; a defect keeps its 5 newest); `400` the body (`sha256` that does not
+match, content over 4 MB); `403` a credential that is not a CI job's; `503` with `Retry-After` while the job's run row is
+not recorded yet (the runner retries `5xx`). The App serves it to members and API keys (`GET /v1/defects/{id}/bundle`), to
+the remote MCP server (`pull_bundle`) and to replay machines.
+
 ### 3. The run summary, when the test step ends: `POST /v1/runner/summaries`
 
 `runner/fenvix-run`'s `summary.json` (unchanged), after the results chunks:
@@ -641,6 +693,62 @@ warm-up. A `succeeded` warm-up with its summary makes the repository's cache **w
 commit is already warm); every warm-up that used a machine gets its one non-billable usage event (test minutes from
 the summary, the rest of the machine time as other steps).
 
+### 6. Replays and explorations on our machines (task machines)
+
+> **Founder rule (2026-11-20): no machine before go-live except through P-047's master switch** (`RUNNER_MODE`, off by
+> default), and each run approved. The App's own EC2 launcher no longer starts task machines (`launchTask` removed).
+> Replays run as leases of P-047's machine pool (`gh_replays`, linked to `ci_replays`), so only when the pool is on.
+> Without it, a replay or an exploration waits, and its `detail` says it is waiting for a fenvix machine. Scheduled
+> explorations have no pool path yet (P-047's pool has the exploration hook, not scheduled). The task-credential routes
+> below stay for that.
+
+Replays (asked for from the dashboard, the API with a key that has the `replay` scope, the remote MCP server or the pull
+request comment's link) and explorations (the nightly exploration of every project that has it on, at its hour (UTC),
+under its time cap and seed budget, targeting all tests or only the unstable ones; and ones asked for by hand or for a
+pull request) are **task machines**. The App's scheduler (every minute) gives each due task a machine through the
+launcher (`launchTask`, P-047's fleet), in the organization's region, at most 3 machines per task. The machine is no
+GitHub runner. User data writes `/etc/fenvix/runner.env` with the plain settings and:
+
+| Variable | Value |
+| --- | --- |
+| `FENVIX_KIND` | `replay` or `exploration` |
+| `FENVIX_TASK_ID` | the task (a UUID) |
+| `FENVIX_TASK_URL` | `https://api.fenvix.dev/v1/runner/replays` or `.../explorations` |
+| `FENVIX_MACHINE`, `FENVIX_MODE`, `FENVIX_REGION`, `FENVIX_RUNNER_NAME` | `per-job`, `enforce`, the region, `fenvix-r<id>-<attempt>` / `fenvix-x<id>-<attempt>` |
+| `FENVIX_CACHE_ACCESS` | `none` (a task never reads or writes the shared cache) |
+
+and the files `/etc/fenvix/task.json` (`{"v": 1, "kind", "taskId", "attempt", "repository": {"id", "fullName"},
+"installationId", "commitSha", ...}`; a replay adds `defectId`, `testId`, `command` (the engine's replay command),
+`runs: 10`, `bundleUrl`; an exploration adds `reason`, `branch`, `budgetSeconds`, `seeds`, `targets` (test ids; empty:
+all)), `/etc/fenvix/checkout-token` (contents: read on this one repository, one hour) and `/etc/fenvix/summary-token`
+(the task's own credential: it names the task and is accepted only by that task's routes). The machine starts
+`fenvix-task.target` (**P-047**: the image's executor runs `fenvix replay <bundle>` `runs` times at `commitSha`, or
+`detpy explore` under the budget, then powers off).
+
+**What a replay machine sends**, with its task credential:
+
+- `GET /v1/runner/replays/{taskId}/bundle`: the defect's bundle (`application/gzip`; `404` none yet: replay from `command`);
+- `POST /v1/runner/replays` `{"replayId", "event": "started"}`, then `{"replayId", "event": "finished", "outcome": "passed" |
+  "failed" | "error", "runs", "fails", "fingerprint"?, "identicalFingerprint"?, "detail"?, "command"?}` (`passed`: the
+  minimal order passed every replay). `202` stored (or late/repeated: nothing changes); `403` another task's machine;
+  `404` no such replay. The result goes to the defect (`lastReplay`; 10 of 10 passing on a commit that never saw it:
+  `fixed`).
+
+**What an exploration machine sends**: `POST /v1/runner/explorations` (the same body as section 4) with its task
+credential. It is stored as that job's night (`ci_exploration_jobs.exploration_id`), whatever else the project stored
+that day; the job is `finished`.
+
+**Stopping a run** (`POST /v1/runs/{id}/cancel`, the live view): within a minute the App cancels the GitHub workflow run
+(this needs the App's repository permission "Actions: Read and write"; without it only the machine is ended) and ends
+the job's machine (`terminateRunner`, by the runner's name); GitHub then fails the job with its runner gone.
+
+### Skip with proof off, or paused
+
+A project's `skipWithProof: false`, or a pause after an audit rerun found a wrong skip (`skipPaused`, resumed by an owner
+or admin: `POST /v1/projects/{id}/skip/resume`), starts the job's machine with `FENVIX_CACHE_ACCESS=none` and **no**
+`/etc/fenvix/cache-token`: the engine has nothing to reuse and runs every test. **P-047**: the runner must run the
+engine without the shared cache when `FENVIX_CACHE_ACCESS` is `none`.
+
 ### Trial, mode and the 35% gate
 
 Linking an organization's first GitHub installation starts its **30-day shadow trial** (`gh_link_installation`,
@@ -648,7 +756,11 @@ migrations 0014 and 0015; linking more installations does not restart it). Since
 starts the trial only when the organization never had one, has no other installation linked (now or before: an
 existing customer adding a GitHub account is not put into shadow mode), and the installation's GitHub account
 (`account_id`) never had one through any organization (`ci_trial_accounts`: reinstalling the App and linking it to a
-new organization does not start another). Organizations linked before 0014 get trial dates in the past. While it runs, the App starts machines with
+new organization does not start another). Organizations linked before 0014 get trial dates in the past. **Since
+2026-11-20 (G-0187) shadow mode is off unless the App's `SHADOW_MODE=true`**: no runner reads `FENVIX_MODE` yet, so a
+trial run skipped tests for real while it was labelled shadow; until the runner runs shadow mode (P-047), trial runs
+start with `FENVIX_MODE=enforce` and are labelled `enforce`, and `wouldSkipTests` / `wouldSaveMs` stay 0. With
+`SHADOW_MODE=true`, while the trial runs, the App starts machines with
 `FENVIX_MODE=shadow` and the run rows get `mode: "shadow"`: every test runs, and the engine records, per test, whether
 it would have skipped it with proof (`wouldSkip`). The trial's would-have-saved share is the shadow runs' `wouldSaveMs`
 (each at most the run's own test time) over their test time (run + skipped), time-weighted over the trial's finished
@@ -686,6 +798,70 @@ An organization's region (`us` | `eu`) decides where its jobs' machines run (`RU
 one AWS region and launch template per region). The App records the region on the job (`gh_jobs.region`) and the run
 (`ci_runs.region`), and passes it to the machine (`FENVIX_REGION`). A region with no placement gets no machine.
 
+## Live test view (proposed 2026-11-20, P-049; server P-048, machines P-047)
+
+What the dashboard's live test view, its stop and replay buttons and the defect page need. The operations are in
+`openapi/fenvix-api.yaml` with the tag `proposed`: the server serves only `dashboard` operations and needs a handler
+for each, so each moves to `dashboard` in the change that serves it (P-048). The new fields are optional in the schemas
+until then; the dashboard draws "not reported" when one is absent and never makes one up.
+
+**Live tests.** `GET /runs/{runId}/tests/live?afterSeq=N` → `{ items: TestResult[], lastSeq, status }`: the tests that
+finished after `seq` N, in the order they finished, at most 2,000 per answer. The dashboard asks with the last
+`lastSeq` every 4 seconds while the run is running and the page is visible (as the run itself, `GET /runs/{runId}`
+with `If-None-Match`). A Per-test outcome gains `worker` (the runner's worker name, e.g. `gw0`, null for a serial
+run), `seq` and `finishedAt`. Where they come from: the runner's progress record gains
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `finished` | `RunnerTestOutcome[]` (+ `worker`) | the tests finished since the previous progress record, at most 500 per record; a test sent twice keeps the first |
+| `workers` | `{ id, currentTest, testsDone }[]` | every worker and the test it runs now |
+
+stored as they arrive (the App gives each a `seq` in arrival order). The results chunks at the end of the job stay
+authoritative: they replace the live rows of the same tests (keeping `seq`, `worker`, `finishedAt`).
+
+**Run progress** gains `workers: { id, currentTest, testsDone, state: running | idle | done }[]`.
+
+**Run** gains `stop` (below), `job: { workflow, name, matrix } | null` (the GitHub job: several test jobs or a matrix
+give several runs of a commit; from the `workflow_job` event's `workflow_name`, `name` and the matrix part of the
+name), `githubRunId` and `githubJobId` (links to the job on GitHub).
+
+**Stop.** `POST /runs/{runId}/stop` `{ when: "now" | "first_failure" | "off" }`, owner or admin, `202` with the run;
+`409` when the run is not running. `now` asks P-047's dispatcher to cancel the GitHub job and terminate its machine at
+once; `first_failure` is armed and does the same when the first failed test arrives (at once if one already failed);
+`off` disarms it. `Run.stop = { when, state: armed | requested | done | failed, requestedAt, requestedBy, detail }`;
+`done` once GitHub reports the job cancelled, `failed` with the reason in `detail`.
+
+**Replay.** `POST /runs/{runId}/replays` `{ testId }`, owner or admin, `202` with the Replay; `GET /runs/{runId}/replays`
+(newest first); `GET /replays/{replayId}`. P-047's dispatcher runs the one test on our machines, at the run's commit,
+with its seed and order (the defect's minimal order when the test is a flaky defect), 10 times.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id`, `runId`, `testId` | string | |
+| `defectId` | string \| null | the defect of this test in this run, when there is one |
+| `state` | `queued` \| `running` \| `done` \| `failed` | `failed`: the replay itself could not run (`detail` says why) |
+| `verdict` | `reproduced` \| `flaky` \| `passed` \| null | once done: failed every time with an identical fingerprint / failed some of the times / never failed |
+| `runs`, `done`, `fails` | number | replays asked for (10), finished, failed |
+| `identicalFingerprint` | boolean \| null | |
+| `command` | string | the engine command the machine ran |
+| `detail` | string | for a person |
+| `requestedAt`, `startedAt`, `finishedAt` | time | |
+
+**Defect.** `GET /defects/{defectId}/occurrences` → every run where the defect's test failed with this defect, newest
+first: `{ runId, runNumber, commitSha, branch, pullRequest, at }` (from `ci_test_results.failure_defect_id` joined with
+`ci_runs`). `GET /defects/{defectId}/bundle` → `{ url, expiresAt, sha256, bytes }`, a short-lived signed link to the
+bundle (`bundle.json`, `order.txt`, the traces) the runner sent; `404` when none is stored. The Defect gains
+`firstPullRequest` and, in `divergence`, `passing` and `failing`: the events of a passing and of the failing run up to
+and including the first divergent one (the last of each), each `{ index, thread, source, op, site, value }` from the
+engine's trace; the dashboard shows them side by side. Absent or empty when the runner sent no trace.
+
+**The replay command** the dashboard shows and copies is the runner's (`replayCommand`, the engine's own `command`).
+When the runner sent none it is built from the seed and the minimal order with `<bundle>` standing for the folder of
+the downloaded bundle. `fenvix defects pull`, which earlier versions printed, does not exist (audit G-0585) and is
+never shown.
+
+**Runs of a pull request.** `GET /projects/{projectId}/runs` gains `pullRequest` and `branch` filters.
+
 ## How records reach the dashboard
 
 The runner sends the records above to the App; the App writes Postgres as the restricted role `fenvix_github_app`,
@@ -694,7 +870,32 @@ in transactions that name the organization (row level security keeps the others 
 The dashboard reads them only through the fenvix API (`openapi/fenvix-api.yaml`, role `fenvix_api`), never from the
 database directly.
 
+**Who sees a project (G-1631).** A member, or an API key (acting as the member who made it), sees a project and every
+record of it only while GitHub says that member's GitHub identity can see the project's repository: a public
+repository, or an answer the App got from GitHub less than 10 minutes ago (it asks again every few minutes). No answer,
+an old one, no GitHub sign-in: the project is not there (lists leave it out, its ids answer 404, like another
+organization's). The dashboard can tell a person who signed in with Google or an email link that they see private
+repositories' projects once they sign in with GitHub.
+
 ## Changes
+
+- 2026-11-20 (P-048, round 3): **projects follow GitHub's access** (G-1631, "Who sees a project" above); the pull
+  command downloads `/v1/defects/{id}/bundle/download`.
+
+- 2026-11-20 (P-048, migration 0019, docs/REPORT-service-backend.md): **one defect per flaky test** with its history
+  (Defect occurrence), defects from the summary's `flaky[]` without a bundle (`reported`), more causes, defect state
+  (`fixed`, `muted`), **defect bundles** (`POST /v1/runner/bundles`, `GET /v1/defects/{id}/bundle`), **replays and
+  explorations on our machines** (task machines, `POST /v1/runner/replays`, scheduled explorations), **stopping a run**,
+  **API keys** and the **remote MCP server** (`POST /v1/mcp`), `FENVIX_CACHE_ACCESS=none` when skip with proof is off or
+  paused, **shadow mode off** until the runner runs it (`SHADOW_MODE`), the pull request comment combines every fenvix
+  job of the head commit, one check run per job (`fenvix / <job>`), the run trigger `other`.
+- 2026-11-20 (P-048 serves P-049's "Live test view": listLiveTests, stopRun, listReplays, replayTest, getReplay,
+  listDefectOccurrences, getDefectBundle are `dashboard` operations now; `Replay.runId` may be null (a defect replay
+  asked for outside a run); the bundle's bytes are `GET /v1/defects/{id}/bundle/download`, which the signed link of
+  getDefectBundle and the pull command use).
+- 2026-11-20 (P-049): "Live test view" (proposed operations and optional fields: live tests, workers, stop, replay,
+  defect occurrences and bundle, divergence events side by side, run job, runs by pull request). `fenvix defects
+  pull` removed from the replay command.
 
 - 2026-11-19 (review R-016b): **whether a job is billable comes from GitHub's data only**: a job that started on our
   machine is billed its held minutes whatever its summary and conclusion (`cancelled_before_tests` now means "never

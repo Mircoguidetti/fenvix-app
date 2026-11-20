@@ -295,7 +295,7 @@ test("rows from Postgres become the contract's records", () => {
   assert.equal(live.region, "eu");
   assert.equal(live.wouldSkipTests, 40);
   assert.equal(live.audit.rerun, 3);
-  assert.deepEqual(live.progress, { phase: "testing", testsTotal: 100, testsDone: 40, passed: 39, failed: 1, skippedWithProof: 0, currentTest: "t", elapsedMs: 5000, updatedAt: "2026-11-17T12:00:00.000Z" });
+  assert.deepEqual(live.progress, { phase: "testing", testsTotal: 100, testsDone: 40, passed: 39, failed: 1, skippedWithProof: 0, currentTest: "t", elapsedMs: 5000, updatedAt: "2026-11-17T12:00:00.000Z", workers: [] });
   assert.equal(mapProgress({ phase: "weird", testsTotal: null }, "2026-11-17T12:00:00Z").phase, "setup");
   const t = mapTestResult({ run_id: "r", test_id: "tests/a.py::test_x", outcome: "failed", failure_kind: "flaky_defect", defect_id: "d", failure_message: "boom" });
   assert.equal(t.file, "tests/a.py");

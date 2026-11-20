@@ -15,6 +15,7 @@ export type TestRunner = S["TestRunner"];
 export type RunTrigger = S["RunTrigger"];
 export type RunStatus = S["RunStatus"];
 export type RunMode = S["RunMode"];
+export type Replay = S["Replay"];
 export type SetupState = S["SetupState"];
 export type TestOutcome = S["TestOutcome"];
 export type MissKind = S["MissKind"];

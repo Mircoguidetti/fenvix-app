@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { client, type ProjectRow, type SetupState } from "../data";
-import { Message, PageHeader, Kicker } from "../components/PageHeader";
+import { Message, PageHeader, Kicker, LoadError } from "../components/PageHeader";
 import { RunStatusPill, StatusPill } from "../components/StateBadge";
 import { SkipShare, WarmCacheNote } from "../components/ci";
 import { useAsync } from "../lib/useAsync";
@@ -31,7 +31,7 @@ export function ProjectsPage() {
         }
       />
       {projects.status === "loading" && <Message>Loading projects</Message>}
-      {projects.status === "error" && <Message role="alert">{projects.message}</Message>}
+      {projects.status === "error" && <LoadError message={projects.message} onRetry={projects.reload} />}
       {projects.status === "ready" && projects.data.length === 0 && (
         <div className="empty">
           <h2>No projects yet</h2>

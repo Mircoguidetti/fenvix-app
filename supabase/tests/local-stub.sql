@@ -21,3 +21,14 @@ create or replace function auth.role() returns text language sql stable as $$
 $$;
 -- Supabase Auth sets this when the address is confirmed (a link was followed, or the provider vouched for it).
 alter table auth.users add column if not exists email_confirmed_at timestamptz;
+-- A provider sign-in of a person (Supabase Auth keeps one per provider; GitHub's provider_id is the GitHub user id).
+create table if not exists auth.identities (
+  id uuid primary key default gen_random_uuid(),
+  provider_id text not null,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  identity_data jsonb not null default '{}'::jsonb,
+  provider text not null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique (provider_id, provider)
+);

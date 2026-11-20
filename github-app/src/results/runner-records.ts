@@ -8,12 +8,17 @@
 export type RunMode = "enforce" | "shadow";
 export type Phase = "setup" | "collecting" | "testing" | "reporting";
 
+export interface TraceEvent { index: number; thread: string; source: string; op: string; site: string; value: string }
+
 /** Which job (RunnerJob). The identity (runner, repository, run for per-job machines) comes from the credential. */
 export interface RunnerJob { runId: number; runAttempt: number; repositoryId?: number; runnerName?: string }
 
 export interface RunnerProgress extends RunnerJob {
   seq: number; phase: Phase; testsTotal: number | null; testsDone: number; passed: number; failed: number; skippedWithProof: number;
   currentTest: string | null; elapsedMs: number; mode?: RunMode;
+  /** The tests finished since the previous record (the live view), and the parallel workers. */
+  finished?: RunnerTestOutcome[];
+  workers?: { id: string; currentTest?: string | null; testsDone?: number; state?: "running" | "idle" | "done" }[];
 }
 
 export interface RunnerFailure {
@@ -21,7 +26,7 @@ export interface RunnerFailure {
 }
 export interface RunnerTestOutcome {
   testId: string; outcome: "passed" | "failed" | "skipped_with_proof"; durationMs: number; failure?: RunnerFailure | null;
-  cacheKey?: string | null; wouldSkip?: boolean;
+  cacheKey?: string | null; wouldSkip?: boolean; worker?: string | null; finishedAt?: string; output?: string;
 }
 export interface RunnerReceipt {
   testId: string; cacheKey: string; reusedEngineRunId: string; fingerprint: string; reusedDurationMs: number;
@@ -32,13 +37,17 @@ export interface RunnerReceipt {
   runtime?: Record<string, unknown>; config?: Record<string, unknown>; changedFilesProven?: number;
 }
 export interface RunnerDefect {
-  testId: string; status: "reproduced" | "replay_unstable"; kind: "order" | "brittle" | "fails-alone";
+  testId: string; status: "reproduced" | "replay_unstable"; kind: DefectKind;
   polluters?: string[]; setters?: string[]; order: string[]; prefixLength?: number; seed?: number | null; fingerprint: string;
   replay: { runs: number; fails: number; identicalFingerprint: boolean }; outcome?: string;
   exception: { type: string; phase: string; message: string; location: string };
-  divergence?: { index: number; reason: string; description: string } | null;
+  divergence?: { index: number; reason: string; description: string; passing?: TraceEvent[]; failing?: TraceEvent[] } | null;
   engineVersion?: string; language?: "python" | "node"; replayCommand?: string;
 }
+/** The bundle's `kind`: order dependence (order, brittle, fails-alone) or the kind of the first divergent event. */
+export const DEFECT_KINDS = ["order", "brittle", "fails-alone", "async-order", "thread", "clock", "random", "network", "fs", "env"] as const;
+export type DefectKind = (typeof DEFECT_KINDS)[number];
+const ORDER_KINDS: readonly string[] = ["order", "brittle", "fails-alone"];
 export interface RunnerAuditRerun { testId: string; cacheKey: string; outcome: "confirmed" | "wrong_skip"; untrusted?: boolean; detail?: string }
 export type MissKind = "new" | "failed-before" | "config" | "runtime" | "clock" | "env" | "data" | "code";
 export interface MissDetail { kind: MissKind; detail: string; tests: number }
@@ -143,6 +152,16 @@ export function parseProgress(raw: unknown): RunnerProgress {
     currentTest: opt(o, "currentTest", "", orNull((v, p) => text(v, p, 2000))) ?? null,
     elapsedMs: nonNeg("elapsedMs"),
     mode: opt(o, "mode", "", (v, p) => oneOf(v, p, MODES)),
+    finished: opt(o, "finished", "", (v, p) => list(v, p, testOutcome, { max: 500 })),
+    workers: opt(o, "workers", "", (v, p) => list(v, p, (x, q) => {
+      const w = obj(x, q);
+      return def({
+        id: text(need(w, "id", q), at(q, "id"), 100),
+        currentTest: opt(w, "currentTest", q, orNull((y, r) => text(y, r, 2000))),
+        testsDone: opt(w, "testsDone", q, (y, r) => int(y, r, 0)),
+        state: opt(w, "state", q, (y, r) => oneOf(y, r, ["running", "idle", "done"] as const)),
+      });
+    }, { max: 256 })),
   });
 }
 
@@ -167,6 +186,9 @@ function testOutcome(v: unknown, path: string): RunnerTestOutcome {
     failure: opt(o, "failure", path, orNull(failure)),
     cacheKey: opt(o, "cacheKey", path, orNull((x, p) => text(x, p, undefined, HEX32))),
     wouldSkip: opt(o, "wouldSkip", path, bool),
+    worker: opt(o, "worker", path, orNull((x, p) => text(x, p, 100))),
+    finishedAt: opt(o, "finishedAt", path, (x, p) => text(x, p, undefined, DATE_TIME)),
+    output: opt(o, "output", path, (x, p) => text(x, p, 65536)),
   });
 }
 
@@ -209,10 +231,14 @@ export function parseDefect(v: unknown, path: string): RunnerDefect {
   return def({
     testId: text(need(o, "testId", path), at(path, "testId"), 2000),
     status: oneOf(need(o, "status", path), at(path, "status"), ["reproduced", "replay_unstable"] as const),
-    kind: oneOf(need(o, "kind", path), at(path, "kind"), ["order", "brittle", "fails-alone"] as const),
+    kind: oneOf(need(o, "kind", path), at(path, "kind"), DEFECT_KINDS),
     polluters: opt(o, "polluters", path, strings()),
     setters: opt(o, "setters", path, strings()),
-    order: list(need(o, "order", path), at(path, "order"), (x, p) => text(x, p), { min: 1 }),
+    // The minimal order: required for an order defect (order, brittle, fails-alone); a Level 1 or Level 2 defect
+    // (threads, async order, clock, randomness, network, files, environment) may send none: the test alone (G-1754).
+    order: ORDER_KINDS.includes(String(o.kind)) || o.order !== undefined
+      ? list(need(o, "order", path), at(path, "order"), (x, p) => text(x, p), { min: 1 })
+      : [text(need(o, "testId", path), at(path, "testId"), 2000)],
     prefixLength: opt(o, "prefixLength", path, (x, p) => int(x, p, 0)),
     seed: opt(o, "seed", path, orNull((x, p) => int(x, p))),
     fingerprint: text(need(o, "fingerprint", path), at(path, "fingerprint"), undefined, HEX32),
@@ -225,7 +251,13 @@ export function parseDefect(v: unknown, path: string): RunnerDefect {
     exception,
     divergence: opt(o, "divergence", path, orNull((x, p) => {
       const d = obj(x, p);
-      return { index: int(need(d, "index", p), at(p, "index")), reason: text(need(d, "reason", p), at(p, "reason")), description: text(need(d, "description", p), at(p, "description")) };
+      const ev = (y: unknown, r: string) => list(y, r, (e, q) => {
+        const t = obj(e, q);
+        return { index: int(need(t, "index", q), at(q, "index")), thread: text(need(t, "thread", q), at(q, "thread")), source: text(need(t, "source", q), at(q, "source")),
+          op: text(need(t, "op", q), at(q, "op")), site: text(need(t, "site", q), at(q, "site")), value: text(need(t, "value", q), at(q, "value")) };
+      }, { max: 200 });
+      return def({ index: int(need(d, "index", p), at(p, "index")), reason: text(need(d, "reason", p), at(p, "reason")), description: text(need(d, "description", p), at(p, "description")),
+        passing: opt(d, "passing", p, ev), failing: opt(d, "failing", p, ev) });
     })),
     engineVersion: opt(o, "engineVersion", path, (x, p) => text(x, p)),
     language: opt(o, "language", path, (x, p) => oneOf(x, p, ["python", "node"] as const)),
@@ -303,10 +335,19 @@ export function parseExploration(raw: unknown): RunnerExploration {
 
 // ---------------------------------------------------------------- mapping a defect bundle to the dashboard's record
 
-export type DefectCause = "polluter" | "state_setter" | "fails_alone";
+export type DefectCause =
+  | "polluter" | "state_setter" | "fails_alone" | "async_order" | "thread" | "clock" | "random" | "network" | "filesystem" | "environment" | "unknown";
 
-/** order → polluter, brittle → state_setter (the test fails without it), fails-alone → fails_alone. */
-export const causeOf = (kind: RunnerDefect["kind"]): DefectCause => (kind === "order" ? "polluter" : kind === "brittle" ? "state_setter" : "fails_alone");
+/**
+ * The bundle's kind as the defect's cause: order → polluter, brittle → state_setter (the test fails without it),
+ * fails-alone → fails_alone; the kinds of the divergent event beyond order dependence (L1/L2: async-order, thread,
+ * clock, random, network, fs, env) map one to one (G-0633).
+ */
+const CAUSE_OF: Record<DefectKind, DefectCause> = {
+  order: "polluter", brittle: "state_setter", "fails-alone": "fails_alone", "async-order": "async_order", thread: "thread",
+  clock: "clock", random: "random", network: "network", fs: "filesystem", env: "environment",
+};
+export const causeOf = (kind: RunnerDefect["kind"]): DefectCause => CAUSE_OF[kind];
 
 /** polluters for order, setters for brittle, none for fails-alone. */
 export const causeTestsOf = (d: Pick<RunnerDefect, "kind" | "polluters" | "setters">): string[] =>
@@ -320,6 +361,7 @@ export function progressRecord(p: RunnerProgress): Record<string, unknown> {
   return {
     seq: p.seq, phase: p.phase, testsTotal: p.testsTotal, testsDone: p.testsDone, passed: p.passed, failed: p.failed,
     skippedWithProof: p.skippedWithProof, currentTest: p.currentTest, elapsedMs: p.elapsedMs,
+    workers: (p.workers ?? []).map((w) => ({ id: w.id, currentTest: w.currentTest ?? null, testsDone: w.testsDone ?? 0, state: w.state ?? "running" })),
   };
 }
 
@@ -328,6 +370,43 @@ export const isNewerProgress = (stored: { seq?: unknown } | null | undefined, se
   const s = stored && typeof stored.seq === "number" ? stored.seq : -1;
   return seq > s;
 };
+
+// ---------------------------------------------------------------- bundles and replays (POST /v1/runner/bundles, /v1/runner/replays)
+
+/** A defect bundle's largest size (raw, before base64): API Gateway and Lambda cap a request near 6 MB. */
+export const BUNDLE_MAX_BYTES = 4 * 1024 * 1024;
+
+export interface RunnerBundle extends RunnerJob { testId: string; fingerprint?: string; sha256?: string; content: string }
+
+export function parseBundle(raw: unknown): RunnerBundle {
+  const o = obj(raw, "");
+  return def({
+    ...job(o),
+    testId: text(need(o, "testId", ""), "testId", 2000),
+    fingerprint: opt(o, "fingerprint", "", (v, p) => text(v, p, undefined, HEX32)),
+    sha256: opt(o, "sha256", "", (v, p) => text(v, p, undefined, /^[0-9a-f]{64}$/)),
+    content: text(need(o, "content", ""), "content", Math.ceil(BUNDLE_MAX_BYTES / 3) * 4 + 4, /^[A-Za-z0-9+/]*={0,2}$/),
+  });
+}
+
+export function parseReplayReport(raw: unknown): import("../tasks/tasks.ts").ReplayReport {
+  const o = obj(raw, "");
+  const event = oneOf(need(o, "event", ""), "event", ["started", "finished"] as const);
+  const r = def({
+    replayId: text(need(o, "replayId", ""), "replayId", undefined, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
+    event,
+    outcome: opt(o, "outcome", "", (v, p) => oneOf(v, p, ["passed", "failed", "error"] as const)),
+    runs: opt(o, "runs", "", (v, p) => int(v, p, 0, 1000)),
+    fails: opt(o, "fails", "", (v, p) => int(v, p, 0, 1000)),
+    fingerprint: opt(o, "fingerprint", "", (v, p) => text(v, p, undefined, HEX32)),
+    identicalFingerprint: opt(o, "identicalFingerprint", "", bool),
+    detail: opt(o, "detail", "", (v, p) => text(v, p, 2000)),
+    command: opt(o, "command", "", (v, p) => text(v, p, 4000)),
+  });
+  if (event === "finished" && r.outcome === undefined) throw new RecordError("outcome", "is required when event is finished");
+  if (r.fails !== undefined && r.runs !== undefined && r.fails > r.runs) throw new RecordError("fails", "must be at most runs");
+  return r;
+}
 
 // ---------------------------------------------------------------- warm-up machines (POST /v1/runner/warmups)
 

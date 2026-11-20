@@ -170,3 +170,10 @@ describe("region placement (RUNNER_PLACEMENT)", () => {
     assert.deepEqual([await full.hasCapacity("us"), await full.hasCapacity("eu")], [false, true]);
   });
 });
+
+describe("founder rule: no machine before go-live except through the master switch (P-047's RUNNER_MODE, off by default)", () => {
+  it("without RUNNER_MODE there is no launcher at all; the EC2 launcher cannot start a replay or exploration machine of its own", () => {
+    assert.equal(launcherFrom({}, jsonLogger("silent")), null);
+    assert.equal("launchTask" in Ec2Launcher.prototype, false);
+  });
+});

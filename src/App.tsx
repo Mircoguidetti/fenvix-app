@@ -20,8 +20,9 @@ import { SettingsPage } from "./pages/Settings";
 import { MembersPage } from "./pages/Members";
 import { STYLEGUIDE_ON, StyleguidePage } from "./pages/Styleguide";
 import { OrgProvider, useOrg } from "./session/OrgProvider";
-import { InviteScreen, NameOrgScreen, NoOrgScreen } from "./components/OrgScreens";
+import { InviteScreen, NameOrgScreen, NoOrgScreen, OrgLoadErrorScreen } from "./components/OrgScreens";
 import { usePendingInvite } from "./lib/invite";
+import { rememberReturnPath } from "./lib/returnPath";
 
 function NotFound() {
   return (
@@ -49,15 +50,22 @@ function Gated() {
   const invite = usePendingInvite();
   if (invite) return <InviteScreen token={invite} />;
   if (org.status === "loading") return null;
+  if (org.status === "error" && org.orgs.length === 0) return <OrgLoadErrorScreen />;
   if (org.status === "ready" && org.orgs.length === 0) return <NoOrgScreen />;
   if (org.current?.role === "owner" && !org.current.nameConfirmed) return <NameOrgScreen key={org.current.id} />;
   return <Dashboard key={org.current?.id ?? "default"} />;
 }
 
+/** The sign-in page, on any address: the address asked for is kept to come back to after signing in (G-1686). */
+function SignedOut() {
+  useEffect(() => rememberReturnPath(window.location.pathname + window.location.search), []);
+  return <SignInPage />;
+}
+
 function Routed() {
   const { status, user } = useSession();
   if (status === "loading") return null;
-  if (!user) return <SignInPage />;
+  if (!user) return <SignedOut />;
   return (
     <OrgProvider key={user.id}>
       <Gated />

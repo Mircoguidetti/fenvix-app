@@ -50,12 +50,15 @@ describe("the contract inside the bundle", () => {
     const noOrg = dashboardOperations().filter((o) => !o.workspace).map((o) => o.operationId).sort();
     // completeGitHubInstall: the organization comes from the completion (the install link's signed state), and the
     // database links only for the person that state names (review R-016 F2).
-    assert.deepEqual(noOrg, ["acceptInvitation", "completeGitHubInstall", "createOrganization", "getMe", "listOrganizations"]);
+    // deleteMe: the person's own account (0019), whatever organization.
+    assert.deepEqual(noOrg, ["acceptInvitation", "completeGitHubInstall", "createOrganization", "deleteMe", "getMe", "listOrganizations"]);
   });
 });
 
 describe("the role table", () => {
-  const ADMIN_OPS = ["changeMemberRole", "createInstallLink", "createInvitation", "listInvitations", "openSetupPullRequest", "removeMember", "renameOrganization", "revokeInvitation", "saveProjectSettings", "saveSettings"];
+  const ADMIN_OPS = ["changeMemberRole", "createApiKey", "createInstallLink", "createInvitation", "deleteOrganization", "deleteProject", "exportOrganization",
+    "listApiKeys", "listAuditEvents", "listInvitations", "openSetupPullRequest", "removeMember", "renameOrganization", "replayTest", "requestExploration", "resumeSkip", "revokeApiKey",
+    "revokeInvitation", "saveExplorationSettings", "saveProjectSettings", "saveSettings", "stopRun", "unlinkInstallation"];
 
   it("x-fenvix-role: admin marks exactly the owner-or-admin operations", () => {
     assert.deepEqual(dashboardOperations().filter((o) => o.admin).map((o) => o.operationId).sort(), ADMIN_OPS);

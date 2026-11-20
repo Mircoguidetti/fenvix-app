@@ -59,8 +59,9 @@ Vite bakes these in when it builds, so change them and build again. If one of `V
 ## Set up Supabase
 
 1. **Create the schema.** Supabase dashboard → SQL editor → New query. Run every file in `supabase/migrations/` in
-   order, `0001` to `0014`. 0011 holds the CI dashboard's tables and plans; 0014 removes the earlier product's tables
-   and must run after all the others.
+   order, `0001` to `0019` (the deploy pipeline does this on every merge). 0011 holds the CI dashboard's tables and plans;
+   0014 removes the earlier product's tables; 0018 is the machines (P-047), 0019 the service back-end (defect history, bundles, replays, API keys,
+   exploration jobs, deleting and retention).
 2. **Auth URLs.** Authentication → URL Configuration. Set *Site URL* to the production address and add
    every address the app is served from to *Redirect URLs*, each with a trailing slash: for example
    `https://console.fenvix.dev/` and `http://localhost:5173/`. Vercel previews build with `VITE_DATA_BACKEND=mock`
@@ -118,7 +119,7 @@ After a provider or email sign-in the user lands on `/overview`, not on the page
 | `npm run check` | Builds with the mock and serves it, then: behaviour checks on desktop and phone (`scripts/checks.mjs`: every page, the trial gate met and not met, the live run view and that its polling stops once the run finishes or the page is hidden, the Connect flow and each `?github=` return, audit reruns, units, billing, region for owners, API keys coming soon), organization checks (`scripts/orgs-checks.mjs`: members see the region and everything else read-only, invitations), status colours (`scripts/status-colors-checks.mjs`), and the screenshots with axe and layout checks (`scripts/screenshots.mjs`) | Playwright and Chromium |
 | `npm run screenshots` | Every page at 1440 and 390 px, light and dark, into `docs/screenshots/` | a preview server on :4173 |
 | `node scripts/ui-shots.mjs` | Every page at six widths: no sideways scroll, 44 px touch targets on a phone, axe | a preview server on :4173 |
-| `npm run test:rls` | Runs the migrations twice each and the row level security tests in `supabase/tests/` | A scratch Postgres 15+ |
+| `npm run test:rls` | Runs the migrations twice each and the row level security tests in `supabase/tests/` (`backend-rls.sql`: every customer table, organization A against B, as the API's member and API key, the App and the browser) | A scratch Postgres 15+ |
 
 `npm run test:rls` takes `TEST_DATABASE_URL`, the address of an **empty, disposable** Postgres database, for example:
 
@@ -129,6 +130,17 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/fenvix_scratch npm run te
 
 What these cannot show: the real API's answers (another check runs every page against it locally) and that your
 Google and GitHub apps, redirect URLs, SMTP and keys are set up correctly. That needs a real sign-in.
+
+## Remote MCP server (coding agents)
+
+`POST https://api.fenvix.dev/v1/mcp` with an organization's API key (API keys page; scope `read`, plus `replay` to
+replay on our machines). Agents install nothing. The loop fenvix is made for: the agent pushes a fix, calls
+`wait_for_run` with the commit (or the pull request and its project) until the runs finish (each call waits at most 20 s
+and says `callAgain`), reads the failures it returns (per test: the error, a log excerpt, new or a known defect, for a
+flaky test the first divergent event and the replay command), reads a test's full output with `get_test_log`, replays a
+flaky test with `replay` (on our machines) or `pull_bundle` (locally), fixes, pushes again. `failures_for` answers
+without waiting. The job logs stay in GitHub Actions (our runners stream them there); the MCP server gives the agent the
+structured cause, which GitHub does not have. The same answers are API operations (`listFailures`, `getTestLog`, ...).
 
 ## Where things are
 

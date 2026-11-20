@@ -8,12 +8,17 @@
  *   3. else no project yet.
  */
 export type Language = "python" | "node" | "go";
-export type TestRunner = "pytest" | "vitest" | "jest" | "go test";
+/** Every runner a project can have (G-0616, G-1750); which ones the engine runs is engineRuns (src/onboarding/onboard.ts). */
+export type TestRunner = "pytest" | "unittest" | "django" | "nose2" | "ward" | "vitest" | "jest" | "mocha" | "node:test" | "ava" | "tap" | "bun" | "playwright" | "cypress" | "go test";
 export interface Stack { language: Language; testRunner: TestRunner | null }
 
 const LANGUAGES: readonly string[] = ["python", "node", "go"];
-const RUNNERS: readonly string[] = ["pytest", "vitest", "jest", "go test"];
-const LANGUAGE_OF: Record<TestRunner, Language> = { pytest: "python", vitest: "node", jest: "node", "go test": "go" };
+export const LANGUAGE_OF: Record<TestRunner, Language> = {
+  pytest: "python", unittest: "python", django: "python", nose2: "python", ward: "python",
+  vitest: "node", jest: "node", mocha: "node", "node:test": "node", ava: "node", tap: "node", bun: "node", playwright: "node", cypress: "node",
+  "go test": "go",
+};
+export const RUNNERS: readonly string[] = Object.keys(LANGUAGE_OF);
 
 const lang = (v: unknown): Language | null => (typeof v === "string" && LANGUAGES.includes(v) ? (v as Language) : null);
 const runner = (v: unknown): TestRunner | null => (typeof v === "string" && RUNNERS.includes(v) ? (v as TestRunner) : null);
@@ -23,6 +28,13 @@ function nodeRunnerIn(v: unknown): TestRunner | null {
   if (typeof v !== "string") return null;
   if (/\bvitest\b/i.test(v)) return "vitest";
   if (/\bjest\b/i.test(v)) return "jest";
+  if (/\bplaywright\b/i.test(v)) return "playwright";
+  if (/\bcypress\b/i.test(v)) return "cypress";
+  if (/\bmocha\b/i.test(v)) return "mocha";
+  if (/\bnode\s+--test\b|\bnode:test\b/i.test(v)) return "node:test";
+  if (/\bava\b/i.test(v)) return "ava";
+  if (/\btap\b/i.test(v)) return "tap";
+  if (/\bbun\s+test\b/i.test(v)) return "bun";
   return null;
 }
 

@@ -151,7 +151,7 @@ describe("R-016 trial: the 30-day shadow trial and its 35% gate", () => {
 
   before(async () => {
     admin = await resetDb();
-    await h.start();
+    await h.start({ SHADOW_MODE: "true" });
     first = await makeOrg(admin, "r016-trial-1");
     second = await makeOrg(admin, "r016-trial-2");
     h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });

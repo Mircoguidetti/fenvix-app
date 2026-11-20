@@ -41,7 +41,7 @@ describe("run results on GitHub, runs and usage events", () => {
     const runs = [...shop.checkRuns.values()];
     assert.equal(runs.length, 1);
     assert.equal(runs[0]!.status, "in_progress");
-    assert.equal(runs[0]!.name, "fenvix");
+    assert.equal(runs[0]!.name, "fenvix / test", "one check run per job, named after it (G-1645)");
     assert.equal(runs[0]!.head_sha, PR_SHA);
     const job = (await admin.query("select status, check_run_id, runner_name from gh_jobs where job_id = 601")).rows[0];
     assert.equal(job.status, "in_progress");
@@ -68,7 +68,9 @@ describe("run results on GitHub, runs and usage events", () => {
     assert.equal(comments.length, 1);
     assert.equal(comments[0]!.issue, 7);
     assert.match(comments[0]!.body, /^<!-- fenvix:run-summary -->/);
-    assert.match(comments[0]!.body, /\[Check run\]\(https:\/\/github\.com\/acme\/shop\/runs\/\d+\)/);
+    assert.match(comments[0]!.body, /\[check\]\(https:\/\/github\.com\/acme\/shop\/runs\/\d+\)/);
+    assert.match(comments[0]!.body, /### ❌ fenvix · 1 failed/);
+    assert.match(comments[0]!.body, /\| CI \/ test \| ❌ 1 failed \| 56 \| 45 \|/);
 
     const run = (await admin.query("select * from ci_runs")).rows[0];
     assert.equal(run.workspace_id, org.workspaceId);
@@ -123,7 +125,8 @@ describe("run results on GitHub, runs and usage events", () => {
     const shop = h.gh.repos.get("acme/shop")!;
     assert.equal(shop.comments.size, 1);
     const body = [...shop.comments.values()][0]!.body;
-    assert.match(body, /✅ fenvix · 46 of 56 tests skipped with proof/);
+    assert.match(body, /### ✅ fenvix · all tests passed/);
+    assert.match(body, /\*\*Skip with proof:\*\* 46 of 56 tests skipped/);
     const patched = h.gh.exchanges.filter((x) => x.method === "PATCH" && /\/issues\/comments\/\d+$/.test(x.path));
     assert.equal(patched.length, 1);
     const runs = (await admin.query("select number, status from ci_runs order by number")).rows;

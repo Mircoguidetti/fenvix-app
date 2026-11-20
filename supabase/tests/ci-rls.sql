@@ -92,6 +92,10 @@ end $$;
 reset role;
 
 -- ---------------------------------------------------------------- the member, through the API: reads W, never XW, writes nothing
+-- G-1631: GitHub said (just now) that every member sees every repository (the App's answers; backend-rls.sql tests them).
+insert into public.gh_repo_access (user_id, project_id, can_see, basis, checked_at)
+  select m.user_id, p.id, true, 'write', now() from public.workspace_members m join public.ci_projects p on p.workspace_id = m.workspace_id
+  on conflict (user_id, project_id) do update set can_see = true, checked_at = now();
 set local role fenvix_api;
 do $$
 declare r ci_ids%rowtype; n int; t text;
@@ -119,10 +123,14 @@ begin
       select id, 99, repeat('9', 40), 'main', 'push', 'passed', now(), now() from public.ci_projects where workspace_id = r.w;
     assert false, 'the API can insert runs';
   exception when insufficient_privilege then null; end;
+  -- A member may fix, mute or reopen a defect of W (0019), nothing else of it, and nothing of another organization.
   begin
-    update public.ci_defects set state = 'fixed';
-    assert false, 'the API can change defects';
+    update public.ci_defects set test_id = 'renamed';
+    assert false, 'the API can change a defect beyond its state';
   exception when insufficient_privilege then null; end;
+  update public.ci_defects set state = 'fixed' where workspace_id = r.xw;
+  get diagnostics n = row_count;
+  assert n = 0, 'WRITE LEAK: a member changed the outsider''s defect';
   begin
     update public.ci_plans set price_usd_month = 1;
     assert false, 'the API can set a price';
@@ -135,6 +143,10 @@ end $$;
 reset role;
 
 -- ---------------------------------------------------------------- the owner, through the API: settings of W only, four columns only
+-- G-1631: GitHub said (just now) that every member sees every repository (the App's answers; backend-rls.sql tests them).
+insert into public.gh_repo_access (user_id, project_id, can_see, basis, checked_at)
+  select m.user_id, p.id, true, 'write', now() from public.workspace_members m join public.ci_projects p on p.workspace_id = m.workspace_id
+  on conflict (user_id, project_id) do update set can_see = true, checked_at = now();
 set local role fenvix_api;
 do $$
 declare r ci_ids%rowtype; n int;

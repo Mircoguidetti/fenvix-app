@@ -40,7 +40,7 @@ export interface StoredChunk { id: number; chunk: number; payload: RunnerResults
 export interface TestRow {
   test_id: string; outcome: RunnerTestOutcome["outcome"]; duration_ms: number; failure_kind: "real" | "flaky_defect" | null;
   failure_phase: string | null; exception_type: string | null; failure_message: string | null; failure_location: string | null;
-  defect_fingerprint: string | null;
+  defect_fingerprint: string | null; worker: string | null; finished_at: string | null; output: string | null;
 }
 
 /** A per-test outcome as ci_test_results stores it: failure fields only for a failed test (a failed test always has a kind). */
@@ -51,17 +51,27 @@ export function testRow(t: RunnerTestOutcome): TestRow {
     failure_kind: f?.kind ?? null, failure_phase: f ? (f.phase ?? "call") : null, exception_type: f?.exceptionType ?? null,
     failure_message: f?.message ?? null, failure_location: f?.location ?? null,
     defect_fingerprint: f?.kind === "flaky_defect" ? (f.defectFingerprint ?? null) : null,
+    worker: t.worker ?? null, finished_at: t.finishedAt ?? null, output: t.output ?? null,
   };
 }
 
 export interface DefectRow {
   test_id: string; status: string; cause: string; cause_tests: string[]; minimal_order: string[]; prefix_length: number; seed: number | null;
-  fingerprint: string; replay_runs: number; replay_fails: number; identical_fingerprint: boolean; outcome: string;
+  fingerprint: string | null; replay_runs: number; replay_fails: number; identical_fingerprint: boolean; outcome: string;
   exception: { type: string; phase: string; message: string; location: string }; divergence: RunnerDefect["divergence"] | null;
   family_key: string; engine_version: string; language: "python" | "node"; replay_command: string | null;
 }
 
-/** A defect bundle as ci_defects stores it. */
+/**
+ * A defect bundle as ci_defects stores it. A bundle that does not say its language gets the project's; a project in a
+ * language fenvix does not run (anything but Python and Node) never has its defects labelled Python (G-0194): they are
+ * left out (null) and the caller logs them.
+ */
+export function defectRowOrNull(d: RunnerDefect, projectLanguage: string): DefectRow | null {
+  const language = d.language ?? (projectLanguage === "node" ? "node" : projectLanguage === "python" ? "python" : null);
+  return language ? defectRow({ ...d, language }, projectLanguage) : null;
+}
+
 export function defectRow(d: RunnerDefect, projectLanguage: string): DefectRow {
   const causeTests = causeTestsOf(d);
   return {
@@ -95,46 +105,108 @@ function lastBy<T>(items: T[], key: (x: T) => string): T[] {
 
 // ---------------------------------------------------------------- defects
 
+/** Where a defect was seen: a run (its commit, branch and pull request come from the run row) or an exploration. */
+export type Sighting = { runId: string; seenAt: Date } | { explorationId: string; seenAt: Date };
+
 /**
- * Upserts defect bundles by (project, test, fingerprint). For a run (`runId`): occurrences + 1 the first time the
- * run brings the defect (not when the same run's results are applied again), last seen / last run move forward only.
- * For an exploration (`runId` null) occurrences do not change: an exploration is not a run.
- * Returns the defects with whether each was inserted now.
+ * Upserts defects by (project, test): ONE defect per flaky test of a project, whatever its fingerprint, the engine
+ * version or the order (G-1701, G-1808). The newest bundle's facts replace the older ones; a bundle never gives way to
+ * a bare report from the summary (status 'reported'). Every sighting is a row of ci_defect_occurrences (one per run, one
+ * per exploration) with the fingerprint and the divergent event of that time, and whether the fingerprint changed
+ * since the defect's previous sighting (the service compares them, G-1749). `occurrences` is the number of runs that
+ * saw it (an exploration is not a run). Seen again in a new run: a fixed defect opens again (a fix that did not hold);
+ * a muted one stays muted. Returns the defects with whether each was inserted now.
  */
-export async function upsertDefects(c: Client, projectId: string, defects: DefectRow[], o: { runId: string | null; seenAt: Date }): Promise<{ id: string; test_id: string; fingerprint: string; inserted: boolean }[]> {
-  const rows = lastBy(defects, (d) => `${d.test_id}\u0000${d.fingerprint}`);
+const KEEP = "(excluded.status = 'reported' and d.status <> 'reported') or excluded.last_seen_at < d.last_seen_at";
+const KEEP_SET = ["status", "cause", "cause_tests", "minimal_order", "prefix_length", "seed", "fingerprint", "replay_runs", "replay_fails",
+  "identical_fingerprint", "outcome", "exception", "divergence", "family_key"].map((k) => `${k} = case when ${KEEP} then d.${k} else excluded.${k} end`).join(", ") + ",";
+
+export async function upsertDefects(c: Client, projectId: string, defects: DefectRow[], o: Sighting): Promise<{ id: string; test_id: string; fingerprint: string | null; inserted: boolean }[]> {
+  const rows = lastBy(defects, (d) => d.test_id);
   if (!rows.length) return [];
-  const r = await c.query<{ id: string; test_id: string; fingerprint: string; inserted: boolean }>(
+  const runId = "runId" in o ? o.runId : null;
+  const explorationId = "explorationId" in o ? o.explorationId : null;
+  const r = await c.query<{ id: string; test_id: string; fingerprint: string | null; inserted: boolean }>(
     `insert into ci_defects as d (workspace_id, project_id, test_id, status, cause, cause_tests, minimal_order, prefix_length, seed, fingerprint,
        replay_runs, replay_fails, identical_fingerprint, outcome, exception, divergence, family_key, first_seen_at, last_seen_at, first_run_id,
        last_run_id, occurrences, engine_version, language, replay_command)
      select public.cp_workspace(), $1, x.test_id, x.status, x.cause, x.cause_tests, x.minimal_order, x.prefix_length, x.seed, x.fingerprint,
        x.replay_runs, x.replay_fails, x.identical_fingerprint, x.outcome, x.exception, x.divergence, x.family_key, $3, $3, $2::uuid,
-       $2::uuid, 1, x.engine_version, x.language, x.replay_command
+       $2::uuid, 0, x.engine_version, x.language, x.replay_command
      from jsonb_to_recordset($4::jsonb) as x(test_id text, status text, cause text, cause_tests text[], minimal_order text[], prefix_length int,
        seed bigint, fingerprint text, replay_runs int, replay_fails int, identical_fingerprint boolean, outcome text, exception jsonb,
        divergence jsonb, family_key text, engine_version text, language text, replay_command text)
-     on conflict (project_id, test_id, fingerprint) do update set
-       status = excluded.status, cause = excluded.cause, cause_tests = excluded.cause_tests, minimal_order = excluded.minimal_order,
-       prefix_length = excluded.prefix_length, seed = excluded.seed, replay_runs = excluded.replay_runs, replay_fails = excluded.replay_fails,
-       identical_fingerprint = excluded.identical_fingerprint, outcome = excluded.outcome, exception = excluded.exception,
-       divergence = excluded.divergence, family_key = excluded.family_key,
-       engine_version = case when excluded.engine_version <> '' then excluded.engine_version else d.engine_version end,
-       replay_command = coalesce(excluded.replay_command, d.replay_command),
-       -- seen again: open again (a fix that did not hold)
-       state = case when $2::uuid is not null and d.last_run_id is distinct from $2::uuid then 'open' else d.state end,
-       occurrences = case
-         when $2::uuid is null then d.occurrences
-         when d.first_run_id = $2::uuid or d.last_run_id = $2::uuid
-           or exists (select 1 from ci_test_results t where t.run_id = $2::uuid and t.defect_id = d.id) then d.occurrences
-         else d.occurrences + 1 end,
+     on conflict (project_id, test_id) do update set
+       -- A bundle's facts win over a bare report; among bundles (or among reports), the newest wins.
+       ${KEEP_SET}
+       engine_version = case when excluded.engine_version <> '' and excluded.last_seen_at >= d.last_seen_at then excluded.engine_version else d.engine_version end,
+       replay_command = case when excluded.status = 'reported' and d.status <> 'reported' then d.replay_command
+                             else coalesce(excluded.replay_command, d.replay_command) end,
+       -- seen again in another run: open again (a fix that did not hold); muted stays muted
+       state = case when $2::uuid is not null and d.state = 'fixed' and d.last_run_id is distinct from $2::uuid then 'open' else d.state end,
+       state_reason = case when $2::uuid is not null and d.state = 'fixed' and d.last_run_id is distinct from $2::uuid
+                           then 'seen again after it was fixed' else d.state_reason end,
        first_run_id = coalesce(d.first_run_id, excluded.first_run_id),
        first_seen_at = least(d.first_seen_at, excluded.first_seen_at),
        last_run_id = case when $2::uuid is not null and excluded.last_seen_at >= d.last_seen_at then excluded.last_run_id else d.last_run_id end,
        last_seen_at = greatest(d.last_seen_at, excluded.last_seen_at)
      returning d.id, d.test_id, d.fingerprint, (d.xmax = 0) as inserted`,
-    [projectId, o.runId, o.seenAt, JSON.stringify(rows)]);
+    [projectId, runId, o.seenAt, JSON.stringify(rows)]);
+  // The sightings, then the counts.
+  const byTest = new Map(rows.map((x) => [x.test_id, x]));
+  const sightings = r.rows.map((d) => {
+    const x = byTest.get(d.test_id)!;
+    return { defect_id: d.id, fingerprint: x.fingerprint, divergence: x.divergence, seed: x.seed, engine_version: x.engine_version, status: x.status };
+  });
+  await c.query(
+    `insert into ci_defect_occurrences as o (workspace_id, defect_id, run_id, exploration_id, source, commit_sha, branch, pull_request, fingerprint,
+       fingerprint_changed, divergence, seed, engine_version, status, seen_at)
+     select public.cp_workspace(), x.defect_id, $1::uuid, $2::uuid, case when $1::uuid is not null then 'run' else 'exploration' end,
+       coalesce(r.commit_sha, e.commit_sha), coalesce(r.branch, e.branch), r.pull_request, x.fingerprint,
+       coalesce(x.fingerprint is not null and x.fingerprint is distinct from (
+         select p.fingerprint from ci_defect_occurrences p where p.defect_id = x.defect_id and p.fingerprint is not null
+           and p.seen_at <= $3 and not (p.run_id is not distinct from $1::uuid and p.exploration_id is not distinct from $2::uuid)
+         order by p.seen_at desc, p.id desc limit 1)
+         and exists (select 1 from ci_defect_occurrences p where p.defect_id = x.defect_id and p.fingerprint is not null
+           and not (p.run_id is not distinct from $1::uuid and p.exploration_id is not distinct from $2::uuid)), false),
+       x.divergence, x.seed, coalesce(x.engine_version, ''), x.status, $3
+     from jsonb_to_recordset($4::jsonb) as x(defect_id uuid, fingerprint text, divergence jsonb, seed bigint, engine_version text, status text)
+     left join ci_runs r on r.id = $1::uuid
+     left join ci_explorations e on e.id = $2::uuid
+     on conflict ${runId ? "(defect_id, run_id) where run_id is not null" : "(defect_id, exploration_id) where exploration_id is not null"} do update set
+       fingerprint = coalesce(excluded.fingerprint, o.fingerprint), divergence = coalesce(excluded.divergence, o.divergence),
+       seed = coalesce(excluded.seed, o.seed), engine_version = case when excluded.engine_version <> '' then excluded.engine_version else o.engine_version end,
+       status = case when excluded.status = 'reported' then o.status else excluded.status end,
+       fingerprint_changed = o.fingerprint_changed or excluded.fingerprint_changed`,
+    [runId, explorationId, o.seenAt, JSON.stringify(sightings)]);
+  await c.query(
+    `update ci_defects d set occurrences = (select count(*) from ci_defect_occurrences o where o.defect_id = d.id and o.source = 'run')
+     where d.id = any($1::uuid[])`, [r.rows.map((x) => x.id)]);
   return r.rows;
+}
+
+/**
+ * The flaky tests the run's summary names (failed in the suite, passed alone) that no bundle of this run covers: each is
+ * a defect too, status 'reported', cause 'unknown', with the summary's replay command, so a run never counts a flaky
+ * defect the defect list does not show (G-0184). A bundle that arrives later for the same test replaces the report.
+ */
+export async function recordReportedFlaky(c: Client, run: RunTarget, flaky: { nodeid: string; replay: string }[]): Promise<number> {
+  if (!flaky.length) return 0;
+  const covered = new Set((await c.query<{ test_id: string }>(
+    `select d.test_id from ci_defect_occurrences o join ci_defects d on d.id = o.defect_id
+     where o.run_id = $1 and o.status <> 'reported'`, [run.id])).rows.map((x) => x.test_id));
+  if (run.language !== "python" && run.language !== "node") return 0;
+  const rows: DefectRow[] = lastBy(flaky, (f) => f.nodeid).filter((f) => !covered.has(f.nodeid)).map((f) => ({
+    test_id: f.nodeid, status: "reported", cause: "unknown", cause_tests: [], minimal_order: [f.nodeid], prefix_length: 0, seed: null,
+    fingerprint: null, replay_runs: 0, replay_fails: 0, identical_fingerprint: false, outcome: "failed",
+    exception: { type: "", phase: "call", message: "", location: "" }, divergence: null, family_key: "<none>", engine_version: "",
+    language: run.language === "node" ? "node" : "python", replay_command: f.replay.slice(0, 4000),
+  }));
+  await upsertDefects(c, run.projectId, rows, { runId: run.id, seenAt: run.seenAt });
+  await c.query(
+    `update ci_test_results t set defect_id = d.id from ci_defects d
+     where t.run_id = $1 and t.defect_id is null and t.outcome = 'failed' and d.project_id = $2 and d.test_id = t.test_id`, [run.id, run.projectId]);
+  return rows.length;
 }
 
 // ---------------------------------------------------------------- results chunks of a run
@@ -167,7 +239,7 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
   const cap = run.maxTestMs && run.maxTestMs > 0 ? Math.round(run.maxTestMs) : null;
 
   // Defects (the per-test outcomes point at them by fingerprint).
-  await upsertDefects(c, run.projectId, all<RunnerDefect>("defects").map((d) => defectRow(d, run.language)), { runId: run.id, seenAt: run.seenAt });
+  await upsertDefects(c, run.projectId, all<RunnerDefect>("defects").flatMap((d) => defectRowOrNull(d, run.language) ?? []), { runId: run.id, seenAt: run.seenAt });
 
   // Receipts. reused_run_id: the project's run whose engine run id is the one the receipt reuses.
   const receipts = lastBy(all<RunnerReceipt>("receipts").map(receiptRow), (r) => r.test_id);
@@ -199,26 +271,33 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
   if (ready.length) {
     await c.query(
       `insert into ci_test_results (run_id, workspace_id, test_id, outcome, duration_ms, failure_kind, failure_phase, exception_type, failure_message,
-         failure_location, defect_id, receipt_id)
+         failure_location, worker, finished_at, output, defect_id, receipt_id)
        select $1, public.cp_workspace(), x.test_id, x.outcome, x.duration_ms, x.failure_kind, x.failure_phase, x.exception_type, x.failure_message,
-         x.failure_location,
+         x.failure_location, x.worker, x.finished_at, x.output,
          case when x.failure_kind = 'flaky_defect' then (
-           select d.id from ci_defects d where d.project_id = $2 and d.test_id = x.test_id
-             and (d.fingerprint = x.defect_fingerprint or (x.defect_fingerprint is null and d.last_run_id = $1))
-           order by d.last_seen_at desc limit 1) end,
+           select d.id from ci_defects d where d.project_id = $2 and d.test_id = x.test_id) end,
          case when x.outcome = 'skipped_with_proof' then (select r.id from ci_skip_receipts r where r.run_id = $1 and r.test_id = x.test_id) end
        from jsonb_to_recordset($3::jsonb) as x(test_id text, outcome text, duration_ms bigint, failure_kind text, failure_phase text, exception_type text,
-         failure_message text, failure_location text, defect_fingerprint text)
+         failure_message text, failure_location text, defect_fingerprint text, worker text, finished_at timestamptz, output text)
        on conflict (run_id, test_id) do update set outcome = excluded.outcome, duration_ms = excluded.duration_ms, failure_kind = excluded.failure_kind,
          failure_phase = excluded.failure_phase, exception_type = excluded.exception_type, failure_message = excluded.failure_message,
          failure_location = excluded.failure_location, defect_id = coalesce(excluded.defect_id, ci_test_results.defect_id),
-         receipt_id = excluded.receipt_id`,
+         receipt_id = excluded.receipt_id, worker = coalesce(ci_test_results.worker, excluded.worker),
+         finished_at = coalesce(ci_test_results.finished_at, excluded.finished_at), output = coalesce(excluded.output, ci_test_results.output)`,
       [run.id, run.projectId, JSON.stringify(ready)]);
+    // The live view's order: rows the progress records did not bring get the next seq numbers (keeping the ones they did).
+    await c.query(
+      `update ci_test_results t set seq = n.seq from (
+         select test_id, (select coalesce(max(seq), 0) from ci_test_results where run_id = $1) + row_number() over (order by finished_at nulls last, test_id) as seq
+         from ci_test_results where run_id = $1 and seq is null) n
+       where t.run_id = $1 and t.test_id = n.test_id`, [run.id]);
+    // A stop armed for the first failure fires (P-049's live view).
+    if (ready.some((t) => t.outcome === "failed")) await armedStopFires(c, run.id);
   }
   // A flaky failure whose bundle came in a later chunk: linked now.
   await c.query(
     `update ci_test_results t set defect_id = d.id from ci_defects d
-     where t.run_id = $1 and t.defect_id is null and t.failure_kind = 'flaky_defect' and d.project_id = $2 and d.test_id = t.test_id and d.last_run_id = $1`,
+     where t.run_id = $1 and t.defect_id is null and t.failure_kind = 'flaky_defect' and d.project_id = $2 and d.test_id = t.test_id`,
     [run.id, run.projectId]);
 
   // Audit reruns.
@@ -231,6 +310,15 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
        on conflict (run_id, test_id) do update set cache_key = excluded.cache_key, outcome = excluded.outcome, untrusted = excluded.untrusted,
          detail = excluded.detail`,
       [run.id, JSON.stringify(audits)]);
+    // A wrong skip stops skipping for the project until an owner or admin resumes it (G-1757): the next machines get no
+    // shared cache, so every test runs; the project and its runs say why.
+    const wrong = audits.filter((a) => a.outcome === "wrong_skip");
+    if (wrong.length) {
+      await c.query(
+        `update ci_projects set skip_paused_at = coalesce(skip_paused_at, now()),
+           skip_paused_reason = coalesce(skip_paused_reason, $2) where id = $1`,
+        [run.projectId, `An audit rerun found a wrong skip: ${wrong[0]!.test_id} failed although its receipt said it could be skipped. Skipping is paused for this project.`.slice(0, 500)]);
+    }
   }
 
   // Totals, from everything stored: audit reruns of the run; shadow mode's "would have skipped" from every chunk of the
@@ -267,28 +355,61 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
  * One night of exploration: its defects upserted (not counted as occurrences: no run), then the exploration row,
  * once per (project, start, commit) (sent again: updated). new_defect_ids: the defects this exploration inserted.
  */
-export async function applyExploration(c: Client, projectId: string, language: string, e: RunnerExploration): Promise<{ id: string; newDefectIds: string[] }> {
-  const defects = await upsertDefects(c, projectId, (e.defects ?? []).map((d) => defectRow(d, language)), { runId: null, seenAt: new Date(e.finishedAt) });
-  const newIds = defects.filter((d) => d.inserted).map((d) => d.id);
+export async function applyExploration(c: Client, projectId: string, language: string, e: RunnerExploration, jobId: string | null = null): Promise<{ id: string; newDefectIds: string[] }> {
   const values = [projectId, e.startedAt, e.finishedAt, e.commitSha, e.branch, e.seeds, e.runs, e.collected, e.seconds,
     JSON.stringify(e.flakyFailing ?? []), JSON.stringify(e.alwaysFailing ?? []), JSON.stringify(e.notReproduced ?? []),
     JSON.stringify(e.familiesByPolluter ?? {}), JSON.stringify(e.seedsLog ?? [])];
   const existing = (await c.query<{ id: string; new_defect_ids: string[] }>(
     "select id, new_defect_ids from ci_explorations where project_id = $1 and started_at = $2 and commit_sha = $3 order by id limit 1 for update",
     [projectId, e.startedAt, e.commitSha])).rows[0];
+  let id: string;
+  let known: string[] = [];
   if (existing) {
-    const ids = [...new Set([...(existing.new_defect_ids ?? []), ...newIds])];
+    id = existing.id;
+    known = existing.new_defect_ids ?? [];
     await c.query(
       `update ci_explorations set finished_at = $3, branch = $5, seeds = $6, runs = $7, collected = $8, seconds = $9, flaky_failing = $10,
-         always_failing = $11, not_reproduced = $12, families_by_polluter = $13, seeds_log = $14, new_defect_ids = $15
-       where id = $16 and project_id = $1 and started_at = $2 and commit_sha = $4`,
-      [...values, JSON.stringify(ids), existing.id]);
-    return { id: existing.id, newDefectIds: ids };
+         always_failing = $11, not_reproduced = $12, families_by_polluter = $13, seeds_log = $14, job_id = coalesce($16::uuid, job_id)
+       where id = $15 and project_id = $1 and started_at = $2 and commit_sha = $4`,
+      [...values, id, jobId]);
+  } else {
+    id = (await c.query<{ id: string }>(
+      `insert into ci_explorations (workspace_id, project_id, started_at, finished_at, commit_sha, branch, seeds, runs, collected, seconds, flaky_failing,
+         always_failing, not_reproduced, families_by_polluter, seeds_log, new_defect_ids, job_id)
+       values (public.cp_workspace(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, '[]'::jsonb, $15) returning id`,
+      [...values, jobId])).rows[0]!.id;
   }
-  const r = await c.query<{ id: string }>(
-    `insert into ci_explorations (workspace_id, project_id, started_at, finished_at, commit_sha, branch, seeds, runs, collected, seconds, flaky_failing,
-       always_failing, not_reproduced, families_by_polluter, seeds_log, new_defect_ids)
-     values (public.cp_workspace(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) returning id`,
-    [...values, JSON.stringify(newIds)]);
-  return { id: r.rows[0]!.id, newDefectIds: newIds };
+  const defects = await upsertDefects(c, projectId, (e.defects ?? []).flatMap((d) => defectRowOrNull(d, language) ?? []), { explorationId: id, seenAt: new Date(e.finishedAt) });
+  const ids = [...new Set([...known, ...defects.filter((d) => d.inserted).map((d) => d.id)])];
+  await c.query("update ci_explorations set new_defect_ids = $2 where id = $1", [id, JSON.stringify(ids)]);
+  return { id, newDefectIds: ids };
+}
+
+/** A stop armed for the first failed test (stop_when first_failure) is requested: the sweep cancels the job. */
+export async function armedStopFires(c: Client, runId: string): Promise<boolean> {
+  const r = await c.query(
+    `update ci_runs set stop_state = 'requested', stop_detail = 'the first test failed' where id = $1 and status = 'running'
+       and stop_state = 'armed' and stop_when = 'first_failure'`, [runId]);
+  return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * The live view's per-test rows from a runner progress record (`finished`): stored as they arrive with the next seq
+ * numbers, a test sent twice keeps the first. Tests skipped with proof wait for the results chunk (their receipt).
+ */
+export async function storeLiveTests(c: Client, runId: string, tests: RunnerTestOutcome[]): Promise<number> {
+  const rows = lastBy(tests.map(testRow), (t) => t.test_id).filter((t) => t.outcome !== "skipped_with_proof");
+  if (!rows.length) return 0;
+  await c.query("select 1 from ci_runs where id = $1 for update", [runId]);
+  const r = await c.query(
+    `insert into ci_test_results (run_id, workspace_id, test_id, outcome, duration_ms, failure_kind, failure_phase, exception_type, failure_message,
+       failure_location, worker, finished_at, output, seq)
+     select $1, public.cp_workspace(), x.test_id, x.outcome, x.duration_ms, x.failure_kind, x.failure_phase, x.exception_type, x.failure_message,
+       x.failure_location, x.worker, coalesce(x.finished_at, now()), x.output,
+       (select coalesce(max(seq), 0) from ci_test_results where run_id = $1) + x.n
+     from (select y.*, row_number() over () as n from jsonb_to_recordset($2::jsonb) as y(test_id text, outcome text, duration_ms bigint, failure_kind text,
+       failure_phase text, exception_type text, failure_message text, failure_location text, worker text, finished_at timestamptz, output text)) x
+     on conflict (run_id, test_id) do nothing`, [runId, JSON.stringify(rows)]);
+  if (rows.some((t) => t.outcome === "failed")) await armedStopFires(c, runId);
+  return r.rowCount ?? 0;
 }

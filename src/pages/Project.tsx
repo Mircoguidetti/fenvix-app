@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
 import { client, type Defect, type ProjectRow, type ProjectSettings, type Run, type RunQuery } from "../data";
-import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker, LoadError, Await } from "../components/PageHeader";
 import { BeforeWithChart, Sparkline } from "../components/charts";
 import { CodeBlock, MinuteSum, SAVED_NOTE, runMinutesNote, triggerLabel } from "../components/ci";
 import { CopyButton } from "../components/CopyButton";
@@ -120,17 +120,25 @@ function RunsTab({ project }: { project: ProjectRow }) {
 
   return (
     <>
-      <LatestRun project={project} runs={recent.status === "ready" ? recent.data : null} openDefects={defects.status === "ready" ? defects.data : null} />
+      {recent.status === "error" ? (
+        <LoadError message={recent.message} onRetry={recent.reload} />
+      ) : (
+        <LatestRun project={project} runs={recent.status === "ready" ? recent.data : null} openDefects={defects.status === "ready" ? defects.data : null} />
+      )}
       <div className="grid-2">
         <Card id="ttg-per-run" title="Time to green, per run" description="Push to first green run, per commit, last 30 days.">
-          {recent.status === "ready" && timeToGreenPerCommit(recent.data).length > 1 ? (
-            <BeforeWithChart points={timeToGreenPerCommit(recent.data).map((x) => ({ at: x.at, value: x.seconds }))} before={project.baseline?.medianTimeToGreenS ?? null} format={(n) => secs(n)} />
-          ) : (
-            <Message>{recent.status === "ready" ? "Not enough green commits yet." : "Loading the chart"}</Message>
-          )}
+          <Await state={recent} loading="Loading the chart">
+            {(rs) =>
+              timeToGreenPerCommit(rs).length > 1 ? (
+                <BeforeWithChart points={timeToGreenPerCommit(rs).map((x) => ({ at: x.at, value: x.seconds }))} before={project.baseline?.medianTimeToGreenS ?? null} format={(n) => secs(n)} />
+              ) : (
+                <Message>Not enough green commits yet.</Message>
+              )
+            }
+          </Await>
         </Card>
         <Card id="activity" title="Live activity" description={project.fullName}>
-          {activity.status === "ready" ? <ActivityList items={activity.data} now={client.now()} /> : <Message>Loading</Message>}
+          <Await state={activity} loading="Loading activity">{(items) => <ActivityList items={items} now={client.now()} />}</Await>
         </Card>
       </div>
 
@@ -156,7 +164,7 @@ function RunsTab({ project }: { project: ProjectRow }) {
         }
       >
         {runs.status === "loading" && <Message>Loading runs</Message>}
-        {runs.status === "error" && <Message role="alert">{runs.message}</Message>}
+        {runs.status === "error" && <LoadError message={runs.message} onRetry={runs.reload} />}
         {runs.status === "ready" && runs.data.items.length === 0 && <p className="muted">No runs match. The first run arrives once the test job uses runs-on: fenvix.</p>}
         {runs.status === "ready" && runs.data.items.length > 0 && (
           <>
@@ -263,7 +271,7 @@ function SetupTab({ project }: { project: ProjectRow }) {
     <div className="grid-2">
       <Card id="snippet" title="The test job on fenvix" description="One line: runs-on: fenvix. The steps stay as they are; fenvix wraps the test command with the engine.">
         <CodeBlock code={snippet} what="setup snippet" label="Test job using runs-on: fenvix" />
-        {change.status === "ready" ? <SetupDiff change={change.data} /> : change.status === "error" ? <Message role="alert">{change.message}</Message> : <Message>Loading the change</Message>}
+        <Await state={change} loading="Loading the change">{(c) => <SetupDiff change={c} />}</Await>
       </Card>
       <Card id="status" title="Status" description="How this project was connected.">
         <dl className="facts">
@@ -387,7 +395,7 @@ export function ProjectPage({ section = "runs" }: { section?: "runs" | "settings
   // Old links (?tab=setup, ?tab=settings) open the project's Settings.
   if (params.get("tab")) return <Navigate to={`/projects/${id}/settings`} replace />;
   if (project.status === "loading") return <Message>Loading project</Message>;
-  if (project.status === "error") return <Message role="alert">{project.message}</Message>;
+  if (project.status === "error") return <LoadError message={project.message} onRetry={project.reload} />;
   if (!p)
     return (
       <div className="empty not-found">

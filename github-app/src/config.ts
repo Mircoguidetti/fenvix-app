@@ -71,6 +71,10 @@ export interface Config {
   /** How often the node server's warm-up scheduler runs (0: never; on AWS the warm-up Lambda's schedule runs it). */
   warmupTickSeconds: number;
   githubTimeoutMs: number;
+  /** SHADOW_MODE=true: trial runs are started and labelled shadow (only once the runner runs shadow mode; G-0187). */
+  shadowMode: boolean;
+  /** PUBLIC_API_URL: this service's own address, which task machines call back (default https://api.fenvix.dev). */
+  publicApiUrl: string;
 }
 
 type Env = Record<string, string | undefined>;
@@ -213,5 +217,7 @@ export function loadConfig(env: Env = process.env, opts: { surface?: "all" | "wo
     warmup: warmupFromEnv(env),
     warmupTickSeconds: int(env, "WARMUP_TICK_SECONDS", 60, 0),
     githubTimeoutMs: int(env, "GITHUB_TIMEOUT_MS", 15_000, 100),
+    shadowMode: env.SHADOW_MODE === "true",
+    publicApiUrl: httpsUrl(env, "PUBLIC_API_URL", "https://api.fenvix.dev", nodeEnv),
   };
 }

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { session, type SessionUser } from "./index";
+import { SESSION_ENDED_EVENT, markSessionEnded, rememberReturnPath } from "../lib/returnPath";
 
 interface SessionState {
   status: "loading" | "ready";
@@ -27,9 +28,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     } catch {
       stop = undefined;
     }
+    // The API said the session is over (401): sign out here, keep the page to come back to, show the sign-in page.
+    const ended = () => {
+      if (!alive) return;
+      rememberReturnPath(window.location.pathname + window.location.search);
+      markSessionEnded();
+      void session.signOut().catch(() => undefined);
+      setState({ status: "ready", user: null });
+    };
+    window.addEventListener(SESSION_ENDED_EVENT, ended);
     return () => {
       alive = false;
       stop?.();
+      window.removeEventListener(SESSION_ENDED_EVENT, ended);
     };
   }, []);
 

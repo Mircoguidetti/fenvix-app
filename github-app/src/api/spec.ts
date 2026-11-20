@@ -18,6 +18,8 @@ export interface Operation {
   tags: string[];
   /** x-fenvix-role: admin (an owner or admin of the organization). */
   admin: boolean;
+  /** x-fenvix-key: what an API key may call (read, or replay: a key with the replay scope); null: no key. */
+  key: "read" | "replay" | null;
   /** Takes X-Fenvix-Workspace (an operation on one organization). */
   workspace: boolean;
   /** Request schemas, references inlined (null: none). */
@@ -106,6 +108,7 @@ export function operations(): Operation[] {
         route: `/v1${path.replace(/\{([^}]+)\}/g, ":$1")}`,
         tags: (op.tags ?? []) as string[],
         admin: op["x-fenvix-role"] === "admin",
+        key: op["x-fenvix-key"] === "read" || op["x-fenvix-key"] === "replay" ? op["x-fenvix-key"] : null,
         workspace: params.some((p) => p.in === "header" && p.name === "X-Fenvix-Workspace"),
         params: objectSchema(params.filter((p) => p.in === "path")),
         querystring: objectSchema(params.filter((p) => p.in === "query")),

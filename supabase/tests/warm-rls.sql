@@ -98,6 +98,10 @@ end $$;
 reset role;
 
 -- ---------------------------------------------------------------- the member, through the API: W's warm-ups and cache state only
+-- G-1631: GitHub said (just now) that every member sees every repository (the App's answers; backend-rls.sql tests them).
+insert into public.gh_repo_access (user_id, project_id, can_see, basis, checked_at)
+  select m.user_id, p.id, true, 'write', now() from public.workspace_members m join public.ci_projects p on p.workspace_id = m.workspace_id
+  on conflict (user_id, project_id) do update set can_see = true, checked_at = now();
 set local role fenvix_api;
 do $$
 declare r warm_ids%rowtype;
@@ -127,6 +131,10 @@ end $$;
 reset role;
 
 -- The outsider: only XW's.
+-- G-1631: GitHub said (just now) that every member sees every repository (the App's answers; backend-rls.sql tests them).
+insert into public.gh_repo_access (user_id, project_id, can_see, basis, checked_at)
+  select m.user_id, p.id, true, 'write', now() from public.workspace_members m join public.ci_projects p on p.workspace_id = m.workspace_id
+  on conflict (user_id, project_id) do update set can_see = true, checked_at = now();
 set local role fenvix_api;
 do $$
 declare r warm_ids%rowtype;

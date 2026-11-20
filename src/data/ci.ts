@@ -365,7 +365,7 @@ export function familiesOf(defects: Defect[]): DefectFamily[] {
 /** The engine's family key: the cause tests joined by " + ", or "<none>". */
 export const familyKeyOf = (causeTests: string[]) => (causeTests.length ? causeTests.join(" + ") : "<none>");
 
-/** Where `fenvix defects pull` writes a defect's bundle. */
+/** Where the pull command writes a defect's bundle. */
 export const bundleDir = (d: Pick<Defect, "id">) => `.fenvix/defects/${d.id}`;
 
 /**
@@ -379,16 +379,29 @@ export function replayCommand(d: Pick<Defect, "id" | "seed" | "language" | "test
   return `pytest --det${seed} --det-order=${bundleDir(d)}/order.txt`;
 }
 
-export const pullCommand = (d: Pick<Defect, "id">) => `fenvix defects pull ${d.id}`;
+/**
+ * Fetches the defect's replay bundle with an API key into bundleDir (the API's GET /v1/defects/{id}/bundle; the
+ * `fenvix` CLI has no `defects pull` command, so the command is plain curl and tar). FENVIX_API_KEY: a key of the
+ * organization (API keys page), scope read.
+ */
+export const pullCommand = (d: Pick<Defect, "id">) =>
+  `mkdir -p ${bundleDir(d)} && curl -fsSL -H "Authorization: Bearer $FENVIX_API_KEY" https://api.fenvix.dev/v1/defects/${d.id}/bundle/download | tar -xz -C ${bundleDir(d)}`;
 
 /** The workflow change the setup pull request makes: the test job moves to fenvix machines. */
 export function setupChange(_project: Pick<Project, "language">): SetupChange {
   return { path: ".github/workflows/ci.yml", job: "test", before: "runs-on: ubuntu-latest", after: "runs-on: fenvix" };
 }
 
+/** The command each runner's tests run with (the setup snippet). */
+const RUN_COMMAND: Record<string, string> = {
+  pytest: "pytest", unittest: "python -m unittest", django: "python manage.py test", nose2: "nose2", ward: "ward",
+  vitest: "npx vitest run", jest: "npx jest", mocha: "npx mocha", "node:test": "node --test", ava: "npx ava", tap: "npx tap", bun: "bun test",
+  playwright: "npx playwright test", cypress: "npx cypress run", "go test": "go test ./...",
+};
+
 /** The setup snippet shown on a project: one line in the test job. */
 export function setupSnippet(project: Pick<Project, "language" | "testRunner">): string {
-  const run = project.testRunner === "pytest" ? "pytest" : project.testRunner === "go test" ? "go test ./..." : project.testRunner === "jest" ? "npx jest" : "npx vitest run";
+  const run = RUN_COMMAND[project.testRunner] ?? "npx vitest run";
   const install = project.language === "python" ? "pip install -e .[test]" : project.language === "node" ? "npm ci" : "go mod download";
   return ["jobs:", "  test:", "    runs-on: fenvix", "    steps:", "      - uses: actions/checkout@v4", `      - run: ${install}`, `      - run: ${run}`].join("\n");
 }

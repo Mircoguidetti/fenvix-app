@@ -69,7 +69,7 @@ describe("connect flow: link (trial) → setup pull request by repository id →
 
   before(async () => {
     admin = await resetDb();
-    await h.start({}, { launcher });
+    await h.start({ SHADOW_MODE: "true" }, { launcher });
     org = await makeOrg(admin, "flow-owner");
     // An EU organization: its machines run in the EU, or not at all.
     await admin.query("update workspaces set region = 'eu' where id = $1", [org.workspaceId]);
@@ -173,7 +173,7 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     assert.equal((await runner("progress", "fenvix-j81000", 31000, p(3, "testing", 20, { currentTest: VAT, failed: 1, passed: 19 }))).statusCode, 202);
     assert.equal((await runner("progress", "fenvix-j81000", 31000, p(2, "collecting", 0))).statusCode, 202, "an older record is accepted and ignored");
     const live = rows.mapRun(plain(await runRow(run1))).progress!;
-    assert.deepEqual({ ...live, updatedAt: "" }, { phase: "testing", testsTotal: 56, testsDone: 20, passed: 19, failed: 1, skippedWithProof: 0, currentTest: VAT, elapsedMs: 3000, updatedAt: "" });
+    assert.deepEqual({ ...live, updatedAt: "" }, { phase: "testing", testsTotal: 56, testsDone: 20, passed: 19, failed: 1, skippedWithProof: 0, currentTest: VAT, elapsedMs: 3000, updatedAt: "", workers: [] });
     assert.equal(((await runRow(run1)).progress as Row).seq, 3);
     // Another runner, another run, a malformed record.
     assert.equal((await runner("progress", "fenvix-j81000", 31000, p(4, "testing", 21, { runnerName: "fenvix-j1" }))).statusCode, 403);
@@ -339,7 +339,9 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     const b = (await admin.query("select id, cause, occurrences, first_run_id from ci_defects where test_id = $1", [defectB.testId])).rows[0];
     const mapped = rows.mapExploration(plain(ex[0]));
     assert.deepEqual([mapped.newDefectIds, mapped.seeds, mapped.familiesByPolluter.length], [[b.id], 20, 2]);
-    assert.deepEqual([b.cause, b.occurrences, b.first_run_id], ["fails_alone", 1, null]);
+    // Found by an exploration only: no run saw it yet (occurrences counts runs), its sighting is in its history.
+    assert.deepEqual([b.cause, b.occurrences, b.first_run_id], ["fails_alone", 0, null]);
+    assert.equal((await admin.query("select count(*)::int as n from ci_defect_occurrences where defect_id = $1 and source = 'exploration'", [b.id])).rows[0].n, 1);
     assert.equal((await admin.query("select occurrences from ci_defects where test_id = $1", [EUR])).rows[0].occurrences, 2, "an exploration is not a run");
     const bad = await runner("explorations", "fenvix-explore", undefined, { ...exploration, commitSha: "nope" });
     assert.deepEqual([bad.statusCode, bad.json().error.field], [400, "commitSha"]);

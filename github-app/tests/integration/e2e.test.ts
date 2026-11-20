@@ -121,7 +121,7 @@ describe("recorded end to end: installation → onboarding pull request → work
     runner.push({ runId: 31002, summaryFile: "tests/fixtures/runner/job3-warm-pass.summary.json", status: r.statusCode, at: at2 });
     await deliver("workflow_job", workflowJob("completed", { id: 81002, runId: 31002, sha: DEV_SHA_2, branch: "tax-change", conclusion: "success", startedAt: "2026-11-18T10:10:05Z", completedAt: "2026-11-18T10:11:05Z" }));
     assert.equal(shop.comments.size, 1);
-    assert.match([...shop.comments.values()][0]!.body, /✅ fenvix · 46 of 56 tests skipped with proof/);
+    assert.match([...shop.comments.values()][0]!.body, /### ✅ fenvix · all tests passed[\s\S]*\*\*Skip with proof:\*\* 46 of 56 tests skipped/);
   });
 
   it("8. every webhook matches GitHub's webhook schema; every API call matches GitHub's REST description", async () => {

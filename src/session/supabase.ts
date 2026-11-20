@@ -66,8 +66,9 @@ export const supabaseSession: SessionClient = {
     return user;
   },
 
+  // "local": this browser only, as Settings says (audit G-2245; supabase-js defaults to every device).
   async signOut() {
-    const { error } = await getSupabase().auth.signOut();
+    const { error } = await getSupabase().auth.signOut({ scope: "local" });
     if (error) throw new Error(error.message);
   },
 

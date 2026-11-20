@@ -168,7 +168,7 @@ describe("F5: half-applied migrations other than 0017 (scratch Postgres)", () =>
   let server; const name = `deploy_p2_${process.pid}`;
   const url = () => { const u = new URL(SERVER); u.pathname = `/${name}`; return u.toString(); };
   const psqlFile = (file) => execFileSync("psql", [url(), "-v", "ON_ERROR_STOP=1", "-q", "-f", file], { stdio: ["ignore", "ignore", "pipe"] });
-  const files = readMigrations();
+  const files = readMigrations().filter((m) => m.version <= "0017"); // the hand-applied era (later ones are run by the pipeline)
   const fresh = async () => { await server.query(`drop database if exists ${name} with (force)`); await server.query(`create database ${name}`); psqlFile(STUB); };
   const cutRun = (version, before) => {
     const sql = files.find((x) => x.version === version).sql;

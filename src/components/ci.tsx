@@ -30,10 +30,13 @@ export function SkipShare({ share }: { share: number | null }) {
   );
 }
 
-const TRIGGERS: Record<RunTrigger, string> = { push: "Push", pull_request: "Pull request", merge_group: "Merge queue", schedule: "Schedule", workflow_dispatch: "Manual" };
+const TRIGGERS: Record<RunTrigger, string> = { push: "Push", pull_request: "Pull request", merge_group: "Merge queue", schedule: "Schedule", workflow_dispatch: "Manual", other: "Other event" };
 export const triggerLabel = (t: RunTrigger) => TRIGGERS[t];
 
-const CAUSES: Record<DefectCause, string> = { polluter: "Polluter", state_setter: "State setter missing", fails_alone: "Fails alone" };
+const CAUSES: Record<DefectCause, string> = {
+  polluter: "Polluter", state_setter: "State setter missing", fails_alone: "Fails alone", async_order: "Async event order", thread: "Thread switch",
+  clock: "Clock", random: "Randomness", network: "Network", filesystem: "File system", environment: "Environment", unknown: "Not minimised yet",
+};
 export const causeLabel = (c: DefectCause) => CAUSES[c];
 
 /** One sentence that names the cause. */

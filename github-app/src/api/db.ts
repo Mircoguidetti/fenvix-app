@@ -38,7 +38,7 @@ export class ApiDb {
   }
 
   /** One transaction for `userId` in `workspaceId` (or none: the person's own organizations only). */
-  async tx<T>(userId: string, workspaceId: string | null, fn: (t: Tx) => Promise<T>): Promise<T> {
+  async tx<T>(userId: string, workspaceId: string | null, fn: (t: Tx) => Promise<T>, apiKeyId: string | null = null): Promise<T> {
     const c = await this.pool.connect();
     const t: Tx = {
       q: async <R = Row>(sql: string, params: unknown[] = []) => (await c.query(sql, params)).rows as R[],
@@ -47,7 +47,8 @@ export class ApiDb {
     let broken = false;
     try {
       await c.query("begin");
-      await c.query("select set_config('app.user_id', $1, true), set_config('app.workspace_id', $2, true)", [userId, workspaceId ?? ""]);
+      await c.query("select set_config('app.user_id', $1, true), set_config('app.workspace_id', $2, true), set_config('app.api_key_id', $3, true)",
+        [userId, workspaceId ?? "", apiKeyId ?? ""]);
       const out = await fn(t);
       await c.query("commit");
       return out;

@@ -19,7 +19,10 @@ const SERVER = process.env.FENVIX_DEPLOY_TEST_DB ?? "postgresql://postgres@local
 const STUB = new URL("../../supabase/tests/local-stub.sql", import.meta.url).pathname;
 const urlOf = (db) => { const u = new URL(SERVER); u.pathname = `/${db}`; return u.toString(); };
 const psqlFile = (db, file) => execFileSync("psql", [urlOf(db), "-v", "ON_ERROR_STOP=1", "-q", "-f", file], { stdio: ["ignore", "ignore", "pipe"] });
-const files = readMigrations();
+// The founder's database was migrated by hand up to 0017 (2026-11-19); later migrations reach it through this pipeline.
+const ALL = readMigrations();
+const files = ALL.filter((m) => m.version <= "0017");
+const LATER = ALL.filter((m) => m.version > "0017").map((m) => m.version);
 const upTo = (v) => files.filter((m) => m.version <= v);
 
 let server;
@@ -62,6 +65,12 @@ describe("migrations: the founder's database (0001-0010 by the earlier product, 
       const [r2, out2] = await captured(() => migrate(c, files));
       assert.deepEqual([r2.found, r2.applied], [[], []]);
       assert.match(out2, /database up to date/);
+      // The deploy after this one: the migrations written since (0019, the service back-end) run once, in order.
+      const [r3] = await captured(() => migrate(c, ALL));
+      assert.deepEqual([r3.found, r3.applied], [[], LATER]);
+      assert.notEqual((await c.query("select to_regclass('public.ci_api_keys') as t")).rows[0].t, null);
+      const [r4] = await captured(() => migrate(c, ALL));
+      assert.deepEqual(r4.applied, [], "once");
     } finally { await c.end(); }
   });
 
@@ -70,14 +79,14 @@ describe("migrations: the founder's database (0001-0010 by the earlier product, 
     for (const m of files) psqlFile(db, join(MIGRATIONS_DIR, m.name));
     const dir = mkdtempSync(join(tmpdir(), "fenvix-mig-"));
     cpSync(MIGRATIONS_DIR, dir, { recursive: true });
-    writeFileSync(join(dir, "0018_next.sql"), "create table public.next_thing (id int primary key);\ninsert into public.next_thing values (1);\n");
+    writeFileSync(join(dir, "0099_next.sql"), "create table public.next_thing (id int primary key);\ninsert into public.next_thing values (1);\n");
     const c = await connect(db);
     try {
       await captured(() => migrate(c, files));
       const [r] = await captured(() => migrate(c, readMigrations(dir)));
-      assert.deepEqual(r.applied, ["0018"]);
+      assert.deepEqual(r.applied, [...LATER, "0099"]);
       assert.equal((await c.query("select count(*)::int as n from public.next_thing")).rows[0].n, 1);
-      assert.equal((await tracked(c)).at(-1), "0018:applied");
+      assert.equal((await tracked(c)).at(-1), "0099:applied");
       const [r2] = await captured(() => migrate(c, readMigrations(dir)));
       assert.deepEqual(r2.applied, [], "once");
     } finally { await c.end(); }
@@ -88,15 +97,16 @@ describe("migrations: the founder's database (0001-0010 by the earlier product, 
     for (const m of files) psqlFile(db, join(MIGRATIONS_DIR, m.name));
     const dir = mkdtempSync(join(tmpdir(), "fenvix-mig-"));
     cpSync(MIGRATIONS_DIR, dir, { recursive: true });
-    writeFileSync(join(dir, "0018_half.sql"), "create table public.half_done (id int);\nselect 1/0;\n");
-    writeFileSync(join(dir, "0019_after.sql"), "create table public.after_it (id int);\n");
+    writeFileSync(join(dir, "0098_half.sql"), "create table public.half_done (id int);\nselect 1/0;\n");
+    writeFileSync(join(dir, "0099_after.sql"), "create table public.after_it (id int);\n");
     const c = await connect(db);
     try {
       await captured(() => migrate(c, files));
-      await assert.rejects(captured(() => migrate(c, readMigrations(dir))), /0018_half\.sql failed and was rolled back .*division by zero .*SQLSTATE 22012.*Later migrations were not run/);
+      await assert.rejects(captured(() => migrate(c, readMigrations(dir))), /0098_half\.sql failed and was rolled back .*division by zero .*SQLSTATE 22012.*Later migrations were not run/);
       assert.equal((await c.query("select to_regclass('public.half_done') as t")).rows[0].t, null);
       assert.equal((await c.query("select to_regclass('public.after_it') as t")).rows[0].t, null);
-      assert.equal((await tracked(c)).at(-1), "0017:found");
+      // The real migrations before the failing one were applied; nothing at or after it.
+      assert.equal((await tracked(c)).at(-1), LATER.length ? `${LATER.at(-1)}:applied` : "0017:found");
     } finally { await c.end(); }
   });
 
@@ -112,7 +122,7 @@ describe("migrations: the founder's database (0001-0010 by the earlier product, 
       await assert.rejects(captured(() => migrate(c, readMigrations(dir))), /0016_review_r016b\.sql was changed after it was applied/);
       const dir2 = mkdtempSync(join(tmpdir(), "fenvix-mig-"));
       cpSync(MIGRATIONS_DIR, dir2, { recursive: true });
-      writeFileSync(join(dir2, "0018_ok.sql"), "select 1;\n");
+      writeFileSync(join(dir2, "0099_ok.sql"), "select 1;\n");
       await captured(() => migrate(c, readMigrations(dir2)));
       writeFileSync(join(dir2, "0017a.sql"), "select 1;\n");
       await assert.rejects(async () => readMigrations(dir2), /NNNN_lowercase_name/);
@@ -125,9 +135,9 @@ describe("migrations: other starting points", () => {
     const db = await freshDb("empty");
     const c = await connect(db);
     try {
-      const [r] = await captured(() => migrate(c, files));
-      assert.deepEqual(r.applied, files.map((m) => m.version));
-      assert.deepEqual(await tracked(c), files.map((m) => `${m.version}:applied`));
+      const [r] = await captured(() => migrate(c, ALL));
+      assert.deepEqual(r.applied, ALL.map((m) => m.version));
+      assert.deepEqual(await tracked(c), ALL.map((m) => `${m.version}:applied`));
       assert.notEqual((await c.query("select to_regclass('public.gh_warmups') as t")).rows[0].t, null);
     } finally { await c.end(); }
   });

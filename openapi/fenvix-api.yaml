@@ -17,6 +17,17 @@ info:
     every call that the person is a member of it and, where `x-fenvix-role: admin` is set, an owner or admin. Row level
     security in the database checks the same again.
 
+    **API keys** (scripts, the CLI, coding agents, the remote MCP server): operations marked `x-fenvix-key: read` (runs,
+    defects, bundles, explorations) also take `Authorization: Bearer fxk_...`, a key of one organization made on the
+    API keys page (owners and admins; shown once, revocable, optional expiry). With a key, X-Fenvix-Workspace may be
+    left out (it is the key's organization; another one is 404). Operations marked `x-fenvix-key: replay` need a key
+    with the replay scope. Every other operation refuses a key (403). Requests are limited per person and per key
+    (`rate_limited`, 429 with Retry-After).
+
+    **Remote MCP server**: `POST /v1/mcp` (and https://mcp.fenvix.dev once its DNS record exists) speaks the Model
+    Context Protocol (JSON-RPC 2.0, streamable HTTP, JSON responses) with an API key: tools list_runs, list_defects,
+    get_defect, pull_bundle, request_replay, get_replay. Agents install nothing.
+
     **Runner operations** (tag `runner`) are called by fenvix machines with their per-machine credential
     (docs/data-contract.md, "What the runner sends").
 
@@ -31,6 +42,16 @@ tags:
     description: Called by the dashboard with the signed-in person's Supabase session token.
   - name: runner
     description: Called by fenvix machines with their per-machine credential.
+  - name: mcp
+    description: The remote MCP server, for coding agents, with an API key.
+  - name: app
+    description: The GitHub App's own endpoints (GitHub calls them, or the browser on its way back from GitHub). Outside /v1.
+  - name: proposed
+    description: |
+      Agreed for the dashboard (docs/data-contract.md, "Live test view"), not served yet. The server serves only
+      operations tagged `dashboard` and needs a handler for each, so an operation moves from `proposed` to `dashboard`
+      in the same change that adds its handler (github-app/src/api/server.ts). Until then the dashboard builds against
+      it with test fixtures and shows the API's error when it is called.
 
 paths:
   # ------------------------------------------------------------------ the person and their organizations
@@ -113,6 +134,18 @@ paths:
       responses:
         "204": { description: Removed }
         default: { $ref: "#/components/responses/Error" }
+  /organization/transfer-ownership:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }]
+    post:
+      tags: [dashboard]
+      operationId: transferOwnership
+      description: "Owners only (G-2325). The member becomes an owner and the caller an admin, in one step, confirmed by typing the organization's name; the audit log records organization.ownership_transferred."
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [userId, confirmName], additionalProperties: false, properties: { userId: { type: string, format: uuid }, confirmName: { type: string, maxLength: 64 } } } } } }
+      responses:
+        "200":
+          description: Transferred
+          content: { application/json: { schema: { type: object, required: [userId, role, yourRole], properties: { userId: { type: string }, role: { $ref: "#/components/schemas/OrgRole" }, yourRole: { $ref: "#/components/schemas/OrgRole" } } } } }
+        default: { $ref: "#/components/responses/Error" }
   /organization/invitations:
     parameters: [{ $ref: "#/components/parameters/Workspace" }]
     get:
@@ -149,7 +182,7 @@ paths:
     post:
       tags: [dashboard]
       operationId: acceptInvitation
-      description: Every refusal (unknown, used, expired, revoked, another or an unverified e-mail) is the same 404.
+      description: "A pending invitation sent to another address than the signed-in person's verified one answers 403 `invitation_other_email` (G-2329); every other refusal (unknown, used, expired, revoked) is the same 404."
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string, maxLength: 128 } } } } } }
       responses:
         "200":
@@ -188,6 +221,7 @@ paths:
     get:
       tags: [dashboard]
       operationId: listProjects
+      x-fenvix-key: read
       responses:
         "200":
           description: OK
@@ -198,6 +232,7 @@ paths:
     get:
       tags: [dashboard]
       operationId: getProject
+      x-fenvix-key: read
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectRow" } } } }
         default: { $ref: "#/components/responses/Error" }
@@ -216,11 +251,14 @@ paths:
     get:
       tags: [dashboard]
       operationId: listRuns
+      x-fenvix-key: read
       description: Newest first. With `since`, every run since then (no paging; at most 20,000).
       parameters:
         - { name: scope, in: query, schema: { type: string, enum: [all, pr, default], default: all } }
         - { name: status, in: query, schema: { type: string, enum: [all, passed, failed], default: all } }
         - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: pullRequest, in: query, description: "Only the runs of this pull request.", schema: { type: integer, minimum: 1 } }
+        - { name: branch, in: query, description: "Only the runs of this branch.", schema: { type: string, maxLength: 255 } }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
       responses:
@@ -242,6 +280,7 @@ paths:
     get:
       tags: [dashboard]
       operationId: listExplorations
+      x-fenvix-key: read
       responses:
         "200":
           description: Nights of exploration, newest first
@@ -283,6 +322,7 @@ paths:
     get:
       tags: [dashboard]
       operationId: getRun
+      x-fenvix-key: read
       description: |
         Live view: while `run.status` is `running` the dashboard asks again every 3 to 5 seconds, only while the page
         is open and visible, sending the last `ETag` as `If-None-Match`; nothing changed answers 304 with no body.
@@ -299,6 +339,7 @@ paths:
     get:
       tags: [dashboard]
       operationId: listTestResults
+      x-fenvix-key: read
       parameters:
         - { name: outcome, in: query, schema: { type: string, enum: [all, passed, failed, skipped_with_proof], default: all } }
         - { name: search, in: query, schema: { type: string, maxLength: 200 } }
@@ -312,16 +353,84 @@ paths:
     get:
       tags: [dashboard]
       operationId: listRunFiles
+      x-fenvix-key: read
       responses:
         "200":
           description: The run's tests by file
           content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/RunFile" } } } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /runs/{runId}/tests/live:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/RunId" }]
+    get:
+      tags: [dashboard]
+      operationId: listLiveTests
+      x-fenvix-key: read
+      description: |
+        The live view's tests: the tests of the run that finished after `afterSeq`, in the order they finished (by `seq`),
+        at most 2,000 per answer. The dashboard asks with the last `lastSeq` it got, every 3 to 5 seconds while the run
+        is running and the page is visible. While the run runs these come from the runner's progress records
+        (`finished`); once its results are applied, from the results (the same tests, `seq` kept where known).
+      parameters:
+        - { name: afterSeq, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/LiveTests" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /runs/{runId}/stop:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/RunId" }]
+    post:
+      tags: [dashboard]
+      operationId: stopRun
+      x-fenvix-role: admin
+      description: |
+        Stops a running run on fenvix's machines (the dispatcher cancels the GitHub job and terminates its machine).
+        `now`: at once. `first_failure`: armed; the run is stopped when its first test fails (at once if one already
+        failed). `off`: disarms `first_failure`. 409 when the run is not running.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [when], properties: { when: { type: string, enum: [now, first_failure, off] } } } } }
+      responses:
+        "202": { description: "Accepted: the run with its stop request", content: { application/json: { schema: { $ref: "#/components/schemas/RunDetail" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /runs/{runId}/replays:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/RunId" }]
+    get:
+      tags: [dashboard]
+      operationId: listReplays
+      x-fenvix-key: read
+      responses:
+        "200":
+          description: The run's replays, newest first
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/Replay" } } } } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [dashboard]
+      operationId: replayTest
+      x-fenvix-role: admin
+      description: |
+        Replays one test of the run on fenvix's machines: the run's commit, seed and order (the defect's minimal order
+        when the test is a flaky defect), `runs` times (10). A test already queued or running for this run is answered
+        with that replay.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [testId], properties: { testId: { type: string, maxLength: 2000 } } } } }
+      responses:
+        "202": { description: Accepted, content: { application/json: { schema: { $ref: "#/components/schemas/Replay" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /replays/{replayId}:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { name: replayId, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [dashboard]
+      operationId: getReplay
+      x-fenvix-key: read
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Replay" } } } }
         default: { $ref: "#/components/responses/Error" }
   /receipts/{receiptId}:
     parameters: [{ $ref: "#/components/parameters/Workspace" }, { name: receiptId, in: path, required: true, schema: { type: string, format: uuid } }]
     get:
       tags: [dashboard]
       operationId: getSkipReceipt
+      x-fenvix-key: read
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/SkipReceipt" } } } }
         default: { $ref: "#/components/responses/Error" }
@@ -332,18 +441,21 @@ paths:
     get:
       tags: [dashboard]
       operationId: listDefects
-      parameters: [{ $ref: "#/components/parameters/DefectProject" }, { $ref: "#/components/parameters/DefectState" }]
+      x-fenvix-key: read
+      description: Newest first, at most `limit` (1,000) from `offset`; `total` is how many match.
+      parameters: [{ $ref: "#/components/parameters/DefectProject" }, { $ref: "#/components/parameters/DefectState" }, { $ref: "#/components/parameters/Limit" }, { $ref: "#/components/parameters/Offset" }]
       responses:
         "200":
           description: Newest first
-          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/Defect" } } } } } }
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/Defect" } }, total: { type: integer } } } } }
         default: { $ref: "#/components/responses/Error" }
   /defect-families:
     parameters: [{ $ref: "#/components/parameters/Workspace" }]
     get:
       tags: [dashboard]
       operationId: listDefectFamilies
-      parameters: [{ $ref: "#/components/parameters/DefectProject" }, { $ref: "#/components/parameters/DefectState" }]
+      x-fenvix-key: read
+      parameters: [{ $ref: "#/components/parameters/DefectProject" }, { $ref: "#/components/parameters/DefectState" }, { $ref: "#/components/parameters/Limit" }, { $ref: "#/components/parameters/Offset" }]
       responses:
         "200":
           description: Defects grouped by cause
@@ -354,8 +466,254 @@ paths:
     get:
       tags: [dashboard]
       operationId: getDefect
+      x-fenvix-key: read
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Defect" } } } }
+        default: { $ref: "#/components/responses/Error" }
+
+  /defects/{defectId}/state:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/DefectId" }]
+    post:
+      tags: [dashboard]
+      operationId: setDefectState
+      description: Fix, mute or reopen a defect (any member; not with an API key). A fixed defect seen again in a later run opens again.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/DefectStateChange" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Defect" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /defects/{defectId}/bundle/download:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/DefectId" }]
+    get:
+      tags: [dashboard]
+      operationId: downloadDefectBundle
+      x-fenvix-key: read
+      description: "The defect's replay bundle as the runner uploaded it: a .tar.gz of bundle.json, order.txt and the run's traces. `curl -H 'Authorization: Bearer $FENVIX_API_KEY' .../bundle | tar -xz`"
+      responses:
+        "200":
+          description: The bundle
+          headers: { x-fenvix-bundle-sha256: { schema: { type: string } } }
+          content: { application/gzip: { schema: { type: string, format: binary } } }
+        default: { $ref: "#/components/responses/Error" }
+  /defects/{defectId}/replays:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/DefectId" }]
+    get:
+      tags: [dashboard]
+      operationId: listDefectReplays
+      x-fenvix-key: read
+      responses:
+        "200":
+          description: Newest first
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/Replay" } } } } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [dashboard]
+      operationId: requestDefectReplay
+      x-fenvix-key: replay
+      description: "Replays the defect on a fenvix machine (`fenvix replay` of its bundle, 10 times) at a commit (default: the newest commit that saw it). One replay in flight per defect; at most 10 a day. The result comes back to the defect: 10 of 10 passing on a later commit marks it fixed."
+      requestBody: { required: false, content: { application/json: { schema: { $ref: "#/components/schemas/ReplayRequest" } } } }
+      responses:
+        "202": { description: Requested, content: { application/json: { schema: { $ref: "#/components/schemas/Replay" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}/exploration-settings:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/ProjectId" }]
+    put:
+      tags: [dashboard]
+      operationId: saveExplorationSettings
+      x-fenvix-role: admin
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/ExplorationSettings" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ExplorationSettings" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}/exploration-jobs:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/ProjectId" }]
+    get:
+      tags: [dashboard]
+      operationId: listExplorationJobs
+      x-fenvix-key: read
+      responses:
+        "200":
+          description: Newest first (50)
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/ExplorationJob" } } } } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [dashboard]
+      operationId: requestExploration
+      x-fenvix-role: admin
+      description: An exploration now (or for a pull request's commit), under the project's time cap and seed budget. One in flight per project.
+      requestBody: { required: false, content: { application/json: { schema: { type: object, additionalProperties: false, properties: { commitSha: { type: string, pattern: "^[0-9a-f]{40}$" }, testIds: { type: array, maxItems: 500, items: { type: string, maxLength: 2000 } } } } } } }
+      responses:
+        "202": { description: Requested, content: { application/json: { schema: { $ref: "#/components/schemas/ExplorationJob" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}/skip/resume:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/ProjectId" }]
+    post:
+      tags: [dashboard]
+      operationId: resumeSkip
+      x-fenvix-role: admin
+      description: Skip with proof again after fenvix paused it (an audit rerun found a wrong skip).
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}/disconnect:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/ProjectId" }]
+    post:
+      tags: [dashboard]
+      operationId: deleteProject
+      x-fenvix-role: admin
+      description: Disconnects the repository and deletes the project with its runs, results, receipts, defects, bundles, replays and explorations. No machine runs its jobs until its setup is asked for again.
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+  /organization/delete:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }]
+    post:
+      tags: [dashboard]
+      operationId: deleteOrganization
+      x-fenvix-role: admin
+      description: An owner deletes the organization (typing its name) with everything in it. Its GitHub installations are unlinked; usage events are kept for billing.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [confirmName], properties: { confirmName: { type: string, maxLength: 64 } } } } } }
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+  /organization/export:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }]
+    get:
+      tags: [dashboard]
+      operationId: exportOrganization
+      x-fenvix-role: admin
+      description: The organization's data as JSON (projects, the newest 5,000 runs, defects with their history, explorations). Per-test results and receipts are read run by run (listTestResults, getSkipReceipt).
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/OrganizationExport" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /failures:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }]
+    get:
+      tags: [dashboard]
+      operationId: listFailures
+      x-fenvix-key: read
+      description: "The coding agent's question (MCP failures_for): the failing and flaky tests of a pull request (its newest commit; with projectId), a commit or a run, each with the error, a log excerpt, the defect, the first divergent event, the replay command, and whether it is new or a known failure. status: running while one of the runs runs, none when no run was found."
+      parameters:
+        - { name: projectId, in: query, schema: { type: string, format: uuid } }
+        - { name: pullRequest, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: commitSha, in: query, schema: { type: string, pattern: "^[0-9a-f]{40}$" } }
+        - { name: runId, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Failures" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /runs/{runId}/tests/log:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/RunId" }]
+    get:
+      tags: [dashboard]
+      operationId: getTestLog
+      x-fenvix-key: read
+      description: "The full output of one test of the run, as the runner captured it (at most 64 KB; null when the runner sent none)."
+      parameters: [{ name: testId, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 2000 } }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runId, testId, outcome, output, failure]
+                properties:
+                  runId: { type: string }
+                  testId: { type: string }
+                  outcome: { $ref: "#/components/schemas/TestOutcome" }
+                  output: { type: [string, "null"] }
+                  failure: { oneOf: [{ $ref: "#/components/schemas/TestFailure" }, { type: "null" }] }
+        default: { $ref: "#/components/responses/Error" }
+  /organization/audit-log:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }]
+    get:
+      tags: [dashboard]
+      operationId: listAuditEvents
+      x-fenvix-role: admin
+      description: "Who changed what, newest first: members and roles, invitations, the organization's name and region, GitHub linked or unlinked, project settings and disconnections, API keys, defects' states."
+      parameters: [{ $ref: "#/components/parameters/Limit" }, { $ref: "#/components/parameters/Offset" }]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/AuditEvent" } } } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /me/delete:
+    post:
+      tags: [dashboard]
+      operationId: deleteMe
+      description: Deletes the signed-in person's account. Refused while they are the only owner of an organization with other members; organizations where they are the only member are deleted with it.
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+  /api-keys:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }]
+    get:
+      tags: [dashboard]
+      operationId: listApiKeys
+      x-fenvix-role: admin
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/ApiKey" } } } } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [dashboard]
+      operationId: createApiKey
+      x-fenvix-role: admin
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/ApiKeyRequest" } } } }
+      responses:
+        "201": { description: "Created; key is shown this once", content: { application/json: { schema: { $ref: "#/components/schemas/ApiKeyCreated" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /api-keys/{keyId}/revoke:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { name: keyId, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      tags: [dashboard]
+      operationId: revokeApiKey
+      x-fenvix-role: admin
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ApiKey" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /github/installations/{installationId}/unlink:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { name: installationId, in: path, required: true, schema: { type: integer, minimum: 1 } }]
+    post:
+      tags: [dashboard]
+      operationId: unlinkInstallation
+      x-fenvix-role: admin
+      description: Disconnects a GitHub account (installation) from the organization. Its projects and their data are deleted; the App stays installed on GitHub until it is uninstalled there.
+      responses:
+        "204": { description: Unlinked }
+        default: { $ref: "#/components/responses/Error" }
+  /mcp:
+    post:
+      tags: [mcp]
+      operationId: mcp
+      security: [{ apiKey: [] }]
+      description: "The remote MCP server (Model Context Protocol 2025-06-18, streamable HTTP with JSON responses): initialize, tools/list, tools/call (list_runs, list_defects, get_defect, pull_bundle, request_replay, get_replay), ping. One JSON-RPC message per request."
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        "200": { description: A JSON-RPC response, content: { application/json: { schema: { type: object } } } }
+        "202": { description: A notification was accepted }
+  /defects/{defectId}/occurrences:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { name: defectId, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [dashboard]
+      operationId: listDefectOccurrences
+      x-fenvix-key: read
+      parameters: [{ $ref: "#/components/parameters/Limit" }, { $ref: "#/components/parameters/Offset" }]
+      description: Every run where this defect's test failed with this defect, newest first (the defect's memory across runs).
+      responses:
+        "200":
+          description: Newest first
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/DefectOccurrence" } }, total: { type: integer } } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /defects/{defectId}/bundle:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { name: defectId, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [dashboard]
+      operationId: getDefectBundle
+      x-fenvix-key: read
+      description: A short-lived link to the defect's replay bundle (a .tar.gz of bundle.json, order.txt and the traces). 404 when no bundle is stored.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/DefectBundle" } } } }
         default: { $ref: "#/components/responses/Error" }
 
   # ------------------------------------------------------------------ usage and billing
@@ -554,6 +912,79 @@ paths:
         "202": { $ref: "#/components/responses/Accepted" }
         default: { $ref: "#/components/responses/Error" }
 
+  /runner/bundles:
+    post:
+      tags: [runner]
+      operationId: postRunnerBundle
+      security: [{ runner: [] }]
+      description: "A defect's replay bundle from the job's own machine: base64 of a .tar.gz (bundle.json, order.txt, the run's traces), at most 4 MB. Send it after the results chunk that names the defect, or before: the defect is made either way. 503 with Retry-After while the job's run is not recorded yet."
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RunnerBundle" } } } }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        default: { $ref: "#/components/responses/Error" }
+  /runner/replays:
+    post:
+      tags: [runner]
+      operationId: postRunnerReplay
+      security: [{ runner: [] }]
+      description: "A replay machine's two reports (its own task credential only): started, then finished with passed, failed or error, runs, fails and the fingerprint. 10 of 10 passing on a later commit than the defect's last sighting marks the defect fixed."
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RunnerReplayReport" } } } }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        default: { $ref: "#/components/responses/Error" }
+  /runner/replays/{replayId}/bundle:
+    get:
+      tags: [runner]
+      operationId: getRunnerReplayBundle
+      security: [{ runner: [] }]
+      parameters: [{ name: replayId, in: path, required: true, schema: { type: string, format: uuid } }]
+      description: The bundle the replay machine replays (its own replay only).
+      responses:
+        "200": { description: The bundle, content: { application/gzip: { schema: { type: string, format: binary } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /healthz:
+    servers: [{ url: https://api.fenvix.dev }]
+    get:
+      tags: [app]
+      operationId: healthz
+      security: []
+      responses:
+        "200": { description: The service answers, content: { application/json: { schema: { type: object, required: [ok], properties: { ok: { type: boolean } } } } } }
+  /webhooks/github:
+    servers: [{ url: https://api.fenvix.dev }]
+    post:
+      tags: [app]
+      operationId: githubWebhook
+      security: []
+      description: "GitHub's webhook deliveries, signed with the webhook secret (X-Hub-Signature-256 over the raw body). Events handled: installation, installation_repositories, installation_target, repository, push, pull_request, workflow_job, workflow_run, check_run, check_suite, github_app_authorization; ping answers pong; any other event is recorded and answered 202 ignored."
+      parameters:
+        - { name: X-GitHub-Event, in: header, required: true, schema: { type: string } }
+        - { name: X-GitHub-Delivery, in: header, required: true, schema: { type: string, maxLength: 100 } }
+        - { name: X-Hub-Signature-256, in: header, required: true, schema: { type: string } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        "200": { description: ping, content: { application/json: { schema: { type: object } } } }
+        "202": { description: Accepted (handled in the background) or ignored, content: { application/json: { schema: { type: object } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /github/setup:
+    servers: [{ url: https://api.fenvix.dev }]
+    get:
+      tags: [app]
+      operationId: githubSetup
+      security: []
+      description: "Where GitHub sends the browser after an installation (OAuth callback). Always a 303 to the dashboard's /projects/connect with `github=confirm&installation=<id>&account=<login>#completion=<code>`, `github=requested`, or `github=error&reason=<reason>`, reason one of expired, incomplete, oauth, not_yours, github_not_admin, not_admin, other_organization, removed, used, github, error (docs/data-contract.md, \"Linking an installation\")."
+      parameters:
+        - { name: installation_id, in: query, schema: { type: integer } }
+        - { name: setup_action, in: query, schema: { type: string, enum: [install, update, request] } }
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+      responses:
+        "200": { description: "Never: every answer is the 303 redirect" }
+        "303": { description: To the dashboard }
+
 components:
   securitySchemes:
     session:
@@ -564,6 +995,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: the machine's summary credential (github-app/src/runners/credentials.ts)
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: "an organization's API key, fxk_ followed by 40 characters"
 
   parameters:
     Workspace:
@@ -578,7 +1013,10 @@ components:
     PageSize: { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 25 } }
     MonthPath: { name: month, in: path, required: true, schema: { $ref: "#/components/schemas/Month" } }
     DefectProject: { name: projectId, in: query, schema: { type: string, format: uuid } }
-    DefectState: { name: state, in: query, schema: { type: string, enum: [open, fixed, all], default: open } }
+    DefectState: { name: state, in: query, schema: { type: string, enum: [open, fixed, muted, all], default: open } }
+    DefectId: { name: defectId, in: path, required: true, schema: { type: string, format: uuid } }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 1000 } }
+    Offset: { name: offset, in: query, schema: { type: integer, minimum: 0, maximum: 1000000, default: 0 } }
 
   responses:
     Error:
@@ -675,8 +1113,8 @@ components:
 
     # ---------------------------------------------------------------- projects and runs
     Language: { type: string, enum: [python, node, go] }
-    TestRunner: { type: string, enum: [pytest, vitest, jest, go test] }
-    RunTrigger: { type: string, enum: [push, pull_request, merge_group, schedule, workflow_dispatch] }
+    TestRunner: { type: string, enum: [pytest, unittest, django, nose2, ward, vitest, jest, mocha, "node:test", ava, tap, bun, playwright, cypress, go test], description: "Every runner the service knows (G-0616, G-1750). fenvix runs pytest, Vitest and Jest; a project with another runner is recognised and its setup pull request says why it is not run yet." }
+    RunTrigger: { type: string, enum: [push, pull_request, merge_group, schedule, workflow_dispatch, other] }
     RunStatus: { type: string, enum: [running, passed, failed, cancelled] }
     RunMode: { type: string, enum: [enforce, shadow], description: "shadow: the trial; every test ran and the engine recorded what it would have skipped." }
     SetupState: { type: string, enum: [app_installed, pr_open, active] }
@@ -724,6 +1162,10 @@ components:
         connectedAt: { type: string, format: date-time }
         baseline: { oneOf: [{ $ref: "#/components/schemas/Baseline" }, { type: "null" }] }
         settings: { $ref: "#/components/schemas/ProjectSettings" }
+        skipPaused:
+          oneOf: [{ type: object, required: [at, reason], properties: { at: { type: string, format: date-time }, reason: { type: string } } }, { type: "null" }]
+          description: "fenvix paused skip with proof after an audit rerun found a wrong skip (resumeSkip); null: not paused"
+        exploration: { $ref: "#/components/schemas/ExplorationSettings" }
         warmCache: { $ref: "#/components/schemas/WarmCache" }
     WarmupStatus:
       type: string
@@ -796,6 +1238,36 @@ components:
         currentTest: { type: [string, "null"] }
         elapsedMs: { type: integer }
         updatedAt: { type: string, format: date-time }
+        workers:
+          type: array
+          description: "Proposed (P-049): the parallel workers and what each runs now; empty or absent when the runner did not say."
+          items: { $ref: "#/components/schemas/RunWorker" }
+    RunWorker:
+      type: object
+      required: [id, currentTest, testsDone, state]
+      properties:
+        id: { type: string, description: "The worker's name as the runner gives it, e.g. gw0" }
+        currentTest: { type: [string, "null"] }
+        testsDone: { type: integer }
+        state: { type: string, enum: [running, idle, done] }
+    RunStop:
+      type: object
+      description: "A stop asked for on a running run (POST /runs/{runId}/stop). armed: first_failure waits for a failure; requested: sent to the machines; done: the job was cancelled; failed: it could not be (detail says why)."
+      required: [when, state, requestedAt, requestedBy, detail]
+      properties:
+        when: { type: string, enum: [now, first_failure] }
+        state: { type: string, enum: [armed, requested, done, failed] }
+        requestedAt: { type: string, format: date-time }
+        requestedBy: { type: string, description: "The person's name" }
+        detail: { type: string }
+    RunJob:
+      type: object
+      description: "The GitHub job behind a run: a repository with several test jobs or a matrix has one run per job."
+      required: [workflow, name, matrix]
+      properties:
+        workflow: { type: string }
+        name: { type: string }
+        matrix: { type: [string, "null"], description: "The matrix values, e.g. python 3.12" }
     MissDetail:
       type: object
       required: [kind, detail, tests]
@@ -809,6 +1281,8 @@ components:
         id: { type: string, format: uuid }
         projectId: { type: string, format: uuid }
         number: { type: integer }
+        language: { oneOf: [{ $ref: "#/components/schemas/Language" }, { type: "null" }], description: "The run's own language, from its summary (G-1755: a repository with Python and TypeScript test jobs). Null: the project's." }
+        testRunner: { oneOf: [{ $ref: "#/components/schemas/TestRunner" }, { type: "null" }], description: "The run's own test runner, from its summary. Null: the project's." }
         engineRunId: { type: [string, "null"] }
         commitSha: { type: string }
         commitMessage: { type: string }
@@ -847,6 +1321,10 @@ components:
           properties: { rerun: { type: integer }, wrongSkips: { type: integer } }
         region: { oneOf: [{ $ref: "#/components/schemas/Region" }, { type: "null" }] }
         progress: { oneOf: [{ $ref: "#/components/schemas/RunProgress" }, { type: "null" }] }
+        stop: { oneOf: [{ $ref: "#/components/schemas/RunStop" }, { type: "null" }], description: "Proposed (P-049)" }
+        job: { oneOf: [{ $ref: "#/components/schemas/RunJob" }, { type: "null" }], description: "Proposed (P-049)" }
+        githubRunId: { type: [integer, "null"], description: "Proposed (P-049): GitHub's workflow run id, for the link to the job" }
+        githubJobId: { type: [integer, "null"], description: "Proposed (P-049): GitHub's job id" }
     RunPage:
       type: object
       required: [items, total, page, pageSize]
@@ -925,6 +1403,42 @@ components:
         durationMs: { type: integer }
         failure: { oneOf: [{ $ref: "#/components/schemas/TestFailure" }, { type: "null" }] }
         receiptId: { type: [string, "null"] }
+        worker: { type: [string, "null"], description: "Proposed (P-049): the worker that ran it" }
+        seq: { type: [integer, "null"], description: "Proposed (P-049): its place in the order tests finished" }
+        finishedAt: { type: [string, "null"], format: date-time, description: "Proposed (P-049)" }
+    LiveTests:
+      type: object
+      required: [items, lastSeq, status]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/TestResult" } }
+        lastSeq: { type: integer, description: "The highest seq given so far: ask again with afterSeq = lastSeq" }
+        status: { $ref: "#/components/schemas/RunStatus" }
+    Replay:
+      type: object
+      description: |
+        One test of a run replayed on fenvix's machines, `runs` times with the run's seed and order. verdict, once done:
+        reproduced (failed every time with an identical fingerprint), flaky (failed some of the times), passed (never failed).
+      required: [id, runId, testId, defectId, state, verdict, runs, done, fails, identicalFingerprint, command, detail, requestedAt, startedAt, finishedAt]
+      properties:
+        id: { type: string }
+        runId: { type: [string, "null"], description: "null: a replay of a defect asked for outside a run (API key, MCP)" }
+        projectId: { type: string }
+        commitSha: { type: string }
+        fingerprint: { type: [string, "null"] }
+        requestedVia: { type: string, enum: [dashboard, api_key, mcp, pull_request] }
+        testId: { type: string }
+        defectId: { type: [string, "null"] }
+        state: { type: string, enum: [queued, running, done, failed] }
+        verdict: { type: [string, "null"], enum: [reproduced, flaky, passed, null] }
+        runs: { type: integer }
+        done: { type: integer }
+        fails: { type: integer }
+        identicalFingerprint: { type: [boolean, "null"] }
+        command: { type: string, description: "The engine command the machine ran" }
+        detail: { type: string, description: "For a person: what it waits for, or why it failed" }
+        requestedAt: { type: string, format: date-time }
+        startedAt: { type: [string, "null"], format: date-time }
+        finishedAt: { type: [string, "null"], format: date-time }
     TestPage:
       type: object
       required: [items, total, page, pageSize, counts]
@@ -1007,7 +1521,142 @@ components:
         recent: { type: array, items: { $ref: "#/components/schemas/AuditRerun" }, description: "The latest audited tests, newest first (at most 50)." }
 
     # ---------------------------------------------------------------- defects
-    DefectCause: { type: string, enum: [polluter, state_setter, fails_alone] }
+    DefectCause: { type: string, enum: [polluter, state_setter, fails_alone, async_order, thread, clock, random, network, filesystem, environment, unknown] }
+    Failures:
+      type: object
+      required: [status, runs, items]
+      properties:
+        status: { type: string, enum: [running, passed, failed, none] }
+        runs:
+          type: array
+          items: { type: object, required: [id, number, status, commitSha, job], properties: { id: { type: string }, number: { type: integer }, status: { type: string }, commitSha: { type: string }, job: { type: [string, "null"] } } }
+        items:
+          type: array
+          items:
+            type: object
+            required: [runId, runNumber, job, testId, kind, error, logExcerpt, defectId, divergence, replayCommand, new, known]
+            properties:
+              runId: { type: string }
+              runNumber: { type: integer }
+              job: { type: [string, "null"] }
+              testId: { type: string }
+              kind: { type: string, enum: [real, flaky_defect] }
+              error: { type: object, required: [type, message, location], properties: { type: { type: string }, message: { type: string }, location: { type: string } } }
+              logExcerpt: { type: [string, "null"], description: "the last 2,000 characters of the test's output (else the error message)" }
+              defectId: { type: [string, "null"] }
+              divergence: { type: [object, "null"], description: "the first divergent event (flaky tests)" }
+              replayCommand: { type: [string, "null"] }
+              new: { type: boolean, description: "first seen in these runs" }
+              known: { type: boolean, description: "seen before (a known defect, or a test that failed before)" }
+    AuditEvent:
+      type: object
+      required: [id, at, actor, action, target, detail]
+      properties:
+        id: { type: integer }
+        at: { type: string, format: date-time }
+        actor:
+          type: object
+          required: [kind, id, email]
+          properties: { kind: { type: string, enum: [person, api_key, fenvix] }, id: { type: [string, "null"] }, email: { type: [string, "null"] } }
+        action: { type: string }
+        target: { type: string }
+        detail: { type: object }
+    DefectStateChange:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state: { type: string, enum: [open, fixed, muted] }
+        reason: { type: string, maxLength: 500 }
+    ReplayRequest:
+      type: object
+      additionalProperties: false
+      properties: { commitSha: { type: string, pattern: "^[0-9a-f]{40}$" } }
+    ExplorationSettings:
+      type: object
+      additionalProperties: false
+      required: [hourUtc, budgetSeconds, seeds, target]
+      properties:
+        hourUtc: { type: integer, minimum: 0, maximum: 23 }
+        budgetSeconds: { type: integer, minimum: 60, maximum: 14400 }
+        seeds: { type: integer, minimum: 1, maximum: 500 }
+        target: { type: string, enum: [all, unstable], description: "unstable: only the tests of open defects and tests that failed in the last 14 days" }
+    ExplorationJob:
+      type: object
+      required: [id, projectId, reason, status, detail, commitSha, budgetSeconds, seeds, targets, explorationId, createdAt, finishedAt]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        reason: { type: string, enum: [nightly, pull_request, manual] }
+        status: { type: string, enum: [pending, dispatched, running, finished, failed, cancelled] }
+        detail: { type: string }
+        commitSha: { type: [string, "null"] }
+        budgetSeconds: { type: integer }
+        seeds: { type: integer }
+        targets: { type: array, items: { type: string } }
+        explorationId: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        finishedAt: { type: [string, "null"], format: date-time }
+    ApiKey:
+      type: object
+      required: [id, name, prefix, scopes, createdAt, expiresAt, lastUsedAt, revokedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        prefix: { type: string, description: "the key's first 10 characters (fxk_ and 6), to recognise it" }
+        scopes: { type: array, items: { type: string, enum: [read, replay] } }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: [string, "null"], format: date-time }
+        lastUsedAt: { type: [string, "null"], format: date-time }
+        revokedAt: { type: [string, "null"], format: date-time }
+    ApiKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64 }
+        scopes: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, items: { type: string, enum: [read, replay] }, default: [read] }
+        expiresInDays: { type: integer, minimum: 1, maximum: 3650 }
+    ApiKeyCreated:
+      allOf:
+        - $ref: "#/components/schemas/ApiKey"
+        - type: object
+          required: [key]
+          properties: { key: { type: string, description: "the key itself, shown this once" } }
+    OrganizationExport:
+      type: object
+      required: [exportedAt, organization, projects, runs, defects, occurrences, explorations]
+      properties:
+        exportedAt: { type: string, format: date-time }
+        organization: { type: object }
+        projects: { type: array, items: { $ref: "#/components/schemas/Project" } }
+        runs: { type: array, items: { $ref: "#/components/schemas/Run" } }
+        defects: { type: array, items: { $ref: "#/components/schemas/Defect" } }
+        occurrences: { type: array, items: { type: object } }
+        explorations: { type: array, items: { $ref: "#/components/schemas/Exploration" } }
+    RunnerBundle:
+      allOf:
+        - $ref: "#/components/schemas/RunnerJob"
+        - type: object
+          required: [testId, content]
+          properties:
+            testId: { type: string, maxLength: 2000 }
+            fingerprint: { type: string, pattern: "^[0-9a-f]{32}$" }
+            sha256: { type: string, pattern: "^[0-9a-f]{64}$", description: "of the decoded content; checked when given" }
+            content: { type: string, description: "base64 of the .tar.gz, at most 4 MB decoded" }
+    RunnerReplayReport:
+      type: object
+      required: [replayId, event]
+      properties:
+        replayId: { type: string, format: uuid }
+        event: { type: string, enum: [started, finished] }
+        outcome: { type: string, enum: [passed, failed, error], description: "required with finished: passed = the minimal order passed every replay" }
+        runs: { type: integer, minimum: 0, maximum: 1000 }
+        fails: { type: integer, minimum: 0, maximum: 1000 }
+        fingerprint: { type: string, pattern: "^[0-9a-f]{32}$" }
+        identicalFingerprint: { type: boolean }
+        detail: { type: string, maxLength: 2000 }
+        command: { type: string, maxLength: 4000 }
     Defect:
       type: object
       required: [id, projectId, projectName, testId, status, state, cause, causeTests, minimalOrder, prefixLength, seed, fingerprint, replays, outcome, exception,
@@ -1017,14 +1666,14 @@ components:
         projectId: { type: string }
         projectName: { type: string }
         testId: { type: string }
-        status: { type: string, enum: [reproduced, replay_unstable] }
-        state: { type: string, enum: [open, fixed] }
+        status: { type: string, enum: [reproduced, replay_unstable, reported], description: "reported: the run's summary named it flaky (failed in the suite, passed alone) and no bundle has come yet" }
+        state: { type: string, enum: [open, fixed, muted] }
         cause: { $ref: "#/components/schemas/DefectCause" }
         causeTests: { type: array, items: { type: string } }
         minimalOrder: { type: array, items: { type: string } }
         prefixLength: { type: integer }
         seed: { type: [integer, "null"] }
-        fingerprint: { type: string }
+        fingerprint: { type: [string, "null"] }
         replays:
           type: object
           required: [runs, fails, identicalFingerprint]
@@ -1036,8 +1685,16 @@ components:
           properties: { type: { type: string }, phase: { type: string }, message: { type: string }, location: { type: string } }
         divergence:
           oneOf:
-            - { type: object, required: [index, reason, description], properties: { index: { type: integer }, reason: { type: string }, description: { type: string } } }
+            - type: object
+              required: [index, reason, description]
+              properties:
+                index: { type: integer }
+                reason: { type: string }
+                description: { type: string }
+                passing: { type: array, items: { $ref: "#/components/schemas/TraceEvent" }, description: "A passing run's events up to the divergent one (the last)" }
+                failing: { type: array, items: { $ref: "#/components/schemas/TraceEvent" }, description: "The failing run's events up to the divergent one (the last)" }
             - { type: "null" }
+        firstPullRequest: { type: [integer, "null"], description: "Proposed (P-049): the pull request of the run where it was first seen" }
         familyKey: { type: string }
         firstSeenAt: { type: string, format: date-time }
         lastSeenAt: { type: string, format: date-time }
@@ -1050,6 +1707,59 @@ components:
         replayCommand:
           type: [string, "null"]
           description: "The replay command the runner sent with the bundle (e.g. the engine's own command); null: the dashboard builds it from the seed and the minimal order."
+        stateReason: { type: [string, "null"] }
+        stateChangedAt: { type: [string, "null"], format: date-time }
+        bundle: { oneOf: [{ $ref: "#/components/schemas/DefectBundleInfo" }, { type: "null" }] }
+        lastReplay: { oneOf: [{ $ref: "#/components/schemas/Replay" }, { type: "null" }] }
+        pullCommand: { type: string, description: "fetches the bundle with an API key (curl and tar)" }
+        culprit: { oneOf: [{ type: object, required: [summary], properties: { summary: { type: string }, url: { type: [string, "null"] } } }, { type: "null" }], description: "Passo 3's culprit verdict, when the engine delivers it" }
+        dependencyVerdict: { oneOf: [{ type: object, required: [summary], properties: { summary: { type: string } } }, { type: "null" }], description: "Passo 3's dependency verdict, when the engine delivers it" }
+    TraceEvent:
+      type: object
+      description: One event of the engine's trace (thread, source, operation, call site, value).
+      required: [index, thread, source, op, site, value]
+      properties:
+        index: { type: integer }
+        thread: { type: string }
+        source: { type: string, description: "time, random, entropy, fs, net, env, sched, ..." }
+        op: { type: string }
+        site: { type: string, description: "path:line" }
+        value: { type: string }
+    DefectOccurrence:
+      type: object
+      description: "One sighting of the defect: a run (with its commit, branch and pull request), or an exploration (runId, runNumber null)."
+      required: [runId, runNumber, commitSha, branch, pullRequest, at]
+      properties:
+        runId: { type: [string, "null"] }
+        runNumber: { type: [integer, "null"] }
+        commitSha: { type: [string, "null"] }
+        branch: { type: [string, "null"] }
+        pullRequest: { type: [integer, "null"] }
+        at: { type: string, format: date-time }
+        id: { type: string }
+        source: { type: string, enum: [run, exploration] }
+        explorationId: { type: [string, "null"] }
+        fingerprint: { type: [string, "null"] }
+        fingerprintChanged: { type: boolean, description: "the fingerprint differs from the defect's previous sighting" }
+        divergence:
+          oneOf:
+            - { type: object, required: [index, reason, description], properties: { index: { type: integer }, reason: { type: string }, description: { type: string } } }
+            - { type: "null" }
+        seed: { type: [integer, "null"] }
+        engineVersion: { type: string }
+        status: { type: string, enum: [reproduced, replay_unstable, reported] }
+    DefectBundleInfo:
+      type: object
+      required: [id, sha256, sizeBytes, receivedAt]
+      properties: { id: { type: string }, sha256: { type: string }, sizeBytes: { type: integer }, receivedAt: { type: string, format: date-time } }
+    DefectBundle:
+      type: object
+      required: [url, expiresAt, sha256, bytes]
+      properties:
+        url: { type: string, description: "Signed, short-lived" }
+        expiresAt: { type: string, format: date-time }
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        bytes: { type: integer }
     DefectFamily:
       type: object
       required: [key, projectId, projectName, cause, causeTests, defects]
@@ -1280,6 +1990,22 @@ components:
             currentTest: { type: [string, "null"], maxLength: 2000 }
             elapsedMs: { type: integer, minimum: 0 }
             mode: { $ref: "#/components/schemas/RunMode" }
+            finished:
+              type: array
+              maxItems: 500
+              description: "The tests finished since the previous progress record (the live view); a test sent twice keeps the first. The results chunks stay authoritative."
+              items: { $ref: "#/components/schemas/RunnerTestOutcome" }
+            workers:
+              type: array
+              maxItems: 256
+              items:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: string, maxLength: 100 }
+                  currentTest: { type: [string, "null"], maxLength: 2000 }
+                  testsDone: { type: integer, minimum: 0 }
+                  state: { type: string, enum: [running, idle, done] }
     RunnerTestOutcome:
       type: object
       required: [testId, outcome, durationMs]
@@ -1301,6 +2027,9 @@ components:
             - { type: "null" }
         cacheKey: { type: [string, "null"], pattern: "^[0-9a-f]{32}$", description: "skipped_with_proof: the receipt's key" }
         wouldSkip: { type: boolean, description: "Shadow mode: the engine would have skipped it" }
+        worker: { type: [string, "null"], maxLength: 100, description: "The worker that ran it (e.g. gw0); null for a serial run" }
+        finishedAt: { type: string, format: date-time }
+        output: { type: string, maxLength: 65536, description: "The test's captured output (stdout, stderr, log), at most 64 KB: the coding agent's get_test_log" }
     RunnerReceipt:
       type: object
       description: One reused test's receipt (receipts.jsonl line plus the lists from proof-cache.json).
@@ -1325,7 +2054,10 @@ components:
       properties:
         testId: { type: string, maxLength: 2000 }
         status: { type: string, enum: [reproduced, replay_unstable] }
-        kind: { type: string, enum: [order, brittle, fails-alone] }
+        kind:
+          type: string
+          enum: [order, brittle, fails-alone, async-order, thread, clock, random, network, fs, env]
+          description: "order dependence (order, brittle, fails-alone) or the kind of the first divergent event (async-order, thread, clock, random, network, fs, env)"
         polluters: { type: array, items: { type: string } }
         setters: { type: array, items: { type: string } }
         order: { type: array, minItems: 1, items: { type: string } }
@@ -1343,7 +2075,14 @@ components:
           properties: { type: { type: string }, phase: { type: string }, message: { type: string, maxLength: 4000 }, location: { type: string } }
         divergence:
           oneOf:
-            - { type: object, required: [index, reason, description], properties: { index: { type: integer }, reason: { type: string }, description: { type: string } } }
+            - type: object
+              required: [index, reason, description]
+              properties:
+                index: { type: integer }
+                reason: { type: string }
+                description: { type: string }
+                passing: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/TraceEvent" }, description: "a passing run's events up to the divergent one" }
+                failing: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/TraceEvent" }, description: "the failing run's events up to the divergent one" }
             - { type: "null" }
         engineVersion: { type: string }
         language: { type: string, enum: [python, node] }

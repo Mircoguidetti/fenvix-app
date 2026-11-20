@@ -112,9 +112,10 @@ export function parseSummary(raw: unknown): RunSummary {
   if (!Array.isArray(flakyRaw)) throw new SummaryError("summary.flaky must be a list");
   const flaky: FlakyTest[] = flakyRaw.map((f, i) => {
     const ff = f as Record<string, unknown>;
-    const nodeid = str(ff?.nodeid, 2000);
+    // `nodeid` (pytest's word) or `testId` (any runner; G-1752).
+    const nodeid = str(ff?.nodeid, 2000) ?? str(ff?.testId, 2000);
     const replay = str(ff?.replay, 4000);
-    if (!nodeid || !replay) throw new SummaryError(`summary.flaky[${i}] needs nodeid and replay`);
+    if (!nodeid || !replay) throw new SummaryError(`summary.flaky[${i}] needs nodeid (or testId) and replay`);
     return { nodeid, replay, minimise: str(ff.minimise, 4000) };
   });
   const commit = typeof o.commit === "string" ? o.commit : "";

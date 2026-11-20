@@ -1,6 +1,7 @@
 import { backend, configError } from "../lib/env";
 import { getSupabase } from "../lib/supabaseClient";
 import { friendlyError } from "../data/ci-rows";
+import { takeReturnPath } from "../lib/returnPath";
 
 let redirectError: string | null = null;
 
@@ -37,5 +38,7 @@ export async function completeAuthRedirect(): Promise<void> {
   url.search = "";
   url.hash = "";
   if (url.pathname === "") url.pathname = "/"; // "/" opens the last project (App.tsx, Home)
-  window.history.replaceState(null, "", url.toString());
+  // Signed in: back to the deep link the person opened before signing in (audit G-1686), if any.
+  const back = redirectError ? null : takeReturnPath();
+  window.history.replaceState(null, "", back ? new URL(back, url.origin).toString() : url.toString());
 }

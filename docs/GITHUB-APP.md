@@ -80,7 +80,7 @@ Fill in, top to bottom:
 
 | Permission | Access | Why |
 |---|---|---|
-| Actions | **Read-only** | read the workflow run of a job (its trigger, commit message and pull request); needed for the `workflow_job` event |
+| Actions | **Read-only** (Read and write to re-run and stop jobs) | read the workflow run of a job (its trigger, commit message and pull request); needed for the `workflow_job` event. **Read and write** lets the check run's Re-run button re-run the job (`POST .../actions/jobs/{id}/rerun`) and the live view's Stop cancel it (`POST .../actions/runs/{id}/cancel`); with Read-only the check run says how to re-run it by hand and Stop only ends the fenvix machine (2026-11-20, P-048) |
 | **Administration** | **Read and write** | one machine per job (`DEPLOY-AWS.md`): `POST /repos/{owner}/{repo}/actions/runners/generate-jitconfig` creates the just-in-time runner of one queued job, on that repository only. Used for nothing else |
 | Checks | **Read and write** | the `fenvix` check run on each commit |
 | Contents | **Read and write** | read the workflow files; create the `fenvix/runs-on` branch and commit the one-line change on it |
@@ -102,9 +102,15 @@ Under **Subscribe to events**, tick:
 - **Pull request**
 - **Push**
 - **Workflow job** (the box appears once Actions is Read-only)
-- **Repository** (the box is there with Metadata: Read-only; fenvix reads `edited` with a new default branch, so the dashboard follows it)
+- **Repository** (the box is there with Metadata: Read-only; fenvix reads `edited` with a new default branch, so the dashboard follows it, and `renamed`, `transferred`, `archived`, `unarchived`, `deleted`)
+- **Workflow run** (a run completed while one of its fenvix jobs had lost its events: the job is read back from GitHub)
+- **Check run** and **Check suite** (the Re-run buttons of fenvix check runs)
+- Optional, **Member**, **Organization**, **Membership** and **Team**: someone lost access to a repository on GitHub,
+  so fenvix forgets at once that they could see its project (G-1631). The last three also need the organization
+  permission **Members: Read-only**. Without them, fenvix asks GitHub again every few minutes, and an answer lives 10
+  minutes at most.
 
-`installation` and `installation_repositories` are sent to every GitHub App without a box to tick.
+`installation`, `installation_repositories`, `installation_target` (the account was renamed) and `github_app_authorization` are sent to every GitHub App without a box to tick. Any other event is recorded and answered 202 (ignored). Every sweep the App also lists its recent deliveries (`GET /app/hook/deliveries`) and asks GitHub to send again the ones that failed, and reads back fenvix jobs still queued with no machine after three minutes.
 
 ### 4. Where can this GitHub App be installed?
 

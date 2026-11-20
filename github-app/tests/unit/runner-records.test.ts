@@ -129,7 +129,7 @@ describe("runner records: the request schemas of openapi/fenvix-api.yaml, checke
 describe("progress: stored in the dashboard's shape, newer records only", () => {
   it("ci_runs.progress has the keys mapProgress (src/data/ci-rows.ts) reads, plus seq; nothing else", () => {
     const rec = progressRecord(parseProgress(progress));
-    assert.deepEqual(Object.keys(rec).sort(), ["currentTest", "elapsedMs", "failed", "passed", "phase", "seq", "skippedWithProof", "testsDone", "testsTotal"]);
+    assert.deepEqual(Object.keys(rec).sort(), ["currentTest", "elapsedMs", "failed", "passed", "phase", "seq", "skippedWithProof", "testsDone", "testsTotal", "workers"]);
     assert.equal(rec.seq, 4);
   });
 
@@ -159,7 +159,7 @@ describe("results mapping to the dashboard's rows", () => {
 
   it("a test outcome: failure fields only when it failed (a failure always has a kind); the defect's fingerprint for a flaky one", () => {
     const [real, flaky, skipped, passed] = parseResults(results).tests!;
-    assert.deepEqual(testRow(real!), { test_id: real!.testId, outcome: "failed", duration_ms: 12, failure_kind: "real", failure_phase: "call", exception_type: "AssertionError", failure_message: "assert 30 == 31", failure_location: "tests/test_tax.py:40", defect_fingerprint: null });
+    assert.deepEqual(testRow(real!), { test_id: real!.testId, outcome: "failed", duration_ms: 12, failure_kind: "real", failure_phase: "call", exception_type: "AssertionError", failure_message: "assert 30 == 31", failure_location: "tests/test_tax.py:40", defect_fingerprint: null, worker: null, finished_at: null, output: null });
     assert.equal(testRow(flaky!).defect_fingerprint, H("a"));
     assert.equal(testRow(flaky!).failure_phase, "call");
     assert.equal(testRow(skipped!).failure_kind, null);

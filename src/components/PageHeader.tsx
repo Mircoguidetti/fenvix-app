@@ -68,3 +68,32 @@ export function Kicker({ children }: { children?: ReactNode }) {
   const text = children ?? (current.status === "ready" ? current.name : " ");
   return <p className="page-kicker">{text}</p>;
 }
+
+/**
+ * A load that failed: the error in red and a button that asks again (audit G-1691). Every screen shows a failed read
+ * with this, never as "Loading" for ever (G-1690, G-1692 to G-1694, G-2277 to G-2282).
+ */
+export function LoadError({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <div className="load-error">
+      <Message role="alert">{message}</Message>
+      {onRetry && (
+        <button type="button" className="btn btn-sm" onClick={onRetry}>
+          Try again
+        </button>
+      )}
+    </div>
+  );
+}
+
+type Loadable<T> = ({ status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: T }) & { reload?: () => void };
+
+/**
+ * The three states of a read, each drawn: "loading" says what is loading, "error" is a LoadError with Try again,
+ * "ready" renders `children`. A read that failed can never look like one still loading or like an empty result.
+ */
+export function Await<T>({ state, loading, children }: { state: Loadable<T>; loading: string; children: (data: T) => ReactNode }) {
+  if (state.status === "loading") return <Message>{loading}</Message>;
+  if (state.status === "error") return <LoadError message={state.message} onRetry={state.reload} />;
+  return <>{children(state.data)}</>;
+}
