@@ -34,7 +34,7 @@ const summary = (name: string, extra: Row = {}) => ({ ...(JSON.parse(readFileSyn
 
 class FakeLauncher implements RunnerLauncher {
   launches: RunnerLaunch[] = [];
-  regions: Region[] = ["us", "eu"];
+  regions: Region[] = ["eu", "us"];
   canPlace(region: Region) { return this.regions.includes(region); }
   async launch(l: RunnerLaunch) { this.launches.push(l); return { instanceId: `i-${l.jobId}`, already: false }; }
 }
@@ -72,7 +72,7 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     await h.start({}, { launcher });
     org = await makeOrg(admin, "flow-owner");
     // An EU organization: its machines run in the EU, or not at all.
-    await admin.query("update workspaces set region = 'eu' where id = $1", [org.workspaceId]);
+    await admin.query("update workspaces set region = 'us' where id = $1", [org.workspaceId]);
     h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id, REPOS.web.id], selection: "all" });
     h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": CI_YAML } });
     h.gh.addRepo({ id: REPOS.web.id, fullName: REPOS.web.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/test.yml": WEB_YAML } });
@@ -147,8 +147,8 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     await h.send("push", push(MAIN_SHA, "refs/heads/main", 1795430000));
     h.gh.addRun("acme/shop", 31000, { event: "push", headSha: MAIN_SHA, headBranch: "main", message: "Merge pull request #1" });
     await h.send("workflow_job", workflowJob("queued", { id: 81000, runId: 31000, sha: MAIN_SHA, branch: "main" }));
-    assert.deepEqual(launcher.launches.map((l) => [l.jobId, l.region, l.mode, l.runnerName]), [[81000, "eu", "shadow", "fenvix-j81000"]]);
-    assert.equal((await admin.query("select region from gh_jobs where job_id = 81000")).rows[0].region, "eu");
+    assert.deepEqual(launcher.launches.map((l) => [l.jobId, l.region, l.mode, l.runnerName]), [[81000, "us", "shadow", "fenvix-j81000"]]);
+    assert.equal((await admin.query("select region from gh_jobs where job_id = 81000")).rows[0].region, "us");
     assert.equal((await admin.query("select count(*)::int as n from ci_runs")).rows[0].n, 0, "no run row before the job starts");
   });
 
@@ -158,7 +158,7 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     assert.ok(job.ci_run_id);
     run1 = job.ci_run_id;
     const row = await runRow(run1);
-    assert.deepEqual([row.status, row.mode, row.region, row.number, row.trigger, row.branch, row.finished_at], ["running", "shadow", "eu", 1, "push", "main", null]);
+    assert.deepEqual([row.status, row.mode, row.region, row.number, row.trigger, row.branch, row.finished_at], ["running", "shadow", "us", 1, "push", "main", null]);
     assert.equal(new Date(row.pushed_at as string).getTime(), 1795430000 * 1000);
     assert.equal(rows.mapRun(plain(row)).progress, null);
     // The same event again: still one row.
@@ -217,7 +217,7 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     assert.equal((await admin.query("select count(*)::int as n from ci_runs")).rows[0].n, 1, "the running row was finished, not a second one");
     const row = await runRow(run1);
     const run = rows.mapRun(plain(row));
-    assert.deepEqual([run.status, run.mode, run.region, run.engineRunId, run.seed, run.progress], ["failed", "shadow", "eu", "20261118T094005-4412", 3, null]);
+    assert.deepEqual([run.status, run.mode, run.region, run.engineRunId, run.seed, run.progress], ["failed", "shadow", "us", "20261118T094005-4412", 3, null]);
     assert.deepEqual([run.wouldSkipTests, run.wouldSaveMs], [2, 13]);
     assert.equal(run.missDetails.length, 2);
     assert.equal(run.tests.total, 56);
@@ -254,7 +254,7 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     await admin.query("update ci_subscriptions set trial_ends_at = now() - interval '1 day', trial_started_at = now() - interval '31 days' where workspace_id = $1", [org.workspaceId]);
     h.gh.addRun("acme/shop", 31001, { event: "push", headSha: SHA2, headBranch: "main", message: "Next" });
     await h.send("workflow_job", workflowJob("queued", { id: 81001, runId: 31001, sha: SHA2, branch: "main" }));
-    assert.deepEqual([launcher.launches.at(-1)!.region, launcher.launches.at(-1)!.mode], ["eu", "enforce"]);
+    assert.deepEqual([launcher.launches.at(-1)!.region, launcher.launches.at(-1)!.mode], ["us", "enforce"]);
     const t = { startedAt: "2026-11-18T10:10:05Z", completedAt: "2026-11-18T10:11:05Z" };
     await h.send("workflow_job", workflowJob("in_progress", { id: 81001, runId: 31001, sha: SHA2, branch: "main", runner: "fenvix-j81001", ...t }));
     run2 = (await admin.query("select ci_run_id from gh_jobs where job_id = 81001")).rows[0].ci_run_id;

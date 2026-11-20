@@ -55,8 +55,11 @@ describe("settings", () => {
     await assert.rejects(settings({ apiCorsOrigins: "http://preview.fenvix.dev" }), /apiCorsOrigins/);
     await assert.rejects(settings({ fenvixRegion: "asia" }), /us or eu/);
     await assert.rejects(settings({ secondFenvixRegion: "eu" }), /all three, or none/);
-    await assert.rejects(settings({ secondFenvixRegion: "us", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "lt-0123456789abcdef0" }), /the other of us and eu/);
-    await assert.rejects(settings({ secondFenvixRegion: "eu", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "template" }), /lt-/);
+    await assert.rejects(settings({ secondFenvixRegion: "eu", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "lt-0123456789abcdef0" }), /the other of us and eu/);
+    // Audit G-0185/G-0190: the label is where the machines are. eu-west-1 machines are never "us".
+    await assert.rejects(settings({ fenvixRegion: "us" }), /fenvixRegion" is "us" but the machines run in eu-west-1/);
+    await assert.rejects(settings({ secondFenvixRegion: "us", secondAwsRegion: "eu-central-1", secondLaunchTemplateId: "lt-0123456789abcdef0" }), /machines run in eu-central-1/);
+    await assert.rejects(settings({ secondFenvixRegion: "us", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "template" }), /lt-/);
     await assert.rejects(settings({ secondCacheUrl: "http://10.43.0.10:8787" }), /secondCacheUrl/);
     const s = await settings();
     assert.equal(s.domainName, "api.fenvix.dev");
@@ -65,7 +68,7 @@ describe("settings", () => {
     assert.equal(s.demoMaxHours, 12);
     assert.equal(s.runnerVolumeGb, 30);
     assert.equal(s.region, "eu-west-1");
-    assert.equal(s.fenvixRegion, "us", "this stack's machines serve the us region unless set");
+    assert.equal(s.fenvixRegion, "eu", "this stack's machines (eu-west-1) serve the eu region");
     assert.equal(s.apiCorsOrigins, "");
   });
 });

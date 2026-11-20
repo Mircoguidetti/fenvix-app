@@ -147,7 +147,10 @@ export class FenvixGitHubAppStack extends Stack {
       baseEnv: {
         NODE_ENV: "production", NODE_OPTIONS: "--enable-source-maps", LOG_LEVEL: "info", SSM_PREFIX: appPrefix(s.env),
         SUPABASE_URL: s.supabaseUrl, DASHBOARD_URL: s.dashboardUrl, GITHUB_APP_SLUG: s.githubAppSlug, DB_POOL_MAX: "1",
-        WORK_QUEUE_URL: queue.queueUrl, ...(s.apiCorsOrigins ? { API_CORS_ORIGINS: s.apiCorsOrigins } : {}),
+        WORK_QUEUE_URL: queue.queueUrl,
+        // The regions that have machines: the API lets an organization choose only these (audit G-0190).
+        FENVIX_MACHINE_REGIONS: [s.fenvixRegion, ...(s.secondFenvixRegion ? [s.secondFenvixRegion] : [])].join(","),
+        ...(s.apiCorsOrigins ? { API_CORS_ORIGINS: s.apiCorsOrigins } : {}),
       },
       description: "fenvix dashboard API (openapi/fenvix-api.yaml): /v1/* except /v1/runner/*",
     });

@@ -188,7 +188,7 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
     dashboardUrl: https("dashboardUrl"), supabaseUrl: https("supabaseUrl"), runsOnLabel: need("runsOnLabel"),
     summaryWaitSeconds: int("summaryWaitSeconds", 60, 86_400), sweepMinutes: int("sweepMinutes", 1, 60),
     logRetentionDays: int("logRetentionDays", 1, 365), alarmEmail: get("alarmEmail"),
-    apiCorsOrigins: get("apiCorsOrigins"), fenvixRegion: (get("fenvixRegion") || "us") as Settings["fenvixRegion"],
+    apiCorsOrigins: get("apiCorsOrigins"), fenvixRegion: (get("fenvixRegion") || "eu") as Settings["fenvixRegion"],
     secondFenvixRegion: get("secondFenvixRegion"), secondAwsRegion: get("secondAwsRegion"), secondLaunchTemplateId: get("secondLaunchTemplateId"),
     secondCacheUrl: get("secondCacheUrl"),
     runnerMode: need("runnerMode") as Settings["runnerMode"], runnerMaxRunning: int("runnerMaxRunning", 1, 100),
@@ -233,11 +233,15 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
     if (!u || u.protocol !== "https:" || u.origin !== o.replace(/\/+$/, "")) throw new Error('Setting "apiCorsOrigins" must be https:// origins (scheme://host, no path), comma separated');
   }
   if (s.fenvixRegion !== "us" && s.fenvixRegion !== "eu") throw new Error('Setting "fenvixRegion" must be us or eu');
+  // The label must be where the machines are (audit G-0185, G-0190): an eu-* AWS region is "eu", a us-* one "us".
+  const continent = (awsRegion: string) => (awsRegion.startsWith("eu-") ? "eu" : awsRegion.startsWith("us-") ? "us" : null);
+  if (continent(s.region) !== s.fenvixRegion) throw new Error(`Setting "fenvixRegion" is "${s.fenvixRegion}" but the machines run in ${s.region}: the label must be ${continent(s.region) ?? "a region fenvix offers (us-*, eu-*)"}`);
   const second = [s.secondFenvixRegion, s.secondAwsRegion, s.secondLaunchTemplateId];
   if (second.some(Boolean)) {
     if (!second.every(Boolean)) throw new Error('Settings "secondFenvixRegion", "secondAwsRegion" and "secondLaunchTemplateId": all three, or none');
     if (!["us", "eu"].includes(s.secondFenvixRegion) || s.secondFenvixRegion === s.fenvixRegion) throw new Error('Setting "secondFenvixRegion" must be the other of us and eu');
     if (!/^[a-z]{2}-[a-z]+-\d$/.test(s.secondAwsRegion)) throw new Error('Setting "secondAwsRegion" is not an AWS region');
+    if (continent(s.secondAwsRegion) !== s.secondFenvixRegion) throw new Error(`Setting "secondFenvixRegion" is "${s.secondFenvixRegion}" but its machines run in ${s.secondAwsRegion}`);
     if (!/^lt-[0-9a-f]{8,17}$/.test(s.secondLaunchTemplateId)) throw new Error('Setting "secondLaunchTemplateId" must look like lt-0123456789abcdef0');
   }
   if (s.secondCacheUrl && (!s.secondFenvixRegion || !/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(s.secondCacheUrl))) {

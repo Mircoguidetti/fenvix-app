@@ -32,7 +32,7 @@
     "logRetentionDays": "14",
     "alarmEmail": "",
     "apiCorsOrigins": "",
-    "fenvixRegion": "us",
+    "fenvixRegion": "eu",
     "secondFenvixRegion": "",
     "secondAwsRegion": "",
     "secondLaunchTemplateId": "",

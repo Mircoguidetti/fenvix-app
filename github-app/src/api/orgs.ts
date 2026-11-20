@@ -244,7 +244,12 @@ export const saveSettings: Handler = async (ctx) => {
   const o = orgOf(ctx);
   const name = parseOrgName(ctx.body.workspaceName, "workspaceName");
   const emailNotices = ctx.body.emailNotices === true;
-  const region = ctx.body.region === "eu" ? "eu" : "us";
+  const region = ctx.body.region === "eu" ? "eu" : ctx.body.region === "us" ? "us" : o.region;
+  // Only a region with machines (audit G-0190): elsewhere the organization's jobs would never start. An unchanged
+  // region is always accepted, so an organization still on a region without machines can save its other settings.
+  if (region !== o.region && !ctx.cfg.machineRegions.includes(region)) {
+    throw conflict(`fenvix has no machines in the ${region === "us" ? "United States" : "European Union"} yet: your jobs would stay queued. Keep ${o.region === "us" ? "United States" : "European Union"}.`, "region");
+  }
   // A new name counts as chosen; an unchanged one keeps its state.
   await ctx.t.q("update public.workspaces set name = $2, name_confirmed = name_confirmed or name <> $2, email_notices = $3, region = $4 where id = $1",
     [o.id, name, emailNotices, region]);

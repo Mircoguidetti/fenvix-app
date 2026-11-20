@@ -26,6 +26,11 @@ export interface ApiConfig {
   /** False while the GitHub App is not configured (GITHUB_APP_SLUG empty). */
   githubConfigured: boolean;
   webUrl: string;
+  /**
+   * The fenvix regions that have machines (FENVIX_MACHINE_REGIONS, e.g. "eu"; the stack sets it from RUNNER_PLACEMENT).
+   * An organization may choose only one of these: a region without machines would leave its jobs queued (G-0190).
+   */
+  machineRegions: ("us" | "eu")[];
 }
 
 type Env = Record<string, string | undefined>;
@@ -60,6 +65,14 @@ function int(env: Env, name: string, fallback: number, min: number): number {
   return n;
 }
 
+/** "eu", "us,eu"; unset means "eu" (the only fleet: eu-west-1, audit G-0185). */
+export function machineRegions(raw: string | undefined): ("us" | "eu")[] {
+  const list = (raw ?? "eu").split(",").map((x) => x.trim()).filter(Boolean);
+  for (const r of list) if (r !== "us" && r !== "eu") throw new Error(`FENVIX_MACHINE_REGIONS: unknown region "${r}" (us, eu)`);
+  if (!list.length) throw new Error("FENVIX_MACHINE_REGIONS: at least one region");
+  return [...new Set(list)] as ("us" | "eu")[];
+}
+
 export function loadApiConfig(env: Env = process.env): ApiConfig {
   const nodeEnv = env.NODE_ENV ?? "development";
   const supabaseUrl = url(env, "SUPABASE_URL", undefined, nodeEnv);
@@ -89,5 +102,6 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     appSlug,
     githubConfigured: appSlug !== "",
     webUrl: url(env, "GITHUB_WEB_URL", "https://github.com", nodeEnv),
+    machineRegions: machineRegions(env.FENVIX_MACHINE_REGIONS),
   };
 }

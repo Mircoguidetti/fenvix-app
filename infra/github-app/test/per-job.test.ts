@@ -43,13 +43,13 @@ describe("the stack, per-job mode", async () => {
     assert.equal(fnEnv("http").RUNNER_MODE, undefined, "the HTTP function never launches");
   });
 
-  it("runner placement by the organization's region: this stack's fleet under its fenvix region (us by default)", async () => {
+  it("runner placement by the organization's region: this stack's fleet under its fenvix region (eu: the machines are in eu-west-1)", async () => {
     const placement = (v: unknown) => {
       // { "Fn::Join": ["", [...parts]] }: the launch template id is a reference; the rest is the JSON around it.
       const parts = (v as { "Fn::Join": [string, unknown[]] })["Fn::Join"][1];
       return JSON.parse(parts.map((x) => (typeof x === "string" ? x : "LT")).join("")) as Record<string, { awsRegion: string; launchTemplateId: string }>;
     };
-    assert.deepEqual(placement(fnEnv("worker").RUNNER_PLACEMENT), { us: { awsRegion: "eu-west-1", launchTemplateId: "LT" } });
+    assert.deepEqual(placement(fnEnv("worker").RUNNER_PLACEMENT), { eu: { awsRegion: "eu-west-1", launchTemplateId: "LT" } });
     assert.match(json(fnEnv("worker").RUNNER_PLACEMENT), /FleetLaunchTemplate/);
     assert.match(json(fnEnv("worker").RUNNER_LAUNCH_TEMPLATE_ID), /FleetLaunchTemplate/, "kept");
     const two = await synth({ runnerMode: "per-job", fenvixRegion: "eu", secondFenvixRegion: "us", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "lt-0123456789abcdef0", secondCacheUrl: "http://10.43.0.10:8787" });

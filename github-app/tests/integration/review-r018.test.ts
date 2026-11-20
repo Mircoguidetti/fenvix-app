@@ -19,7 +19,7 @@ class FakeFleet implements RunnerLauncher {
   warmups: WarmupLaunch[] = [];
   live = new Map<number, Region>();
   max = 10;
-  canPlace(region: Region) { return region === "us"; }
+  canPlace(region: Region) { return region === "eu"; }
   async hasCapacity() { return this.jobs.length + this.live.size < this.max; }
   async launch(l: RunnerLaunch) { this.jobs.push(l); return { instanceId: `i-j${l.jobId}`, already: false }; }
   async slots() { return { running: this.live.size, warmups: this.live.size, max: this.max }; }

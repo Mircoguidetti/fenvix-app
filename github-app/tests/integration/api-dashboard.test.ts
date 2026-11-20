@@ -80,9 +80,9 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     const ws = ownerA.workspaceId;
     const o = await call(api, "getOrganization", { token: memberA.token, ws });
     assert.equal(o.status, 200);
-    assert.deepEqual({ role: o.body.role, members: o.body.members, region: o.body.region, limits: o.body.limits }, { role: "member", members: 3, region: "us", limits: { maxMembers: 50, invitationsPerDay: 20 } });
+    assert.deepEqual({ role: o.body.role, members: o.body.members, region: o.body.region, limits: o.body.limits }, { role: "member", members: 3, region: "eu", limits: { maxMembers: 50, invitationsPerDay: 20 } });
     const s = await call(api, "getSettings", { token: memberA.token, ws });
-    assert.equal(s.body.region, "us");
+    assert.equal(s.body.region, "eu", "new organizations default to eu: the only machines are in eu-west-1 (audit G-0185)");
     const m = await call(api, "listMembers", { token: memberA.token, ws });
     assert.equal(m.body.limit, 50);
     assert.deepEqual(m.body.items.map((x: { email: string; role: string; you: boolean }) => [x.email, x.role, x.you]).sort(),
@@ -370,7 +370,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
 
     const matrix: Record<string, (who: Person, role: "member" | "admin" | "owner") => Promise<number>> = {
       renameOrganization: async (who, role) => (await call(api, "renameOrganization", { token: who.token, ws, body: { name: `Renamed by ${role}` } })).status,
-      saveSettings: async (who, role) => (await call(api, "saveSettings", { token: who.token, ws, body: { workspaceName: `Set by ${role}`, emailNotices: role !== "owner", region: role === "owner" ? "eu" : "us" } })).status,
+      saveSettings: async (who, role) => (await call(api, "saveSettings", { token: who.token, ws, body: { workspaceName: `Set by ${role}`, emailNotices: role !== "owner", region: "eu" } })).status,
       saveProjectSettings: async (who, role) => (await call(api, "saveProjectSettings", { token: who.token, ws, params: { projectId }, body: { skipWithProof: true, commentOnPullRequests: role === "admin", nightlyExploration: true, testCommand: `  pytest -q -k ${role}  ` } })).status,
       listInvitations: async (who) => (await call(api, "listInvitations", { token: who.token, ws })).status,
       createInvitation: async (who, role) => (await call(api, "createInvitation", { token: who.token, ws, body: { email: `invitee-${role}-${githubId()}@api.fenvix.test`, role: role === "owner" ? "admin" : "member" } })).status,
@@ -450,6 +450,10 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       assert.deepEqual([r.status, r.body.error.field], [400, "region"]);
       r = await call(api, "saveSettings", { token: owner.token, ws, body: { workspaceName: "x", emailNotices: true, region: "us" } });
       assert.deepEqual([r.status, r.body.error.field], [400, "workspaceName"]);
+      // Audit G-0190: a region with no machines is refused (409 on the field), never stored: its jobs would stay queued.
+      r = await call(api, "saveSettings", { token: owner.token, ws, body: { workspaceName: "Ok name", emailNotices: true, region: "us" } });
+      assert.deepEqual([r.status, r.body.error.field], [409, "region"]);
+      assert.equal((await admin.query("select region from workspaces where id = $1", [ws])).rows[0].region, "eu");
       r = await call(api, "getProject", { token: owner.token, ws, params: { projectId: "nope" } });
       assert.deepEqual([r.status, r.body.error.field], [400, "projectId"]);
       r = await call(api, "openSetupPullRequest", { token: owner.token, ws, params: { repositoryId: 0 } });
