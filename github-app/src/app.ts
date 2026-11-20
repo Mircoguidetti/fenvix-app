@@ -125,6 +125,20 @@ export async function buildApp(deps: Deps): Promise<App> {
       if (!r) return fail(reply, 401, "unauthorized", "This session ended: say hello again (or retire).");
       return reply.header("cache-control", "no-store").send(r);
     });
+    fastify.post("/v1/runner/replays", { bodyLimit: 8 * 1024 }, async (req, reply) => {
+      const scope = verifyMachineCredential(cfg.runnerTokens, req.headers.authorization);
+      if (!scope || !(await machines.alive(scope))) return fail(reply, 401, "unauthorized", "This machine's current session credential is required.");
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const n = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1000;
+      if (!n(b.leaseId) || !n(b.done) || !n(b.fails) || (b.fails as number) > (b.done as number) || typeof b.identicalFingerprint !== "boolean"
+        || !(b.matchesDefect === null || typeof b.matchesDefect === "boolean") || (b.detail !== undefined && typeof b.detail !== "string")) {
+        return fail(reply, 400, "bad_request", "leaseId, done, fails (<= done), identicalFingerprint, matchesDefect (boolean or null) are required.");
+      }
+      const ok = await service.receiveReplay(scope.machineId, { leaseId: b.leaseId as number, done: b.done as number, fails: b.fails as number,
+        identicalFingerprint: b.identicalFingerprint as boolean, matchesDefect: b.matchesDefect as boolean | null, detail: String(b.detail ?? "") });
+      if (!ok) return fail(reply, 403, "forbidden", "This lease is not a replay of this machine.");
+      return reply.code(202).send({ ok: true });
+    });
     fastify.post("/v1/runner/machine/events", { bodyLimit: 8 * 1024 }, async (req, reply) => {
       const scope = verifyMachineCredential(cfg.runnerTokens, req.headers.authorization);
       if (!scope) return fail(reply, 401, "unauthorized", "This machine's session credential is required.");

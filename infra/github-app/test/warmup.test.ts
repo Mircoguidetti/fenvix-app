@@ -58,7 +58,7 @@ describe("warm-up runs (our machines): the warm-up scheduler function, its sched
 
   it("a warm-up lease on our machines ends at once as unsupported until the engine ships its warm-up executor (G-1731)", () => {
     const agent = readFileSync(new URL("../lib/runner/files/fenvix-agent", import.meta.url), "utf8");
-    assert.match(agent, /if lease.get\("kind"\) != "job":/);
+    assert.match(agent, /if lease.get\("kind"\) not in \("job", "replay"\):/);
     assert.match(agent, /unsupported: no .* executor in this engine/);
   });
 

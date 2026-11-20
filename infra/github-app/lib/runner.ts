@@ -14,6 +14,7 @@ export const RUNNER_FILES: [string, string, string][] = [
   ["fenvix-agent.service", "/etc/systemd/system/fenvix-agent.service", "0644"],
   ["fenvix-slot", "/opt/fenvix/bin/fenvix-slot", "0755"],
   ["fenvix-job-started", "/opt/fenvix/bin/fenvix-job-started", "0755"],
+  ["fenvix-replay", "/opt/fenvix/bin/fenvix-replay", "0755"],
 ];
 
 export const IMAGE_FILES = RUNNER_FILES;

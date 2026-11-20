@@ -295,6 +295,56 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
     assert.equal((r.body.error as { field: string }).field, "finished");
   });
 
+  it("replay N times (P-049): on a machine of the SAME customer, with the run's commit, a read-only token and the defect's seed; the verdict against its fingerprint", async () => {
+    const ciRun = (await admin.query("select ci_run_id from gh_jobs where job_id = 1006")).rows[0].ci_run_id as string;
+    const run = (await admin.query("select project_id, commit_sha from ci_runs where id = $1", [ciRun])).rows[0];
+    await admin.query(`insert into ci_defects (workspace_id, project_id, test_id, status, cause, minimal_order, seed, fingerprint, family_key, first_seen_at, last_seen_at, language)
+      values ($1, $2, 'tests/test_a.py::test_two', 'reproduced', 'polluter', '{tests/test_a.py::test_two}', 7, $3, 'fam', now(), now(), 'python')`, [acme.workspaceId, run.project_id, "d".repeat(32)]);
+    // No room (the customer's cap or the region's machines): the replay waits, and says why.
+    const waiting = (await h.app.service.requestReplay(ciRun, "tests/test_a.py::test_two", 10))!;
+    assert.deepEqual(Object.values((await admin.query("select status, left(detail, 8) as d from gh_replays where id = $1", [waiting])).rows[0]), ["waiting", "waiting:"]);
+    await admin.query("update gh_replays set status = 'failed' where id = $1", [waiting]);
+    await admin.query("update workspaces set max_machines = 10 where id = $1", [acme.workspaceId]);
+    await admin.query("update gh_machines set state = 'gone' where workspace_id is null and state <> 'gone'");
+    const replayId = (await h.app.service.requestReplay(ciRun, "tests/test_a.py::test_two", 10))!;
+    const rp = (await admin.query("select * from gh_replays where id = $1", [replayId])).rows[0];
+    assert.equal(rp.status, "running");
+    const lease = (await admin.query("select * from gh_leases where replay_id = $1", [replayId])).rows[0];
+    assert.equal((await machine(lease.machine_id)).workspace_id, acme.workspaceId, "a replay runs only on its customer's machine");
+    const work = unseal<Record<string, unknown>>(["runner-token-for-tests-0123456789abcdef"], lease.id, lease.payload);
+    assert.deepEqual({ ...work, checkoutToken: typeof work.checkoutToken }, {
+      kind: "replay", replayId, repository: "acme/shop", commitSha: run.commit_sha, checkoutToken: "string", testId: "tests/test_a.py::test_two",
+      times: 10, seed: 7, fingerprint: "d".repeat(32), language: "python", env: { FENVIX_REPLAY_ID: String(replayId), FENVIX_REGION: "eu" },
+    });
+    const tokenCall = h.gh.exchanges.filter((x) => x.path.endsWith("/access_tokens")).at(-1)!;
+    assert.deepEqual(tokenCall.body, { repository_ids: [REPOS.shop.id], permissions: { contents: "read", metadata: "read" } });
+    // The machine boots, takes the lease, reports. Another machine's session (globex's) is refused.
+    const m = await boot(await instanceOf(lease.machine_id));
+    await poll(m.token);
+    const report = { leaseId: lease.id, done: 10, fails: 10, identicalFingerprint: true, matchesDefect: true, detail: "REPRODUCED: test order" };
+    const g = (await admin.query("select id, instance_id from gh_machines where workspace_id = $1 and state = 'bound' limit 1", [globex.workspaceId])).rows[0];
+    if (g) {
+      const { createHash } = await import("node:crypto");
+      await admin.query("update gh_machines set boot_secret_sha256 = $2 where id = $1", [g.id, createHash("sha256").update("2".repeat(64)).digest("hex")]);
+      const gt = String((await post("/v1/runner/machine/hello", { machineId: g.id, bootSecret: "2".repeat(64) })).body.token);
+      assert.equal((await post("/v1/runner/replays", report, gt)).status, 403, "another customer's machine cannot report this replay");
+    }
+    assert.equal((await post("/v1/runner/replays", { ...report, fails: 11 }, m.token)).status, 400);
+    assert.equal((await post("/v1/runner/replays", report, m.token)).status, 202);
+    const done = (await admin.query("select status, done, fails, identical_fingerprint, verdict, detail from gh_replays where id = $1", [replayId])).rows[0];
+    assert.deepEqual(done, { status: "done", done: 10, fails: 10, identical_fingerprint: true, verdict: "reproduced", detail: "REPRODUCED: test order" });
+    await post("/v1/runner/machine/events", { type: "finished", leaseId: lease.id }, m.token);
+    // flaky and passed
+    for (const [fails, verdict] of [[4, "flaky"], [0, "passed"]] as const) {
+      const id = (await h.app.service.requestReplay(ciRun, "tests/test_a.py::test_two", 10))!;
+      const l = (await admin.query("select id from gh_leases where replay_id = $1", [id])).rows[0];
+      await poll(m.token);
+      await post("/v1/runner/replays", { ...report, leaseId: l.id, fails }, m.token);
+      await post("/v1/runner/machine/events", { type: "finished", leaseId: l.id }, m.token);
+      assert.equal((await admin.query("select verdict from gh_replays where id = $1", [id])).rows[0].verdict, verdict);
+    }
+  });
+
   it("spot for bursts: above spotAbove running machines new machines are spot; an interruption re-runs the job", async () => {
     await admin.query("update gh_machines set state = 'gone' where state <> 'gone'");
     await admin.query("update gh_leases set state = 'done' where state in ('offered', 'running')");
@@ -315,6 +365,19 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
     assert.equal((await machine(s.machineId)).state, "retiring");
     await h.send("workflow_job", workflowJob("completed", { id: 1007, runId: 9407, sha: "2".repeat(40), branch: "feature", runner: "fenvix-j1007", conclusion: "failure" }));
     assert.deepEqual(h.gh.jobReruns, [{ repo: "acme/shop", jobId: 1007 }], "re-run once: the deterministic run gives the same result");
+  });
+
+  it("the nightly exploration's hook (F-04): an exploration lease never takes the always-on machine and always starts a spot machine", async () => {
+    await admin.query("update gh_machines set state = 'gone' where state <> 'gone'");
+    await admin.query("update gh_leases set state = 'done' where state in ('offered', 'running')");
+    await h.app.service.poolTick();
+    const ready = (await admin.query("select id from gh_machines where state in ('launching', 'ready') and workspace_id is null")).rows.map((r) => r.id);
+    const a = await pool.allocate({ kind: "exploration", workspaceId: acme.workspaceId, region: "eu", size: "standard" });
+    assert.ok("leaseId" in a);
+    const m = await machine(a.machineId);
+    assert.equal(m.market, "spot");
+    assert.ok(!ready.includes(a.machineId), "not the always-on or a reserve machine");
+    await pool.release(a.leaseId, "test", "done");
   });
 
   it("a machine that never says hello is terminated and its job goes back to pending; orphans in EC2 are terminated", async () => {

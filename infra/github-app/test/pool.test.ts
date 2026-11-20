@@ -123,7 +123,11 @@ describe("the stack: our machines (pool)", async () => {
   });
 
   it("the image: Ubuntu 24.04 parent, install.sh in a component under the 16,000-character limit, AMI tagged for the launcher", () => {
-    const [, comp] = resources(t, "AWS::ImageBuilder::Component")[0]!;
+    const comps = resources(t, "AWS::ImageBuilder::Component");
+    assert.equal(comps.length, 2, "the install component and the image tests (G-1745)");
+    const [, comp] = comps.find(([id]) => !id.includes("TestComponent"))!;
+    const [, tests] = comps.find(([id]) => id.includes("TestComponent"))!;
+    assert.match(tests.Properties.Data as string, /- name: test\n[\s\S]*fenvix-replay[\s\S]*fenvix machine image: ok/);
     const data = comp.Properties.Data as string;
     assert.ok(data.length <= COMPONENT_LIMIT, `${data.length}`);
     assert.match(data, /bash \/opt\/fenvix\/install\.sh/);

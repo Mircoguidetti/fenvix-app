@@ -100,5 +100,24 @@ got="$(slot read 1 fenvix-out/summary.json 2>/dev/null || true)"
 [ -z "$got" ] && ok "I5 root reads a slot's file as the slot user: a planted symlink to a root-only file gives nothing" || bad "I5 read through the symlink: $got"
 slot wipe 1
 
+# ---- I6: a replay lease: no runner; fenvix-replay (here a probe) runs as the slot user, in the sandbox; the checkout
+# token is the slot user's alone.
+cat >"$work/replay-probe" <<'PROBE'
+#!/usr/bin/env bash
+out=/srv/fenvix-iso-out
+{ echo "uid $(id -u)"; [ -r "$HOME/.fenvix/checkout-token" ] && echo "token readable"; echo "spec $(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("checkoutToken", "no-token-in-spec"))' "$1")"
+  ls /srv/fenvix-iso-slots-other 2>/dev/null | grep -q . && echo "FOUND other slot"; } >"$out/replay"
+PROBE
+chmod 0755 "$work/replay-probe"
+mkdir -p /srv/fenvix-iso-out && chmod 0777 /srv/fenvix-iso-out
+printf '{"kind":"replay","replayId":1,"repository":"a/b","commitSha":"%s","testId":"t","times":1,"checkoutToken":"ghs_secret","env":{}}' "$(printf 'c%.0s' $(seq 1 40))" >"$work/lease-r.json"
+slot prepare 1 "$work/lease-r.json" && FENVIX_REPLAY_COMMAND="$work/replay-probe" slot run 1 >/dev/null 2>&1
+got="$(cat /srv/fenvix-iso-out/replay 2>/dev/null)"
+if [[ "$got" == *"uid 20001"* && "$got" == *"token readable"* && "$got" == *"spec no-token-in-spec"* && "$got" != *FOUND* ]]; then
+  ok "I6 a replay runs as its slot user; the token is in the slot user's file only, not in the description"
+else bad "I6 replay slot: $got"; fi
+[ "$(stat -c '%U %a' "$work/slot/1/.fenvix/checkout-token" 2>/dev/null)" = "fenvix-s1 600" ] && ok "I6 the token file is the slot user's, mode 600" || bad "I6 token file: $(stat -c '%U %a' "$work/slot/1/.fenvix/checkout-token" 2>&1)"
+slot wipe 1; rm -rf /srv/fenvix-iso-out
+
 echo "isolation: $fails failed"
 exit $((fails > 0))

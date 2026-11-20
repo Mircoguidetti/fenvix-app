@@ -552,6 +552,75 @@ export class GitHubService {
     await this.dispatchPending();
   }
 
+  /**
+   * Replay one defect of a run N times on our machines (the dashboard's live view, P-049). Recorded at once
+   * (gh_replays, status waiting) and given a slot on a machine of the SAME customer when one is free.
+   */
+  async requestReplay(ciRunId: string, testId: string, times: number): Promise<number | null> {
+    const [j] = await this.db.q<{ installation_id: number; repository_id: number }>(
+      "select installation_id, repository_id from gh_jobs where ci_run_id = $1 order by job_id desc limit 1", [ciRunId]);
+    const [inst] = j ? await this.db.q<{ workspace_id: string | null }>("select workspace_id from gh_installations where installation_id = $1", [j.installation_id]) : [];
+    if (!j || !inst?.workspace_id) { this.log.warn({ run: ciRunId }, "replay: no such run of a linked installation"); return null; }
+    const [r] = await this.db.q<{ id: number }>(
+      "insert into gh_replays (workspace_id, ci_run_id, repository_id, test_id, times) values ($1, $2, $3, $4, $5) returning id",
+      [inst.workspace_id, ciRunId, j.repository_id, testId, times]);
+    await this.dispatchReplay(r!.id);
+    return r!.id;
+  }
+
+  /** Gives a waiting replay a slot and its work: the run's commit, a read-only checkout token, the defect's seed. */
+  async dispatchReplay(replayId: number): Promise<"leased" | "waiting" | "failed"> {
+    if (!this.pool) return "waiting";
+    const [rp] = await this.db.q<{ id: number; workspace_id: string; ci_run_id: string; repository_id: number; test_id: string; times: number; status: string }>(
+      "select * from gh_replays where id = $1", [replayId]);
+    if (!rp || rp.status !== "waiting") return "failed";
+    const repo = await this.repo(rp.repository_id);
+    const fail = async (why: string) => { await this.db.q("update gh_replays set status = 'failed', detail = left($2, 1000), finished_at = now() where id = $1", [replayId, why]); return "failed" as const; };
+    if (!repo) return fail("the repository is no longer installed");
+    const ctx = await this.db.tx(rp.workspace_id, async (c) => {
+      const run = (await c.query<{ commit_sha: string; project_id: string }>("select commit_sha, project_id from ci_runs where id = $1", [rp.ci_run_id])).rows[0];
+      const defect = run ? (await c.query<{ id: string; seed: number | null; fingerprint: string; language: string }>(
+        "select id, seed, fingerprint, language from ci_defects where project_id = $1 and test_id = $2 order by last_seen_at desc limit 1", [run.project_id, rp.test_id])).rows[0] : undefined;
+      const region = (await this.orgContext(c)).region;
+      return { run, defect, region };
+    });
+    if (!ctx.run) return fail("the run is gone");
+    const a = await this.pool.pool.allocate({ kind: "replay", replayId, workspaceId: rp.workspace_id, region: ctx.region, size: this.pool.pool.s.defaultSize });
+    if ("wait" in a) { await this.db.q("update gh_replays set detail = left($2, 1000) where id = $1", [replayId, `waiting: ${a.wait}`]); return "waiting"; }
+    try {
+      const tok = await this.gh.app.request<{ token: string }>("POST", `/app/installations/${repo.installation_id}/access_tokens`, {
+        body: { repository_ids: [repo.repository_id], permissions: { contents: "read", metadata: "read" } },
+      });
+      await this.pool.pool.offer(a.leaseId, {
+        kind: "replay", replayId, repository: repo.full_name, commitSha: ctx.run.commit_sha, checkoutToken: tok.data.token,
+        testId: rp.test_id, times: rp.times, seed: ctx.defect?.seed ?? null, fingerprint: ctx.defect?.fingerprint ?? null, language: ctx.defect?.language ?? null,
+        env: { FENVIX_REPLAY_ID: String(replayId), FENVIX_REGION: ctx.region },
+      });
+    } catch (e) {
+      await this.pool.pool.release(a.leaseId, "replay: no checkout token");
+      return fail(`no checkout token: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    await this.db.q("update gh_replays set status = 'running', defect_id = $2, started_at = now(), detail = '' where id = $1", [replayId, ctx.defect?.id ?? null]);
+    return "leased";
+  }
+
+  /**
+   * POST /v1/runner/replays (the machine's credential; the lease must be this machine's, for this replay). The
+   * verdict is the engine's numbers against the defect's stored fingerprint: reproduced (failed every time, one
+   * fingerprint), passed (never failed), flaky (anything between).
+   */
+  async receiveReplay(machineId: number, b: { leaseId: number; done: number; fails: number; identicalFingerprint: boolean; matchesDefect: boolean | null; detail: string }): Promise<boolean> {
+    const [l] = await this.db.q<{ replay_id: number | null }>("select replay_id from gh_leases where id = $1 and machine_id = $2 and kind = 'replay'", [b.leaseId, machineId]);
+    if (!l?.replay_id) return false;
+    const verdict = b.done === 0 ? null : b.fails === 0 ? "passed"
+      : b.fails === b.done && b.identicalFingerprint && b.matchesDefect !== false ? "reproduced" : "flaky";
+    await this.db.q(
+      `update gh_replays set status = 'done', done = $2, fails = $3, identical_fingerprint = $4, verdict = $5, detail = left($6, 1000), finished_at = now()
+        where id = $1 and status in ('running', 'waiting')`,
+      [l.replay_id, b.done, b.fails, b.identicalFingerprint, verdict, b.detail]);
+    return true;
+  }
+
   /** Jobs waiting for a slot, oldest first (every free slot and every tick). */
   async dispatchPending(limit = 20): Promise<number> {
     if (!this.pool) return 0;
@@ -580,7 +649,16 @@ export class GitHubService {
     const t = await this.pool.pool.tick();
     // Jobs GitHub already finished or cancelled while they waited never get a slot.
     await this.db.q("update gh_jobs set dispatch_state = 'none', dispatch_detail = 'GitHub ended the job before it got a machine' where dispatch_state = 'pending' and status <> 'queued'");
-    return { ...t, leased: await this.dispatchPending() };
+    const leased = await this.dispatchPending();
+    // Replays waiting for a slot (customer jobs first: they were dispatched above).
+    for (const r of await this.db.q<{ id: number }>("select id from gh_replays where status = 'waiting' order by created_at limit 10")) {
+      if (await this.dispatchReplay(r.id) === "waiting") break;
+    }
+    // A replay whose machine went away is failed, with the reason (the dashboard may ask again).
+    await this.db.q(`update gh_replays r set status = 'failed', detail = 'its machine went away', finished_at = now()
+      where r.status = 'running' and exists (select 1 from gh_leases l where l.replay_id = r.id and l.state = 'lost')
+        and not exists (select 1 from gh_leases l where l.replay_id = r.id and l.state in ('offered', 'running'))`);
+    return { ...t, leased };
   }
 
   private async launchRunner(jobId: number, installationId: number, repo: RepoFull): Promise<void> {

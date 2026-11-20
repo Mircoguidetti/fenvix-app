@@ -64,8 +64,18 @@ for k, v in env.items():
         sys.exit("bad setting " + k)
     print(f"{k}={v}")
 PY
-    python3 -I -c 'import json,sys; sys.stdout.write(json.load(open(sys.argv[1]))["jitConfig"])' "$work" \
-      | as_slot sh -c 'umask 077; cat >"$1"' _ "$home/.fenvix/jitconfig"
+    kind="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("kind", "job"))' "$work")"
+    if [ "$kind" = replay ]; then
+      # A replay is no GitHub job: no runner. Its description (without the token) and its checkout token, for the
+      # slot user only; fenvix-replay runs instead of the runner.
+      python3 -I -c 'import json,sys; w=json.load(open(sys.argv[1])); w.pop("checkoutToken", None); print(json.dumps(w))' "$work" \
+        | as_slot sh -c 'umask 077; cat >"$1"' _ "$home/.fenvix/replay.json"
+      python3 -I -c 'import json,sys; sys.stdout.write(json.load(open(sys.argv[1]))["checkoutToken"])' "$work" \
+        | as_slot sh -c 'umask 077; cat >"$1"' _ "$home/.fenvix/checkout-token"
+    else
+      python3 -I -c 'import json,sys; sys.stdout.write(json.load(open(sys.argv[1]))["jitConfig"])' "$work" \
+        | as_slot sh -c 'umask 077; cat >"$1"' _ "$home/.fenvix/jitconfig"
+    fi
     ;;
   run)
     [ -d "$home" ] || { echo "fenvix-slot: slot $n is not prepared" >&2; exit 2; }
@@ -88,6 +98,12 @@ PY
     # The agent's state and the machine's settings (root-only already) are not even mounted for the job.
     for d in /var/lib/fenvix-agent /etc/fenvix; do [ -d "$d" ] && mount -t tmpfs -o mode=0700,size=1m tmpfs "$d"; done
     cd "$home"
+    if [ -f "$home/.fenvix/replay.json" ]; then
+      exec setpriv --reuid "$uid" --regid "$uid" --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all -- \
+        env -i HOME="$home" USER="$user" LOGNAME="$user" PATH="/opt/fenvix/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+        LANG=C.UTF-8 FENVIX_OUT="$home/fenvix-out" ${FENVIX_GIT_BASE:+FENVIX_GIT_BASE="$FENVIX_GIT_BASE"} \
+        "${FENVIX_REPLAY_COMMAND:-/opt/fenvix/bin/fenvix-replay}" "$home/.fenvix/replay.json"
+    fi
     jit="$(as_slot cat -- "$home/.fenvix/jitconfig")"
     run="${FENVIX_SLOT_COMMAND:-$home/runner/run.sh}"
     exec setpriv --reuid "$uid" --regid "$uid" --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all -- \

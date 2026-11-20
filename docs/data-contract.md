@@ -426,6 +426,18 @@ retired, and a job that then fails on GitHub is re-run once).
 The job's records (progress, results, summaries below) go with the JOB's credential `summaryToken`, never the
 machine's: a job can only report on itself.
 
+#### Replays (`kind: "replay"`, the dashboard's "replay N times")
+
+The API enqueues Work `{kind: "replay", runId, testId, times}` (1 to 50). The App records `gh_replays` (status
+`waiting` -> `running` -> `done` | `failed`, with `detail`) and leases a slot on a machine of the SAME customer. The
+lease's work: `{kind: "replay", replayId, repository, commitSha, checkoutToken, testId, times, seed, fingerprint,
+language}` (`checkoutToken`: contents read, that one repository, one hour). In the slot, `fenvix-replay` checks out the
+commit, makes the project's Python environment, runs `fenvix repro TEST --seed <seed|fixed> --confirm N --json` and
+the machine sends, with its session credential, **`POST /v1/runner/replays`** `{leaseId, done, fails,
+identicalFingerprint, matchesDefect}` (`matchesDefect`: the replayed fingerprint is the defect's stored one, or null).
+Verdict stored: `reproduced` (failed every time, one fingerprint, the defect's), `passed` (never failed), `flaky`
+(anything else); `null` when nothing ran (the detail says why, e.g. the engine has no repro for that runner yet).
+
 #### The engine contract in a job's slot (runner side owns it, engine side honours it)
 
 Every step of the job sees these variables (the slot's runner `.env`):

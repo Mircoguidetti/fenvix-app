@@ -114,7 +114,7 @@ class Agent:
             time.sleep(2)
 
     def start_slot(self, lease: dict) -> None:
-        if lease.get("kind") != "job":
+        if lease.get("kind") not in ("job", "replay"):
             # A warm-up needs the engine's warm-up executor (runner/warmup.sh), which the trunk engine does not ship yet:
             # the lease ends at once and says so (the service then times the warm-up out as unsupported).
             self.event({"type": "finished", "leaseId": lease["leaseId"], "detail": f"unsupported: no {lease.get('kind')} executor in this engine"})
@@ -159,7 +159,27 @@ class Agent:
         except ValueError:
             return None
 
+    def replay_result(self, lease_id: int, n: int) -> None:
+        # The outcome fenvix-replay wrote, read AS THE SLOT USER, sent with the machine's session (the API checks that
+        # this lease is this machine's replay).
+        try:
+            out = subprocess.run([SLOT, "read", str(n), "fenvix-out/replay.json"], capture_output=True, timeout=60)
+            r = json.loads(out.stdout) if out.returncode == 0 and out.stdout else None
+        except (subprocess.SubprocessError, OSError, ValueError):
+            r = None
+        if not isinstance(r, dict):
+            r = {"done": 0, "fails": 0, "identicalFingerprint": False, "matchesDefect": None, "detail": "the replay wrote no outcome"}
+        body = {"leaseId": lease_id, "done": int(r.get("done") or 0), "fails": int(r.get("fails") or 0),
+                "identicalFingerprint": bool(r.get("identicalFingerprint")), "matchesDefect": r.get("matchesDefect"),
+                "detail": str(r.get("detail") or "")[:900]}
+        if body["fails"] > body["done"]:
+            body["fails"] = body["done"]
+        st, _b = self.api.post("/v1/runner/replays", body, self.api.token)
+        log(f"slot {n}: replay outcome sent ({st})")
+
     def finish(self, lease_id: int, n: int, detail: str, work: dict | None) -> None:
+        if work and work.get("kind") == "replay":
+            self.replay_result(lease_id, n)
         if work and work.get("kind") == "job" and work.get("summaryToken"):
             s = self.summary_of(n)
             env = work.get("env") or {}

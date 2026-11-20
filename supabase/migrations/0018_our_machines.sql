@@ -89,7 +89,8 @@ create table if not exists public.gh_leases (
   id bigint generated always as identity primary key,
   machine_id bigint not null references public.gh_machines (id),
   slot int not null check (slot between 1 and 16),
-  kind text not null check (kind in ('job', 'warmup', 'replay')),
+  -- exploration: the nightly exploration's hook (F-04): always a spot machine of the customer, never a GitHub job.
+  kind text not null check (kind in ('job', 'warmup', 'replay', 'exploration')),
   job_id bigint,
   warmup_id bigint,
   replay_id bigint,
@@ -105,7 +106,8 @@ create table if not exists public.gh_leases (
   taken_at timestamptz,
   finished_at timestamptz,
   check ((kind = 'job') = (job_id is not null)),
-  check ((kind = 'warmup') = (warmup_id is not null))
+  check ((kind = 'warmup') = (warmup_id is not null)),
+  check ((kind = 'replay') = (replay_id is not null))
 );
 -- One active lease per job (a lost lease's job gets a new one).
 create unique index if not exists gh_leases_one_per_job on public.gh_leases (job_id) where state in ('offered', 'running');
@@ -166,7 +168,30 @@ create or replace view public.gh_machine_minutes with (security_invoker = true) 
     from public.gh_machines m where m.bound_at is not null
    group by 1, 2, 3, 4, 5, 6;
 
--- 7. Webhook deliveries GitHub could not deliver (our API was down): asked for again once each (audit G-1771).
+-- 7. Replays: the dashboard asks to replay one defect of a run N times on our machines (P-049, Work kind replay).
+--    The machine checks out the run's commit, rebuilds the defect with the engine (fenvix repro TEST --seed S
+--    --confirm N) and reports: runs done, fails, one fingerprint or not, the verdict against the stored fingerprint.
+create table if not exists public.gh_replays (
+  id bigint generated always as identity primary key,
+  workspace_id uuid not null references public.workspaces (id) on delete cascade,
+  ci_run_id uuid not null,
+  defect_id uuid,
+  repository_id bigint not null,
+  test_id text not null check (char_length(test_id) between 1 and 2000),
+  times int not null default 10 check (times between 1 and 50),
+  status text not null default 'waiting' check (status in ('waiting', 'running', 'done', 'failed')),
+  done int check (done is null or done >= 0),
+  fails int check (fails is null or fails >= 0),
+  identical_fingerprint boolean,
+  verdict text check (verdict is null or verdict in ('reproduced', 'flaky', 'passed')),
+  detail text not null default '' check (char_length(detail) <= 1000),
+  created_at timestamptz not null default now(),
+  started_at timestamptz,
+  finished_at timestamptz
+);
+create index if not exists gh_replays_waiting on public.gh_replays (created_at) where status = 'waiting';
+
+-- 8. Webhook deliveries GitHub could not deliver (our API was down): asked for again once each (audit G-1771).
 create table if not exists public.gh_redeliveries (
   github_delivery_id bigint primary key,
   guid text not null,
@@ -176,6 +201,15 @@ create table if not exists public.gh_redeliveries (
 );
 
 -- ---------------------------------------------------------------- row level security
+alter table public.gh_replays enable row level security;
+revoke all on public.gh_replays from public, anon, authenticated;
+grant select, insert, update on public.gh_replays to fenvix_github_app;
+drop policy if exists gh_replays_github_app on public.gh_replays;
+create policy gh_replays_github_app on public.gh_replays for all to fenvix_github_app using (true) with check (true);
+-- The dashboard API: its organization's replays, read only.
+grant select on public.gh_replays to fenvix_api;
+drop policy if exists gh_replays_api_read on public.gh_replays;
+create policy gh_replays_api_read on public.gh_replays for select to fenvix_api using (workspace_id = public.api_workspace());
 alter table public.gh_redeliveries enable row level security;
 revoke all on public.gh_redeliveries from public, anon, authenticated;
 grant select, insert, update on public.gh_redeliveries to fenvix_github_app;

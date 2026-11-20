@@ -13,7 +13,7 @@ export const IMAGE_TEST = [
   "set -euo pipefail",
   "test -s /opt/fenvix/ENGINE && echo \"engine: $(cat /opt/fenvix/ENGINE)\"",
   "/opt/fenvix/venv/bin/python -c 'import detpy' && echo 'engine: the Python package loads'",
-  "test -x /opt/fenvix/actions-runner/run.sh && test -x /opt/fenvix/bin/fenvix-slot && test -x /opt/fenvix/bin/fenvix-agent",
+  "test -x /opt/fenvix/actions-runner/run.sh && test -x /opt/fenvix/bin/fenvix-slot && test -x /opt/fenvix/bin/fenvix-agent && test -x /opt/fenvix/bin/fenvix-replay",
   "python3 -I -c \"import ast,sys; ast.parse(open('/opt/fenvix/bin/fenvix-agent').read())\"",
   "systemctl is-enabled fenvix-agent.service fenvix-imds-block.service",
   "for n in $(seq 1 16); do id fenvix-s$n >/dev/null; done",
@@ -39,8 +39,21 @@ export function componentDocument(s: Settings): string {
     "      commands:",
     "      - |",
     script,
-    // Image tests (G-1745): on a machine started from the NEW image, the engine, the agent, the slot tool and the runner
-    // must be there and start; otherwise the image is not distributed and the newest good image stays in use.
+    "",
+  ].join("\n");
+}
+
+/**
+ * Image tests (G-1745), a component of their own (the install component is near Image Builder's size limit): on a
+ * machine started from the NEW image, the engine, the agent, the slot tool and the runner must be there and start;
+ * otherwise the image is not distributed and the newest good image stays in use.
+ */
+export function testComponentDocument(): string {
+  return [
+    "name: fenvix-machine-tests",
+    "description: the machine image starts what our machines need",
+    "schemaVersion: 1.0",
+    "phases:",
     "- name: test",
     "  steps:",
     "  - name: FenvixMachineStarts",
@@ -82,7 +95,8 @@ export class RunnerFleet extends Construct {
     // ---------------------------------------------------------------- the image
     const doc = componentDocument(s);
     if (doc.length > COMPONENT_LIMIT) throw new Error(`the image component is ${doc.length} characters (limit ${COMPONENT_LIMIT})`);
-    const version = contentVersion(doc + s.runnerVolumeGb);
+    const testDoc = testComponentDocument();
+    const version = contentVersion(doc + testDoc + s.runnerVolumeGb);
     this.engineVersion = s.engineVersion || "none";
     this.imageVersion = version;
     const component = new imagebuilder.CfnComponent(this, "Component", {
@@ -90,10 +104,14 @@ export class RunnerFleet extends Construct {
       description: "fenvix runner: install.sh from infra/github-app/lib/runner/files",
       supportedOsVersions: ["Ubuntu 24"],
     });
+    const testComponent = new imagebuilder.CfnComponent(this, "TestComponent", {
+      name: name("machine-tests"), platform: "Linux", version, data: testDoc,
+      description: "fenvix machine image tests", supportedOsVersions: ["Ubuntu 24"],
+    });
     const recipe = new imagebuilder.CfnImageRecipe(this, "Recipe", {
       name: name("runner"), version,
       parentImage: `ssm:${UBUNTU_2404_AMI_PARAMETER}`,
-      components: [{ componentArn: component.attrArn }],
+      components: [{ componentArn: component.attrArn }, { componentArn: testComponent.attrArn }],
       blockDeviceMappings: [{ deviceName: "/dev/sda1", ebs: { volumeSize: s.runnerVolumeGb, volumeType: "gp3", encrypted: true, deleteOnTermination: true } }],
     });
     const buildRole = new iam.Role(this, "BuildRole", {

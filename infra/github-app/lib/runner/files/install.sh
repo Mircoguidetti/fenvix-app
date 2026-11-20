@@ -68,6 +68,9 @@ tar -xzf "$tmp/engine.tgz" -C "$tmp"
 python3 -m venv /opt/fenvix/venv
 PYTHON=/opt/fenvix/venv/bin/python bash "$tmp/$top/install.sh" /opt/fenvix || die "the engine's install.sh failed"
 ln -sf /opt/fenvix/venv/bin/fenvix /usr/local/bin/fenvix 2>/dev/null || true
+# The engine's wheels stay on the image: a replay installs them into the project's own Python (fenvix-replay).
+install -d -m 0755 /opt/fenvix/wheels
+cp "$tmp/$top"/wheels/*.whl /opt/fenvix/wheels/ 2>/dev/null || true
 printf '%s sha256=%s\n' "$FENVIX_ENGINE_VERSION" "$FENVIX_ENGINE_SHA256" >/opt/fenvix/ENGINE
 chmod 0644 /opt/fenvix/ENGINE
 log "engine: $(cat /opt/fenvix/ENGINE)"

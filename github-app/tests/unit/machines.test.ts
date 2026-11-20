@@ -47,4 +47,11 @@ describe("our machines: settings, sealed leases, machine credentials, stop", () 
     assert.throws(() => parseWork({ kind: "stop_run", runId: id, when: "later" }), /not a work message/);
     assert.throws(() => parseWork({ kind: "stop_run", runId: "1; drop", when: "now" }), /not a work message/);
   });
+
+  it("replay work: a run id, a test id and 1 to 50 times", () => {
+    const id = "0f1e2d3c-4b5a-4968-8776-655443322110";
+    assert.deepEqual(parseWork({ kind: "replay", runId: id, testId: "t::x", times: 10 }), { kind: "replay", runId: id, testId: "t::x", times: 10 });
+    assert.throws(() => parseWork({ kind: "replay", runId: id, testId: "t::x", times: 51 }), /not a work message/);
+    assert.throws(() => parseWork({ kind: "replay", runId: id, testId: "", times: 5 }), /not a work message/);
+  });
 });

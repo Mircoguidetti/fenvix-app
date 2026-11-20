@@ -25,9 +25,15 @@ import type { PoolSettings } from "./settings.ts";
  */
 
 export interface AllocRequest {
-  kind: "job" | "warmup";
+  /**
+   * exploration: the nightly exploration's hook (F-04, not scheduled yet): it never takes the always-on or a reserve
+   * machine (those are for pull-request jobs) and a new machine for it is always spot (a lost machine restarts from the
+   * same seed).
+   */
+  kind: "job" | "warmup" | "replay" | "exploration";
   jobId?: number;
   warmupId?: number;
+  replayId?: number;
   workspaceId: string;
   region: Region;
   size: string;
@@ -121,8 +127,9 @@ export class MachinePool {
         "select count(*)::int as n from gh_machines where workspace_id = $1 and state in ('bound', 'retiring')", [r.workspaceId])).rows[0]!.n;
       if (mine >= maxMachines) return { wait: `this organization's ${mine} machines are busy (its limit is ${maxMachines})` };
 
+      const pr = r.kind !== "exploration";
       // 2. A clean running machine (the always-on one): bound to this customer now.
-      const ready = (await c.query<MachineRow>(
+      const ready = !pr ? undefined : (await c.query<MachineRow>(
         "select * from gh_machines where region = $1 and size = $2 and state = 'ready' order by hello_at nulls last, id limit 1 for update",
         [r.region, r.size])).rows[0];
       if (ready) {
@@ -130,7 +137,7 @@ export class MachinePool {
         return this.lease(c, ready.id, 1, r, "ready");
       }
       // 3. A reserve machine (stopped, never used): started for this customer with a fresh boot secret.
-      const reserve = (await c.query<MachineRow>(
+      const reserve = !pr ? undefined : (await c.query<MachineRow>(
         "select * from gh_machines where region = $1 and size = $2 and state = 'reserve' and instance_id is not null order by id limit 1 for update",
         [r.region, r.size])).rows[0];
       if (reserve) {
@@ -146,7 +153,7 @@ export class MachinePool {
         "select count(*)::int as n, count(*) filter (where state in ('bound', 'ready', 'starting', 'launching', 'preparing'))::int as running from gh_machines where region = $1 and state <> 'gone'",
         [r.region])).rows[0]!;
       if (live.n >= this.s.maxMachines) return { wait: `all ${live.n} machines of region ${r.region} are in use (limit ${this.s.maxMachines})` };
-      const market = live.running >= this.s.spotAbove ? "spot" as const : "on-demand" as const;
+      const market = !pr || live.running >= this.s.spotAbove ? "spot" as const : "on-demand" as const;
       const secret = randomBytes(32).toString("hex");
       const m = (await c.query<{ id: number }>(
         `insert into gh_machines (region, size, instance_type, market, slots, state, workspace_id, ever_bound, bound_at, boot_secret_sha256, launched_at)
@@ -162,8 +169,8 @@ export class MachinePool {
 
   private async lease(c: Client, machineId: number, slot: number, r: AllocRequest, path: "own" | "ready" | "reserve" | "new"): Promise<Alloc> {
     const l = (await c.query<{ id: number }>(
-      `insert into gh_leases (machine_id, slot, kind, job_id, warmup_id, workspace_id, path) values ($1, $2, $3, $4, $5, $6, $7) returning id`,
-      [machineId, slot, r.kind, r.jobId ?? null, r.warmupId ?? null, r.workspaceId, path])).rows[0]!;
+      `insert into gh_leases (machine_id, slot, kind, job_id, warmup_id, replay_id, workspace_id, path) values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+      [machineId, slot, r.kind, r.jobId ?? null, r.warmupId ?? null, r.replayId ?? null, r.workspaceId, path])).rows[0]!;
     await c.query("update gh_machines set empty_since = null where id = $1", [machineId]);
     return { leaseId: l.id, machineId, slot };
   }
@@ -233,6 +240,11 @@ export class MachinePool {
     this.o.log?.info({ machine: machineId, state: res.state, engine: engineVersion }, "machine said hello");
     const exp = Math.floor(this.now() / 1000) + MACHINE_TTL_SECONDS;
     return { token: signMachineCredential(this.o.keys[0]!, { machineId, gen: res.gen, exp }), mode: res.mode, pollSeconds: 2 };
+  }
+
+  /** Whether a machine credential is its machine's current session (not retired, not replaced by a newer hello). */
+  async alive(scope: MachineScope): Promise<boolean> {
+    return !!(await this.db.q("select 1 from gh_machines where id = $1 and session_gen = $2 and state not in ('retiring', 'gone')", [scope.machineId, scope.gen]))[0];
   }
 
   /** The machine's current session, or null (a stale credential: retired, or it said hello again). */
