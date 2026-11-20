@@ -56,7 +56,8 @@ export function OrgProvider({ children }: { children: ReactNode }) {
     const current = list.items.find((o) => o.id === active) ?? null;
     const role = current?.role ?? null;
     // Without the API the role is not known here; the server still decides.
-    const manage = list.status === "ready" ? canManage(role) : list.status !== "loading";
+    // Only a build without the API (the mock) offers every control; a failed load offers none (audit G-2276).
+    const manage = list.status === "ready" ? canManage(role) : list.status === "unavailable";
     return { status: list.status, orgs: list.items, current, role, canManage: manage, error: list.error, refresh, switchTo };
   }, [list, active, refresh, switchTo]);
 

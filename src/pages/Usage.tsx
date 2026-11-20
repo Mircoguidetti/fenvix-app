@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Download } from "lucide-react";
 import { client } from "../data";
-import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker, LoadError } from "../components/PageHeader";
 import { StackedBars } from "../components/charts";
 import { MinuteSum, SAVED_NOTE } from "../components/ci";
 import { Select } from "../components/Select";
@@ -52,7 +52,7 @@ export function UsagePage() {
   const [params, setParams] = useSearchParams();
   const months = useAsync(() => client.listUsageMonths(), []);
   const month = params.get("month") ?? (months.status === "ready" ? months.data[0] : "");
-  const report = useAsync(() => (month ? client.getUsage(month) : new Promise<never>(() => {})), [month]);
+  const report = useAsync(() => (month ? client.getUsage(month) : Promise.resolve(null)), [month]);
   const [exporting, setExporting] = useState(false);
 
   async function exportCsv() {
@@ -88,9 +88,12 @@ export function UsagePage() {
         </div>
       </div>
 
-      {report.status === "loading" && <Message>Loading usage</Message>}
-      {report.status === "error" && <Message role="alert">{report.message}</Message>}
-      {report.status === "ready" && (() => {
+      {months.status === "error" && <LoadError message={months.message} onRetry={months.reload} />}
+      {months.status === "ready" && months.data.length === 0 && <p className="muted">No usage yet: the first month appears once a test job has run on fenvix.</p>}
+      {months.status !== "error" && month !== "" && report.status === "loading" && <Message>Loading usage</Message>}
+      {months.status === "loading" && <Message>Loading usage</Message>}
+      {report.status === "error" && <LoadError message={report.message} onRetry={report.reload} />}
+      {report.status === "ready" && report.data && (() => {
         const u = report.data;
         return (
           <>

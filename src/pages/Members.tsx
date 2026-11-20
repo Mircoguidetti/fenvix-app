@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker, LoadError } from "../components/PageHeader";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { CopyButton } from "../components/CopyButton";
 import { useToast } from "../components/Toast";
@@ -50,6 +50,15 @@ export function MembersPage() {
   const [revoking, setRevoking] = useState<Invitation | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  if (orgs.available && org.status === "error") {
+    return (
+      <>
+        <PageHeader back={<Kicker>Organization</Kicker>} title="Members" description="Who can see this organization's projects, and what they can change." />
+        <LoadError message={org.error ?? "Could not load your organizations."} onRetry={() => void org.refresh()} />
+      </>
+    );
+  }
+  if (orgs.available && (org.status === "loading" || !org.current)) return <Message>Loading members</Message>;
   if (!orgs.available || !org.current || !role) {
     return (
       <>
@@ -181,7 +190,7 @@ export function MembersPage() {
       <Card id="members" title="Members" description={count !== null && limit !== null ? `${count} of ${limit} members.` : undefined}>
         {!org.canManage && <Message>You can see who is in this organization. Only an owner or admin can change it.</Message>}
         {members.status === "loading" && <Message>Loading members</Message>}
-        {members.status === "error" && <Message role="alert">{members.message}</Message>}
+        {members.status === "error" && <LoadError message={members.message} onRetry={members.reload} />}
         {members.status === "ready" && (
           <div className="table-card">
             <table className="data responsive members-table">
@@ -244,7 +253,7 @@ export function MembersPage() {
       {org.canManage && (
         <Card id="pending" title="Pending invitations" description="Invitations that have not been accepted yet.">
           {invites.status === "loading" && <Message>Loading invitations</Message>}
-          {invites.status === "error" && <Message role="alert">{invites.message}</Message>}
+          {invites.status === "error" && <LoadError message={invites.message} onRetry={invites.reload} />}
           {invites.status === "ready" && invites.data.length === 0 && <Message>No pending invitations.</Message>}
           {invites.status === "ready" && invites.data.length > 0 && (
             <div className="table-card">

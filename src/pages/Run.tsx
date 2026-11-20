@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { client, type Run, type RunFile, type SkipReceipt, type TestOutcome } from "../data";
 import { BadgeCheck, Check, X } from "lucide-react";
-import { Card, Message, PageHeader } from "../components/PageHeader";
+import { Card, Message, PageHeader, LoadError } from "../components/PageHeader";
 import { MinuteSum, OutcomePill, SAVED_NOTE, triggerLabel } from "../components/ci";
 import { RunStatusPill } from "../components/StateBadge";
 import { Pagination } from "../components/Pagination";
@@ -246,7 +246,7 @@ export function RunPage() {
   }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (data.status === "loading") return <Message>Loading run</Message>;
-  if (data.status === "error") return <Message role="alert">{data.message}</Message>;
+  if (data.status === "error") return <LoadError message={data.message} onRetry={data.reload} />;
   if (!data.data || !live.detail || data.data.run.projectId !== projectId)
     return (
       <div className="empty not-found">
@@ -425,7 +425,7 @@ export function RunPage() {
       >
         <SearchInput aria-label="Search tests" placeholder="Search by test id" value={search} onChange={(e) => setSearch(e.target.value)} />
         {tests.status === "loading" && <Message>Loading tests</Message>}
-        {tests.status === "error" && <Message role="alert">{tests.message}</Message>}
+        {tests.status === "error" && <LoadError message={tests.message} onRetry={tests.reload} />}
         {tests.status === "ready" && (
           <>
             {running ? (
@@ -476,7 +476,7 @@ export function RunPage() {
 
       <ConfirmDialog open={!!receiptId} title="Skipped with proof" confirmLabel="Close" hideCancel wide onConfirm={() => set({ receipt: null })} onCancel={() => set({ receipt: null })}>
         {receipt.status === "loading" && <Message>Loading the receipt</Message>}
-        {receipt.status === "error" && <Message role="alert">{receipt.message}</Message>}
+        {receipt.status === "error" && <LoadError message={receipt.message} onRetry={receipt.reload} />}
         {receipt.status === "ready" && receipt.data && (
           <>
             <p className="mono break-anywhere receipt-test">{receipt.data.testId}</p>

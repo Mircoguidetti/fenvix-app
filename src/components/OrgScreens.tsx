@@ -90,6 +90,28 @@ export function NameOrgScreen() {
   );
 }
 
+/**
+ * Your organizations could not be loaded (the API is down, offline, a 500): say so and offer to try again, instead of
+ * opening the dashboard on a made-up organization (audit G-2276).
+ */
+export function OrgLoadErrorScreen() {
+  const org = useOrg();
+  const [busy, setBusy] = useState(false);
+  return (
+    <Frame label="Could not load your organizations">
+      <h1>Could not load your organizations</h1>
+      <p className="error" role="alert">
+        {org.error ?? "Could not reach fenvix. Check your connection and try again."}
+      </p>
+      <div className="stack wide">
+        <button type="button" className="btn btn-primary btn-block btn-lg" disabled={busy} onClick={async () => (setBusy(true), await org.refresh(), setBusy(false))}>
+          Try again
+        </button>
+      </div>
+    </Frame>
+  );
+}
+
 /** Someone who belongs to no organization (they left, or were removed): they can join one by invitation. */
 export function NoOrgScreen() {
   return (

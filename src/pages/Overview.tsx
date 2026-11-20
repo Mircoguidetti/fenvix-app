@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { client } from "../data";
-import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker, LoadError, Await } from "../components/PageHeader";
 import { AreaSeriesChart, HBars, Sparkline, TimeBarsChart } from "../components/charts";
 import { MinuteSum, SAVED_NOTE, SkipShare, shortTest } from "../components/ci";
 import { ActivityList } from "./ProjectSections";
@@ -46,7 +46,7 @@ export function OverviewPage() {
       />
 
       {data.status === "loading" && <Message>Loading overview</Message>}
-      {data.status === "error" && <Message role="alert">{data.message}</Message>}
+      {data.status === "error" && <LoadError message={data.message} onRetry={data.reload} />}
       {data.status === "ready" && data.data.trial && (
         <Card
           id="trial"
@@ -196,7 +196,7 @@ export function OverviewPage() {
               </Card>
             </div>
             <Card id="activity" title="Live activity" description="Every project, newest first.">
-              {activity.status === "ready" ? <ActivityList items={activity.data} now={now} /> : <Message>Loading</Message>}
+              <Await state={activity} loading="Loading activity">{(items) => <ActivityList items={items} now={now} />}</Await>
             </Card>
           </>
         );

@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { Check } from "lucide-react";
 import { client, type Plan } from "../data";
-import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
+import { Card, Message, PageHeader, Kicker, LoadError } from "../components/PageHeader";
 import { useToast } from "../components/Toast";
 import { TRIAL_DESCRIPTION, TrialSummary } from "../components/Trial";
 import { useAsync } from "../lib/useAsync";
@@ -26,7 +26,7 @@ export function BillingPage() {
       <PageHeader back={<Kicker />} title="Billing" description="A monthly plan sized by your projects and your run units. A run unit is 10 baseline minutes of a fenvix machine, timed by GitHub, so a job fenvix makes faster costs less." />
 
       {billing.status === "loading" && <Message>Loading billing</Message>}
-      {billing.status === "error" && <Message role="alert">{billing.message}</Message>}
+      {billing.status === "error" && <LoadError message={billing.message} onRetry={billing.reload} />}
       {billing.status === "ready" && (() => {
         const b = billing.data;
         const list = plans.status === "ready" ? plans.data.filter((p) => p.kind === "plan") : [];

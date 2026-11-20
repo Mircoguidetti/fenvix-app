@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { takeSessionEnded } from "../lib/returnPath";
 import { useSearchParams } from "react-router-dom";
 import { CircleCheck } from "lucide-react";
 import { Logo } from "../components/Logo";
@@ -13,7 +14,7 @@ export function SignInPage() {
   const [params, setParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [sentTo, setSentTo] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(session.configError ?? null);
+  const [error, setError] = useState<string | null>(session.configError ?? (takeSessionEnded() ? "Your session has ended. Sign in again to go back where you were." : null));
   const [busy, setBusy] = useState(false);
   const token = params.get("token");
 
@@ -90,7 +91,7 @@ export function SignInPage() {
         </div>
       <div className="signin-card">
         <h1>Sign in</h1>
-        <p className="muted signin-lead">Welcome back. Pick how you want to sign in.</p>
+        <p className="muted signin-lead">Sign in, or create your account: the first sign-in creates it.</p>
 
         <div className="signin-providers">
           <button type="button" className="btn btn-block btn-lg" onClick={() => provider("github")} disabled={busy}>
@@ -139,9 +140,6 @@ export function SignInPage() {
           </p>
         )}
 
-        <p className="signin-terms muted small">
-          By continuing you agree to the <a href="https://fenvix.com/terms">Terms of Service</a> and the <a href="https://fenvix.com/privacy">Privacy Policy</a>.
-        </p>
       </div>
       </section>
     </main>
