@@ -653,6 +653,21 @@ const TESTS = {
     await page.getByRole("heading", { name: "Northwind Platform" }).waitFor();
   },
 
+  async "settings: one account, GitHub and Google both connected to it"(page) {
+    await signIn(page, "settings");
+    const card = page.locator("#sign-in-methods");
+    const list = card.getByRole("list", { name: "Connected sign-in methods" });
+    await list.getByText("GitHub").waitFor();
+    assert(!(await card.getByRole("button", { name: /^Disconnect/ }).count()), "the only sign-in method can be disconnected");
+    await card.getByRole("button", { name: "Connect Google" }).click();
+    await toast(page, "Google connected");
+    await list.getByText("Google").waitFor();
+    assert(!(await card.getByRole("button", { name: /^Connect/ }).count()), "a connected provider is still offered");
+    await card.getByRole("button", { name: "Disconnect Google" }).click();
+    await toast(page, "Google disconnected");
+    await card.getByRole("button", { name: "Connect Google" }).waitFor();
+  },
+
   async "navigation: breadcrumb at every level, one way back to all projects, the rail opens above everything"(page, vp) {
     if (isMobile(vp)) return;
     await signIn(page, "projects/prj_homehub/defects");

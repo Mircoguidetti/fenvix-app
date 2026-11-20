@@ -3,9 +3,17 @@ import { getSupabase } from "../lib/supabaseClient";
 import { friendlyError } from "../data/ci-rows";
 
 let redirectError: string | null = null;
+let redirectErrorCode: string | null = null;
 
 /** Set when the browser came back from a provider but the exchange failed. */
 export const lastRedirectError = () => redirectError;
+/** Supabase's error_code of that failure (e.g. identity_already_exists after connecting a provider), when it sent one. */
+export const lastRedirectErrorCode = () => redirectErrorCode;
+/** Forgets the failure once a screen has shown it. */
+export function clearRedirectError() {
+  redirectError = null;
+  redirectErrorCode = null;
+}
 
 /**
  * Finishes a sign-in redirect before the router renders.
@@ -22,7 +30,10 @@ export async function completeAuthRedirect(): Promise<void> {
   const failure = params.get("error_description") ?? params.get("error");
   if (!code && !failure) return;
 
-  if (failure) redirectError = decodeURIComponent(failure);
+  if (failure) {
+    redirectError = decodeURIComponent(failure);
+    redirectErrorCode = params.get("error_code");
+  }
   else if (configError) redirectError = configError;
   else {
     try {

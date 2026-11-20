@@ -151,6 +151,10 @@ Supabase sends people back to the dashboard after signing in (email links, provi
 2. **Site URL:** `https://console.fenvix.dev` → **Save**.
 3. **Redirect URLs → Add URL:** `https://console.fenvix.dev/**` → **Save URLs**. (If an address from an earlier setup is
    listed, such as the dashboard's former host, remove it: the trash icon on its row.)
+4. **Authentication** → **Sign In / Providers** → **User Signups** → turn on **Allow manual linking** → **Save
+   changes**. The dashboard's **Settings → Sign-in methods** uses it to connect GitHub and Google to one account.
+   (Supabase links a second provider on its own only when that provider reports a verified email the account already
+   has; otherwise a first sign-in with it makes a separate account.)
 
 The pipeline cannot set this itself without a Supabase management token, which would give it control of the whole
 Supabase account.

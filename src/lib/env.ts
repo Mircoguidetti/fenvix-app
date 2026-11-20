@@ -44,7 +44,7 @@ export function configProblem(env: { backend: Backend; apiUrl: string; supabaseU
 /** A message to show on the sign-in page instead of a broken screen when the environment is incomplete. */
 export const configError: string | null = configProblem({ backend, apiUrl, supabaseUrl, supabaseAnonKey });
 
-/** Where a provider sends the browser back to: the root of the site. */
-export function redirectTarget(): string {
-  return `${window.location.origin}/`;
+/** Where a provider sends the browser back to: the root of the site, or a page of it (connecting a provider: /settings). */
+export function redirectTarget(path = "/"): string {
+  return `${window.location.origin}${path}`;
 }
