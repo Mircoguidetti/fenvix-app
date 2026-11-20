@@ -253,8 +253,8 @@ export function DefectPage() {
           <div>
             <dt>Fingerprint</dt>
             <dd>
-              <code className="hash mono" title={d.fingerprint}>
-                {d.fingerprint}
+              <code className="hash mono" title={d.fingerprint ?? undefined}>
+                {d.fingerprint ?? "not replayed yet"}
               </code>
             </dd>
           </div>

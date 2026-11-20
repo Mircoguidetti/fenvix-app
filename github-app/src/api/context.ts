@@ -39,6 +39,10 @@ export interface Ctx {
   query: Record<string, any>;
   body: any;
   headers: Record<string, string | string[] | undefined>;
+  /** The API key the request came with (no person then: userId is ""), with its scopes. */
+  apiKey?: { id: string; scopes: ("read" | "replay")[] };
+  /** The request came through the remote MCP server. */
+  viaMcp?: boolean;
   /** Runs once the request's transaction has committed (never if it rolled back); a failure there is logged only. */
   afterCommit(fn: () => Promise<void>): void;
 }

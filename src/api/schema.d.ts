@@ -496,6 +496,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Newest first, at most `limit` (1,000) from `offset`; `total` is how many match. */
         get: operations["listDefects"];
         put?: never;
         post?: never;
@@ -539,6 +540,402 @@ export interface paths {
         get: operations["getDefect"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/defects/{defectId}/history": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                defectId: components["parameters"]["DefectId"];
+            };
+            cookie?: never;
+        };
+        /** @description Every run (with its commit, branch and pull request) and exploration that saw the defect, newest first, with the fingerprint and the divergent event of that time. */
+        get: operations["listDefectOccurrences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/defects/{defectId}/state": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                defectId: components["parameters"]["DefectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Fix, mute or reopen a defect (any member; not with an API key). A fixed defect seen again in a later run opens again. */
+        post: operations["setDefectState"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/defects/{defectId}/bundle": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                defectId: components["parameters"]["DefectId"];
+            };
+            cookie?: never;
+        };
+        /** @description The defect's replay bundle as the runner uploaded it: a .tar.gz of bundle.json, order.txt and the run's traces. `curl -H 'Authorization: Bearer $FENVIX_API_KEY' .../bundle | tar -xz` */
+        get: operations["getDefectBundle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/defects/{defectId}/replays": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                defectId: components["parameters"]["DefectId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listDefectReplays"];
+        put?: never;
+        /** @description Replays the defect on a fenvix machine (`fenvix replay` of its bundle, 10 times) at a commit (default: the newest commit that saw it). One replay in flight per defect; at most 10 a day. The result comes back to the defect: 10 of 10 passing on a later commit marks it fixed. */
+        post: operations["requestDefectReplay"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/replays/{replayId}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                replayId: string;
+            };
+            cookie?: never;
+        };
+        get: operations["getReplay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{runId}/cancel": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Stops a running run (the live view's Stop button; any member): its GitHub job is cancelled and its fenvix machine ended within a minute. */
+        post: operations["cancelRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{runId}/replays": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Replays one test of the run on a fenvix machine at the run's commit (the live view and the run page). For a test that is a defect, the defect's replay. */
+        post: operations["requestTestReplay"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{projectId}/exploration-settings": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["saveExplorationSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{projectId}/exploration-jobs": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listExplorationJobs"];
+        put?: never;
+        /** @description An exploration now (or for a pull request's commit), under the project's time cap and seed budget. One in flight per project. */
+        post: operations["requestExploration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{projectId}/skip/resume": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Skip with proof again after fenvix paused it (an audit rerun found a wrong skip). */
+        post: operations["resumeSkip"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{projectId}/disconnect": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Disconnects the repository and deletes the project with its runs, results, receipts, defects, bundles, replays and explorations. No machine runs its jobs until its setup is asked for again. */
+        post: operations["deleteProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organization/delete": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description An owner deletes the organization (typing its name) with everything in it. Its GitHub installations are unlinked; usage events are kept for billing. */
+        post: operations["deleteOrganization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organization/export": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The organization's data as JSON (projects, the newest 5,000 runs, defects with their history, explorations). Per-test results and receipts are read run by run (listTestResults, getSkipReceipt). */
+        get: operations["exportOrganization"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organization/audit-log": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Who changed what, newest first: members and roles, invitations, the organization's name and region, GitHub linked or unlinked, project settings and disconnections, API keys, defects' states. */
+        get: operations["listAuditEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Deletes the signed-in person's account. Refused while they are the only owner of an organization with other members; organizations where they are the only member are deleted with it. */
+        post: operations["deleteMe"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api-keys": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listApiKeys"];
+        put?: never;
+        post: operations["createApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api-keys/{keyId}/revoke": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                keyId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["revokeApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/github/installations/{installationId}/unlink": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                installationId: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Disconnects a GitHub account (installation) from the organization. Its projects and their data are deleted; the App stays installed on GitHub until it is uninstalled there. */
+        post: operations["unlinkInstallation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description The remote MCP server (Model Context Protocol 2025-06-18, streamable HTTP with JSON responses): initialize, tools/list, tools/call (list_runs, list_defects, get_defect, pull_bundle, request_replay, get_replay), ping. One JSON-RPC message per request. */
+        post: operations["mcp"];
         delete?: never;
         options?: never;
         head?: never;
@@ -863,6 +1260,107 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runner/bundles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description A defect's replay bundle from the job's own machine: base64 of a .tar.gz (bundle.json, order.txt, the run's traces), at most 4 MB. Send it after the results chunk that names the defect, or before: the defect is made either way. 503 with Retry-After while the job's run is not recorded yet. */
+        post: operations["postRunnerBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runner/replays": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description A replay machine's two reports (its own task credential only): started, then finished with passed, failed or error, runs, fails and the fingerprint. 10 of 10 passing on a later commit than the defect's last sighting marks the defect fixed. */
+        post: operations["postRunnerReplay"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runner/replays/{replayId}/bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The bundle the replay machine replays (its own replay only). */
+        get: operations["getRunnerReplayBundle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/healthz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["healthz"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description GitHub's webhook deliveries, signed with the webhook secret (X-Hub-Signature-256 over the raw body). Events handled: installation, installation_repositories, installation_target, repository, push, pull_request, workflow_job, workflow_run, check_run, check_suite, github_app_authorization; ping answers pong; any other event is recorded and answered 202 ignored. */
+        post: operations["githubWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/github/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Where GitHub sends the browser after an installation (OAuth callback). Always a 303 to the dashboard's /projects/connect with `github=confirm&installation=<id>&account=<login>#completion=<code>`, `github=requested`, or `github=error&reason=<reason>`, reason one of expired, incomplete, oauth, not_yours, github_not_admin, not_admin, other_organization, removed, used, github, error (docs/data-contract.md, "Linking an installation"). */
+        get: operations["githubSetup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -945,7 +1443,7 @@ export interface components {
         /** @enum {string} */
         TestRunner: "pytest" | "vitest" | "jest" | "go test";
         /** @enum {string} */
-        RunTrigger: "push" | "pull_request" | "merge_group" | "schedule" | "workflow_dispatch";
+        RunTrigger: "push" | "pull_request" | "merge_group" | "schedule" | "workflow_dispatch" | "other";
         /** @enum {string} */
         RunStatus: "running" | "passed" | "failed" | "cancelled";
         /**
@@ -997,6 +1495,13 @@ export interface components {
             connectedAt: string;
             baseline: components["schemas"]["Baseline"] | null;
             settings: components["schemas"]["ProjectSettings"];
+            /** @description fenvix paused skip with proof after an audit rerun found a wrong skip (resumeSkip); null: not paused */
+            skipPaused?: {
+                /** Format: date-time */
+                at: string;
+                reason: string;
+            } | null;
+            exploration?: components["schemas"]["ExplorationSettings"];
             warmCache: components["schemas"]["WarmCache"];
         };
         /**
@@ -1131,6 +1636,11 @@ export interface components {
                 wrongSkips: number;
             };
             region: components["schemas"]["Region"] | null;
+            /**
+             * Format: date-time
+             * @description someone stopped the run from the dashboard; it ends within a minute
+             */
+            cancelRequestedAt?: string | null;
             progress: components["schemas"]["RunProgress"] | null;
         };
         RunPage: {
@@ -1304,22 +1814,192 @@ export interface components {
             recent: components["schemas"]["AuditRerun"][];
         };
         /** @enum {string} */
-        DefectCause: "polluter" | "state_setter" | "fails_alone";
+        DefectCause: "polluter" | "state_setter" | "fails_alone" | "async_order" | "thread" | "clock" | "random" | "network" | "filesystem" | "environment" | "unknown";
+        AuditEvent: {
+            id: number;
+            /** Format: date-time */
+            at: string;
+            actor: {
+                /** @enum {string} */
+                kind: "person" | "api_key" | "fenvix";
+                id: string | null;
+                email: string | null;
+            };
+            action: string;
+            target: string;
+            detail: Record<string, never>;
+        };
+        DefectOccurrence: {
+            id: string;
+            /** @enum {string} */
+            source: "run" | "exploration";
+            runId: string | null;
+            runNumber: number | null;
+            explorationId: string | null;
+            commitSha: string | null;
+            branch: string | null;
+            pullRequest: number | null;
+            fingerprint: string | null;
+            /** @description the fingerprint differs from the defect's previous sighting */
+            fingerprintChanged: boolean;
+            divergence: {
+                index: number;
+                reason: string;
+                description: string;
+            } | null;
+            seed: number | null;
+            engineVersion: string;
+            /** @enum {string} */
+            status: "reproduced" | "replay_unstable" | "reported";
+            /** Format: date-time */
+            seenAt: string;
+        };
+        DefectStateChange: {
+            /** @enum {string} */
+            state: "open" | "fixed" | "muted";
+            reason?: string;
+        };
+        DefectBundle: {
+            id: string;
+            sha256: string;
+            sizeBytes: number;
+            /** Format: date-time */
+            receivedAt: string;
+        };
+        Replay: {
+            id: string;
+            defectId: string | null;
+            runId: string | null;
+            projectId: string;
+            testId: string;
+            commitSha: string;
+            /** @enum {string} */
+            status: "requested" | "dispatched" | "running" | "passed" | "failed" | "error" | "cancelled";
+            detail: string;
+            runs: number | null;
+            fails: number | null;
+            fingerprint: string | null;
+            identicalFingerprint: boolean | null;
+            /** @enum {string} */
+            requestedVia: "dashboard" | "api_key" | "mcp" | "pull_request";
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            finishedAt: string | null;
+        };
+        ReplayRequest: {
+            commitSha?: string;
+        };
+        ExplorationSettings: {
+            hourUtc: number;
+            budgetSeconds: number;
+            seeds: number;
+            /**
+             * @description unstable: only the tests of open defects and tests that failed in the last 14 days
+             * @enum {string}
+             */
+            target: "all" | "unstable";
+        };
+        ExplorationJob: {
+            id: string;
+            projectId: string;
+            /** @enum {string} */
+            reason: "nightly" | "pull_request" | "manual";
+            /** @enum {string} */
+            status: "pending" | "dispatched" | "running" | "finished" | "failed" | "cancelled";
+            detail: string;
+            commitSha: string | null;
+            budgetSeconds: number;
+            seeds: number;
+            targets: string[];
+            explorationId: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            finishedAt: string | null;
+        };
+        ApiKey: {
+            id: string;
+            name: string;
+            /** @description the key's first 10 characters (fxk_ and 6), to recognise it */
+            prefix: string;
+            scopes: ("read" | "replay")[];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string | null;
+            /** Format: date-time */
+            lastUsedAt: string | null;
+            /** Format: date-time */
+            revokedAt: string | null;
+        };
+        ApiKeyRequest: {
+            name: string;
+            /**
+             * @default [
+             *       "read"
+             *     ]
+             */
+            scopes: ("read" | "replay")[];
+            expiresInDays?: number;
+        };
+        ApiKeyCreated: components["schemas"]["ApiKey"] & {
+            /** @description the key itself, shown this once */
+            key: string;
+        };
+        OrganizationExport: {
+            /** Format: date-time */
+            exportedAt: string;
+            organization: Record<string, never>;
+            projects: components["schemas"]["Project"][];
+            runs: components["schemas"]["Run"][];
+            defects: components["schemas"]["Defect"][];
+            occurrences: Record<string, never>[];
+            explorations: components["schemas"]["Exploration"][];
+        };
+        RunnerBundle: components["schemas"]["RunnerJob"] & {
+            testId: string;
+            fingerprint?: string;
+            /** @description of the decoded content; checked when given */
+            sha256?: string;
+            /** @description base64 of the .tar.gz, at most 4 MB decoded */
+            content: string;
+        };
+        RunnerReplayReport: {
+            /** Format: uuid */
+            replayId: string;
+            /** @enum {string} */
+            event: "started" | "finished";
+            /**
+             * @description required with finished: passed = the minimal order passed every replay
+             * @enum {string}
+             */
+            outcome?: "passed" | "failed" | "error";
+            runs?: number;
+            fails?: number;
+            fingerprint?: string;
+            identicalFingerprint?: boolean;
+            detail?: string;
+            command?: string;
+        };
         Defect: {
             id: string;
             projectId: string;
             projectName: string;
             testId: string;
+            /**
+             * @description reported: the run's summary named it flaky (failed in the suite, passed alone) and no bundle has come yet
+             * @enum {string}
+             */
+            status: "reproduced" | "replay_unstable" | "reported";
             /** @enum {string} */
-            status: "reproduced" | "replay_unstable";
-            /** @enum {string} */
-            state: "open" | "fixed";
+            state: "open" | "fixed" | "muted";
             cause: components["schemas"]["DefectCause"];
             causeTests: string[];
             minimalOrder: string[];
             prefixLength: number;
             seed: number | null;
-            fingerprint: string;
+            fingerprint: string | null;
             replays: {
                 runs: number;
                 fails: number;
@@ -1351,6 +2031,22 @@ export interface components {
             testRunner: components["schemas"]["TestRunner"];
             /** @description The replay command the runner sent with the bundle (e.g. the engine's own command); null: the dashboard builds it from the seed and the minimal order. */
             replayCommand: string | null;
+            stateReason?: string | null;
+            /** Format: date-time */
+            stateChangedAt?: string | null;
+            bundle?: components["schemas"]["DefectBundle"] | null;
+            lastReplay?: components["schemas"]["Replay"] | null;
+            /** @description fetches the bundle with an API key (curl and tar) */
+            pullCommand?: string;
+            /** @description Passo 3's culprit verdict, when the engine delivers it */
+            culprit?: {
+                summary: string;
+                url?: string | null;
+            } | null;
+            /** @description Passo 3's dependency verdict, when the engine delivers it */
+            dependencyVerdict?: {
+                summary: string;
+            } | null;
         };
         DefectFamily: {
             key: string;
@@ -1637,8 +2333,11 @@ export interface components {
             testId: string;
             /** @enum {string} */
             status: "reproduced" | "replay_unstable";
-            /** @enum {string} */
-            kind: "order" | "brittle" | "fails-alone";
+            /**
+             * @description order dependence (order, brittle, fails-alone) or the kind of the first divergent event (async-order, thread, clock, random, network, fs, env)
+             * @enum {string}
+             */
+            kind: "order" | "brittle" | "fails-alone" | "async-order" | "thread" | "clock" | "random" | "network" | "fs" | "env";
             polluters?: string[];
             setters?: string[];
             order: string[];
@@ -1767,7 +2466,10 @@ export interface components {
         PageSize: number;
         MonthPath: components["schemas"]["Month"];
         DefectProject: string;
-        DefectState: "open" | "fixed" | "all";
+        DefectState: "open" | "fixed" | "muted" | "all";
+        DefectId: string;
+        Limit: number;
+        Offset: number;
     };
     requestBodies: never;
     headers: never;
@@ -2575,6 +3277,8 @@ export interface operations {
             query?: {
                 projectId?: components["parameters"]["DefectProject"];
                 state?: components["parameters"]["DefectState"];
+                limit?: components["parameters"]["Limit"];
+                offset?: components["parameters"]["Offset"];
             };
             header: {
                 /** @description The organization the request is for. The person must be a member of it. */
@@ -2593,6 +3297,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         items: components["schemas"]["Defect"][];
+                        total?: number;
                     };
                 };
             };
@@ -2604,6 +3309,8 @@ export interface operations {
             query?: {
                 projectId?: components["parameters"]["DefectProject"];
                 state?: components["parameters"]["DefectState"];
+                limit?: components["parameters"]["Limit"];
+                offset?: components["parameters"]["Offset"];
             };
             header: {
                 /** @description The organization the request is for. The person must be a member of it. */
@@ -2650,6 +3357,614 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Defect"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listDefectOccurrences: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["Limit"];
+                offset?: components["parameters"]["Offset"];
+            };
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                defectId: components["parameters"]["DefectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["DefectOccurrence"][];
+                        total: number;
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setDefectState: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                defectId: components["parameters"]["DefectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DefectStateChange"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Defect"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDefectBundle: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                defectId: components["parameters"]["DefectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bundle */
+            200: {
+                headers: {
+                    "x-fenvix-bundle-sha256"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listDefectReplays: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                defectId: components["parameters"]["DefectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Replay"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    requestDefectReplay: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                defectId: components["parameters"]["DefectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ReplayRequest"];
+            };
+        };
+        responses: {
+            /** @description Requested */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Replay"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getReplay: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                replayId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Replay"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    cancelRun: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Requested */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    requestTestReplay: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    testId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Requested */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Replay"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    saveExplorationSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExplorationSettings"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExplorationSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listExplorationJobs: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first (50) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ExplorationJob"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    requestExploration: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    commitSha?: string;
+                    testIds?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Requested */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExplorationJob"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    resumeSkip: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteProject: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteOrganization: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    confirmName: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    exportOrganization: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationExport"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAuditEvents: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["Limit"];
+                offset?: components["parameters"]["Offset"];
+            };
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["AuditEvent"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listApiKeys: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ApiKey"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createApiKey: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApiKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Created; key is shown this once */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyCreated"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revokeApiKey: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                keyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKey"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    unlinkInstallation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                installationId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unlinked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    mcp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description A JSON-RPC response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description A notification was accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };
@@ -3003,6 +4318,156 @@ export interface operations {
         responses: {
             202: components["responses"]["Accepted"];
             default: components["responses"]["Error"];
+        };
+    };
+    postRunnerBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerBundle"];
+            };
+        };
+        responses: {
+            202: components["responses"]["Accepted"];
+            default: components["responses"]["Error"];
+        };
+    };
+    postRunnerReplay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerReplayReport"];
+            };
+        };
+        responses: {
+            202: components["responses"]["Accepted"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getRunnerReplayBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                replayId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    healthz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The service answers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok: boolean;
+                    };
+                };
+            };
+        };
+    };
+    githubWebhook: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-GitHub-Event": string;
+                "X-GitHub-Delivery": string;
+                "X-Hub-Signature-256": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description ping */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Accepted (handled in the background) or ignored */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    githubSetup: {
+        parameters: {
+            query?: {
+                installation_id?: number;
+                setup_action?: "install" | "update" | "request";
+                code?: string;
+                state?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Never: every answer is the 303 redirect */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description To the dashboard */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
 }

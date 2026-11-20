@@ -4,11 +4,14 @@ import { createSign, type KeyObject } from "node:crypto";
 export class GitHubError extends Error {
   readonly status: number;
   readonly body: unknown;
-  constructor(status: number, method: string, path: string, body: unknown) {
+  /** A rate limit: the seconds GitHub asked to wait. */
+  readonly retryAfterSeconds: number | null;
+  constructor(status: number, method: string, path: string, body: unknown, retryAfterSeconds: number | null = null) {
     const msg = typeof body === "object" && body && "message" in body ? String((body as { message: unknown }).message) : "";
     super(`GitHub ${method} ${path} answered ${status}${msg ? `: ${msg}` : ""}`);
     this.status = status;
     this.body = body;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -20,6 +23,18 @@ export interface RequestOptions {
 }
 
 export interface Response<T> { status: number; data: T }
+
+/** Seconds GitHub asks to wait (a rate limit's 403 or 429), or null when the answer is no rate limit. */
+export function rateLimitWait(res: { status: number; headers: { get(name: string): string | null } }, now = Date.now()): number | null {
+  if (res.status !== 403 && res.status !== 429) return null;
+  const after = res.headers.get("retry-after");
+  if (after && /^\d+$/.test(after)) return Number(after);
+  if (res.headers.get("x-ratelimit-remaining") === "0") {
+    const reset = Number(res.headers.get("x-ratelimit-reset") ?? NaN);
+    return Number.isFinite(reset) ? Math.max(1, Math.ceil(reset - now / 1000)) : 60;
+  }
+  return res.status === 429 ? 60 : null;
+}
 
 const b64url = (b: Buffer | string) => Buffer.from(b).toString("base64url");
 
@@ -56,9 +71,21 @@ export class GitHubHttp {
       authorization: `${this.scheme} ${await this.token()}`,
     };
     if (o.body !== undefined) headers["content-type"] = "application/json";
-    const res = await fetch(url, {
+    const send = () => fetch(url, {
       method, headers, body: o.body === undefined ? undefined : JSON.stringify(o.body), signal: AbortSignal.timeout(this.timeoutMs),
     });
+    let res = await send();
+    // GitHub's rate limits (G-1727): a primary limit (x-ratelimit-remaining 0) or a secondary one (retry-after). A short
+    // wait is waited once; a longer one fails the work with when to try again (the queue retries it later).
+    const wait = rateLimitWait(res);
+    if (wait !== null) {
+      if (wait <= 10) {
+        await new Promise((r) => setTimeout(r, wait * 1000));
+        res = await send();
+      }
+      const again = rateLimitWait(res);
+      if (again !== null) throw new GitHubError(res.status, method, path, { message: `GitHub rate limit: try again in ${again} s` }, again);
+    }
     const text = await res.text();
     let data: unknown = null;
     if (text) { try { data = JSON.parse(text); } catch { data = text; } }

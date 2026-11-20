@@ -154,8 +154,15 @@ export class FakeGitHub {
 
   private notFound(): [number, Json] { return [404, { message: "Not Found", documentation_url: "https://docs.github.com/rest", status: "404" }]; }
 
+  /** Extra routes a test adds (consulted first): GitHub endpoints the fake does not model, answered as the test says. */
+  readonly extra: { method: string; path: RegExp; answer: (m: RegExpExecArray, body: unknown, q: Record<string, string>) => [number, unknown] }[] = [];
+
   private route(method: string, p: string, q: Record<string, string>, body: unknown, auth: string): [number, unknown] {
     let m: RegExpExecArray | null;
+    for (const x of this.extra) {
+      const hit = x.method === method ? x.path.exec(p) : null;
+      if (hit) return x.answer(hit, body, q);
+    }
     // ---- OAuth (github.com, not the API)
     if (method === "POST" && p === "/login/oauth/access_token") {
       const code = (body as { code?: string })?.code ?? "";

@@ -32,13 +32,16 @@ export interface RunnerReceipt {
   runtime?: Record<string, unknown>; config?: Record<string, unknown>; changedFilesProven?: number;
 }
 export interface RunnerDefect {
-  testId: string; status: "reproduced" | "replay_unstable"; kind: "order" | "brittle" | "fails-alone";
+  testId: string; status: "reproduced" | "replay_unstable"; kind: DefectKind;
   polluters?: string[]; setters?: string[]; order: string[]; prefixLength?: number; seed?: number | null; fingerprint: string;
   replay: { runs: number; fails: number; identicalFingerprint: boolean }; outcome?: string;
   exception: { type: string; phase: string; message: string; location: string };
   divergence?: { index: number; reason: string; description: string } | null;
   engineVersion?: string; language?: "python" | "node"; replayCommand?: string;
 }
+/** The bundle's `kind`: order dependence (order, brittle, fails-alone) or the kind of the first divergent event. */
+export const DEFECT_KINDS = ["order", "brittle", "fails-alone", "async-order", "thread", "clock", "random", "network", "fs", "env"] as const;
+export type DefectKind = (typeof DEFECT_KINDS)[number];
 export interface RunnerAuditRerun { testId: string; cacheKey: string; outcome: "confirmed" | "wrong_skip"; untrusted?: boolean; detail?: string }
 export type MissKind = "new" | "failed-before" | "config" | "runtime" | "clock" | "env" | "data" | "code";
 export interface MissDetail { kind: MissKind; detail: string; tests: number }
@@ -209,7 +212,7 @@ export function parseDefect(v: unknown, path: string): RunnerDefect {
   return def({
     testId: text(need(o, "testId", path), at(path, "testId"), 2000),
     status: oneOf(need(o, "status", path), at(path, "status"), ["reproduced", "replay_unstable"] as const),
-    kind: oneOf(need(o, "kind", path), at(path, "kind"), ["order", "brittle", "fails-alone"] as const),
+    kind: oneOf(need(o, "kind", path), at(path, "kind"), DEFECT_KINDS),
     polluters: opt(o, "polluters", path, strings()),
     setters: opt(o, "setters", path, strings()),
     order: list(need(o, "order", path), at(path, "order"), (x, p) => text(x, p), { min: 1 }),
@@ -303,10 +306,19 @@ export function parseExploration(raw: unknown): RunnerExploration {
 
 // ---------------------------------------------------------------- mapping a defect bundle to the dashboard's record
 
-export type DefectCause = "polluter" | "state_setter" | "fails_alone";
+export type DefectCause =
+  | "polluter" | "state_setter" | "fails_alone" | "async_order" | "thread" | "clock" | "random" | "network" | "filesystem" | "environment" | "unknown";
 
-/** order → polluter, brittle → state_setter (the test fails without it), fails-alone → fails_alone. */
-export const causeOf = (kind: RunnerDefect["kind"]): DefectCause => (kind === "order" ? "polluter" : kind === "brittle" ? "state_setter" : "fails_alone");
+/**
+ * The bundle's kind as the defect's cause: order → polluter, brittle → state_setter (the test fails without it),
+ * fails-alone → fails_alone; the kinds of the divergent event beyond order dependence (L1/L2: async-order, thread,
+ * clock, random, network, fs, env) map one to one (G-0633).
+ */
+const CAUSE_OF: Record<DefectKind, DefectCause> = {
+  order: "polluter", brittle: "state_setter", "fails-alone": "fails_alone", "async-order": "async_order", thread: "thread",
+  clock: "clock", random: "random", network: "network", fs: "filesystem", env: "environment",
+};
+export const causeOf = (kind: RunnerDefect["kind"]): DefectCause => CAUSE_OF[kind];
 
 /** polluters for order, setters for brittle, none for fails-alone. */
 export const causeTestsOf = (d: Pick<RunnerDefect, "kind" | "polluters" | "setters">): string[] =>
@@ -328,6 +340,43 @@ export const isNewerProgress = (stored: { seq?: unknown } | null | undefined, se
   const s = stored && typeof stored.seq === "number" ? stored.seq : -1;
   return seq > s;
 };
+
+// ---------------------------------------------------------------- bundles and replays (POST /v1/runner/bundles, /v1/runner/replays)
+
+/** A defect bundle's largest size (raw, before base64): API Gateway and Lambda cap a request near 6 MB. */
+export const BUNDLE_MAX_BYTES = 4 * 1024 * 1024;
+
+export interface RunnerBundle extends RunnerJob { testId: string; fingerprint?: string; sha256?: string; content: string }
+
+export function parseBundle(raw: unknown): RunnerBundle {
+  const o = obj(raw, "");
+  return def({
+    ...job(o),
+    testId: text(need(o, "testId", ""), "testId", 2000),
+    fingerprint: opt(o, "fingerprint", "", (v, p) => text(v, p, undefined, HEX32)),
+    sha256: opt(o, "sha256", "", (v, p) => text(v, p, undefined, /^[0-9a-f]{64}$/)),
+    content: text(need(o, "content", ""), "content", Math.ceil(BUNDLE_MAX_BYTES / 3) * 4 + 4, /^[A-Za-z0-9+/]*={0,2}$/),
+  });
+}
+
+export function parseReplayReport(raw: unknown): import("../tasks/tasks.ts").ReplayReport {
+  const o = obj(raw, "");
+  const event = oneOf(need(o, "event", ""), "event", ["started", "finished"] as const);
+  const r = def({
+    replayId: text(need(o, "replayId", ""), "replayId", undefined, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
+    event,
+    outcome: opt(o, "outcome", "", (v, p) => oneOf(v, p, ["passed", "failed", "error"] as const)),
+    runs: opt(o, "runs", "", (v, p) => int(v, p, 0, 1000)),
+    fails: opt(o, "fails", "", (v, p) => int(v, p, 0, 1000)),
+    fingerprint: opt(o, "fingerprint", "", (v, p) => text(v, p, undefined, HEX32)),
+    identicalFingerprint: opt(o, "identicalFingerprint", "", bool),
+    detail: opt(o, "detail", "", (v, p) => text(v, p, 2000)),
+    command: opt(o, "command", "", (v, p) => text(v, p, 4000)),
+  });
+  if (event === "finished" && r.outcome === undefined) throw new RecordError("outcome", "is required when event is finished");
+  if (r.fails !== undefined && r.runs !== undefined && r.fails > r.runs) throw new RecordError("fails", "must be at most runs");
+  return r;
+}
 
 // ---------------------------------------------------------------- warm-up machines (POST /v1/runner/warmups)
 

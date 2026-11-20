@@ -1,7 +1,13 @@
 import type { RunSummary } from "./summary.ts";
 
-/** What GitHub calls the check run on the commit. */
+/** What GitHub calls the check runs: "fenvix" and, per job, "fenvix / <job>". */
 export const CHECK_NAME = "fenvix";
+
+/**
+ * The check run of one job (G-1645): two fenvix jobs on a commit (a matrix, two test jobs) get two check runs that
+ * branch protection and a reader can tell apart. GitHub caps a check run's name at 100 characters.
+ */
+export const checkName = (jobName: string) => `${CHECK_NAME} / ${jobName}`.slice(0, 100);
 /** Marks the one fenvix comment on a pull request, so it is found and updated in place. */
 export const COMMENT_MARKER = "<!-- fenvix:run-summary -->";
 
@@ -114,7 +120,7 @@ export function checkRunOutput(s: RunSummary | null, ctx: RenderContext): { titl
   if (nc.length) T.push(`Not cacheable (the test touched something the engine cannot prove): ${nc.map(([k, v]) => `${k} ${n(v)}`).join(", ")}.`);
   if (s.runtimeChanged.length) T.push(`The machine's runtime changed since the previous run: ${s.runtimeChanged.slice(0, 10).map(code).join(", ")}.`);
   T.push("Test time: run " + minutes(s.testSecondsRun) + ", skipped with proof " + minutes(s.testSecondsSaved) + ".");
-  if (s.engineVersion) T.push(`Engine: detpy ${s.engineVersion}.`);
+  if (s.engineVersion) T.push(`Engine: ${s.stack?.language === "node" ? "detjs" : "detpy"} ${s.engineVersion}.`);
   let summary = S.join("\n");
   if (summary.length > 65_000) summary = summary.slice(0, 64_900) + "\n\n(cut: see the run on fenvix)";
   return { title: title(s, c), summary, text: T.join("\n\n") };

@@ -27,11 +27,11 @@ const PROJECTS = `select p.*, g.* from public.ci_projects p
     where r.project_id = p.id order by r.removed_at nulls first, r.repository_id limit 1) g on true
   where p.workspace_id = $1`;
 
-async function projects(t: Tx, ws: string): Promise<Project[]> {
+export async function projects(t: Tx, ws: string): Promise<Project[]> {
   return (await t.q(`${PROJECTS} order by p.full_name`, [ws])).map(mapProject);
 }
 
-async function project(t: Tx, ws: string, id: string): Promise<Project> {
+export async function project(t: Tx, ws: string, id: string): Promise<Project> {
   const r = await t.one(`${PROJECTS} and p.id = $2`, [ws, id]);
   if (!r) throw notFound(NO_PROJECT);
   return mapProject(r);
@@ -39,9 +39,14 @@ async function project(t: Tx, ws: string, id: string): Promise<Project> {
 
 const runs = async (t: Tx, sql: string, params: unknown[]): Promise<Run[]> => (await t.q(`select * from public.ci_runs where ${sql}`, params)).map(mapRun);
 
-async function defects(t: Tx, ws: string, where: string, params: unknown[], all: Project[]) {
+/** A defect row with its current bundle's facts and its newest replay (the API's Defect record). */
+export const DEFECT_ROWS = `select d.*, b.sha256 as bundle_sha256, b.size_bytes as bundle_size, b.received_at as bundle_received_at,
+    (select row_to_json(x) from (select * from public.ci_replays rp where rp.id = d.last_replay_id) x) as last_replay
+  from public.ci_defects d left join public.ci_defect_bundles b on b.id = d.bundle_id`;
+
+async function defects(t: Tx, ws: string, where: string, params: unknown[], all: Project[], page: { limit: number; offset: number } = { limit: 100_000, offset: 0 }) {
   const byId = new Map(all.map((p) => [p.id, p]));
-  const rows = await t.q(`select * from public.ci_defects where workspace_id = $1 ${where} order by last_seen_at desc, id`, [ws, ...params]);
+  const rows = await t.q(`${DEFECT_ROWS} where d.workspace_id = $1 ${where} order by d.last_seen_at desc, d.id limit ${Math.trunc(page.limit)} offset ${Math.trunc(page.offset)}`, [ws, ...params]);
   return rows.map((r) => mapDefect(r, byId.get(String(r.project_id))));
 }
 
@@ -318,24 +323,27 @@ export const getSkipReceipt: Handler = async (ctx) => {
 
 async function defectList(ctx: Ctx) {
   const { id: ws } = orgOf(ctx);
-  const q = ctx.query as { projectId?: string; state: "open" | "fixed" | "all" };
+  const q = ctx.query as { projectId?: string; state: "open" | "fixed" | "muted" | "all"; limit?: number; offset?: number };
   const all = q.projectId ? [await project(ctx.t, ws, q.projectId)] : await projects(ctx.t, ws);
   const where: string[] = [];
   const params: unknown[] = [];
-  if (q.projectId) { params.push(q.projectId); where.push(`and project_id = $${params.length + 1}`); }
-  if (q.state !== "all") { params.push(q.state); where.push(`and state = $${params.length + 1}`); }
-  return defects(ctx.t, ws, where.join(" "), params, all);
+  if (q.projectId) { params.push(q.projectId); where.push(`and d.project_id = $${params.length + 1}`); }
+  if (q.state !== "all") { params.push(q.state); where.push(`and d.state = $${params.length + 1}`); }
+  const page = { limit: q.limit ?? 1000, offset: q.offset ?? 0 };
+  const total = (await ctx.t.one<{ n: number }>(`select count(*)::int as n from public.ci_defects d where d.workspace_id = $1 ${where.join(" ")}`, [ws, ...params]))!.n;
+  return { items: await defects(ctx.t, ws, where.join(" "), params, all, page), total };
 }
 
-export const listDefects: Handler = async (ctx) => ({ items: await defectList(ctx) });
-export const listDefectFamilies: Handler = async (ctx) => ({ items: familiesOf(await defectList(ctx)) });
+export const listDefects: Handler = async (ctx) => defectList(ctx);
+export const listDefectFamilies: Handler = async (ctx) => ({ items: familiesOf((await defectList(ctx)).items) });
 
-export const getDefect: Handler = async (ctx) => {
-  const { id: ws } = orgOf(ctx);
-  const r = await ctx.t.one("select * from public.ci_defects where workspace_id = $1 and id = $2", [ws, ctx.params.defectId]);
+export async function defectById(t: Tx, ws: string, id: string) {
+  const r = await t.one(`${DEFECT_ROWS} where d.workspace_id = $1 and d.id = $2`, [ws, id]);
   if (!r) throw notFound("That defect does not exist in this organization.");
-  return mapDefect(r, await project(ctx.t, ws, String(r.project_id)));
-};
+  return mapDefect(r, await project(t, ws, String(r.project_id)));
+}
+
+export const getDefect: Handler = async (ctx) => defectById(ctx.t, orgOf(ctx).id, ctx.params.defectId);
 
 // ---------------------------------------------------------------- usage, plans, billing
 

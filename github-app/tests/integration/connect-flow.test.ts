@@ -69,7 +69,7 @@ describe("connect flow: link (trial) → setup pull request by repository id →
 
   before(async () => {
     admin = await resetDb();
-    await h.start({}, { launcher });
+    await h.start({ SHADOW_MODE: "true" }, { launcher });
     org = await makeOrg(admin, "flow-owner");
     // An EU organization: its machines run in the EU, or not at all.
     await admin.query("update workspaces set region = 'eu' where id = $1", [org.workspaceId]);
@@ -339,7 +339,9 @@ describe("connect flow: link (trial) → setup pull request by repository id →
     const b = (await admin.query("select id, cause, occurrences, first_run_id from ci_defects where test_id = $1", [defectB.testId])).rows[0];
     const mapped = rows.mapExploration(plain(ex[0]));
     assert.deepEqual([mapped.newDefectIds, mapped.seeds, mapped.familiesByPolluter.length], [[b.id], 20, 2]);
-    assert.deepEqual([b.cause, b.occurrences, b.first_run_id], ["fails_alone", 1, null]);
+    // Found by an exploration only: no run saw it yet (occurrences counts runs), its sighting is in its history.
+    assert.deepEqual([b.cause, b.occurrences, b.first_run_id], ["fails_alone", 0, null]);
+    assert.equal((await admin.query("select count(*)::int as n from ci_defect_occurrences where defect_id = $1 and source = 'exploration'", [b.id])).rows[0].n, 1);
     assert.equal((await admin.query("select occurrences from ci_defects where test_id = $1", [EUR])).rows[0].occurrences, 2, "an exploration is not a run");
     const bad = await runner("explorations", "fenvix-explore", undefined, { ...exploration, commitSha: "nope" });
     assert.deepEqual([bad.statusCode, bad.json().error.field], [400, "commitSha"]);

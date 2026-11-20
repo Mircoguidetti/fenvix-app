@@ -365,7 +365,7 @@ export function familiesOf(defects: Defect[]): DefectFamily[] {
 /** The engine's family key: the cause tests joined by " + ", or "<none>". */
 export const familyKeyOf = (causeTests: string[]) => (causeTests.length ? causeTests.join(" + ") : "<none>");
 
-/** Where `fenvix defects pull` writes a defect's bundle. */
+/** Where the pull command writes a defect's bundle. */
 export const bundleDir = (d: Pick<Defect, "id">) => `.fenvix/defects/${d.id}`;
 
 /**
@@ -379,7 +379,13 @@ export function replayCommand(d: Pick<Defect, "id" | "seed" | "language" | "test
   return `pytest --det${seed} --det-order=${bundleDir(d)}/order.txt`;
 }
 
-export const pullCommand = (d: Pick<Defect, "id">) => `fenvix defects pull ${d.id}`;
+/**
+ * Fetches the defect's replay bundle with an API key into bundleDir (the API's GET /v1/defects/{id}/bundle; the
+ * `fenvix` CLI has no `defects pull` command, so the command is plain curl and tar). FENVIX_API_KEY: a key of the
+ * organization (API keys page), scope read.
+ */
+export const pullCommand = (d: Pick<Defect, "id">) =>
+  `mkdir -p ${bundleDir(d)} && curl -fsSL -H "Authorization: Bearer $FENVIX_API_KEY" https://api.fenvix.dev/v1/defects/${d.id}/bundle | tar -xz -C ${bundleDir(d)}`;
 
 /** The workflow change the setup pull request makes: the test job moves to fenvix machines. */
 export function setupChange(_project: Pick<Project, "language">): SetupChange {

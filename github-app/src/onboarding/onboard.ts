@@ -64,6 +64,26 @@ export function pullRequestBody(o: { job: JobAnalysis; diff: string; others: Job
   return L.join("\n");
 }
 
+/** Whether the engine can run a job's tests: Python with pytest, Node with Vitest or Jest. */
+export function engineRuns(language: Language | null, runner: TestRunner | null): { ok: true } | { ok: false; why: string } {
+  if (language === "python" && runner === "pytest") return { ok: true };
+  if (language === "node" && (runner === "vitest" || runner === "jest")) return { ok: true };
+  if (!language) return { ok: false, why: "runs tests fenvix cannot run yet: fenvix runs pytest (Python) and Vitest or Jest (Node)" };
+  if (language === "go") return { ok: false, why: "runs go test: fenvix runs Python (pytest) and Node (Vitest, Jest) only for now" };
+  return { ok: false, why: `runs ${language} tests with a runner fenvix cannot run yet: fenvix runs pytest (Python) and Vitest or Jest (Node)` };
+}
+
+/** The test runner behind a Node job's `npm test`: package.json's scripts.test names vitest or jest, else null. */
+async function nodeRunnerOf(gh: GitHubHttp, repo: string, ref: string | null): Promise<TestRunner | null> {
+  const f = await gh.request<ContentFile>("GET", `${repoPath(repo)}/contents/package.json`, { query: ref ? { ref } : {}, allow: [404] }).catch(() => null);
+  if (!f || f.status === 404 || f.data.encoding !== "base64" || typeof f.data.content !== "string") return null;
+  try {
+    const pkg = JSON.parse(Buffer.from(f.data.content, "base64").toString("utf8")) as { scripts?: Record<string, string> };
+    const test = pkg.scripts?.test ?? "";
+    return /\bvitest\b/.test(test) ? "vitest" : /\bjest\b/.test(test) ? "jest" : null;
+  } catch { return null; }
+}
+
 async function readWorkflows(gh: GitHubHttp, repo: string, ref: string, maxFiles: number): Promise<{ files: { path: string; text: string; sha: string }[]; skipped: string[] } | null> {
   const list = await gh.request<ContentFile[] | ContentFile>("GET", `${repoPath(repo)}/contents/.github/workflows`, { query: { ref }, allow: [404] });
   if (list.status === 404 || !Array.isArray(list.data)) return null;
@@ -112,6 +132,15 @@ export async function onboardRepository(gh: GitHubHttp, fullName: string, o: Onb
         language: choice.job.language, testRunner: choice.job.testRunner, defaultBranch };
     }
     const job = choice.job;
+    // The engine runs pytest (Python) and Vitest or Jest (Node) only, on Linux x86_64 (go-live scope). A job whose
+    // runner is anything else (Gradle, Maven, cargo, go test, mocha, node --test, Playwright, a bare `npm test` whose
+    // script is none of the two, `make test`...) would run on fenvix with no engine: no pull request (G-0617).
+    if (job.language === "node" && !job.testRunner) job.testRunner = await nodeRunnerOf(gh, fullName, defaultBranch);
+    const runs = engineRuns(job.language, job.testRunner);
+    if (!runs.ok) {
+      return { state: "unsupported", detail: `${job.file}:${job.jobId} ${runs.why}`, workflowPath: job.file, job: job.jobId,
+        language: job.language, testRunner: job.testRunner, defaultBranch };
+    }
     const found = { workflowPath: job.file, job: job.jobId, language: job.language, testRunner: job.testRunner, defaultBranch };
 
     const owner = repo.data.owner.login;

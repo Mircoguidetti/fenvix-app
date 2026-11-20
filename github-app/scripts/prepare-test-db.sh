@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Prepares an EMPTY SCRATCH Postgres 15+ database for the App's tests: the Supabase stand-ins, the migrations 0001 to
-# 0013 once, then 0014 to 0017 twice each (each must be safe to repeat; 0001 to 0013 are not any more once 0014 has removed the
+# 0013 once, then 0014 to 0018 twice each (each must be safe to repeat; 0001 to 0013 are not any more once 0014 has removed the
 # earlier product, which is expected), then local passwords for the restricted roles fenvix_github_app and fenvix_api.
 # Refuses anything that looks like a hosted Supabase project.
 #
@@ -31,6 +31,8 @@ apply 0016_review_r016b
 apply 0016_review_r016b
 apply 0017_warm_cache
 apply 0017_warm_cache
+apply 0018_service_backend
+apply 0018_service_backend
 # Local passwords for the restricted roles, for the tests only (the real ones are set outside the repository).
 psql_run -c "alter role fenvix_github_app password 'local-test-only'; alter role fenvix_api password 'local-test-only'" >/dev/null
-echo "scratch database ready: 0001 to 0013 applied once, 0014 to 0017 twice (0006 is on another branch)"
+echo "scratch database ready: 0001 to 0013 applied once, 0014 to 0018 twice (0006 is on another branch)"

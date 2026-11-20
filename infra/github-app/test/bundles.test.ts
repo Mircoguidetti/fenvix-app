@@ -69,7 +69,9 @@ describe("the bundled functions (esbuild, ESM)", async () => {
     const code = readFileSync(file, "utf8");
     assert.match(code, /Repositories not set up as projects/, "src/data/ci.ts is in the bundle");
     assert.match(code, /fenvix-usage-/);
-    assert.doesNotMatch(code, /is not a PEM private key|login\/oauth\/access_token|webhooks\/github/, "not the App: no key parsing, no OAuth exchange, no webhook route");
+    // The contract compiled in documents the App's routes too (G-2230, G-2231), so the check looks for the App's code:
+    // its key parsing, its OAuth exchange, its webhook route's own answer.
+    assert.doesNotMatch(code, /is not a PEM private key|login\/oauth\/access_token|header does not match the body/, "not the App: no key parsing, no OAuth exchange, no webhook route");
     const { handler } = (await import(pathToFileURL(file).href)) as { handler: (e: unknown) => Promise<unknown> };
     const saved = process.env.SSM_PREFIX;
     delete process.env.SSM_PREFIX;

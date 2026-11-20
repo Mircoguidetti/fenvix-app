@@ -24,7 +24,8 @@ export interface RunnerLaunch {
   /** GitHub's encoded just-in-time configuration (single use). */
   jitConfig: string;
   /** "write" only for trusted refs (a push, schedule or manual run on the default branch of the repository itself). */
-  cacheAccess: "write" | "read";
+  /** "none": skip with proof is off or paused for the project (no cache token is given; every test runs). */
+  cacheAccess: "write" | "read" | "none";
   /** This machine's summary credential: bound to runnerName, repositoryId and runId (credentials.ts). */
   summaryToken?: string;
   /** This job's shared-cache token: its installation's cache organization only, write only if cacheAccess is "write". */
@@ -63,6 +64,30 @@ export interface WarmupLaunch {
   region: Region;
 }
 
+/**
+ * A task machine (src/tasks/): a replay of one defect (`fenvix replay` of its bundle at a commit) or one exploration
+ * (`detpy explore` under a time cap and a seed budget) of a repository, on our machines, outside GitHub Actions.
+ * docs/data-contract.md "Replays and explorations on our machines" is what the machine receives and sends.
+ */
+export interface TaskLaunch {
+  kind: "replay" | "exploration";
+  /** ci_replays.id or ci_exploration_jobs.id (a UUID). */
+  taskId: string;
+  attempt: number;
+  repositoryId: number;
+  repositoryFullName: string;
+  installationId: number;
+  commitSha: string;
+  runnerName: string;
+  /** Read-only installation token for this one repository (contents: read), for the checkout. */
+  checkoutToken: string;
+  /** This machine's App credential: POST /v1/runner/replays or /v1/runner/explorations for this task only. */
+  summaryToken: string;
+  region: Region;
+  /** The task's description (/etc/fenvix/task.json). */
+  spec: Record<string, unknown>;
+}
+
 export interface RunnerLauncher {
   launch(l: RunnerLaunch): Promise<{ instanceId: string | null; already: boolean }>;
   /** False while the fleet (of that region) is at its limit: no just-in-time runner is registered for a job that gets no machine. */
@@ -74,6 +99,43 @@ export interface RunnerLauncher {
   launchWarmup?(w: WarmupLaunch): Promise<{ instanceId: string | null; already: boolean }>;
   /** Terminates the warm-up's machines in that region (superseded, cancelled, preempted). Returns the instance ids. */
   terminateWarmup?(region: Region, warmupId: number): Promise<string[]>;
+  /** Replays and explorations (src/tasks/). Absent: they wait as requested. */
+  launchTask?(t: TaskLaunch): Promise<{ instanceId: string | null; already: boolean }>;
+  /** Ends a task's machines (cancelled). */
+  terminateTask?(region: Region, taskId: string): Promise<string[]>;
+  /** Ends the machine of one job's runner (a run stopped from the dashboard). */
+  terminateRunner?(region: Region, runnerName: string): Promise<string[]>;
+}
+
+const TASK_TAG = "fenvix:task";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** A task machine's user data: the plain settings, the task's description, its credentials, then fenvix-task.target. */
+export function taskUserData(t: TaskLaunch, machineEnv: Record<string, string>): string {
+  if (!UUID.test(t.taskId)) throw new Error("the task id is not a UUID");
+  if (!/^[0-9a-f]{40}$/.test(t.commitSha)) throw new Error("the task's commit is not a SHA");
+  if (!FULL_NAME.test(t.repositoryFullName)) throw new Error("the task's repository is not owner/name");
+  if (!INSTALLATION_TOKEN.test(t.checkoutToken)) throw new Error("unexpected checkout token format");
+  if (!TOKEN.test(t.summaryToken)) throw new Error("unexpected credential format");
+  const spec = Buffer.from(JSON.stringify({
+    v: 1, kind: t.kind, taskId: t.taskId, attempt: t.attempt, repository: { id: t.repositoryId, fullName: t.repositoryFullName },
+    installationId: t.installationId, commitSha: t.commitSha, ...t.spec,
+  })).toString("base64");
+  const common = Object.fromEntries(Object.entries(machineEnv).filter(([k]) => !/_TOKEN_PARAM$/.test(k)));
+  const env: Record<string, string> = {
+    ...common, FENVIX_MACHINE: "per-job", FENVIX_KIND: t.kind, FENVIX_MODE: "enforce", FENVIX_REGION: t.region,
+    FENVIX_RUNNER_NAME: t.runnerName, FENVIX_TASK_ID: t.taskId, FENVIX_CACHE_ACCESS: "none",
+  };
+  if (common.FENVIX_SUMMARIES_URL) env.FENVIX_TASK_URL = new URL(t.kind === "replay" ? "replays" : "explorations", common.FENVIX_SUMMARIES_URL).toString();
+  const lines = ["#!/bin/bash", "set -euo pipefail", "umask 022", "install -d -m 0755 /etc/fenvix", "cat >/etc/fenvix/runner.env <<'FENVIX_ENV'"];
+  for (const [k, v] of Object.entries(env)) {
+    if (!/^[A-Z][A-Z0-9_]*$/.test(k) || !SAFE.test(v)) throw new Error(`machine setting ${k} has characters the env file does not allow`);
+    lines.push(`${k}=${v}`);
+  }
+  lines.push("FENVIX_ENV", "umask 077", `printf '%s' '${spec}' | base64 -d >/etc/fenvix/task.json`,
+    `printf '%s' '${t.checkoutToken}' >/etc/fenvix/checkout-token`, `printf '%s' '${t.summaryToken}' >/etc/fenvix/summary-token`,
+    "systemctl start --no-block fenvix-task.target");
+  return lines.join("\n") + "\n";
 }
 
 /** No placement for the organization's region: the job is never started elsewhere. */
@@ -335,6 +397,44 @@ export class Ec2Launcher implements RunnerLauncher {
     if (ids.length) await p.ec2.send(new TerminateInstancesCommand({ InstanceIds: ids }));
     return ids;
   }
+
+  async launchTask(t: TaskLaunch): Promise<{ instanceId: string | null; already: boolean }> {
+    const p = this.placement(t.region);
+    const n = await this.running(t.region);
+    if (n >= this.o.maxRunning) throw new RetryLater(`${n} fenvix machines are running in ${t.region} (limit ${this.o.maxRunning}); ${t.kind} ${t.taskId} waits`);
+    const imageId = await this.imageId(t.region);
+    const tags = [
+      ...Object.entries(this.o.tags ?? {}).map(([Key, Value]) => ({ Key, Value })),
+      { Key: ROLE_TAG, Value: ROLE_VALUE }, { Key: KIND_TAG, Value: t.kind }, { Key: TASK_TAG, Value: t.taskId },
+      { Key: "fenvix:repository", Value: t.repositoryFullName }, { Key: "fenvix:region", Value: t.region }, { Key: "Name", Value: t.runnerName },
+    ];
+    try {
+      const r = await p.ec2.send(new RunInstancesCommand({
+        LaunchTemplate: { LaunchTemplateId: p.launchTemplateId, Version: "$Latest" }, ImageId: imageId, MinCount: 1, MaxCount: 1,
+        ClientToken: `fenvix-${t.kind}-${t.taskId}-${t.attempt}`.slice(0, 64),
+        UserData: Buffer.from(taskUserData(t, { ...this.o.machineEnv, ...(p.machineEnv ?? {}) })).toString("base64"),
+        TagSpecifications: [{ ResourceType: "instance", Tags: tags }, { ResourceType: "volume", Tags: tags }],
+      }));
+      return { instanceId: r.Instances?.[0]?.InstanceId ?? null, already: false };
+    } catch (e) {
+      if ((e as { name?: string }).name === "IdempotentParameterMismatch") return { instanceId: null, already: true };
+      throw e;
+    }
+  }
+
+  private async terminateBy(region: Region, filters: { Name: string; Values: string[] }[]): Promise<string[]> {
+    const p = this.placement(region);
+    const r = await p.ec2.send(new DescribeInstancesCommand({
+      Filters: [{ Name: `tag:${ROLE_TAG}`, Values: [ROLE_VALUE] }, ...filters, { Name: "instance-state-name", Values: ["pending", "running", "stopping", "stopped"] }],
+    }));
+    const ids = (r.Reservations ?? []).flatMap((x) => x.Instances ?? []).map((i) => i.InstanceId).filter((x): x is string => !!x);
+    if (ids.length) await p.ec2.send(new TerminateInstancesCommand({ InstanceIds: ids }));
+    return ids;
+  }
+
+  terminateTask(region: Region, taskId: string): Promise<string[]> { return this.terminateBy(region, [{ Name: `tag:${TASK_TAG}`, Values: [taskId] }]); }
+
+  terminateRunner(region: Region, runnerName: string): Promise<string[]> { return this.terminateBy(region, [{ Name: "tag:Name", Values: [runnerName] }]); }
 
   async launch(l: RunnerLaunch): Promise<{ instanceId: string | null; already: boolean }> {
     const region = l.region ?? "us";

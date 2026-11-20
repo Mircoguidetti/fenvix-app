@@ -25,11 +25,17 @@ export interface SummaryScope {
   warmupId?: number;
   /** Per-job machines: the run attempt of the job (review R-016 F7). Credentials made before it have none. */
   runAttempt?: number;
+  /**
+   * Task machines (src/tasks/): the one replay or exploration it runs. Accepted only by POST /v1/runner/replays (a
+   * replay) or POST /v1/runner/explorations (an exploration job), for that task only.
+   */
+  task?: { kind: "replay" | "exploration"; id: string };
   /** Unix seconds. */
   exp: number;
 }
 
 const SUMMARY_PREFIX = "fxr1.";
+const TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const RUNNER = /^[A-Za-z0-9._-]{1,100}$/;
 const posInt = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v > 0;
 
@@ -39,10 +45,11 @@ export function signSummaryCredential(key: string, s: SummaryScope): string {
   if (!key) throw new Error("no summary signing key (RUNNER_TOKEN)");
   if (!RUNNER.test(s.runnerName) || !posInt(s.repositoryId) || (s.runId !== undefined && !posInt(s.runId)) || !posInt(s.exp)
     || (s.warmupId !== undefined && (!posInt(s.warmupId) || s.runId !== undefined))
-    || (s.runAttempt !== undefined && (!posInt(s.runAttempt) || s.runId === undefined))) {
+    || (s.runAttempt !== undefined && (!posInt(s.runAttempt) || s.runId === undefined))
+    || (s.task !== undefined && (!TASK_ID.test(s.task.id) || !["replay", "exploration"].includes(s.task.kind) || s.runId !== undefined || s.warmupId !== undefined))) {
     throw new Error("bad summary credential scope");
   }
-  const body = Buffer.from(JSON.stringify({ n: s.runnerName, r: s.repositoryId, ...(s.runId ? { u: s.runId } : {}), ...(s.runAttempt ? { a: s.runAttempt } : {}), ...(s.warmupId ? { w: s.warmupId } : {}), e: s.exp })).toString("base64url");
+  const body = Buffer.from(JSON.stringify({ n: s.runnerName, r: s.repositoryId, ...(s.runId ? { u: s.runId } : {}), ...(s.runAttempt ? { a: s.runAttempt } : {}), ...(s.warmupId ? { w: s.warmupId } : {}), ...(s.task ? { t: `${s.task.kind}:${s.task.id}` } : {}), e: s.exp })).toString("base64url");
   return `${SUMMARY_PREFIX}${body}.${mac(key, body).toString("base64url")}`;
 }
 
@@ -62,12 +69,18 @@ export function verifySummaryCredential(keys: string[], authorization: string | 
   }
   if (!ok) return null;
   try {
-    const p = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as { n?: unknown; r?: unknown; u?: unknown; a?: unknown; w?: unknown; e?: unknown };
+    const p = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as { n?: unknown; r?: unknown; u?: unknown; a?: unknown; w?: unknown; t?: unknown; e?: unknown };
     if (typeof p.n !== "string" || !RUNNER.test(p.n) || !posInt(p.r) || !posInt(p.e) || (p.u !== undefined && !posInt(p.u))) return null;
     if (p.a !== undefined && (!posInt(p.a) || p.u === undefined)) return null;
     if (p.w !== undefined && (!posInt(p.w) || p.u !== undefined)) return null;
+    let task: SummaryScope["task"];
+    if (p.t !== undefined) {
+      const m2 = typeof p.t === "string" ? /^(replay|exploration):(.+)$/.exec(p.t) : null;
+      if (!m2 || !TASK_ID.test(m2[2]!) || p.u !== undefined || p.w !== undefined) return null;
+      task = { kind: m2[1] as "replay" | "exploration", id: m2[2]! };
+    }
     if (p.e * 1000 < now) return null;
-    return { runnerName: p.n, repositoryId: p.r, ...(p.u !== undefined ? { runId: p.u as number } : {}), ...(p.a !== undefined ? { runAttempt: p.a as number } : {}), ...(p.w !== undefined ? { warmupId: p.w as number } : {}), exp: p.e };
+    return { runnerName: p.n, repositoryId: p.r, ...(p.u !== undefined ? { runId: p.u as number } : {}), ...(p.a !== undefined ? { runAttempt: p.a as number } : {}), ...(p.w !== undefined ? { warmupId: p.w as number } : {}), ...(task ? { task } : {}), exp: p.e };
   } catch {
     return null;
   }

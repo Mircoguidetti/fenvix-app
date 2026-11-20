@@ -27,7 +27,7 @@ describe("one machine per job: workflow_job.queued starts a runner machine", () 
 
   before(async () => {
     admin = await resetDb();
-    await h.start({}, { launcher });
+    await h.start({ SHADOW_MODE: "true" }, { launcher });
     org = await makeOrg(admin, "runners-owner");
     h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });
     h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": CI_YAML } });

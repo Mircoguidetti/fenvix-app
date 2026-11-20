@@ -23,6 +23,10 @@ export type SetupChange = S["SetupChange"];
 export type TestResult = S["TestResult"];
 export type SkipReceipt = S["SkipReceipt"];
 export type Installation = S["Installation"];
+export type Replay = S["Replay"];
+export type DefectOccurrence = S["DefectOccurrence"];
+export type ApiKey = S["ApiKey"];
+export type ExplorationJob = S["ExplorationJob"];
 export type GitHubRepository = S["GitHubRepository"];
 
 export interface UsageEvent { projectId: string | null; occurredAt: string; billable: boolean; baselineMinutes: number }
@@ -45,6 +49,10 @@ export function familiesOf(defects: Defect[]): DefectFamily[];
 export function setupChange(project: Pick<Project, "language">): SetupChange;
 export function activityFrom(projects: Project[], runs: Run[], defects: Defect[], explorations: Exploration[], limit?: number): ActivityItem[];
 
+export function replayCommand(d: Pick<Defect, "id" | "seed" | "language" | "testRunner"> & { replayCommand?: string | null }): string;
+export function pullCommand(d: Pick<Defect, "id">): string;
+export function bundleDir(d: Pick<Defect, "id">): string;
+
 export function fileOfTest(testId: string): string;
 export function mapPlan(r: Row, currentId: string | null): Plan;
 export function mapRate(r: Row | null | undefined): GitHubRate;
@@ -53,6 +61,7 @@ export function mapRun(r: Row): Run;
 export function mapExploration(r: Row): Exploration;
 export function mapTestResult(r: Row): TestResult;
 export function mapDefect(r: Row, project: { fullName: string; testRunner: Project["testRunner"] } | undefined): Defect;
+export function mapReplay(r: Row): Replay;
 export function mapReceipt(r: Row, reusedRunNumber: number | null): SkipReceipt;
 export function mapAuditRerun(r: Row): AuditRerun;
 export function mapUsageEvent(r: Row): UsageEvent;

@@ -13,13 +13,29 @@ export class SessionVerifier {
 
   /** The user id, or null. Only asymmetric algorithms: a token signed with a shared secret, or "none", is refused. */
   async userId(authorization: string | undefined): Promise<string | null> {
+    return (await this.verify(authorization)).userId;
+  }
+
+  /**
+   * The user and the session a token names (Supabase's `session_id`), or why not: `hs256` when the token is signed with
+   * the project's legacy shared secret (the API says how to fix it, G-2237). The token must carry `exp` (G-2234).
+   */
+  async verify(authorization: string | undefined): Promise<{ userId: string | null; sessionId: string | null; hs256: boolean }> {
+    const none = { userId: null, sessionId: null, hs256: false };
     const m = /^Bearer\s+(\S+)$/i.exec(authorization ?? "");
-    if (!m) return null;
+    if (!m) return none;
     try {
-      const { payload } = await jwtVerify(m[1]!, this.keys, { issuer: this.issuer, audience: "authenticated", algorithms: ["ES256", "RS256", "EdDSA"] });
-      return typeof payload.sub === "string" && /^[0-9a-f-]{36}$/i.test(payload.sub) ? payload.sub : null;
+      const { payload } = await jwtVerify(m[1]!, this.keys, {
+        issuer: this.issuer, audience: "authenticated", algorithms: ["ES256", "RS256", "EdDSA"], requiredClaims: ["exp", "sub"],
+      });
+      const userId = typeof payload.sub === "string" && /^[0-9a-f-]{36}$/i.test(payload.sub) ? payload.sub : null;
+      const sid = typeof payload.session_id === "string" && /^[0-9a-f-]{36}$/i.test(payload.session_id) ? payload.session_id : null;
+      return { userId, sessionId: userId ? sid : null, hs256: false };
     } catch {
-      return null;
+      try {
+        const head = JSON.parse(Buffer.from(m[1]!.split(".")[0] ?? "", "base64url").toString("utf8")) as { alg?: unknown };
+        return { ...none, hs256: head.alg === "HS256" };
+      } catch { return none; }
     }
   }
 }

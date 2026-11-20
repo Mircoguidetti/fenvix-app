@@ -23,7 +23,7 @@ export type Work =
   /** POST /v1/runner/results: one chunk of a job's per-test results (checked against RunnerResults). */
   | { kind: "results"; repositoryId: number; runId: number; runAttempt: number; runnerName: string; results: RunnerResults; attemptBound?: boolean }
   /** POST /v1/runner/explorations: one night of exploration of the repository (checked against RunnerExploration). */
-  | { kind: "exploration"; repositoryId: number; runnerName: string; exploration: RunnerExploration }
+  | { kind: "exploration"; repositoryId: number; runnerName: string; exploration: RunnerExploration; taskId?: string }
   /** The dashboard asked for the setup pull request of one repository (by GitHub's repository id). */
   | { kind: "onboard"; repositoryId: number }
   /** The dashboard API linked an installation (POST /v1/github/installations/complete): its repositories get projects. */
@@ -64,7 +64,7 @@ export async function runWork(service: GitHubService, w: Work): Promise<void> {
     return;
   }
   if (w.kind === "exploration") {
-    await service.receiveExploration({ repositoryId: w.repositoryId, runnerName: w.runnerName, exploration: w.exploration });
+    await service.receiveExploration({ repositoryId: w.repositoryId, runnerName: w.runnerName, exploration: w.exploration, ...(w.taskId ? { taskId: w.taskId } : {}) });
     return;
   }
   if (w.kind === "onboard") {
@@ -105,7 +105,10 @@ export function parseWork(v: unknown): Work {
     };
   }
   if (o?.kind === "exploration" && posInt(o.repositoryId) && typeof o.runnerName === "string" && isObj(o.exploration)) {
-    return { kind: "exploration", repositoryId: o.repositoryId as number, runnerName: o.runnerName, exploration: parseExploration(o.exploration) };
+    return {
+      kind: "exploration", repositoryId: o.repositoryId as number, runnerName: o.runnerName, exploration: parseExploration(o.exploration),
+      ...(typeof o.taskId === "string" && /^[0-9a-f-]{36}$/.test(o.taskId) ? { taskId: o.taskId } : {}),
+    };
   }
   if (o?.kind === "onboard" && posInt(o.repositoryId)) return { kind: "onboard", repositoryId: o.repositoryId as number };
   if (o?.kind === "installation_linked" && posInt(o.installationId)) return { kind: "installation_linked", installationId: o.installationId as number };

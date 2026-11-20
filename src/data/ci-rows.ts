@@ -3,7 +3,7 @@
  * tests/unit/ci.test.ts covers it without a database.
  */
 import type { AuditRerun, Exploration, Defect, GitHubRate, GitHubRepository, Installation, OnboardingState, Plan, Project, Run, RunProgress, SkipReceipt, TestResult, TestRunner, WarmCache, WarmupStatus } from "./types";
-import { familyKeyOf, type UsageEvent } from "./ci.ts";
+import { familyKeyOf, pullCommand, type UsageEvent } from "./ci.ts";
 
 export type Row = Record<string, unknown>;
 
@@ -63,6 +63,11 @@ export function mapProject(r: Row): Project {
     baseline: ttg === null ? null : { medianTimeToGreenS: ttg, medianJobMinutes: num(r.baseline_median_job_minutes), runsSampled: num(r.baseline_runs_sampled), from: str(r.baseline_from), to: str(r.baseline_to) },
     settings: { skipWithProof: r.skip_with_proof !== false, commentOnPullRequests: r.comment_on_pull_requests !== false, nightlyExploration: r.nightly_exploration === true, testCommand: str(r.test_command) },
     warmCache: mapWarmCache(r),
+    skipPaused: r.skip_paused_at ? { at: iso(r.skip_paused_at), reason: str(r.skip_paused_reason) } : null,
+    exploration: {
+      hourUtc: num(r.exploration_hour_utc, 2), budgetSeconds: num(r.exploration_budget_seconds, 2400), seeds: num(r.exploration_seeds, 20),
+      target: str(r.exploration_target) === "unstable" ? "unstable" : "all",
+    },
   };
 }
 
@@ -79,6 +84,7 @@ export function mapRun(r: Row): Run {
     skipMisses: obj(r.skip_misses) as Run["skipMisses"], missDetails: arr(r.miss_details),
     mode: str(r.mode) === "shadow" ? "shadow" : "enforce", wouldSkipTests: num(r.would_skip_tests), wouldSaveMs: num(r.would_save_ms),
     audit: { rerun: num(r.audit_rerun), wrongSkips: num(r.audit_wrong_skips) },
+    cancelRequestedAt: r.cancel_requested_at ? iso(r.cancel_requested_at) : null,
     region: r.region === "us" || r.region === "eu" ? r.region : null,
     progress: str(r.status) === "running" && r.progress ? mapProgress(obj(r.progress), r.progress_at) : null,
   };
@@ -125,15 +131,35 @@ export function mapDefect(r: Row, project: { fullName: string; testRunner: TestR
   const causeTests = arr<string>(r.cause_tests);
   return {
     id: str(r.id), projectId: str(r.project_id), projectName: project?.fullName ?? "", testId: str(r.test_id),
-    status: str(r.status) === "replay_unstable" ? "replay_unstable" : "reproduced", state: str(r.state) === "fixed" ? "fixed" : "open",
+    status: str(r.status) === "replay_unstable" ? "replay_unstable" : str(r.status) === "reported" ? "reported" : "reproduced",
+    state: str(r.state) === "fixed" ? "fixed" : str(r.state) === "muted" ? "muted" : "open",
     cause: str(r.cause) as Defect["cause"], causeTests, minimalOrder: arr<string>(r.minimal_order), prefixLength: num(r.prefix_length), seed: numOrNull(r.seed),
-    fingerprint: str(r.fingerprint), replays: { runs: num(r.replay_runs, 10), fails: num(r.replay_fails, 10), identicalFingerprint: r.identical_fingerprint !== false },
+    fingerprint: r.fingerprint ? str(r.fingerprint) : null, replays: { runs: num(r.replay_runs, 10), fails: num(r.replay_fails, 10), identicalFingerprint: r.identical_fingerprint !== false },
     outcome: str(r.outcome, "failed"), exception: { type: str(ex.type), phase: str(ex.phase, "call"), message: str(ex.message), location: str(ex.location) },
     divergence: dv ? { index: num(dv.index), reason: str(dv.reason), description: str(dv.description) } : null,
     familyKey: str(r.family_key) || familyKeyOf(causeTests), firstSeenAt: str(r.first_seen_at), lastSeenAt: str(r.last_seen_at),
     firstRunId: r.first_run_id ? str(r.first_run_id) : null, lastRunId: r.last_run_id ? str(r.last_run_id) : null, occurrences: num(r.occurrences, 1),
     engineVersion: str(r.engine_version), language: str(r.language) === "node" ? "node" : "python", testRunner: project?.testRunner ?? "pytest",
     replayCommand: r.replay_command ? str(r.replay_command) : null,
+    stateReason: r.state_reason ? str(r.state_reason) : null, stateChangedAt: r.state_changed_at ? str(r.state_changed_at) : null,
+    bundle: r.bundle_sha256 ? { id: str(r.bundle_id), sha256: str(r.bundle_sha256), sizeBytes: num(r.bundle_size), receivedAt: str(r.bundle_received_at) } : null,
+    lastReplay: r.last_replay ? mapReplay(obj(r.last_replay)) : null,
+    pullCommand: pullCommand({ id: str(r.id) }),
+    culprit: r.culprit ? (obj(r.culprit) as unknown as Defect["culprit"]) : null,
+    dependencyVerdict: r.dependency_verdict ? (obj(r.dependency_verdict) as unknown as Defect["dependencyVerdict"]) : null,
+  };
+}
+
+/** ci_replays (a row, or the same keys as JSON). */
+export function mapReplay(r: Row): NonNullable<Defect["lastReplay"]> {
+  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  return {
+    id: str(r.id), defectId: r.defect_id ? str(r.defect_id) : null, runId: r.run_id ? str(r.run_id) : null, projectId: str(r.project_id),
+    testId: str(r.test_id), commitSha: str(r.commit_sha), status: str(r.status, "requested") as NonNullable<Defect["lastReplay"]>["status"],
+    detail: str(r.detail), runs: n(r.runs), fails: n(r.fails), fingerprint: r.fingerprint ? str(r.fingerprint) : null,
+    identicalFingerprint: r.identical_fingerprint === null || r.identical_fingerprint === undefined ? null : r.identical_fingerprint === true,
+    requestedVia: str(r.requested_via, "dashboard") as NonNullable<Defect["lastReplay"]>["requestedVia"], createdAt: iso(r.created_at),
+    finishedAt: r.finished_at ? iso(r.finished_at) : null,
   };
 }
 

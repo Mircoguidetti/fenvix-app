@@ -382,10 +382,37 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       removeMember: async (who, role) => (await call(api, "removeMember", { token: who.token, ws, params: { userId: targets[role === "owner" ? 1 : role === "admin" ? 2 : 3]!.userId } })).status,
       createInstallLink: async (who) => (await call(api, "createInstallLink", { token: who.token, ws })).status,
       openSetupPullRequest: async (who) => (await call(api, "openSetupPullRequest", { token: who.token, ws, params: { repositoryId } })).status,
+      // The service back-end (P-048, 0018).
+      listApiKeys: async (who) => (await call(api, "listApiKeys", { token: who.token, ws })).status,
+      createApiKey: async (who, role) => (await call(api, "createApiKey", { token: who.token, ws, body: { name: `key of ${role}`, scopes: ["read"] } })).status,
+      revokeApiKey: async (who, role) => {
+        const k = await call(api, "createApiKey", { token: owner.token, ws, body: { name: `revoke ${role}` } });
+        return (await call(api, "revokeApiKey", { token: who.token, ws, params: { keyId: k.body.id } })).status;
+      },
+      listAuditEvents: async (who) => (await call(api, "listAuditEvents", { token: who.token, ws })).status,
+      exportOrganization: async (who) => (await call(api, "exportOrganization", { token: who.token, ws })).status,
+      saveExplorationSettings: async (who) => (await call(api, "saveExplorationSettings", { token: who.token, ws, params: { projectId }, body: { hourUtc: 3, budgetSeconds: 900, seeds: 10, target: "unstable" } })).status,
+      requestExploration: async (who) => {
+        await admin.query("update ci_exploration_jobs set status = 'cancelled' where project_id = $1 and status in ('pending', 'dispatched', 'running')", [projectId]);
+        return (await call(api, "requestExploration", { token: who.token, ws, params: { projectId }, body: {} })).status;
+      },
+      resumeSkip: async (who) => (await call(api, "resumeSkip", { token: who.token, ws, params: { projectId } })).status,
+      deleteProject: async (who, role) => {
+        const p = (await admin.query("insert into ci_projects (workspace_id, full_name, language, test_runner, installation_id) values ($1, $2, 'python', 'pytest', 990001) returning id",
+          [ws, `matrix/delete-${role}-${githubId()}`])).rows[0].id;
+        return (await call(api, "deleteProject", { token: who.token, ws, params: { projectId: p } })).status;
+      },
+      unlinkInstallation: async (who) => {
+        const id = githubId();
+        await admin.query("insert into gh_installations (installation_id, account_id, account_login, account_type, workspace_id, linked_at) values ($1, $1, 'matrix-unlink', 'User', $2, now())", [id, ws]);
+        return (await call(api, "unlinkInstallation", { token: who.token, ws, params: { installationId: id } })).status;
+      },
     };
+    /** Owner only, beyond x-fenvix-role: admin (an admin is refused too): tested on its own below. */
+    const OWNER_ONLY = ["deleteOrganization"];
 
     it("the matrix covers exactly the contract's admin operations", () => {
-      assert.deepEqual(Object.keys(matrix).sort(), dashboardOperations().filter((o) => o.admin).map((o) => o.operationId).sort());
+      assert.deepEqual([...Object.keys(matrix), ...OWNER_ONLY].sort(), dashboardOperations().filter((o) => o.admin).map((o) => o.operationId).sort());
     });
 
     it("member 403, admin and owner 2xx, for each", async () => {
@@ -590,10 +617,45 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     assert.equal((await call(api, "completeGitHubInstall", { token: ownerA.token, body: { completion: C("code-of-ada") } })).status, 404);
   });
 
+  it("the service back-end's operations: defect history, state, bundle and replays; stopping a run; deleting; with real tokens", async () => {
+    const ws = ownerA.workspaceId;
+    const d = (await admin.query("select id, project_id from ci_defects where workspace_id = $1 order by last_seen_at desc limit 1", [ws])).rows[0];
+    const run = (await admin.query("select id, commit_sha from ci_runs where workspace_id = $1 order by started_at desc limit 1", [ws])).rows[0];
+    await admin.query("insert into ci_defect_occurrences (workspace_id, defect_id, run_id, source, commit_sha, status, seen_at) values ($1, $2, $3, 'run', $4, 'reproduced', now()) on conflict do nothing",
+      [ws, d.id, run.id, run.commit_sha]);
+    const b = (await admin.query("insert into ci_defect_bundles (workspace_id, defect_id, sha256, size_bytes, content) values ($1, $2, $3, 3, '\\x010203') returning id", [ws, d.id, "0".repeat(64)])).rows[0];
+    await admin.query("update ci_defects set bundle_id = $2 where id = $1", [d.id, b.id]);
+    const hist = await call(api, "listDefectOccurrences", { token: memberA.token, ws, params: { defectId: d.id } });
+    assert.equal(hist.status, 200);
+    assert.ok(hist.body.total >= 1);
+    assert.equal((await call(api, "getDefectBundle", { token: memberA.token, ws, params: { defectId: d.id } })).status, 200);
+    assert.equal((await call(api, "setDefectState", { token: memberA.token, ws, params: { defectId: d.id }, body: { state: "muted", reason: "tracked" } })).body.state, "muted");
+    const rp = await call(api, "requestDefectReplay", { token: memberA.token, ws, params: { defectId: d.id }, body: { commitSha: run.commit_sha } });
+    assert.equal(rp.status, 202);
+    assert.equal((await call(api, "getReplay", { token: memberA.token, ws, params: { replayId: rp.body.id } })).body.status, "requested");
+    assert.equal((await call(api, "listDefectReplays", { token: memberA.token, ws, params: { defectId: d.id } })).body.items.length, 1);
+    const tr = await call(api, "requestTestReplay", { token: memberA.token, ws, params: { runId: run.id }, body: { testId: "tests/other.py::t" } });
+    assert.equal(tr.status, 202);
+    await admin.query("update ci_runs set status = 'running' where id = $1", [run.id]);
+    assert.equal((await call(api, "cancelRun", { token: memberA.token, ws, params: { runId: run.id } })).status, 202);
+    const pid = String(d.project_id);
+    assert.equal((await call(api, "listExplorationJobs", { token: memberA.token, ws, params: { projectId: pid } })).status, 200);
+    // Another organization sees none of it.
+    assert.equal((await call(api, "listDefectOccurrences", { token: ownerB.token, ws: ownerB.workspaceId, params: { defectId: d.id } })).status, 404);
+    assert.equal((await call(api, "getDefectBundle", { token: ownerB.token, ws: ownerB.workspaceId, params: { defectId: d.id } })).status, 404);
+    // Deleting: an admin cannot delete the organization; its owner can (typing its name). An account goes with deleteMe.
+    const solo = await signUp(admin, "delete-solo");
+    assert.equal((await call(api, "deleteOrganization", { token: adminA.token, ws, body: { confirmName: "x" } })).status, 403);
+    const name = (await admin.query("select name from workspaces where id = $1", [solo.workspaceId])).rows[0].name;
+    assert.equal((await call(api, "deleteOrganization", { token: solo.token, ws: solo.workspaceId, body: { confirmName: name } })).status, 204);
+    assert.equal((await call(api, "deleteMe", { token: solo.token })).status, 204);
+    assert.equal((await admin.query("select count(*)::int as n from auth.users where id = $1", [solo.userId])).rows[0].n, 0);
+  });
+
   it("every dashboard operation of the contract was called and answered as the contract says", () => {
     const all = dashboardOperations().map((o) => o.operationId).sort();
     assert.deepEqual(all.filter((x) => !covered.has(x)), []);
-    assert.equal(all.length, 42);
+    assert.equal(all.length, 63);
     void NOW;
   });
 });

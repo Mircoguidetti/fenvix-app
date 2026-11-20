@@ -4,9 +4,9 @@
 // stricter settings they are not written for). Node runs the .ts files directly (type stripping) and esbuild bundles them.
 export {
   activityFrom, auditFrom, billingFrom, dayStart, daysBetween, familiesOf, median, monthBounds, monthOf, overviewFrom, projectRow,
-  setupChange, trialFrom, usageCsv, usageCsvName, usageFrom,
+  setupChange, trialFrom, usageCsv, usageCsvName, usageFrom, replayCommand, pullCommand, bundleDir,
 } from "../../../src/data/ci.ts";
 export {
   fileOfTest, mapAuditRerun, mapDefect, mapExploration, mapGitHubRepository, mapInstallation, mapPlan, mapProject, mapRate, mapReceipt, mapRun,
-  mapTestResult, mapUsageEvent,
+  mapTestResult, mapUsageEvent, mapReplay,
 } from "../../../src/data/ci-rows.ts";

@@ -4,7 +4,9 @@ import type { Config } from "./config.ts";
 import { Db } from "./db.ts";
 import { GitHubApp, GitHubError } from "./github/client.ts";
 import { verifySignature } from "./github/signature.ts";
-import { parseExploration, parseProgress, parseResults, parseWarmupReport, RecordError, type RunnerJob, type RunnerWarmupReport } from "./results/runner-records.ts";
+import { BUNDLE_MAX_BYTES, parseBundle, parseExploration, parseProgress, parseReplayReport, parseResults, parseWarmupReport, RecordError, type RunnerJob, type RunnerWarmupReport } from "./results/runner-records.ts";
+import type { ReplayReport } from "./tasks/tasks.ts";
+import { createHash } from "node:crypto";
 import { SummaryError, parseSummary, trimSummary } from "./results/summary.ts";
 import { verifySummaryCredential } from "./runners/credentials.ts";
 import type { RunnerLauncher } from "./runners/launcher.ts";
@@ -39,7 +41,7 @@ export function buildCore(cfg: Config, log: Logger, launcher: RunnerLauncher | n
   const service = new GitHubService(db, gh, {
     runsOnLabel: cfg.runsOnLabel, onboardingBranch: cfg.onboardingBranch, onboardAllRepositories: cfg.onboardAllRepositories,
     dashboardUrl: cfg.dashboardUrl, webUrl: cfg.webUrl, summaryWaitSeconds: cfg.summaryWaitSeconds,
-    ...(cfg.runnerTokens[0] ? { summaryKey: cfg.runnerTokens[0] } : {}), cacheSigningKey: cfg.cacheSigningKey, warmup: cfg.warmup,
+    ...(cfg.runnerTokens[0] ? { summaryKey: cfg.runnerTokens[0] } : {}), cacheSigningKey: cfg.cacheSigningKey, warmup: cfg.warmup, shadowMode: cfg.shadowMode, apiUrl: cfg.publicApiUrl,
   }, log, launcher);
   return { service, db, gh };
 }
@@ -48,7 +50,8 @@ declare module "fastify" {
   interface FastifyRequest { rawBody?: Buffer }
 }
 
-const EVENTS = new Set(["installation", "installation_repositories", "repository", "push", "pull_request", "workflow_job", "ping"]);
+const EVENTS = new Set(["installation", "installation_repositories", "installation_target", "repository", "push", "pull_request", "workflow_job",
+  "workflow_run", "check_run", "check_suite", "github_app_authorization", "ping"]);
 
 /**
  * The request log: never the Authorization or signature headers, and never the query string, since /github/setup
@@ -109,7 +112,13 @@ export async function buildApp(deps: Deps): Promise<App> {
     }
     if (!event || !delivery || delivery.length > 100) return fail(reply, 400, "bad_request", "X-GitHub-Event and X-GitHub-Delivery are required.");
     if (event === "ping") return reply.code(200).send({ ok: true, pong: true });
-    if (!EVENTS.has(event)) return reply.code(202).send({ ok: true, ignored: event });
+    if (!EVENTS.has(event)) {
+      // Recorded all the same (G-2302): what GitHub sent that the App chose not to handle leaves a trace.
+      const p = req.body as { action?: unknown; installation?: { id?: unknown } } | undefined;
+      await service.recordIgnored(delivery, event, typeof p?.action === "string" ? p.action : null, typeof p?.installation?.id === "number" ? p.installation.id : null)
+        .catch((e: unknown) => req.log.warn({ err: e instanceof Error ? e.message : String(e) }, "an ignored delivery was not recorded"));
+      return reply.code(202).send({ ok: true, ignored: event });
+    }
     const payload = req.body as Record<string, unknown>;
     return handOff(req, reply, { kind: "webhook", event, delivery, payload });
   });
@@ -123,6 +132,7 @@ export async function buildApp(deps: Deps): Promise<App> {
     if (!scope) return fail(reply, 401, "unauthorized", "This machine's summary credential is required.");
     // A warm-up machine reports to /v1/runner/warmups only: a warm-up is never a run (no run row, no check, no comment).
     if (scope.warmupId !== undefined) return fail(reply, 403, "forbidden", "A warm-up machine reports to /v1/runner/warmups only.");
+    if (scope.task) return fail(reply, 403, "forbidden", "A replay or exploration machine reports its own task only.");
     const b = req.body as Record<string, unknown> | undefined;
     const int = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null);
     const runId = scope.runId ?? int(b?.runId);
@@ -154,6 +164,11 @@ export async function buildApp(deps: Deps): Promise<App> {
     const scope = verifySummaryCredential(cfg.runnerTokens, req.headers.authorization);
     if (!scope) { void fail(reply, 401, "unauthorized", "This machine's summary credential is required."); return null; }
     if (scope.warmupId !== undefined) { void fail(reply, 403, "forbidden", "A warm-up machine reports to /v1/runner/warmups only."); return null; }
+    // A task machine reports its own task only: an exploration machine to /v1/runner/explorations (its job), a replay
+    // machine to /v1/runner/replays.
+    if (scope.task && !(scope.task.kind === "exploration" && req.url.split("?")[0] === "/v1/runner/explorations")) {
+      void fail(reply, 403, "forbidden", "A replay or exploration machine reports its own task only."); return null;
+    }
     let body: T;
     try { body = parse(req.body); } catch (e) {
       if (!(e instanceof RecordError)) throw e;
@@ -215,7 +230,70 @@ export async function buildApp(deps: Deps): Promise<App> {
       req.log.warn({ runner: r.scope.runnerName, repositoryId: r.scope.repositoryId }, "an exploration from a CI job's credential was refused");
       return fail(reply, 403, "forbidden", "A CI job's credential cannot send explorations.");
     }
-    return handOff(req, reply, { kind: "exploration", repositoryId: r.scope.repositoryId, runnerName: r.scope.runnerName, exploration: r.body });
+    return handOff(req, reply, {
+      kind: "exploration", repositoryId: r.scope.repositoryId, runnerName: r.scope.runnerName, exploration: r.body,
+      ...(r.scope.task?.kind === "exploration" ? { taskId: r.scope.task.id } : {}),
+    });
+  });
+
+  // ---------------------------------------------------------------- replay bundles, replays (docs/data-contract.md)
+  // A defect's replay bundle from the job's own machine (its per-job credential): base64 of a .tar.gz, at most 4 MB
+  // (API Gateway and Lambda cap a request near 6 MB). Written at once; 503 while the job's run row is not there yet.
+  fastify.post("/v1/runner/bundles", { bodyLimit: 6 * 1024 * 1024 }, async (req, reply) => {
+    const r = runnerBody(req, reply, parseBundle);
+    if (!r) return reply;
+    if (r.scope.runId === undefined) return fail(reply, 403, "forbidden", "Only a CI job's machine sends the bundles of its run.");
+    const content = Buffer.from(r.body.content, "base64");
+    if (!content.length || content.length > BUNDLE_MAX_BYTES) {
+      return reply.code(400).send({ error: { code: "bad_request", message: `content must be 1 to ${BUNDLE_MAX_BYTES} bytes (base64).`, field: "content" } });
+    }
+    if (r.body.sha256 && createHash("sha256").update(content).digest("hex") !== r.body.sha256) {
+      return reply.code(400).send({ error: { code: "bad_request", message: "sha256 does not match the content.", field: "sha256" } });
+    }
+    try {
+      const out = await service.receiveBundle({ repositoryId: r.scope.repositoryId, runId: r.scope.runId, runAttempt: r.body.runAttempt, runnerName: r.scope.runnerName,
+        testId: r.body.testId, fingerprint: r.body.fingerprint ?? null, content });
+      if (out === "no_run") return reply.code(503).header("retry-after", "10").send({ error: { code: "unavailable", message: "The job's run is not recorded yet. Try again." } });
+    } catch (e) {
+      req.log.error({ err: e instanceof Error ? e.message : String(e) }, "bundle not stored");
+      return fail(reply, 503, "unavailable", "The bundle could not be stored. Try again.");
+    }
+    return reply.code(202).send({ ok: true });
+  });
+
+  /** A replay machine's credential, for its own replay only. */
+  const replayScope = (req: FastifyRequest, reply: FastifyReply) => {
+    const scope = verifySummaryCredential(cfg.runnerTokens, req.headers.authorization);
+    if (!scope) { void fail(reply, 401, "unauthorized", "This machine's credential is required."); return null; }
+    if (scope.task?.kind !== "replay") { void fail(reply, 403, "forbidden", "Only a replay machine reports replays."); return null; }
+    return { repositoryId: scope.repositoryId, runnerName: scope.runnerName, taskId: scope.task.id };
+  };
+
+  fastify.post("/v1/runner/replays", { bodyLimit: 64 * 1024 }, async (req, reply) => {
+    const scope = replayScope(req, reply);
+    if (!scope) return reply;
+    let body: ReplayReport;
+    try { body = parseReplayReport(req.body); } catch (e) {
+      if (!(e instanceof RecordError)) throw e;
+      return reply.code(400).send({ error: { code: "bad_request", message: e.message, field: e.field } });
+    }
+    let res: Awaited<ReturnType<typeof service.tasks.reportReplay>>;
+    try { res = await service.tasks.reportReplay(scope, body); } catch (e) {
+      req.log.error({ err: e instanceof Error ? e.message : String(e) }, "replay report not stored");
+      return fail(reply, 503, "unavailable", "The report could not be stored. Try again.");
+    }
+    if (res === "unknown") return fail(reply, 404, "not_found", "That replay does not exist.");
+    if (res === "forbidden") return fail(reply, 403, "forbidden", "This credential is for another replay's machine.");
+    return reply.code(202).send({ ok: true });
+  });
+
+  fastify.get("/v1/runner/replays/:replayId/bundle", async (req: FastifyRequest<{ Params: { replayId: string } }>, reply) => {
+    const scope = replayScope(req, reply);
+    if (!scope) return reply;
+    const out = await service.tasks.replayBundle(scope, req.params.replayId);
+    if (out === "forbidden") return fail(reply, 403, "forbidden", "This credential is for another replay's machine.");
+    if (!out) return fail(reply, 404, "not_found", "This replay has no bundle.");
+    return reply.code(200).header("content-type", "application/gzip").header("cache-control", "no-store").send(out);
   });
 
   // ---------------------------------------------------------------- warm-up machines report (docs/data-contract.md "Warm-up runs")
@@ -225,7 +303,7 @@ export async function buildApp(deps: Deps): Promise<App> {
   fastify.post("/v1/runner/warmups", { bodyLimit: 4 * 1024 * 1024 }, async (req, reply) => {
     const scope = verifySummaryCredential(cfg.runnerTokens, req.headers.authorization);
     if (!scope) return fail(reply, 401, "unauthorized", "This machine's warm-up credential is required.");
-    if (scope.warmupId === undefined) return fail(reply, 403, "forbidden", "Only a warm-up machine reports warm-ups.");
+    if (scope.warmupId === undefined || scope.task) return fail(reply, 403, "forbidden", "Only a warm-up machine reports warm-ups.");
     let body: RunnerWarmupReport;
     try { body = parseWarmupReport(req.body); } catch (e) {
       if (!(e instanceof RecordError)) throw e;
