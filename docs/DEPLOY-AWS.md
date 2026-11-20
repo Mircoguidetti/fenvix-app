@@ -508,7 +508,7 @@ replaced, the cache starts empty, and the next runs record it again.
 
 **One cache organization per customer installation.** The service scopes every entry, file fact and run to the
 organization of the token. The worker signs one token per job (RSA, the key in SSM that only it reads) naming
-`gh-<installation id>`, read or write, and an expiry; the cache machine checks it with the public key (setting
+`gh-<installation id>-r<repository id>` (one per repository, audit G-0192), read or write, and an expiry; the cache machine checks it with the public key (setting
 `cacheSigningPublicKey`). A job of one customer therefore never reads or writes another customer's cache, and a pull
 request never writes. Nothing role-wide is on a job machine to steal.
 

@@ -42,7 +42,7 @@ describe("the shared cache service (vendored, pinned)", () => {
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
       const exp = Math.floor(Date.now() / 1000) + 3600;
-      const tok = (installationId: number, write: boolean, e = exp) => signCacheToken(CACHE_KEY.privateKey, { installationId, write, exp: e, jobId: 1 });
+      const tok = (installationId: number, write: boolean, e = exp, repositoryId = 11) => signCacheToken(CACHE_KEY.privateKey, { installationId, repositoryId, write, exp: e, jobId: 1 });
       const acmeWrite = tok(1, true), acmeRead = tok(1, false), globexRead = tok(2, false);
       assert.equal((await call("/v1/health", null)).status, 200);
       const doc = { kind: "file", path: "a.py", sha: "x" };
@@ -59,6 +59,22 @@ describe("the shared cache service (vendored, pinned)", () => {
       const lookup = async (t: string) => ((await (await call("/v1/ns/acme%2Fshop/lookup", t, { keys: ["k1"] })).json()) as { found: Record<string, string[]> }).found.k1 ?? [];
       assert.deepEqual(await lookup(acmeRead), [docId], "the same customer's pull request finds the entry");
       assert.deepEqual(await lookup(globexRead), [], "another customer finds nothing under the same namespace");
+      // Audit G-0192/G-0193: another REPOSITORY of the same account (same installation) is another organization:
+      // its read token (a fork's pull request included) finds nothing of acme/shop, and its write token's entries
+      // land in its own namespace only, never in acme/shop's.
+      const siblingRead = tok(1, false, exp, 12), siblingWrite = tok(1, true, exp, 12);
+      assert.deepEqual(await lookup(siblingRead), [], "a sibling repository's pull request reads nothing of acme/shop");
+      const sib = await (await call("/v1/blobs/get", siblingRead, { ids: [docId] })).json() as { docs: Record<string, unknown> };
+      assert.deepEqual(sib.docs, {}, "a sibling repository downloads no entry of acme/shop");
+      const planted = { kind: "file", path: "a.py", sha: "planted" };
+      const plantedId = createHash("sha256").update(JSON.stringify(Object.fromEntries(Object.entries(planted).sort()))).digest("hex");
+      assert.equal((await call("/v1/blobs/put", siblingWrite, { docs: { [plantedId]: planted } })).status, 200);
+      assert.equal((await call("/v1/ns/acme%2Fshop/keys", siblingWrite, { put: [{ key: "k1", doc: plantedId, run: "r9" }] })).status, 200);
+      assert.deepEqual(await lookup(acmeRead), [docId], "a sibling repository's write never adds a result to acme/shop's cache");
+      // A token in the older per-installation form (gh-<id>) is refused outright.
+      const [, , oldSig] = acmeRead.split(".");
+      const oldForm = Buffer.from(JSON.stringify({ org: "gh-1", w: false, exp, job: 1 })).toString("base64url");
+      assert.equal((await call("/v1/stats", `fxs1.${oldForm}.${oldSig}`)).status, 401);
       // Refused: expired, tampered, signed with another key, the old static token, none.
       assert.equal((await call("/v1/stats", tok(1, true, Math.floor(Date.now() / 1000) - 5))).status, 401);
       const [, body, sig] = acmeRead.split(".");
@@ -66,7 +82,7 @@ describe("the shared cache service (vendored, pinned)", () => {
       assert.equal((await call("/v1/stats", `fxs1.${forged}.${sig}`)).status, 401);
       assert.equal((await call("/v1/stats", `fxs1.${body}.${sig}A`)).status, 401);
       const stranger = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey;
-      assert.equal((await call("/v1/stats", signCacheToken(stranger, { installationId: 1, write: true, exp, jobId: 1 }))).status, 401);
+      assert.equal((await call("/v1/stats", signCacheToken(stranger, { installationId: 1, repositoryId: 11, write: true, exp, jobId: 1 }))).status, 401);
       assert.equal((await call("/v1/stats", legacy)).status, 401);
       assert.equal((await call("/v1/stats", null)).status, 401);
     } finally {

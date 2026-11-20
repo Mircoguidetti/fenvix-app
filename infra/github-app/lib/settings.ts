@@ -120,7 +120,7 @@ export interface Settings {
   /**
    * per-job: the public half of the cache signing key (base64 DER; the deploy pipeline generates the pair and passes it as FENVIX_CACHE_SIGNING_PUBLIC_KEY). The worker
    * signs one token per job with the private half (SSM); the cache machine verifies with this. Each customer
-   * installation is its own cache organization (gh-<installation id>); pull requests get read-only tokens.
+   * repository is its own cache organization (gh-<installation id>-r<repository id>); pull requests get read-only tokens.
    */
   cacheSigningPublicKey: string;
   /**

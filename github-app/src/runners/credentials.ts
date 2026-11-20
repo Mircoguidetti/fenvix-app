@@ -73,17 +73,22 @@ export function verifySummaryCredential(keys: string[], authorization: string | 
   }
 }
 
-/** One shared-cache organization per customer installation. */
-export const cacheOrgOf = (installationId: number): string => {
+/**
+ * One shared-cache organization per customer REPOSITORY (audit G-0192, G-0193): `gh-<installation id>-r<repository id>`.
+ * A token names one repository's namespace only, so a job of repository A (a pull request from a fork included) can
+ * neither read nor write repository B's entries, receipts or runs, even within the same GitHub account.
+ */
+export const cacheOrgOf = (installationId: number, repositoryId: number): string => {
   if (!posInt(installationId)) throw new Error("bad installation id");
-  return `gh-${installationId}`;
+  if (!posInt(repositoryId)) throw new Error("bad repository id");
+  return `gh-${installationId}-r${repositoryId}`;
 };
 
 /** `jobId`: the GitHub job; a warm-up's token names its warm-up instead (`warmupId`, field `warm`). */
-export function signCacheToken(key: KeyObject, t: { installationId: number; write: boolean; exp: number } & ({ jobId: number } | { warmupId: number })): string {
+export function signCacheToken(key: KeyObject, t: { installationId: number; repositoryId: number; write: boolean; exp: number } & ({ jobId: number } | { warmupId: number })): string {
   if (key.type !== "private" || key.asymmetricKeyType !== "rsa") throw new Error("the cache signing key must be an RSA private key");
   const who = "jobId" in t ? { job: t.jobId } : { warm: t.warmupId };
-  const body = Buffer.from(JSON.stringify({ org: cacheOrgOf(t.installationId), w: t.write, exp: t.exp, ...who })).toString("base64url");
+  const body = Buffer.from(JSON.stringify({ org: cacheOrgOf(t.installationId, t.repositoryId), w: t.write, exp: t.exp, ...who })).toString("base64url");
   const sig = sign("sha256", Buffer.from(`fxs1.${body}`), key).toString("base64url");
   return `fxs1.${body}.${sig}`;
 }

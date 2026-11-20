@@ -98,7 +98,7 @@ const TOKEN = /^fx[rs]1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 /**
  * The machine's per-job settings and credentials, written by its user data (root only; the job user cannot reach the
  * metadata service), then the services start. FENVIX_MODE is the organization's run mode (shadow during the 30-day
- * trial, else enforce) and FENVIX_REGION its region; the runner reads both (docs/data-contract.md). The shared cache is this installation's organization (gh-<id>): two
+ * trial, else enforce) and FENVIX_REGION its region; the runner reads both (docs/data-contract.md). The shared cache is this repository's organization (gh-<installation>-r<repository>): two
  * customers' jobs never share a cache credential or namespace (R-012 F3).
  */
 export function jobUserData(l: RunnerLaunch, machineEnv: Record<string, string>): string {
@@ -117,7 +117,7 @@ export function jobUserData(l: RunnerLaunch, machineEnv: Record<string, string>)
     FENVIX_CACHE_ACCESS: l.cacheAccess,
   };
   if (common.FENVIX_CACHE_URL) {
-    const org = cacheOrgOf(l.installationId);
+    const org = cacheOrgOf(l.installationId, l.repositoryId);
     env.FENVIX_CACHE_URL = `${new URL(common.FENVIX_CACHE_URL).origin}/${org}`;
     env.FENVIX_CACHE_ORG = org;
   }
@@ -175,7 +175,7 @@ export function warmupUserData(w: WarmupLaunch, machineEnv: Record<string, strin
   };
   if (common.FENVIX_SUMMARIES_URL) env.FENVIX_WARMUPS_URL = new URL("warmups", common.FENVIX_SUMMARIES_URL).toString();
   if (common.FENVIX_CACHE_URL) {
-    const org = cacheOrgOf(w.installationId);
+    const org = cacheOrgOf(w.installationId, w.repositoryId);
     env.FENVIX_CACHE_URL = `${new URL(common.FENVIX_CACHE_URL).origin}/${org}`;
     env.FENVIX_CACHE_ORG = org;
   }

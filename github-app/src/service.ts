@@ -582,7 +582,7 @@ export class GitHubService {
     const exp = Math.floor(Date.now() / 1000) + JOB_CREDENTIAL_SECONDS;
     const cacheAccess = trusted ? "write" as const : "read" as const;
     const summaryToken = signSummaryCredential(this.s.summaryKey, { runnerName, repositoryId: repo.id, runId: row.run_id, runAttempt: row.run_attempt, exp });
-    const cacheToken = this.s.cacheSigningKey ? signCacheToken(this.s.cacheSigningKey, { installationId, write: trusted, exp, jobId }) : undefined;
+    const cacheToken = this.s.cacheSigningKey ? signCacheToken(this.s.cacheSigningKey, { installationId, repositoryId: repo.id, write: trusted, exp, jobId }) : undefined;
     let res: { instanceId: string | null; already: boolean };
     try {
       res = await this.launcher!.launch({

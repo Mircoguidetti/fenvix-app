@@ -4,11 +4,11 @@ The worker mints one token per job (github-app/src/runners/credentials.ts), sign
 an SSM parameter only the worker reads). This machine holds only the public key, so nothing on it can mint a token:
 
     fxs1.<base64url(JSON payload)>.<base64url(RSASSA-PKCS1-v1_5 SHA-256 signature over "fxs1." + payload part)>
-    payload: {"org": "gh-<installation id>", "w": true|false, "exp": <unix seconds>, "job": <job id>}
+    payload: {"org": "gh-<installation id>-r<repository id>", "w": true|false, "exp": <unix seconds>, "job": <job id>}
              (a warm-up machine's token names its warm-up instead: "warm": <warm-up id>; it always writes, since a
              warm-up runs the default branch only. Neither "job" nor "warm" is read here: they are for the logs.)
 
-The organization of every request is the token's ("one cache organization per customer installation"): a token of
+The organization of every request is the token's ("one cache organization per customer repository"): a token of
 one customer never reads or writes another's entries, file facts or runs (docs/REVIEW-R-012.md F3). Pull requests and
 forks get "w": false (read only, within their own organization). Static tokens (tokens.json) are not accepted.
 
@@ -33,7 +33,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cache_service  # noqa: E402  (vendored, byte for byte)
 
 PREFIX = "fxs1."
-ORG = re.compile(r"^gh-[0-9]{1,20}$")
+# One organization per customer repository (audit G-0192/G-0193): gh-<installation id>-r<repository id>. The older
+# per-installation form (gh-<id>) spanned every repository of an account and is refused.
+ORG = re.compile(r"^gh-[0-9]{1,20}-r[0-9]{1,20}$")
 MAX_TOKEN = 4096
 # DER DigestInfo prefix of SHA-256 (RFC 8017, section 9.2, note 1).
 SHA256_INFO = bytes.fromhex("3031300d060960864801650304020105000420")

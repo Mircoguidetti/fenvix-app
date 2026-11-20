@@ -588,7 +588,7 @@ configuration). `/etc/fenvix/runner.env` with the plain settings and:
 | `FENVIX_MODE` | `enforce`: skip with proof what is already proven, run the rest, write the results to the cache |
 | `FENVIX_REGION` | the organization's region |
 | `FENVIX_WARMUP_ID`, `FENVIX_RUNNER_NAME` | the warm-up and this machine's name (`fenvix-w<id>`, `fenvix-w<id>-<attempt>` after a preemption) |
-| `FENVIX_CACHE_ACCESS`, `FENVIX_CACHE_URL`, `FENVIX_CACHE_ORG` | `write`, the installation's own cache organization (`gh-<installation id>`) |
+| `FENVIX_CACHE_ACCESS`, `FENVIX_CACHE_URL`, `FENVIX_CACHE_ORG` | `write`, the repository's own cache organization (`gh-<installation id>-r<repository id>`, audit G-0192) |
 | `FENVIX_WARMUPS_URL` | `https://api.fenvix.dev/v1/runner/warmups` |
 
 and the files `/etc/fenvix/warmup.json`:
