@@ -11,6 +11,7 @@ import { useOrg } from "../session/OrgProvider";
 import { activeOrgId, setActiveOrgId } from "../lib/org";
 import { formatDate } from "../lib/format";
 import { languageLabel } from "./Projects";
+import { installationConfigureUrl } from "../lib/github";
 
 function Step({ n, done, title, children }: { n: number; done: boolean; title: string; children?: ReactNode }) {
   return (
@@ -200,6 +201,9 @@ export function ConnectPage() {
   const [completing, setCompleting] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
   const completed = useRef<string | null>(null);
+  // Set when the person went to GitHub's page of an installation to choose more repositories: coming back reads the list again.
+  const [chose, setChose] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (github !== "confirm") return;
@@ -251,6 +255,31 @@ export function ConnectPage() {
     }, POLL_MS);
     return () => window.clearTimeout(timer.current);
   }, [queued]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function refresh() {
+    setRefreshing(true);
+    try {
+      const [c, list] = await Promise.all([client.getGitHubConnection(), client.listGitHubRepositories()]);
+      connection.setData(c);
+      repos.setData(list);
+    } catch {
+      /* the lists on show stay; the next try may work */
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  // The GitHub page opens in another tab. When this tab is looked at again, the repositories chosen there are listed here.
+  useEffect(() => {
+    if (!chose) return;
+    const back = () => document.visibilityState === "visible" && void refresh();
+    document.addEventListener("visibilitychange", back);
+    window.addEventListener("focus", back);
+    return () => {
+      document.removeEventListener("visibilitychange", back);
+      window.removeEventListener("focus", back);
+    };
+  }, [chose]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function install() {
     setInstalling(true);
@@ -343,20 +372,44 @@ export function ConnectPage() {
       )}
 
       <ol className="steps">
-        <Step n={1} done={anyActive} title="Install the fenvix GitHub App">
+        <Step n={1} done={anyActive} title="Choose the repositories fenvix may see">
           <p className="muted">On a GitHub account or organization, for the repositories you choose. It reads code and workflow files, posts results on pull requests and opens the setup pull request. It never pushes to a branch.</p>
           {connection.status === "loading" && <Message>Loading installations</Message>}
           {connection.status === "error" && <Message role="alert">{connection.message}</Message>}
           {connection.status === "ready" && installations.length > 0 && (
-            <p className="small">
-              {installations.length === 1 ? "One installation" : `${installations.length} installations`}: {installations.map((i) => i.account).join(", ")}.
-            </p>
+            <ul className="install-more" aria-label="Your GitHub installations">
+              {installations.map((i) => (
+                <li key={i.installationId} className="install-more-row">
+                  <span className="name-cell">
+                    <span className="mono break-anywhere">{i.account}</span>
+                    <span className="muted small">
+                      {i.repositorySelection === "all" ? "All repositories" : "Selected repositories"} · {i.repositories} {i.repositories === 1 ? "repository" : "repositories"}
+                    </span>
+                  </span>
+                  {i.status !== "deleted" && (
+                    <a href={installationConfigureUrl(i)} target="_blank" rel="noreferrer" className="btn btn-sm" onClick={() => setChose(true)} aria-label={`Choose more repositories for ${i.account} on GitHub`}>
+                      Choose more repositories
+                      <ExternalLink size={14} aria-hidden="true" />
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
           )}
           <div className="row-actions">
             <button type="button" className={installations.length ? "btn" : "btn btn-primary"} onClick={install} disabled={installing || !org.canManage || connection.status !== "ready"}>
               {installations.length ? "Add another GitHub account" : "Install the GitHub App"}
             </button>
-            <span className="muted small">GitHub asks which repositories fenvix may see, then sends you back here.</span>
+            {installations.length > 0 && (
+              <button type="button" className="btn btn-sm" onClick={() => void refresh()} disabled={refreshing}>
+                {refreshing ? "Refreshing…" : "Refresh repositories"}
+              </button>
+            )}
+            <span className="muted small">
+              {installations.length
+                ? "Choose more repositories of an account you already connected on GitHub's page for it, or add another account or organization. New repositories appear below with their setup pull request."
+                : "GitHub asks which repositories fenvix may see, then sends you back here."}
+            </span>
           </div>
         </Step>
         <Step n={2} done={opened} title="Open the setup pull request">
