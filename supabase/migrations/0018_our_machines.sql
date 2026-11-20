@@ -201,6 +201,20 @@ create table if not exists public.gh_runner_groups (
   primary key (installation_id, repository_id)
 );
 
+-- 7d. What a machine said before it went away (G-1770): why a slot could not start or why its runner failed, kept
+--     after the machine is terminated (the newest 200 lines per machine).
+create table if not exists public.gh_machine_logs (
+  id bigint generated always as identity primary key,
+  machine_id bigint not null references public.gh_machines (id),
+  lease_id bigint,
+  at timestamptz not null default now(),
+  text text not null check (char_length(text) <= 8000)
+);
+create index if not exists gh_machine_logs_machine on public.gh_machine_logs (machine_id, at desc);
+
+-- 7c. When the service last did a periodic job (the installations' reconcile, G-1746).
+create table if not exists public.gh_service_marks (name text primary key, at timestamptz not null);
+
 -- 8. Webhook deliveries GitHub could not deliver (our API was down): asked for again once each (audit G-1771).
 create table if not exists public.gh_redeliveries (
   github_delivery_id bigint primary key,
@@ -211,6 +225,16 @@ create table if not exists public.gh_redeliveries (
 );
 
 -- ---------------------------------------------------------------- row level security
+alter table public.gh_machine_logs enable row level security;
+revoke all on public.gh_machine_logs from public, anon, authenticated;
+grant select, insert, delete on public.gh_machine_logs to fenvix_github_app;
+drop policy if exists gh_machine_logs_github_app on public.gh_machine_logs;
+create policy gh_machine_logs_github_app on public.gh_machine_logs for all to fenvix_github_app using (true) with check (true);
+alter table public.gh_service_marks enable row level security;
+revoke all on public.gh_service_marks from public, anon, authenticated;
+grant select, insert, update on public.gh_service_marks to fenvix_github_app;
+drop policy if exists gh_service_marks_github_app on public.gh_service_marks;
+create policy gh_service_marks_github_app on public.gh_service_marks for all to fenvix_github_app using (true) with check (true);
 alter table public.gh_runner_groups enable row level security;
 revoke all on public.gh_runner_groups from public, anon, authenticated;
 grant select, insert, update, delete on public.gh_runner_groups to fenvix_github_app;

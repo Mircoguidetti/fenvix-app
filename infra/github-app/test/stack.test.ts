@@ -59,7 +59,13 @@ describe("the stack (shared properties)", async () => {
       for (const x of st) for (const a of arr(x.Action)) assert.ok(a !== "*" && !a.endsWith(":*"), `${who}: ${a}`);
     }
     assert.ok(!statementsOf(fnRole("worker")).some((x) => arr(x.Action).includes("sqs:SendMessage")), "the worker does not send");
-    assert.ok(!statementsOf(fnRole("sweep")).some((x) => json(x.Action).includes("sqs:") || json(x.Action).includes("s3:")), "the sweep touches neither queue nor bucket");
+    assert.ok(!statementsOf(fnRole("sweep")).some((x) => json(x.Action).includes("s3:")), "the sweep touches no bucket");
+    // On SQS only the dead-letter redrive (G-1736): consume the dead-letter queue, send to the work queue.
+    for (const x of statementsOf(fnRole("sweep")).filter((x) => json(x.Action).includes("sqs:"))) {
+      const send = arr(x.Action).includes("sqs:SendMessage");
+      assert.match(json(x.Resource), send ? /Work/ : /DeadLetters/);
+      if (!send) assert.ok(arr(x.Action).every((a) => /^sqs:(ReceiveMessage|DeleteMessage|ChangeMessageVisibility|GetQueueAttributes|GetQueueUrl)$/.test(a)), json(x.Action));
+    }
     assert.ok(!statementsOf(fnRole("http")).some((x) => json(x.Action).includes("ec2:")), "the HTTP function calls no EC2 API");
     const httpS3 = statementsOf(fnRole("http")).filter((x) => json(x.Action).includes("s3:"));
     assert.deepEqual(httpS3.flatMap((x) => arr(x.Action)), ["s3:PutObject"]);
@@ -69,7 +75,7 @@ describe("the stack (shared properties)", async () => {
     const qs = resources(t, "AWS::SQS::Queue");
     const work = qs.find(([, q]) => q.Properties.QueueName === "fenvix-prod-github-app-work")![1].Properties;
     assert.equal((work.RedrivePolicy as { maxReceiveCount: number }).maxReceiveCount, 5);
-    assert.equal(work.VisibilityTimeout, 720);
+    assert.equal(work.VisibilityTimeout, 1800, "six times the 300 s worker timeout (G-1747)");
     for (const [, q] of qs) assert.equal(q.Properties.SqsManagedSseEnabled, true);
     assert.equal(resources(t, "AWS::SQS::QueuePolicy").length, 2);
     t.hasResourceProperties("AWS::Lambda::EventSourceMapping", { BatchSize: 5, FunctionResponseTypes: ["ReportBatchItemFailures"], ScalingConfig: { MaximumConcurrency: 10 } });
@@ -81,6 +87,15 @@ describe("the stack (shared properties)", async () => {
       assert.match(json(a[1].Properties.AlarmActions), /Alerts/, `${n} notifies the topic`);
     }
     for (const [, g] of resources(t, "AWS::Logs::LogGroup")) assert.equal(g.Properties.RetentionInDays, 90, "logs kept 90 days (G-1763)");
+    // The sweep redrives dead-lettered work once (G-1736): it may receive and delete on the DLQ and send to the work queue.
+    const sweepFn = resources(t, "AWS::Lambda::Function").find(([, f]) => String(f.Properties.FunctionName).endsWith("-sweep"))![1];
+    const sweepEnv = (sweepFn.Properties.Environment as { Variables: Record<string, unknown> }).Variables;
+    assert.match(json(sweepEnv.DEAD_LETTER_QUEUE_URL), /DeadLetters/);
+    assert.match(json(sweepEnv.WORK_QUEUE_URL), /Work/);
+    const sweepRole = (sweepFn.Properties.Role as { "Fn::GetAtt": string[] })["Fn::GetAtt"][0]!;
+    const st = resources(t, "AWS::IAM::Policy").filter(([, p]) => json(p.Properties.Roles).includes(`"${sweepRole}"`)).map(([, p]) => json(p.Properties.PolicyDocument)).join(" ");
+    assert.match(st, /sqs:ReceiveMessage.*DeadLetters|DeadLetters[^]*sqs:ReceiveMessage/);
+    assert.match(st, /sqs:SendMessage/);
   });
 
   it("the sweep runs on an EventBridge Scheduler rate, invoking only the sweep function", () => {

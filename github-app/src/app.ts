@@ -1,3 +1,4 @@
+import { gunzipSync } from "node:zlib";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { SessionVerifier, verifyState } from "./auth.ts";
 import type { Config } from "./config.ts";
@@ -79,7 +80,23 @@ export async function buildApp(deps: Deps): Promise<App> {
 
   // The raw bytes are kept: the webhook signature is computed over them, not over re-serialised JSON.
   fastify.addContentTypeParser("application/json", { parseAs: "buffer" }, (req, body, done) => {
-    req.rawBody = body as Buffer;
+    let raw = body as Buffer;
+    // Our machines gzip large records (a big suite's summary): API Gateway and Lambda cap a request at 6 MB on the wire
+    // (G-1739). Only /v1/runner/* accepts it; the inflated body keeps the route's own limit (summaries: 32 MB).
+    if (String(req.headers["content-encoding"] ?? "").toLowerCase() === "gzip") {
+      if (!req.url.startsWith("/v1/runner/")) {
+        const e = new Error("Content-Encoding gzip is accepted on /v1/runner/* only.") as Error & { statusCode: number };
+        e.statusCode = 415;
+        return done(e, undefined);
+      }
+      try { raw = gunzipSync(raw, { maxOutputLength: 33 * 1024 * 1024 }); } catch {
+        const e = new Error("The gzip body could not be read (or is over 33 MB inflated).") as Error & { statusCode: number };
+        e.statusCode = 413;
+        return done(e, undefined);
+      }
+    }
+    req.rawBody = raw;
+    body = raw;
     if ((body as Buffer).length === 0) return done(null, {});
     try { done(null, JSON.parse((body as Buffer).toString("utf8"))); } catch {
       const e = new Error("The body is not JSON.") as Error & { statusCode: number };
@@ -148,11 +165,11 @@ export async function buildApp(deps: Deps): Promise<App> {
       if (!ok) return fail(reply, 403, "forbidden", "This lease is not a replay of this machine.");
       return reply.code(202).send({ ok: true });
     });
-    fastify.post("/v1/runner/machine/events", { bodyLimit: 8 * 1024 }, async (req, reply) => {
+    fastify.post("/v1/runner/machine/events", { bodyLimit: 16 * 1024 }, async (req, reply) => {
       const scope = verifyMachineCredential(cfg.runnerTokens, req.headers.authorization);
       if (!scope) return fail(reply, 401, "unauthorized", "This machine's session credential is required.");
       const b = (req.body ?? {}) as { type?: unknown; leaseId?: unknown; detail?: unknown };
-      if (b.type !== "finished" && b.type !== "prepared" && b.type !== "interrupted") return fail(reply, 400, "bad_request", "type is finished, prepared or interrupted.");
+      if (b.type !== "finished" && b.type !== "prepared" && b.type !== "interrupted" && b.type !== "log") return fail(reply, 400, "bad_request", "type is finished, prepared, interrupted or log.");
       if (b.leaseId !== undefined && (typeof b.leaseId !== "number" || !Number.isSafeInteger(b.leaseId))) return fail(reply, 400, "bad_request", "leaseId is a number.");
       const ok = await machines.event(scope, { type: b.type, ...(typeof b.leaseId === "number" ? { leaseId: b.leaseId } : {}), ...(typeof b.detail === "string" ? { detail: b.detail } : {}) });
       if (!ok) return fail(reply, 401, "unauthorized", "This session ended.");

@@ -49,6 +49,8 @@ export class FakeGitHub {
   orgRunnerGroups: { org: string; id: number; name: string; visibility: string; repos: number[] }[] = [];
   orgJitRunners: { org: string; id: number; name: string; groupId: number; labels: string[] }[] = [];
   refuseRunnerGroups = false;
+  /** Permissions an installation reports in GET /app/installations. */
+  installationPermissions = new Map<number, Record<string, string>>();
   /** Workflow runs cancelled (POST /repos/{o}/{r}/actions/runs/{id}/cancel). */
   runCancels: { repo: string; runId: number }[] = [];
   readonly exchanges: Exchange[] = [];
@@ -255,6 +257,24 @@ export class FakeGitHub {
       const ex = exampleResponse("POST", "/app/installations/{installation_id}/access_tokens", 201);
       delete ex.repositories;
       return [201, { ...ex, token, expires_at: new Date(Date.now() + 3600_000).toISOString().replace(/\.\d+Z$/, "Z"), repository_selection: this.installations.get(id)!.selection }];
+    }
+    if (p === "/app/installations" && method === "GET") {
+      if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      const ex = (exampleResponse("GET", "/app/installations", 200) as unknown as Json[])[0]!;
+      // GitHub's description of this list says allOf(Simple User, Enterprise) for the account, where the single
+      // installation says anyOf: the listed account must carry the Enterprise fields too to match it.
+      return [200, [...this.installations.keys()].map((id) => {
+        const j = this.installationJson(id, ex);
+        const a = j.account as Json;
+        return { ...j, account: { ...a, name: a.login, slug: a.login, created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z" }, permissions: this.installationPermissions.get(id) ?? {} };
+      })];
+    }
+    if (p === "/installation/repositories" && method === "GET") {
+      const inst = this.installationOf(auth);
+      if (!inst) return [401, { message: "Bad credentials", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      const repos = [...this.repos.values()].filter((r) => this.installations.get(inst)!.repos.includes(r.id));
+      const ex = (exampleResponse("GET", "/installation/repositories", 200).repositories as Json[])[0]!;
+      return [200, { total_count: repos.length, repositories: repos.map((r) => this.repoJson(r, ex)) }];
     }
     if ((m = /^\/app\/installations\/(\d+)$/.exec(p)) && method === "GET") {
       if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];

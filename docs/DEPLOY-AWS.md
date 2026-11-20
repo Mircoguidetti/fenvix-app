@@ -425,7 +425,7 @@ The repository variables `FENVIX_RUNNER_MODE` and `FENVIX_DEMO_REPOSITORY` are n
 | a GitHub delivery shows **503** `github_not_configured` | | section C is not finished (C5) |
 | a GitHub delivery shows **401** | the App's webhook secret vs `/fenvix/prod/github-app/webhook-secret` | make them equal (C1, C2), then redeliver |
 | a fenvix job stays **Queued**; the worker logs `the installation is not linked` / `no runner image yet` / `limit 4` | `/aws/lambda/fenvix-prod-github-app-worker` | link the installation from the dashboard / wait for the image build (EC2 Image Builder → Images) / 4 machines busy (retried for about an hour) |
-| the dead-letter alarm fires | `/aws/lambda/fenvix-prod-github-app-worker` | fix the cause, then SQS → `fenvix-prod-github-app-dead-letters` → **Start DLQ redrive** |
+| the dead-letter alarm fires | `/aws/lambda/fenvix-prod-github-app-worker` | the sweep already put each dead-lettered work message back once (at most every 15 minutes, G-1736); what is still there failed again after that, or is a failed schedule call. Fix the cause, then SQS → `fenvix-prod-github-app-dead-letters` → **Start DLQ redrive** |
 
 ### Rotating a secret (AWS console → Systems Manager → Parameter Store)
 

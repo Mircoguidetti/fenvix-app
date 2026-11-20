@@ -10,7 +10,7 @@ do $$
 declare t text; who text; ok boolean;
 begin
   foreach who in array array['authenticated', 'anon', 'fenvix_api'] loop
-    foreach t in array array['gh_machines', 'gh_leases', 'gh_redeliveries', 'gh_machine_minutes'] loop
+    foreach t in array array['gh_machines', 'gh_leases', 'gh_redeliveries', 'gh_machine_minutes', 'gh_machine_logs', 'gh_service_marks', 'gh_runner_groups'] loop
       execute format('set local role %I', who);
       ok := false;
       begin

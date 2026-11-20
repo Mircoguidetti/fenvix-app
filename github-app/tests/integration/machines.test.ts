@@ -2,6 +2,7 @@
 // docs/REPORT-our-machines.md lists which audit gap each test closes.
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
 import type pg from "pg";
 import { PoolLauncher } from "../../src/machines/launcher.ts";
@@ -440,9 +441,43 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
     assert.equal((await h.send("ping", ping, { secret: "some-other-secret-0123456789abc" })).statusCode, 401);
   });
 
+  it("G-1739: a runner record can come gzipped (a big summary over the 6 MB front door); elsewhere gzip is refused", async () => {
+    const { gzipSync } = await import("node:zlib");
+    const cred = runnerCredential("fenvix-j1006", REPOS.shop.id, 9406);
+    const big = { runId: 9406, runAttempt: 1, summary: JSON.parse(readFileSync(new URL("../fixtures/runner/job3-warm-pass.summary.json", import.meta.url), "utf8")) };
+    const r = await h.app.fastify.inject({ method: "POST", url: "/v1/runner/summaries", payload: gzipSync(JSON.stringify(big)), headers: { "content-type": "application/json", "content-encoding": "gzip", authorization: `Bearer ${cred}` } });
+    assert.equal(r.statusCode, 202, r.body);
+    const w = await h.app.fastify.inject({ method: "POST", url: "/webhooks/github", payload: gzipSync("{}"), headers: { "content-type": "application/json", "content-encoding": "gzip" } });
+    assert.equal(w.statusCode, 415);
+    const bad = await h.app.fastify.inject({ method: "POST", url: "/v1/runner/summaries", payload: Buffer.from("not gzip"), headers: { "content-type": "application/json", "content-encoding": "gzip", authorization: `Bearer ${cred}` } });
+    assert.equal(bad.statusCode, 413);
+  });
+
+  it("G-1746: an installation whose webhook never arrived (over 6 MB, or lost) is found by the reconcile, with its repositories", async () => {
+    h.gh.addInstallation({ id: 7777, account: { login: "initech", id: 9007, type: "Organization" }, repos: [90001, 90002], selection: "all" });
+    h.gh.addRepo({ id: 90001, fullName: "initech/a", ownerId: 9007, files: {} });
+    h.gh.addRepo({ id: 90002, fullName: "initech/b", ownerId: 9007, files: {} });
+    const r = await h.app.service.reconcileInstallations(true);
+    assert.ok(r.installations >= 1 && r.repositories >= 2, JSON.stringify(r));
+    assert.deepEqual((await admin.query("select repository_id from gh_repositories where installation_id = 7777 order by 1")).rows.map((x) => x.repository_id), [90001, 90002]);
+    assert.equal((await admin.query("select deleted_at from gh_installations where installation_id = 7777")).rows[0].deleted_at, null);
+    // At most every 15 minutes from the sweep.
+    assert.deepEqual(await h.app.service.reconcileInstallations(), { installations: 0, repositories: 0, deleted: 0 });
+  });
+
   it("/readyz: 200 when the database answers (G-1707: the deploy's smoke test)", async () => {
     const r = await h.app.fastify.inject({ method: "GET", url: "/readyz" });
     assert.deepEqual([r.statusCode, r.json()], [200, { ok: true, database: true }]);
+  });
+
+  it("G-1770: what a machine says about a failed slot is kept after the machine is gone (newest 200 lines); another machine's lease id is dropped", async () => {
+    assert.equal((await post("/v1/runner/machine/events", { type: "log", leaseId: 999999, detail: "slot 0 exited 1:\nRunner config refused" }, acmeToken)).status, 202);
+    const rows = (await admin.query("select machine_id, lease_id, text from gh_machine_logs order by id desc limit 1")).rows;
+    assert.equal(rows[0].lease_id, null, "a lease that is not this machine's is not linked");
+    assert.match(rows[0].text, /Runner config refused/);
+    for (let i = 0; i < 205; i++) await post("/v1/runner/machine/events", { type: "log", detail: `line ${i}` }, acmeToken);
+    const n = (await admin.query("select count(*)::int as n from gh_machine_logs where machine_id = $1", [rows[0].machine_id])).rows[0].n;
+    assert.equal(n, 200);
   });
 
   it("machine API input: a bad body is 400, a missing credential 401", async () => {

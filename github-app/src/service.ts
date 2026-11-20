@@ -1081,8 +1081,62 @@ export class GitHubService {
     return asked;
   }
 
+  /**
+   * Installations and repositories from GitHub itself, every 15 minutes (G-1746): an installation webhook over API
+   * Gateway's 6 MB limit (an account on "All repositories") never reaches us, nor does any delivery lost while we were
+   * down for longer than the redelivery window. New installations and repositories are recorded.
+   */
+  async reconcileInstallations(force = false): Promise<{ installations: number; repositories: number; deleted: number }> {
+    const out = { installations: 0, repositories: 0, deleted: 0 };
+    if (!force) {
+      const [due] = await this.db.q<{ due: boolean }>(
+        `insert into gh_service_marks (name, at) values ('reconcile_installations', now())
+           on conflict (name) do update set at = now() where gh_service_marks.at < now() - interval '15 minutes'
+         returning true as due`);
+      if (!due) return out;
+    }
+    const seen: number[] = [];
+    let complete = true;
+    for (let page = 1; page <= 10; page++) {
+      const r = await this.gh.app.request<InstallationP[]>("GET", "/app/installations", { query: { per_page: "100", page: String(page) } });
+      for (const i of r.data) {
+        seen.push(i.id);
+        const known = (await this.db.q("select 1 from gh_installations where installation_id = $1", [i.id])).length > 0;
+        await this.upsertInstallation(i);
+        if (!known) out.installations++;
+        const repos: RepoLite[] = [];
+        for (let rp = 1; rp <= 50; rp++) {
+          const x = await this.gh.installation(i.id).request<{ repositories: RepoLite[] }>("GET", "/installation/repositories", { query: { per_page: "100", page: String(rp) } }).catch(() => null);
+          if (!x) { complete = false; break; }
+          repos.push(...x.data.repositories);
+          if (x.data.repositories.length < 100) break;
+        }
+        const have = new Set((await this.db.q<{ repository_id: number }>("select repository_id from gh_repositories where installation_id = $1 and removed_at is null", [i.id])).map((y) => y.repository_id));
+        const missing = repos.filter((y) => !have.has(y.id));
+        if (missing.length) { await this.upsertRepositories(i.id, missing); out.repositories += missing.length; }
+      }
+      if (r.data.length < 100) break;
+      if (page === 10) complete = false;
+    }
+    // Nothing is marked deleted from a listing: one incomplete or wrong answer must never stop a customer's machines.
+    // A deletion arrives as its own (small) webhook, and lost ones are asked again (redeliverFailed).
+    void complete;
+    if (out.installations || out.repositories || out.deleted) this.log.info(out, "installations reconciled with GitHub");
+    return out;
+  }
+
+  /** True at most once per `minutes` across every function and container (a row in gh_service_marks). */
+  async markDue(name: string, minutes: number): Promise<boolean> {
+    const [due] = await this.db.q<{ due: boolean }>(
+      `insert into gh_service_marks (name, at) values ($1, now())
+         on conflict (name) do update set at = now() where gh_service_marks.at < now() - make_interval(mins => $2)
+       returning true as due`, [name, minutes]);
+    return !!due;
+  }
+
   async sweep(): Promise<number> {
     await this.redeliverFailed().catch(() => 0);
+    await this.reconcileInstallations().catch((e: unknown) => { this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "installations not reconciled"); });
     // Our machines: retire, reconcile, top up the reserve, dispatch waiting jobs (every minute, with the sweep).
     if (this.pool) {
       try {

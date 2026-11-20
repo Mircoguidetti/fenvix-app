@@ -280,10 +280,17 @@ export class MachinePool {
   }
 
   /** What the machine reports: a slot finished, a reserve machine is prepared, EC2 will take a spot machine back. */
-  async event(scope: MachineScope, e: { type: "finished" | "prepared" | "interrupted"; leaseId?: number; detail?: string }): Promise<boolean> {
+  async event(scope: MachineScope, e: { type: "finished" | "prepared" | "interrupted" | "log"; leaseId?: number; detail?: string }): Promise<boolean> {
     return this.db.tx(null, async (c) => {
       const m = await this.session(c, scope);
       if (!m) return false;
+      if (e.type === "log") {
+        // Kept after the machine is gone (G-1770); a lease id that is not this machine's is dropped from the line.
+        const own = e.leaseId ? (await c.query("select 1 from gh_leases where id = $1 and machine_id = $2", [e.leaseId, m.id])).rows.length > 0 : false;
+        await c.query("insert into gh_machine_logs (machine_id, lease_id, text) values ($1, $2, $3)", [m.id, own ? e.leaseId : null, String(e.detail ?? "").slice(0, 8000)]);
+        await c.query("delete from gh_machine_logs where machine_id = $1 and id not in (select id from gh_machine_logs where machine_id = $1 order by id desc limit 200)", [m.id]);
+        return true;
+      }
       const detail = String(e.detail ?? "").slice(0, 1000);
       if (e.type === "finished" && e.leaseId) {
         const l = (await c.query("update gh_leases set state = 'done', finished_at = now(), detail = $3 where id = $1 and machine_id = $2 and state in ('offered', 'running') returning id",

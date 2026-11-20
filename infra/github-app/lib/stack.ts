@@ -29,7 +29,9 @@ export const boundaryName = (env: string) => `fenvix-${env}-github-app-boundary`
 const SERVICE_DIR = fileURLToPath(new URL("../../../github-app/", import.meta.url));
 
 /** Worker timeout; the queue's visibility timeout is six times this (AWS's advice for Lambda consumers). */
-const WORKER_TIMEOUT = Duration.seconds(120);
+// 300 s per batch (G-1747): a slow GitHub call or a large results chunk no longer runs out of time, and with 10
+// concurrent batches one customer's slow work does not hold back the others.
+const WORKER_TIMEOUT = Duration.seconds(300);
 
 export interface FenvixGitHubAppProps extends StackProps { settings: Settings }
 
@@ -261,11 +263,14 @@ export class FenvixGitHubAppStack extends Stack {
     // The sweep is also the pool's minute (github-app/src/machines/pool.ts tick): it retires, reconciles and tops up
     // machines, and dispatches waiting jobs (registering their just-in-time runners: the launch secrets).
     const sweep = fn("Sweep", "sweep.ts", {
-      timeout: Duration.seconds(300), memory: 512, reads: readersOf(s.env, "sweep"), extraEnv: { ...launchEnv, ...warmupEnv },
+      timeout: Duration.seconds(300), memory: 512, reads: readersOf(s.env, "sweep"), extraEnv: { ...launchEnv, ...warmupEnv, WORK_QUEUE_URL: queue.queueUrl, DEAD_LETTER_QUEUE_URL: dlq.queueUrl },
       description: "fenvix GitHub App: the machine pool's minute (retire, reconcile, reserve, waiting jobs); publishes completed jobs whose runner summary never came",
     });
     mayLaunch(sweep, machineRole);
     mayManage(sweep);
+    // Dead-lettered work goes back to the work queue once (G-1736, github-app/src/queue/redrive.ts).
+    dlq.grantConsumeMessages(sweep);
+    queue.grantSendMessages(sweep);
 
     // ---------------------------------------------------------------- the sweep's schedule
     const schedulerRole = new iam.Role(this, "SweepScheduleRole", { assumedBy: new iam.ServicePrincipal("scheduler.amazonaws.com", { conditions: { StringEquals: { "aws:SourceAccount": this.account } } }) });

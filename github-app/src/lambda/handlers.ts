@@ -1,4 +1,5 @@
 import type { App, Core } from "../app.ts";
+import { redriveOnce, type DeadLetterPort, type RedriveTarget } from "../queue/redrive.ts";
 import { readMessage, type BlobPort } from "../queue/sqs.ts";
 import type { Logger } from "../service.ts";
 import { describeWork, runWork } from "../work.ts";
@@ -47,11 +48,19 @@ export function makeWorkerHandler(getCore: () => Promise<WorkerCore>) {
 }
 
 /** Sweep (EventBridge schedule): completed jobs whose summary never came are published after SUMMARY_WAIT_SECONDS. */
-export function makeSweepHandler(getCore: () => Promise<WorkerCore>) {
-  return async (): Promise<{ due: number }> => {
+export function makeSweepHandler(getCore: () => Promise<WorkerCore>, deadLetters?: { dlq: DeadLetterPort; work: RedriveTarget }) {
+  return async (): Promise<{ due: number; redriven?: number; kept?: number }> => {
     const { service, log } = await getCore();
     const due = await service.sweep();
     if (due) log.info({ due }, "sweep: jobs published without a summary (or retried)");
+    // Dead-lettered work goes back once, at most every 15 minutes (G-1736); what fails again stays for a person.
+    if (deadLetters && await service.markDue("redrive_dead_letters", 15)) {
+      try {
+        const r = await redriveOnce(deadLetters.dlq, deadLetters.work);
+        if (r.redriven || r.kept) log.warn(r, "sweep: dead letters redriven once; the kept ones need a person (docs/DEPLOY-AWS.md)");
+        return { due, ...r };
+      } catch (e) { log.warn({ err: e instanceof Error ? e.message : String(e) }, "sweep: dead-letter redrive failed"); }
+    }
     return { due };
   };
 }
