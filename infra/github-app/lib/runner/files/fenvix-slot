@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# One job slot of a machine (root; called by fenvix-agent). A machine holds the jobs of ONE customer (the dispatcher
+# guarantees it); each job of that customer runs in its own slot, a sandbox with:
+#   - its own user (fenvix-s<N>, uid 20000+N) and its own home /srv/fenvix/slot/<N> (0700), recreated for every job;
+#   - its own mount namespace: the other slots' homes are not mounted at all (a tmpfs over /srv/fenvix/slot holds only
+#     its own), and /tmp, /var/tmp, /dev/shm are private tmpfs that vanish with the job;
+#   - its own PID namespace: it sees only its own processes;
+#   - no new privileges, no capabilities; the instance metadata service refused (fenvix-imds-block: any uid but root);
+#   - cgroup limits for memory and CPU when systemd runs the machine (systemd-run --scope).
+# After the job everything of the slot is killed and deleted (wipe).
+#
+#   fenvix-slot prepare N WORK.json    the slot's home, the runner copied in, the job's settings (as the slot user)
+#   fenvix-slot run N                  the runner for exactly one job, in the sandbox (waits for it to end)
+#   fenvix-slot read N RELPATH         prints a file of the slot AS THE SLOT USER (root never follows a slot's path)
+#   fenvix-slot wipe N                 kills every process of the slot and deletes its files
+set -euo pipefail
+cmd="${1:-}"; n="${2:-}"
+[[ "$n" =~ ^([1-9]|1[0-6])$ ]] || { echo "fenvix-slot: slot must be 1 to 16" >&2; exit 2; }
+user="fenvix-s$n"
+uid=$((20000 + n))
+base="${FENVIX_SLOT_BASE:-/srv/fenvix/slot}"
+home="$base/$n"
+runner_template="${FENVIX_RUNNER_TEMPLATE:-/opt/fenvix/actions-runner}"
+id "$user" >/dev/null 2>&1 || { echo "fenvix-slot: no user $user (the image creates fenvix-s1..s16)" >&2; exit 2; }
+[ "$(id -u "$user")" = "$uid" ] || { echo "fenvix-slot: $user is not uid $uid" >&2; exit 2; }
+as_slot() { setpriv --reuid "$uid" --regid "$uid" --clear-groups --no-new-privs -- "$@"; }
+
+wipe() {
+  pkill -KILL -u "$uid" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -u "$uid" >/dev/null 2>&1 || break; sleep 0.2; done
+  # System V IPC of the slot user (shared memory, semaphores, queues) goes too.
+  for kind in m s q; do
+    ipcs -"$kind" 2>/dev/null | awk -v u="$user" -v id="$uid" '$3 == u || $3 == id {print $2}' | while read -r i; do ipcrm -"$kind" "$i" 2>/dev/null || true; done
+  done
+  # rm never follows a symlink it finds inside the tree; the home itself is a directory root made.
+  rm -rf --one-file-system "$home"
+}
+
+case "$cmd" in
+  wipe) wipe ;;
+  prepare)
+    work="${3:?WORK.json}"
+    wipe
+    install -d -m 0755 -o root -g root "$base"
+    install -d -m 0700 -o "$uid" -g "$uid" "$home"
+    # The runner, copied by the slot user from the root-owned template (nothing of a previous job is reused).
+    as_slot cp -R "$runner_template" "$home/runner"
+    as_slot mkdir -m 0700 "$home/.fenvix" "$home/work" "$home/fenvix-out"
+    # The job's settings: written by the slot user, read from the agent's root-only file through stdin.
+    python3 -I - "$work" "$home" <<'PY' | as_slot sh -c 'umask 077; cat >"$1"' _ "$home/runner/.env"
+import json, sys
+w = json.load(open(sys.argv[1]))
+home = sys.argv[2]
+env = dict(w.get("env") or {})
+env.update({
+    "ACTIONS_RUNNER_HOOK_JOB_STARTED": "/opt/fenvix/bin/fenvix-job-started",
+    "FENVIX_OUT": home + "/fenvix-out",
+    "FENVIX_HOME": "/opt/fenvix",
+})
+for k, v in env.items():
+    if not k.replace("_", "").isalnum() or not k[0].isalpha() or "\n" in str(v):
+        sys.exit("bad setting " + k)
+    print(f"{k}={v}")
+PY
+    python3 -I -c 'import json,sys; sys.stdout.write(json.load(open(sys.argv[1]))["jitConfig"])' "$work" \
+      | as_slot sh -c 'umask 077; cat >"$1"' _ "$home/.fenvix/jitconfig"
+    ;;
+  run)
+    [ -d "$home" ] || { echo "fenvix-slot: slot $n is not prepared" >&2; exit 2; }
+    inner=(unshare --mount --pid --fork --kill-child --mount-proc --propagation private -- "$0" inner "$n")
+    if [ -d /run/systemd/system ] && command -v systemd-run >/dev/null; then
+      exec systemd-run --scope --quiet --collect --unit "fenvix-slot-$n-$$" \
+        -p "MemoryMax=${FENVIX_SLOT_MEMORY:-6G}" -p "CPUWeight=100" -p "TasksMax=${FENVIX_SLOT_TASKS:-8192}" -- "${inner[@]}"
+    fi
+    exec "${inner[@]}"
+    ;;
+  inner)
+    # In the new mount and PID namespaces, still root: hide every other slot, make the temporary directories private,
+    # then become the slot user for good.
+    mkdir -p /run/fenvix-self
+    mount --bind "$home" /run/fenvix-self
+    mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs "$base"
+    mkdir -p "$home"
+    mount --move /run/fenvix-self "$home"
+    for d in /tmp /var/tmp /dev/shm; do mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs "$d"; done
+    # The agent's state and the machine's settings (root-only already) are not even mounted for the job.
+    for d in /var/lib/fenvix-agent /etc/fenvix; do [ -d "$d" ] && mount -t tmpfs -o mode=0700,size=1m tmpfs "$d"; done
+    cd "$home"
+    jit="$(as_slot cat -- "$home/.fenvix/jitconfig")"
+    run="${FENVIX_SLOT_COMMAND:-$home/runner/run.sh}"
+    exec setpriv --reuid "$uid" --regid "$uid" --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all -- \
+      env -i HOME="$home" USER="$user" LOGNAME="$user" PATH="/opt/fenvix/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+      LANG=C.UTF-8 RUNNER_ALLOW_RUNASROOT=0 "$run" --jitconfig "$jit"
+    ;;
+  read)
+    rel="${3:?RELPATH}"
+    case "$rel" in /*|*..*) echo "fenvix-slot: a path inside the slot" >&2; exit 2 ;; esac
+    # As the slot user: a symlink planted by the job can only lead where the job could read anyway.
+    as_slot head -c "${FENVIX_READ_LIMIT:-33554432}" -- "$home/$rel"
+    ;;
+  *) echo "usage: fenvix-slot prepare|run|read|wipe N ..." >&2; exit 2 ;;
+esac

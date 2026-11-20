@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""fenvix-agent: the machine side of our machines (root, systemd fenvix-agent.service). Standard library only.
+
+1. Reads the machine's settings from its user data (instance metadata, IMDSv2; root only: every other uid is refused
+   the metadata service by fenvix-imds-block): its machine id, its single-use boot secret, the API URL.
+2. Says hello (POST /v1/runner/machine/hello) with the boot secret and the engine version of the image; gets a
+   session credential. A reserve machine being prepared reports "prepared" and waits to be stopped.
+3. Polls (POST /v1/runner/machine/poll) every 2 s: each lease is one job of this machine's ONE customer, run in its
+   own slot (fenvix-slot: own user, home, mount and PID namespaces). A slot whose lease ended is stopped; "retire"
+   shuts the machine down (EC2 then terminates it: shutdown behaviour terminate).
+4. When a slot's job ends: its summary (if the engine wrote one) is read AS THE SLOT USER (never by root through a
+   path the job controls) and sent with the job's own credential; the slot is wiped; "finished" is reported.
+5. A spot machine watches for EC2's interruption notice and reports it (the dispatcher re-runs its jobs).
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+
+IMDS = os.environ.get("FENVIX_IMDS", "http://169.254.169.254")
+SLOT = os.environ.get("FENVIX_SLOT_BIN", "/opt/fenvix/bin/fenvix-slot")
+STATE = os.environ.get("FENVIX_AGENT_STATE", "/var/lib/fenvix-agent")
+ENGINE_FILE = os.environ.get("FENVIX_ENGINE_FILE", "/opt/fenvix/ENGINE")
+
+
+def log(msg: str) -> None:
+    print(f"[fenvix-agent] {msg}", flush=True)
+
+
+def imds(path: str, timeout: float = 2.0) -> str | None:
+    try:
+        req = urllib.request.Request(f"{IMDS}/latest/api/token", method="PUT", headers={"X-aws-ec2-metadata-token-ttl-seconds": "300"})
+        tok = urllib.request.urlopen(req, timeout=timeout).read().decode()
+        r = urllib.request.urlopen(urllib.request.Request(f"{IMDS}/latest/{path}", headers={"X-aws-ec2-metadata-token": tok}), timeout=timeout)
+        return r.read().decode()
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+    except OSError:
+        return None
+
+
+def settings() -> dict[str, str]:
+    text = os.environ.get("FENVIX_USER_DATA_TEXT") or imds("user-data") or ""
+    out = {}
+    for line in text.splitlines():
+        if line and line[0].isalpha() and "=" in line:
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+class Api:
+    def __init__(self, base: str):
+        if not (base.startswith("https://") or os.environ.get("FENVIX_ALLOW_HTTP") == "1"):
+            raise SystemExit("FENVIX_API_URL must be https://")
+        self.base = base.rstrip("/")
+        self.token: str | None = None
+
+    def post(self, path: str, body: dict, token: str | None = None, timeout: float = 20.0) -> tuple[int, dict]:
+        data = json.dumps(body).encode()
+        h = {"content-type": "application/json", "user-agent": "fenvix-agent/1"}
+        if token:
+            h["authorization"] = f"Bearer {token}"
+        try:
+            r = urllib.request.urlopen(urllib.request.Request(self.base + path, data=data, headers=h, method="POST"), timeout=timeout)
+            return r.status, json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read() or b"{}")
+            except ValueError:
+                return e.code, {}
+        except OSError as e:
+            return 0, {"error": str(e)}
+
+
+class Agent:
+    def __init__(self, s: dict[str, str]):
+        self.s = s
+        self.api = Api(s.get("FENVIX_API_URL", ""))
+        self.summaries = s.get("FENVIX_SUMMARIES_URL", self.api.base + "/v1/runner/summaries")
+        self.slots: dict[int, dict] = {}  # leaseId -> {"slot": n, "proc": Popen, "work": dict}
+        self.lock = threading.Lock()
+        self.interrupted = False
+
+    def engine(self) -> str | None:
+        try:
+            return open(ENGINE_FILE).read().strip()[:200] or None
+        except OSError:
+            return None
+
+    def hello(self) -> str:
+        mid = int(self.s["FENVIX_MACHINE_ID"])
+        st, b = self.api.post("/v1/runner/machine/hello", {"machineId": mid, "bootSecret": self.s.get("FENVIX_BOOT_SECRET", ""), "engineVersion": self.engine()})
+        if st != 200:
+            log(f"hello refused ({st}): {b}")
+            raise SystemExit(3)
+        self.api.token = b["token"]
+        log(f"machine {mid}: hello, mode {b['mode']}, engine {self.engine()}")
+        return b["mode"]
+
+    def event(self, body: dict) -> None:
+        for _ in range(5):
+            st, _b = self.api.post("/v1/runner/machine/events", body, self.api.token)
+            if st in (200, 202, 401):
+                return
+            time.sleep(2)
+
+    def start_slot(self, lease: dict) -> None:
+        used = {v["slot"] for v in self.slots.values()}
+        n = lease["slot"]
+        if n in used:
+            log(f"slot {n} is busy; lease {lease['leaseId']} refused")
+            return
+        os.makedirs(STATE, mode=0o700, exist_ok=True)
+        wf = os.path.join(STATE, f"lease-{lease['leaseId']}.json")
+        fd = os.open(wf, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(lease["work"], f)
+        try:
+            subprocess.run([SLOT, "prepare", str(n), wf], check=True, timeout=600)
+        except (subprocess.SubprocessError, OSError) as e:
+            log(f"slot {n}: prepare failed: {e}")
+            self.finish(lease["leaseId"], n, f"prepare failed: {e}", None)
+            return
+        finally:
+            try:
+                os.unlink(wf)
+            except OSError:
+                pass
+        proc = subprocess.Popen([SLOT, "run", str(n)])
+        with self.lock:
+            self.slots[lease["leaseId"]] = {"slot": n, "proc": proc, "work": lease["work"]}
+        log(f"slot {n}: lease {lease['leaseId']} ({lease['kind']}) started")
+
+    def summary_of(self, n: int) -> dict | None:
+        # Read AS THE SLOT USER (fenvix-slot read): root never opens a path the job could have made a symlink.
+        try:
+            out = subprocess.run([SLOT, "read", str(n), "fenvix-out/summary.json"], capture_output=True, timeout=60)
+        except (subprocess.SubprocessError, OSError):
+            return None
+        if out.returncode != 0 or not out.stdout:
+            return None
+        try:
+            v = json.loads(out.stdout)
+            return v if isinstance(v, dict) else None
+        except ValueError:
+            return None
+
+    def finish(self, lease_id: int, n: int, detail: str, work: dict | None) -> None:
+        if work and work.get("kind") == "job" and work.get("summaryToken"):
+            s = self.summary_of(n)
+            env = work.get("env") or {}
+            if s is not None and str(env.get("FENVIX_RUN_ID", "")).isdigit():
+                url = self.summaries
+                api = Api(url.rsplit("/v1/", 1)[0])
+                st, b = api.post("/v1/runner/summaries", {"runId": int(env["FENVIX_RUN_ID"]), "summary": s}, work["summaryToken"])
+                log(f"slot {n}: summary sent ({st})")
+        subprocess.run([SLOT, "wipe", str(n)], timeout=120)
+        self.event({"type": "finished", "leaseId": lease_id, "detail": detail[:900]})
+        log(f"slot {n}: lease {lease_id} finished ({detail})")
+
+    def reap(self) -> None:
+        with self.lock:
+            done = [(lid, v) for lid, v in self.slots.items() if v["proc"].poll() is not None]
+            for lid, _ in done:
+                del self.slots[lid]
+        for lid, v in done:
+            self.finish(lid, v["slot"], f"exit {v['proc'].returncode}", v["work"])
+
+    def stop(self, lease_id: int) -> None:
+        with self.lock:
+            v = self.slots.get(lease_id)
+        if v:
+            log(f"slot {v['slot']}: lease {lease_id} ended by the service")
+            subprocess.run([SLOT, "wipe", str(v["slot"])], timeout=120)
+
+    def watch_spot(self) -> None:
+        while not self.interrupted:
+            notice = imds("meta-data/spot/instance-action", timeout=1.0)
+            if notice:
+                self.interrupted = True
+                log(f"spot interruption notice: {notice}")
+                self.event({"type": "interrupted", "detail": notice[:500]})
+                return
+            time.sleep(5)
+
+    def run(self) -> int:
+        mode = self.hello()
+        if mode == "prepare":
+            self.event({"type": "prepared"})
+            log("prepared: waiting to be stopped")
+            while True:
+                time.sleep(30)
+        threading.Thread(target=self.watch_spot, daemon=True).start()
+        fails = 0
+        while True:
+            self.reap()
+            with self.lock:
+                holding = list(self.slots.keys())
+            st, b = self.api.post("/v1/runner/machine/poll", {"holding": holding}, self.api.token)
+            if st == 401:
+                log("session ended: shutting down")
+                return self.shutdown()
+            if st != 200:
+                fails += 1
+                if fails * 2 > int(self.s.get("FENVIX_SILENT_SECONDS", "900")):
+                    log("the API is unreachable for too long: shutting down")
+                    return self.shutdown()
+                time.sleep(2)
+                continue
+            fails = 0
+            for lid in b.get("stop", []):
+                self.stop(lid)
+            if b.get("retire"):
+                return self.shutdown()
+            for lease in b.get("leases", []):
+                self.start_slot(lease)
+            time.sleep(float(self.s.get("FENVIX_POLL_SECONDS", "2")))
+
+    def shutdown(self) -> int:
+        with self.lock:
+            slots = list(self.slots.values())
+        for v in slots:
+            subprocess.run([SLOT, "wipe", str(v["slot"])], timeout=120)
+        if os.environ.get("FENVIX_NO_POWEROFF") != "1":
+            subprocess.run(["systemctl", "poweroff"], check=False)
+        return 0
+
+
+def main() -> int:
+    s = settings()
+    if not s.get("FENVIX_MACHINE_ID", "").isdigit():
+        log("no machine settings in the user data: nothing to do")
+        return 0
+    return Agent(s).run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

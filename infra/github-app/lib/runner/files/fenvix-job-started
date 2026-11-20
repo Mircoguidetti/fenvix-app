@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# GitHub runner job-started hook (ACTIONS_RUNNER_HOOK_JOB_STARTED), as the job user: a marker for the idle watchdog of
-# a per-job machine (a machine whose job never came powers off). Never fails the job.
-mkdir -p "$HOME/.fenvix" 2>/dev/null && touch "$HOME/.fenvix/job-started" 2>/dev/null
+# GitHub runner job-started hook (ACTIONS_RUNNER_HOOK_JOB_STARTED), in the job's slot: prints, in the job's log, the
+# engine this machine runs (the trunk artifact, by version and sha256) and the run mode. Never fails the job.
+v="$(cat /opt/fenvix/ENGINE 2>/dev/null || echo 'unknown (no /opt/fenvix/ENGINE)')"
+echo "fenvix: engine ${v}"
+echo "fenvix: mode ${FENVIX_MODE:-enforce}, skip with proof ${FENVIX_SKIP:-1}, region ${FENVIX_REGION:-?}, machine slot $(id -un 2>/dev/null)"
 exit 0
