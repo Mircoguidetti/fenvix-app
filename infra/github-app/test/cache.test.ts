@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -86,9 +86,35 @@ describe("the shared cache service (vendored, pinned)", () => {
       assert.equal((await call("/v1/stats", signCacheToken(stranger, { installationId: 1, repositoryId: 11, write: true, exp, jobId: 1 }))).status, 401);
       assert.equal((await call("/v1/stats", legacy)).status, 401);
       assert.equal((await call("/v1/stats", null)).status, 401);
+      // G-2320: one repository's flood gets 429 with Retry-After; another customer's cache still answers.
+      let limited: Response | null = null;
+      for (let i = 0; i < 400 && !limited; i++) { const r = await call("/v1/stats", acmeRead); if (r.status === 429) limited = r; else await r.arrayBuffer(); }
+      assert.ok(limited, "a flood of one repository is limited");
+      assert.equal(limited.headers.get("retry-after"), "1");
+      assert.equal((await call("/v1/stats", globexRead)).status, 200);
     } finally {
       p.kill();
     }
+  });
+
+  it("G-2320 limits: request and byte buckets per repository, at most two at once per repository, four on the machine", () => {
+    const script = `
+import sys; sys.path.insert(0, ${JSON.stringify(join(AUTH, ".."))})
+import fenvix_cache_auth as a
+t = [0.0]
+L = a.Limits(now=lambda: t[0], rate=1, burst=3, byte_rate=100, byte_burst=1000, per_org_inflight=2, inflight=4)
+out = []
+out.append(L.admit("a", 10)); out.append(L.admit("a", 10)); out.append(L.admit("a", 10))  # two admitted, third: two at once
+L.done("a"); L.done("a")
+out.append(L.admit("a", 10)); L.done("a")                                              # the third request of the burst
+out.append(L.admit("a", 10))                                                           # bucket empty
+t[0] = 1.0; out.append(L.admit("a", 5000))                                             # bytes over the bucket
+out.append(L.admit("b", 10)); out.append(L.admit("c", 10)); out.append(L.admit("d", 10)); out.append(L.admit("e", 10)); out.append(L.admit("f", 10))
+import json; print(json.dumps([o[0] if o else None for o in out]))
+`;
+    const r = spawnSync("python3", ["-I", "-c", script], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout), [null, null, 429, null, 429, 429, null, null, null, null, 503]);
   });
 
   it("the cache machine's user data: the public key only, both service files, the wrapper as the service", async () => {
@@ -97,6 +123,8 @@ describe("the shared cache service (vendored, pinned)", () => {
     assert.match(ud, /\/opt\/fenvix-cache\/fenvix_cache_auth\.py/);
     assert.match(ud, /\/etc\/fenvix-cache\/signing-key\.json/);
     assert.doesNotMatch(ud, /PRIVATE|tokens\.json/);
+    // EC2 refuses user data over 16 KB (before base64): the launch would fail, not the deploy (G-2320 made the wrapper grow).
+    assert.ok(Buffer.byteLength(ud) <= 16 * 1024, `user data ${Buffer.byteLength(ud)} bytes`);
     const svc = readFileSync(new URL("../lib/cache/fenvix-cache.service", import.meta.url), "utf8");
     assert.match(svc, /^ExecStart=\/usr\/bin\/python3 -I \/opt\/fenvix-cache\/fenvix_cache_auth\.py serve .*--key \/etc\/fenvix-cache\/signing-key\.json/m);
   });

@@ -15,6 +15,12 @@ forks get "w": false (read only, within their own organization). Static tokens (
     python3 -I fenvix_cache_auth.py serve --data DIR --key FILE [--host H] [--port P] [--quiet]
 
 FILE is JSON {"n": "<modulus, hex>", "e": <exponent>} (written by the user data; public, not secret).
+
+Limits (audit G-2320), so that one job cannot take the shared cache away from every other customer: each cache
+organization (one customer repository) gets a request rate and a byte rate (token buckets; over them: 429 with
+Retry-After), at most PER_ORG_INFLIGHT requests at once, and the machine at most INFLIGHT requests at once (each may
+hold up to 64 MB unpacked: 4 x 64 MB fits the machine's memory; over it: 503 with Retry-After). How the trunk
+engine's cache client reacts to 429 and 503 is UNKNOWN until it is checked against this service (G-1742).
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -60,6 +67,97 @@ def rsa_verify(n: int, e: int, message: bytes, signature: bytes) -> bool:
         return False
     expected = b"\x00\x01" + b"\xff" * (k - len(t) - 3) + b"\x00" + t
     return hmac.compare_digest(em, expected)
+
+
+RATE = 30.0                       # requests per second per organization (sustained) ...
+BURST = 120.0                     # ... and in a burst
+BYTE_RATE = 32 * 1024 * 1024      # request bytes per second per organization (Content-Length, as sent) ...
+BYTE_BURST = 192 * 1024 * 1024    # ... and in a burst (above one MAX_BODY request)
+PER_ORG_INFLIGHT = 2
+INFLIGHT = 4
+
+
+class Limits:
+    """Per-organization token buckets and in-flight counts, and one machine-wide in-flight count."""
+
+    def __init__(self, now=time.monotonic, rate=RATE, burst=BURST, byte_rate=BYTE_RATE, byte_burst=BYTE_BURST,
+                 per_org_inflight=PER_ORG_INFLIGHT, inflight=INFLIGHT):
+        self.now, self.rate, self.burst, self.byte_rate, self.byte_burst = now, rate, burst, byte_rate, byte_burst
+        self.per_org_inflight, self.inflight = per_org_inflight, inflight
+        self.lock = threading.Lock()
+        self.buckets: dict[str, list[float]] = {}   # org -> [requests left, bytes left, at]
+        self.busy: dict[str, int] = {}
+        self.total = 0
+
+    def admit(self, org: str, nbytes: int) -> tuple[int, str] | None:
+        """None (admitted: call done(org) after), or (status, why) to refuse with."""
+        with self.lock:
+            t = self.now()
+            b = self.buckets.get(org) or [self.burst, self.byte_burst, t]
+            dt = max(0.0, t - b[2])
+            b[0] = min(self.burst, b[0] + dt * self.rate)
+            b[1] = min(self.byte_burst, b[1] + dt * self.byte_rate)
+            b[2] = t
+            self.buckets[org] = b
+            if len(self.buckets) > 10_000:  # forget idle organizations (a full bucket is the same as none)
+                for k in [k for k, v in self.buckets.items() if v[0] >= self.burst and k not in self.busy][:5_000]:
+                    del self.buckets[k]
+            if b[0] < 1 or b[1] < nbytes:
+                return 429, "rate limit of this repository's cache"
+            if self.busy.get(org, 0) >= self.per_org_inflight:
+                return 429, "too many requests at once for this repository's cache"
+            if self.total >= self.inflight:
+                return 503, "the cache is busy"
+            b[0] -= 1
+            b[1] -= nbytes
+            self.busy[org] = self.busy.get(org, 0) + 1
+            self.total += 1
+            return None
+
+    def done(self, org: str) -> None:
+        with self.lock:
+            self.total -= 1
+            n = self.busy.get(org, 0) - 1
+            if n > 0:
+                self.busy[org] = n
+            else:
+                self.busy.pop(org, None)
+
+
+class LimitedHandler(cache_service.Handler):
+    """The vendored handler, admitted per organization after the token is checked and before the body is read."""
+
+    def _auth(self, write: bool):
+        tok = super()._auth(write)
+        if tok is None:
+            return None
+        try:
+            n = max(0, int(self.headers.get("Content-Length") or 0))
+        except ValueError:
+            n = 0
+        refused = self.server.limits.admit(tok["org"], n)  # type: ignore[attr-defined]
+        if refused:
+            code, why = refused
+            self.close_connection = True
+            body = json.dumps({"error": why}).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Retry-After", "1")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return None
+        self._admitted = tok["org"]
+        return tok
+
+    def handle_one_request(self):
+        self._admitted = None
+        try:
+            super().handle_one_request()
+        finally:
+            if self._admitted is not None:
+                self.server.limits.done(self._admitted)  # type: ignore[attr-defined]
+                self._admitted = None
 
 
 class SignedTokens:
@@ -110,6 +208,8 @@ def main(argv=None) -> int:
     tokens = SignedTokens(args.key)
     svc = cache_service.Service(args.data, args.host, args.port, args.quiet)
     svc.tokens = tokens
+    svc.httpd.RequestHandlerClass = LimitedHandler
+    svc.httpd.limits = Limits()  # type: ignore[attr-defined]
     print(f"fenvix cache service on {svc.url} (data {args.data}; per-job signed tokens only)", flush=True)
     try:
         svc.serve_forever()

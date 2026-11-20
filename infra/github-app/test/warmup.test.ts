@@ -53,7 +53,7 @@ describe("warm-up runs (our machines): the warm-up scheduler function, its sched
 
   it("it reads exactly the launch secrets (database, App key, summary key, cache signing key), not the HTTP ones", () => {
     const reads = statementsOf(fnRole("warmup")).filter((x) => json(x.Action).includes("ssm:")).flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter(\/fenvix[^"]*)/)![1]).sort();
-    assert.deepEqual(reads, [`${appPrefix("prod")}/database-url`, `${appPrefix("prod")}/private-key`, `${appPrefix("prod")}/runner-token`, ...cacheParameters("prod").map((p) => p.name)].sort());
+    assert.deepEqual(reads, [`${appPrefix("prod")}/database-url`, `${appPrefix("prod")}/private-key`, `${appPrefix("prod")}/runner-token`, `${appPrefix("prod")}/database-ca-cert`, ...cacheParameters("prod").map((p) => p.name)].sort());
   });
 
   it("a warm-up lease on our machines ends at once as unsupported until the engine ships its warm-up executor (G-1731)", () => {

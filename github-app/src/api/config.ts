@@ -13,6 +13,8 @@ export interface ApiConfig {
   /** Postgres URL of the role fenvix_api, through the Supabase pooler in transaction mode (port 6543). Secret. */
   databaseUrl: string;
   dbPoolMax: number;
+  /** Supabase's CA certificate (public, optional): the database TLS is verified with it (G-2323). */
+  databaseCa?: string;
   supabaseUrl: string;
   supabaseJwksUrl: string;
   /** Signs the installation link's state (the same key as the App's /github/setup). Secret. */
@@ -94,6 +96,7 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     host: env.HOST ?? "0.0.0.0",
     databaseUrl: secret(env, "API_DATABASE_URL"),
     dbPoolMax: int(env, "DB_POOL_MAX", 5, 1),
+    ...(env.DATABASE_CA_CERT ? { databaseCa: env.DATABASE_CA_CERT } : {}),
     supabaseUrl,
     supabaseJwksUrl: url(env, "SUPABASE_JWKS_URL", `${supabaseUrl}/auth/v1/.well-known/jwks.json`, nodeEnv),
     stateSigningKey: secret(env, "STATE_SIGNING_KEY", 32),

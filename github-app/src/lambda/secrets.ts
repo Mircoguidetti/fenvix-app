@@ -19,6 +19,9 @@ import { GetParametersCommand, type SSMClient } from "@aws-sdk/client-ssm";
  *                                                              state signing key: no App key, webhook or client
  *                                                              secret, no runner token
  *
+ *   <prefix>/database-ca-cert        DATABASE_CA_CERT          every function, optional: Supabase's CA (public); with it
+ *                                                              the database TLS is verified (G-2323, src/db-tls.ts)
+ *
  * The per-job worker also reads the cache signing key, by its full name (CACHE_SIGNING_KEY_PARAM, /fenvix/<env>/cache/
  * signing-key). Every function reloads its secrets after SECRETS_TTL_SECONDS (runtime.ts), so a rotation takes
  * effect without a deploy.
@@ -41,6 +44,7 @@ export const SECRET_PARAMETERS: Record<string, { env: string; surfaces: Surface[
   "runner-token": { env: "RUNNER_TOKEN", surfaces: ["all", "launcher"], required: true },
   "runner-token-previous": { env: "RUNNER_TOKEN_PREVIOUS", surfaces: ["all"], required: false },
   "api-database-url": { env: "API_DATABASE_URL", surfaces: ["api"], required: true },
+  "database-ca-cert": { env: "DATABASE_CA_CERT", surfaces: ["all", "launcher", "worker", "api"], required: false },
 };
 
 export function parameterNames(prefix: string, surface: Surface): string[] {

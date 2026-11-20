@@ -25,6 +25,14 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    # Roll back (G-1706, docs/DEPLOY-AWS.md "Roll back"): Run workflow on main with an earlier commit of main. The
+    # workflow file, the OIDC trust and the tests stay main's; only the code deployed is that commit's.
+    inputs:
+      rollback_to:
+        description: "Roll back: the full commit SHA of an earlier commit of main to deploy (empty: main as it is)"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -66,7 +74,17 @@ jobs:
       FENVIX_DASHBOARD_ON_AWS: ${{ vars.FENVIX_DASHBOARD_ON_AWS == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: { persist-credentials: false, fetch-depth: 0 }
+      # Roll back: only a commit that is on main (never a branch, a tag or a pull request's head).
+      - name: 0. Roll back to an earlier commit of main (only with the rollback_to input)
+        if: inputs.rollback_to != ''
+        env:
+          ROLLBACK_TO: ${{ inputs.rollback_to }}
+        run: |
+          [[ "$ROLLBACK_TO" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::rollback_to must be a full 40-character commit SHA"; exit 1; }
+          git merge-base --is-ancestor "$ROLLBACK_TO" "$GITHUB_SHA" || { echo "::error::$ROLLBACK_TO is not an earlier commit of main"; exit 1; }
+          git checkout --quiet --detach "$ROLLBACK_TO"
+          echo "::notice::Rolling back: deploying $ROLLBACK_TO (main is $GITHUB_SHA); the database keeps its schema (migrations only add)."
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -99,7 +117,9 @@ jobs:
           [ "$account" = "$AWS_ACCOUNT" ] || { echo "::error::signed in to AWS account $account, expected $AWS_ACCOUNT"; exit 1; }
           node deploy/cli.mjs preflight
 
+      # Not on a roll back: migrations only go forward and only add (an earlier commit runs on the newer schema).
       - name: 2. Database migrations
+        if: inputs.rollback_to == ''
         run: node deploy/cli.mjs migrate
 
       - name: 3. Database roles (passwords generated here, stored in SSM only)

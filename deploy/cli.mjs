@@ -37,7 +37,7 @@ import { readFounderValue } from "./lib/bootstrap.mjs";
 import { exportEnv, info, mask, notice, Stop, summary, warning } from "./lib/log.mjs";
 import { migrate, readMigrations } from "./lib/migrate.mjs";
 import { recoverFailedCreates } from "./lib/recover.mjs";
-import { ensureRoles } from "./lib/roles.mjs";
+import { ensureRoles, syncDatabaseCa } from "./lib/roles.mjs";
 import { ensureGenerated } from "./lib/secrets.mjs";
 import { adminClientConfig, checkAnonKey, parseAdminUrl, parseCaCert } from "./lib/supabase.mjs";
 
@@ -140,6 +140,9 @@ const steps = {
     try {
       const r = await ensureRoles(client, a, ssm(), { env: ENV });
       summary(`**Database roles:** ${Object.entries(r).map(([k, v]) => `${k} ${v === "kept" ? "unchanged" : "new password (stored in SSM only)"}`).join(", ")}.`);
+      // The services verify the pooler's certificate when the founder saved Supabase's CA (G-2323).
+      const ca = await syncDatabaseCa(ssm(), parseCaCert(await founder("caCert")), { env: ENV });
+      summary(`**Database TLS of the services:** ${ca === "set" || ca === "kept" ? "verified against SUPABASE_CA_CERT (verify-full)" : "encrypted, certificate not verified (no supabase-ca-cert parameter)"}.`);
     } finally { await client.end(); }
   },
 

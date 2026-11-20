@@ -39,7 +39,7 @@ export interface Core { service: GitHubService; db: Db; gh: GitHubApp }
 
 /** The database, the GitHub client and the service: what the HTTP side, the worker and the sweep share. */
 export function buildCore(cfg: Config, log: Logger, launcherOrFactory: RunnerLauncher | ((db: Db) => RunnerLauncher) | null = null): Core {
-  const db = new Db(cfg.databaseUrl, cfg.dbPoolMax);
+  const db = new Db(cfg.databaseUrl, cfg.dbPoolMax, cfg.databaseCa);
   const launcher = typeof launcherOrFactory === "function" ? launcherOrFactory(db) : launcherOrFactory;
   const gh = new GitHubApp({ apiUrl: cfg.apiUrl, appId: cfg.appId, privateKey: cfg.privateKey, timeoutMs: cfg.githubTimeoutMs });
   const service = new GitHubService(db, gh, {

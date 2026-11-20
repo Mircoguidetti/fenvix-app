@@ -378,7 +378,7 @@ In Parameter Store (like section A, step 2):
 
 | Name | Type | Effect |
 |---|---|---|
-| `/fenvix/prod/bootstrap/supabase-ca-cert` | String | Supabase's CA certificate (public): Supabase → Project Settings → Database → **SSL Configuration** → **Download certificate**, open the file in a text editor and paste all of it. The pipeline then verifies the pooler's certificate (like `sslmode=verify-full`) on its admin connection, which carries the database password. Without it the connection is encrypted but the certificate is not checked. If the deploy then stops with "did not verify against SUPABASE_CA_CERT", download it again or delete the parameter. |
+| `/fenvix/prod/bootstrap/supabase-ca-cert` | String | Supabase's CA certificate (public): Supabase → Project Settings → Database → **SSL Configuration** → **Download certificate**, open the file in a text editor and paste all of it. The pipeline then verifies the pooler's certificate (like `sslmode=verify-full`) on its admin connection, which carries the database password, and copies it to `/fenvix/prod/github-app/database-ca-cert`, so the App and the API verify the pooler the same way (G-2323). Without it the connection is encrypted but the certificate is not checked. If the deploy then stops with "did not verify against SUPABASE_CA_CERT", download it again or delete the parameter. |
 
 As repository variables (GitHub → this repository → **Settings → Secrets and variables → Actions → Variables** tab →
 **New repository variable**; available on GitHub Free; not secret):
@@ -398,6 +398,18 @@ change them in a pull request.
 
 Demo mode and per-job mode were retired on 2026-11-20 with the design of our machines (section "Our machines" below).
 The repository variables `FENVIX_RUNNER_MODE` and `FENVIX_DEMO_REPOSITORY` are no longer read; delete them.
+
+## Roll back (G-1706)
+
+To put the previous code back without a revert and a review: GitHub → the repository → **Actions** → **Deploy** →
+**Run workflow**, branch **main**, and in **rollback_to** the full 40-character SHA of the earlier commit of `main`
+(the commit page shows it; the last good deploy is the previous green **Deploy** run). The run still uses `main`'s
+workflow file, the same AWS trust (the branch `main` only) and runs the tests first; then it checks out that commit
+(refused if it is not an earlier commit of `main`), skips the database migrations (they only go forward and only add:
+the earlier code runs on the newer schema) and deploys that commit's functions, image recipe and settings. To go
+forward again, push to `main` or run the workflow with **rollback_to** empty. Limits: an earlier commit must have the
+deploy steps `main`'s workflow calls (any commit from this change on); there are no Lambda aliases or gradual traffic
+shift, so a roll back replaces all functions at once (ESTIMATED: tests plus deploy, about as long as a normal deploy).
 
 ## When something fails
 

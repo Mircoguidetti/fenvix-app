@@ -22,6 +22,8 @@ export interface Config {
   /** Connection string of the restricted role fenvix_github_app. Never logged. */
   databaseUrl: string;
   dbPoolMax: number;
+  /** Supabase's CA certificate (public, optional): the database TLS is verified with it (G-2323). */
+  databaseCa?: string;
 
   /** GitHub App settings page: "App ID". */
   appId: number;
@@ -192,6 +194,7 @@ export function loadConfig(env: Env = process.env, opts: { surface?: "all" | "wo
     nodeEnv,
     databaseUrl: required(env, "GITHUB_APP_DATABASE_URL"),
     dbPoolMax: int(env, "DB_POOL_MAX", 10, 1),
+    ...(env.DATABASE_CA_CERT ? { databaseCa: env.DATABASE_CA_CERT } : {}),
     appId,
     appSlug,
     privateKey: parsePrivateKey(secret(env, "GITHUB_APP_PRIVATE_KEY")),

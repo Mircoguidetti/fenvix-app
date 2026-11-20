@@ -143,7 +143,7 @@ describe("the stack (shared properties)", async () => {
     assert.equal(vars.FENVIX_MACHINE_REGIONS, "eu", "only regions with machines (audit G-0190)");
     const st = statementsOf(fnRole("api"));
     const reads = st.filter((x) => arr(x.Action).some((a) => a.startsWith("ssm:"))).flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]).sort();
-    assert.deepEqual(reads, ["parameter/fenvix/prod/github-app/api-database-url", "parameter/fenvix/prod/github-app/state-signing-key"], "no App key, webhook or client secret, no runner token");
+    assert.deepEqual(reads, ["parameter/fenvix/prod/github-app/api-database-url", "parameter/fenvix/prod/github-app/database-ca-cert", "parameter/fenvix/prod/github-app/state-signing-key"], "no App key, webhook or client secret, no runner token");
     const actions = st.flatMap((x) => arr(x.Action)).sort();
     assert.deepEqual([...new Set(actions)], ["logs:CreateLogStream", "logs:PutLogEvents", "sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:SendMessage", "ssm:GetParameters"]);
     // The App's functions never read the API's database URL.

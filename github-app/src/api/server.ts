@@ -119,7 +119,7 @@ function errorReply(reply: FastifyReply, e: ApiError) {
 
 export function buildApi(deps: ApiDeps): Api {
   const { cfg } = deps;
-  const db = deps.db ?? new ApiDb(cfg.databaseUrl, cfg.dbPoolMax);
+  const db = deps.db ?? new ApiDb(cfg.databaseUrl, cfg.dbPoolMax, cfg.databaseCa);
   const sessions = deps.sessions ?? new SessionVerifier(cfg.supabaseUrl, cfg.supabaseJwksUrl);
   const now = deps.now ?? (() => new Date());
   const origins = new Set(cfg.corsOrigins);

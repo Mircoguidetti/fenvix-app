@@ -1,4 +1,5 @@
 import pg from "pg";
+import { pgTls } from "./db-tls.ts";
 
 // bigint columns here are GitHub ids and counts, all far below 2^53.
 pg.types.setTypeParser(20, (v) => Number(v));
@@ -15,8 +16,8 @@ export type Client = pg.PoolClient;
 export class Db {
   readonly pool: pg.Pool;
 
-  constructor(connectionString: string, max = 10) {
-    this.pool = new pg.Pool({ connectionString, max, idleTimeoutMillis: 30_000, application_name: "fenvix-github-app", statement_timeout: 30_000 });
+  constructor(connectionString: string, max = 10, ca?: string) {
+    this.pool = new pg.Pool({ ...pgTls(connectionString, ca), max, idleTimeoutMillis: 30_000, application_name: "fenvix-github-app", statement_timeout: 30_000 });
     this.pool.on("error", () => {});
   }
 

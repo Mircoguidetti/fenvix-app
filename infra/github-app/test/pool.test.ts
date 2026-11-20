@@ -116,7 +116,7 @@ describe("the stack: our machines (pool)", async () => {
     assert.deepEqual(statementsOf(roleId), []);
     assert.equal(roles[roleId]!.Properties.ManagedPolicyArns, undefined);
     const reads = statementsOf(fnRole("worker")).filter((x) => json(x.Action).includes("ssm:")).flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter(\/fenvix[^"]*)/)![1]).sort();
-    const launch = [`${appPrefix("prod")}/database-url`, `${appPrefix("prod")}/private-key`, `${appPrefix("prod")}/runner-token`, ...cacheParameters("prod").map((p) => p.name)].sort();
+    const launch = [`${appPrefix("prod")}/database-url`, `${appPrefix("prod")}/private-key`, `${appPrefix("prod")}/runner-token`, `${appPrefix("prod")}/database-ca-cert`, ...cacheParameters("prod").map((p) => p.name)].sort();
     assert.deepEqual(reads, launch);
     const sweepReads = statementsOf(fnRole("sweep")).filter((x) => json(x.Action).includes("ssm:")).flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter(\/fenvix[^"]*)/)![1]).sort();
     assert.deepEqual(sweepReads, launch, "the sweep dispatches waiting jobs: the same launch secrets, nothing of HTTP");
