@@ -707,6 +707,68 @@ const TESTS = {
     await page.waitForFunction(() => !document.querySelector(".cx-rail[data-wide]"));
   },
 
+  async "the collapsed rail opens on hover and closes on mouse leave, Escape, link click and outside click; it can be pinned and unpinned"(page, vp) {
+    if (isMobile(vp)) return;
+    await signIn(page, "projects/prj_homehub/defects");
+    await page.locator(".cx-sub").waitFor();
+    const rail = page.locator(".cx-rail");
+    const isWide = () => page.evaluate(() => !!document.querySelector(".cx-rail[data-wide]"));
+    const open = () => page.waitForFunction(() => document.querySelector(".cx-rail[data-wide]"));
+    const closed = () => page.waitForFunction(() => !document.querySelector(".cx-rail[data-wide]"));
+    const elsewhere = async () => page.mouse.move(Math.min(vp.width - 40, 900), 400); // page content beyond the second column
+    assert(!(await isWide()), "the rail starts open");
+    // Opens on hover, as an overlay covering the second column.
+    await rail.hover();
+    await open();
+    const cover = await page.evaluate(() => document.querySelector(".cx-rail-inner").getBoundingClientRect().right >= document.querySelector(".cx-sub").getBoundingClientRect().right - 0.5);
+    assert(cover, "the open rail does not cover the second column");
+    // Stays open while the pointer rests on the part over the second column (no flicker), then closes when it leaves.
+    await page.mouse.move(200, 300);
+    await page.waitForTimeout(300);
+    assert(await isWide(), "the rail closed while the pointer was over it");
+    await elsewhere();
+    await closed();
+    // Escape.
+    await rail.hover();
+    await open();
+    await page.keyboard.press("Escape");
+    await closed();
+    await elsewhere();
+    // Link click (pointer stays over the rail's link, then moves away: it must not stay open through focus).
+    await rail.hover();
+    await open();
+    await rail.getByRole("link", { name: "Overview" }).click();
+    await page.waitForURL(/\/overview/);
+    await closed();
+    await elsewhere();
+    await page.waitForTimeout(200);
+    assert(!(await isWide()), "the rail reopened after the link click");
+    // Keyboard focus opens it; a click outside closes it (the pointer is not on the rail here).
+    await page.keyboard.press("Tab");
+    await page.evaluate(() => document.querySelector(".cx-rail-link").focus());
+    await open();
+    await page.mouse.click(Math.min(vp.width - 40, 900), 400);
+    await closed();
+    // Keyboard focus leaving the rail closes it.
+    await page.keyboard.press("Tab");
+    await page.evaluate(() => document.querySelector(".cx-rail-link").focus());
+    await open();
+    await page.evaluate(() => document.activeElement.blur());
+    await closed();
+    // Pin and unpin.
+    await rail.hover();
+    await open();
+    await rail.getByRole("button", { name: "Keep this menu open" }).click();
+    await elsewhere();
+    await page.waitForTimeout(300);
+    assert(await isWide(), "the pinned rail closed");
+    assert((await rail.getAttribute("data-open")) !== null, "the pinned rail is not marked pinned");
+    await rail.getByRole("button", { name: "Keep this menu open" }).click();
+    await elsewhere();
+    await closed();
+    assert((await rail.getAttribute("data-open")) === null, "the rail is still pinned after unpinning");
+  },
+
   async "connect a project always offers more repositories and another GitHub account"(page, vp) {
     if (isMobile(vp)) return;
     await signIn(page, "projects/connect");

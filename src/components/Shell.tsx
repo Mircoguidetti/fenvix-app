@@ -268,13 +268,36 @@ function readPinned() {
  * "Keep this menu open" pins it open beside the page (remembered in this browser only).
  */
 function Rail({ path }: { path: string }) {
-  const [hover, setHover] = useState(false);
-  const [focused, setFocused] = useState(false);
+  // `open` is the temporary overlay (pointer or keyboard); `pinned` keeps the rail open beside the page.
+  const [open, setOpen] = useState(false);
+  const navRef = useRef<HTMLElement>(null);
   // The open rail is an overlay; where a second bar sits beside it, the overlay covers that bar too.
   const area = areaOf(path);
   const hasSub = area !== null && area !== "overview";
   const [pinned, setPinned] = useState(readPinned);
-  const wide = pinned || hover || focused;
+  const wide = pinned || open;
+  const close = () => {
+    setOpen(false);
+    // A clicked link or button keeps focus; without this the rail would stay open after the pointer has left.
+    const nav = navRef.current;
+    if (nav && nav.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
+  };
+  // Clicking outside the open rail, or Escape from anywhere, closes it.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!navRef.current?.contains(e.target as Node | null)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
   const togglePin = () =>
     setPinned((p) => {
       try {
@@ -282,11 +305,30 @@ function Rail({ path }: { path: string }) {
       } catch {
         /* private window: the pin lasts for this page only */
       }
-      if (p) setHover(false);
+      setOpen(false);
       return !p;
     });
   return (
-    <nav className="cx-rail" aria-label="Areas" data-wide={wide || undefined} data-open={pinned || undefined} data-sub={hasSub || undefined} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} onFocus={() => setFocused(true)} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}>
+    <nav
+      ref={navRef}
+      className="cx-rail"
+      aria-label="Areas"
+      data-wide={wide || undefined}
+      data-open={pinned || undefined}
+      data-sub={hasSub || undefined}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={(e) => {
+        // Only keyboard focus opens it; a click's focus must not keep it open.
+        if (e.target.matches(":focus-visible")) setOpen(true);
+      }}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
+      }}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest("a")) close();
+      }}
+    >
       <div className="cx-rail-inner">
         {AREAS.map((a) => (
           <Link key={a.key} to={a.to} className="cx-rail-link" aria-current={a.match(path) ? "page" : undefined} title={a.label}>
