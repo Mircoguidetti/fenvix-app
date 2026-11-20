@@ -29,7 +29,7 @@
     "runsOnLabel": "fenvix",
     "summaryWaitSeconds": "600",
     "sweepMinutes": "1",
-    "logRetentionDays": "14",
+    "logRetentionDays": "90",
     "alarmEmail": "",
     "apiCorsOrigins": "",
     "fenvixRegion": "eu",

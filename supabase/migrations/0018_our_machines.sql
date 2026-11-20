@@ -166,7 +166,21 @@ create or replace view public.gh_machine_minutes with (security_invoker = true) 
     from public.gh_machines m where m.bound_at is not null
    group by 1, 2, 3, 4, 5, 6;
 
+-- 7. Webhook deliveries GitHub could not deliver (our API was down): asked for again once each (audit G-1771).
+create table if not exists public.gh_redeliveries (
+  github_delivery_id bigint primary key,
+  guid text not null,
+  event text,
+  requested_at timestamptz not null default now(),
+  status int
+);
+
 -- ---------------------------------------------------------------- row level security
+alter table public.gh_redeliveries enable row level security;
+revoke all on public.gh_redeliveries from public, anon, authenticated;
+grant select, insert, update on public.gh_redeliveries to fenvix_github_app;
+drop policy if exists gh_redeliveries_github_app on public.gh_redeliveries;
+create policy gh_redeliveries_github_app on public.gh_redeliveries for all to fenvix_github_app using (true) with check (true);
 alter table public.gh_machines enable row level security;
 alter table public.gh_leases enable row level security;
 revoke all on public.gh_machines, public.gh_leases from public, anon, authenticated;

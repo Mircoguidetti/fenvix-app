@@ -42,6 +42,9 @@ const nextId = () => ++seq;
 export class FakeGitHub {
   /** Jobs re-run (POST /repos/{o}/{r}/actions/jobs/{id}/rerun). */
   jobReruns: { repo: string; jobId: number }[] = [];
+  /** The App's webhook deliveries (GET /app/hook/deliveries) and the redeliveries asked (POST .../attempts). */
+  hookDeliveries: { id: number; guid: string; delivered_at: string; redelivery: boolean; status_code: number; event: string; action: string | null }[] = [];
+  redeliveryRequests: number[] = [];
   /** Workflow runs cancelled (POST /repos/{o}/{r}/actions/runs/{id}/cancel). */
   runCancels: { repo: string; runId: number }[] = [];
   readonly exchanges: Exchange[] = [];
@@ -194,6 +197,15 @@ export class FakeGitHub {
       return [200, { ...ex, state: "active", role, organization: { ...(ex.organization as Json), login: org }, user: { ...(ex.user as Json), login: u.login, id: u.id } }];
     }
     // ---- as the App
+    if (p === "/app/hook/deliveries" && method === "GET") {
+      if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      return [200, this.hookDeliveries];
+    }
+    if ((m = /^\/app\/hook\/deliveries\/(\d+)\/attempts$/.exec(p)) && method === "POST") {
+      if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      this.redeliveryRequests.push(Number(m[1]));
+      return [202, {}];
+    }
     if ((m = /^\/app\/installations\/(\d+)\/access_tokens$/.exec(p)) && method === "POST") {
       if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];
       const id = Number(m[1]);

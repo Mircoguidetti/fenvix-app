@@ -102,7 +102,7 @@ export class FenvixGitHubAppStack extends Stack {
     };
     const fn = (id: string, entry: string, o: { timeout: Duration; memory: number; extraEnv?: Record<string, string>; reads: string[]; description: string; baseEnv?: Record<string, string>; short?: string }) => {
       const short = o.short ?? id.toLowerCase();
-      const logGroup = new logs.LogGroup(this, `${id}Logs`, { logGroupName: `/aws/lambda/${name(short)}`, retention: s.logRetentionDays, removalPolicy: RemovalPolicy.DESTROY });
+      const logGroup = new logs.LogGroup(this, `${id}Logs`, { logGroupName: `/aws/lambda/${name(short)}`, retention: s.logRetentionDays, removalPolicy: RemovalPolicy.RETAIN });
       // Own role, no managed policy: write to its own log group, read its own parameters.
       const role = new iam.Role(this, `${id}Role`, { assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"), description: `fenvix GitHub App: ${id} function` });
       role.addToPolicy(new iam.PolicyStatement({ sid: "OwnLogGroup", actions: ["logs:CreateLogStream", "logs:PutLogEvents"], resources: [logGroup.logGroupArn, `${logGroup.logGroupArn}:*`] }));
@@ -192,7 +192,7 @@ export class FenvixGitHubAppStack extends Stack {
       description: "fenvix GitHub App: runs queued webhooks and runner summaries",
     });
     worker.addToRolePolicy(new iam.PolicyStatement({ sid: "ReadAndDeleteOverflow", actions: ["s3:GetObject", "s3:DeleteObject"], resources: [overflow.arnForObjects("work/*")] }));
-    worker.addEventSource(new SqsEventSource(queue, { batchSize: 5, reportBatchItemFailures: true, maxConcurrency: 2 }));
+    worker.addEventSource(new SqsEventSource(queue, { batchSize: 5, reportBatchItemFailures: true, maxConcurrency: 10 }));
 
     // Start a runner machine: only from our launch template, of the configured type, from our own images, only tagged
     // with its role (R-012 F7: the instance, its disk and its network interface must come from the launch template).
@@ -276,7 +276,7 @@ export class FenvixGitHubAppStack extends Stack {
       scheduleExpression: `rate(${s.sweepMinutes} ${s.sweepMinutes === 1 ? "minute" : "minutes"})`,
       flexibleTimeWindow: { mode: "OFF" },
       state: "ENABLED",
-      target: { arn: sweep.functionArn, roleArn: schedulerRole.roleArn, retryPolicy: { maximumRetryAttempts: 0 } },
+      target: { arn: sweep.functionArn, roleArn: schedulerRole.roleArn, retryPolicy: { maximumRetryAttempts: 2, maximumEventAgeInSeconds: 300 }, deadLetterConfig: { arn: dlq.queueArn } },
     });
 
     // ---------------------------------------------------------------- the warm-up scheduler's schedule
@@ -286,7 +286,7 @@ export class FenvixGitHubAppStack extends Stack {
         name: name("warmup"),
         description: "Warm-up runs: terminate unneeded warm-up machines, dispatch pending warm-ups when machines are free",
         scheduleExpression: "rate(1 minute)", flexibleTimeWindow: { mode: "OFF" }, state: "ENABLED",
-        target: { arn: warmup.functionArn, roleArn: schedulerRole.roleArn, retryPolicy: { maximumRetryAttempts: 0 } },
+        target: { arn: warmup.functionArn, roleArn: schedulerRole.roleArn, retryPolicy: { maximumRetryAttempts: 2, maximumEventAgeInSeconds: 300 }, deadLetterConfig: { arn: dlq.queueArn } },
       });
     }
 
@@ -305,7 +305,7 @@ export class FenvixGitHubAppStack extends Stack {
       new scheduler.CfnSchedule(this, "ReaperSchedule", {
         name: name("reaper"), description: "Terminates runner machines past the hard limit",
         scheduleExpression: "rate(10 minutes)", flexibleTimeWindow: { mode: "OFF" }, state: "ENABLED",
-        target: { arn: reaper.functionArn, roleArn: schedulerRole.roleArn, retryPolicy: { maximumRetryAttempts: 0 } },
+        target: { arn: reaper.functionArn, roleArn: schedulerRole.roleArn, retryPolicy: { maximumRetryAttempts: 2, maximumEventAgeInSeconds: 300 }, deadLetterConfig: { arn: dlq.queueArn } },
       });
     }
 
@@ -331,7 +331,7 @@ export class FenvixGitHubAppStack extends Stack {
     // under /v1/runner/* stay on the App's HTTP function (the more specific route wins).
     api.addRoutes({ path: "/v1/{proxy+}", methods: [apigw.HttpMethod.ANY], integration: new HttpLambdaIntegration("DashboardApi", dashboardApi, { payloadFormatVersion: apigw.PayloadFormatVersion.VERSION_2_0 }) });
     api.addRoutes({ path: "/v1/runner/{proxy+}", methods: [apigw.HttpMethod.ANY], integration: httpIntegration });
-    const accessLogs = new logs.LogGroup(this, "ApiAccessLogs", { logGroupName: `/aws/apigateway/${name("api")}`, retention: s.logRetentionDays, removalPolicy: RemovalPolicy.DESTROY });
+    const accessLogs = new logs.LogGroup(this, "ApiAccessLogs", { logGroupName: `/aws/apigateway/${name("api")}`, retention: s.logRetentionDays, removalPolicy: RemovalPolicy.RETAIN });
     new apigw.HttpStage(this, "Stage", {
       httpApi: api, stageName: "$default", autoDeploy: true,
       throttle: { rateLimit: 50, burstLimit: 100 },
@@ -340,6 +340,8 @@ export class FenvixGitHubAppStack extends Stack {
     });
 
     // ---------------------------------------------------------------- alarm: anything in the dead-letter queue
+    // A schedule's invocation that failed three times goes to the dead-letter queue too (G-1737).
+    dlq.grantSendMessages(schedulerRole);
     const alarm = new cloudwatch.Alarm(this, "DeadLettersAlarm", {
       alarmName: name("dead-letters"),
       alarmDescription: "Work failed 5 times and is in the dead-letter queue (docs/DEPLOY-AWS.md, 'When something fails').",
@@ -347,11 +349,38 @@ export class FenvixGitHubAppStack extends Stack {
       threshold: 0, comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD, evaluationPeriods: 1,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
-    if (s.alarmEmail) {
-      const topic = new sns.Topic(this, "Alerts", { topicName: name("alerts"), enforceSSL: true });
-      topic.addSubscription(new subs.EmailSubscription(s.alarmEmail));
-      alarm.addAlarmAction(new cwActions.SnsAction(topic));
-    }
+    // Every function's errors, the HTTP function's and the worker's throttles, the API's 5xx and the cache machine's
+    // health (G-1760, G-1737). All go to one topic; it notifies the alarm e-mail (the founder sets FENVIX_ALARM_EMAIL,
+    // then confirms the subscription mail: G-1761, G-2313).
+    const alarms: cloudwatch.Alarm[] = [alarm];
+    const errorsOf = (id: string, f: lambda.IFunction, what: string) => alarms.push(new cloudwatch.Alarm(this, `${id}ErrorsAlarm`, {
+      alarmName: name(`${id.toLowerCase()}-errors`), alarmDescription: `The ${what} function failed (docs/DEPLOY-AWS.md, 'When something fails').`,
+      metric: f.metricErrors({ period: Duration.minutes(5), statistic: "Sum" }), threshold: 0,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }));
+    errorsOf("Http", http, "HTTP (webhooks, machines' hello and poll)");
+    errorsOf("Worker", worker, "worker (dispatcher)");
+    errorsOf("Sweep", sweep, "sweep (the machine pool's minute)");
+    errorsOf("Warmup", warmup, "warm-up scheduler");
+    errorsOf("Api", dashboardApi, "dashboard API");
+    for (const [id, f] of [["Http", http], ["Worker", worker]] as const) alarms.push(new cloudwatch.Alarm(this, `${id}ThrottlesAlarm`, {
+      alarmName: name(`${id.toLowerCase()}-throttles`), alarmDescription: `The ${id.toLowerCase()} function was throttled.`,
+      metric: f.metricThrottles({ period: Duration.minutes(5), statistic: "Sum" }), threshold: 0,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }));
+    alarms.push(new cloudwatch.Alarm(this, "Api5xxAlarm", {
+      alarmName: name("api-5xx"), alarmDescription: "The API answered 5xx (GitHub, the machines or the dashboard got an error).",
+      metric: new cloudwatch.Metric({ namespace: "AWS/ApiGateway", metricName: "5xx", dimensionsMap: { ApiId: api.apiId }, period: Duration.minutes(5), statistic: "Sum" }),
+      threshold: 5, comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }));
+    alarms.push(new cloudwatch.Alarm(this, "CacheMachineAlarm", {
+      alarmName: name("cache-machine"), alarmDescription: "The shared cache machine fails its status checks.",
+      metric: new cloudwatch.Metric({ namespace: "AWS/EC2", metricName: "StatusCheckFailed", dimensionsMap: { InstanceId: cache.instance.instanceId }, period: Duration.minutes(5), statistic: "Maximum" }),
+      threshold: 0, comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD, evaluationPeriods: 2, treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+    }));
+    const topic = new sns.Topic(this, "Alerts", { topicName: name("alerts"), enforceSSL: true });
+    if (s.alarmEmail) topic.addSubscription(new subs.EmailSubscription(s.alarmEmail));
+    for (const a of alarms) a.addAlarmAction(new cwActions.SnsAction(topic));
 
 
     // ---------------------------------------------------------------- what the founder needs after the deploy

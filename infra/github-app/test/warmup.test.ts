@@ -21,11 +21,12 @@ describe("warm-up runs (our machines): the warm-up scheduler function, its sched
 
   it("cdk-nag clean with the warm-up function", () => assert.deepEqual(nagErrors, []));
 
-  it("runs every minute, invoked by the scheduler role only, without retries", () => {
+  it("runs every minute, invoked by the scheduler role only; a failed invocation is retried twice, then dead-lettered (G-1737)", () => {
     t.hasResourceProperties("AWS::Scheduler::Schedule", { Name: "fenvix-prod-github-app-warmup", ScheduleExpression: "rate(1 minute)", FlexibleTimeWindow: { Mode: "OFF" } });
     const [, sch] = resources(t, "AWS::Scheduler::Schedule").find(([id]) => id.startsWith("WarmupSchedule"))!;
     assert.match(json(sch.Properties.Target), /Warmup/);
-    assert.equal((sch.Properties.Target as { RetryPolicy: { MaximumRetryAttempts: number } }).RetryPolicy.MaximumRetryAttempts, 0);
+    assert.equal((sch.Properties.Target as { RetryPolicy: { MaximumRetryAttempts: number } }).RetryPolicy.MaximumRetryAttempts, 2);
+    assert.match(json((sch.Properties.Target as { DeadLetterConfig: unknown }).DeadLetterConfig), /DeadLetters/);
   });
 
   it("the worker and the scheduler get the WARMUP_* settings from the stack's settings; the node timer is off on AWS", () => {

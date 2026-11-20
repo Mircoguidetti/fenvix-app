@@ -319,6 +319,21 @@ describe("our machines: dispatcher, affinity, isolation, reserve, caps, metering
     assert.equal(again?.state === "offered" || again?.state === "lost", true);
   });
 
+  it("missed webhooks (G-1771): a delivery GitHub failed and we never processed is asked again, once; a processed one is not", async () => {
+    const now = new Date().toISOString();
+    await admin.query("insert into gh_webhook_deliveries (delivery_id, event, action, installation_id, processed_at) values ('guid-ok', 'workflow_job', 'queued', $1, now()) on conflict do nothing", [INSTALLATION_ID]);
+    h.gh.hookDeliveries = [
+      { id: 501, guid: "guid-lost", delivered_at: now, redelivery: false, status_code: 502, event: "workflow_job", action: "queued" },
+      { id: 502, guid: "guid-ok", delivered_at: now, redelivery: false, status_code: 504, event: "workflow_job", action: "queued" },
+      { id: 503, guid: "guid-fine", delivered_at: now, redelivery: false, status_code: 202, event: "workflow_job", action: "queued" },
+      { id: 504, guid: "guid-old", delivered_at: new Date(Date.now() - 6 * 3600_000).toISOString(), redelivery: false, status_code: 500, event: "push", action: null },
+    ];
+    assert.equal(await h.app.service.redeliverFailed(), 1);
+    assert.deepEqual(h.gh.redeliveryRequests, [501]);
+    assert.equal(await h.app.service.redeliverFailed(), 0, "asked once only");
+    assert.deepEqual(h.gh.redeliveryRequests, [501]);
+  });
+
   it("machine API input: a bad body is 400, a missing credential 401", async () => {
     assert.equal((await post("/v1/runner/machine/hello", { machineId: "x" })).status, 400);
     assert.equal((await post("/v1/runner/machine/poll", {})).status, 401);

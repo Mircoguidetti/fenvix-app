@@ -928,7 +928,40 @@ export class GitHubService {
   }
 
   /** Completed jobs whose summary never came (or whose publication failed) are published after the wait. */
+  /**
+   * Missed webhooks (audit G-1771): GitHub does not retry a delivery our API failed (down, 5xx, timeout). Every sweep
+   * lists the App's recent deliveries and asks GitHub to deliver again, once, each one that failed and that we never
+   * processed. A queued workflow_job lost that way would otherwise leave the customer's job queued for good.
+   */
+  async redeliverFailed(maxAgeMinutes = 180): Promise<number> {
+    type D = { id: number; guid: string; delivered_at: string; redelivery: boolean; status_code: number; event: string };
+    let r;
+    try { r = await this.gh.app.request<D[]>("GET", "/app/hook/deliveries", { query: { per_page: "100" } }); } catch (e) {
+      this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "could not list the App's webhook deliveries");
+      return 0;
+    }
+    const since = Date.now() - maxAgeMinutes * 60_000;
+    const failed = (r.data ?? []).filter((d) => !d.redelivery && (d.status_code === 0 || d.status_code >= 400) && Date.parse(d.delivered_at) >= since);
+    let asked = 0;
+    for (const d of failed) {
+      const [seen] = await this.db.q("select 1 from gh_webhook_deliveries where delivery_id = $1 and processed_at is not null", [d.guid]);
+      if (seen) continue;
+      const fresh = await this.db.q("insert into gh_redeliveries (github_delivery_id, guid, event) values ($1, $2, $3) on conflict do nothing returning github_delivery_id", [d.id, d.guid, d.event]);
+      if (!fresh.length) continue;
+      try {
+        const x = await this.gh.app.request("POST", `/app/hook/deliveries/${d.id}/attempts`, { allow: [422] });
+        await this.db.q("update gh_redeliveries set status = $2 where github_delivery_id = $1", [d.id, x.status]);
+        asked++;
+      } catch (e) {
+        this.log.warn({ delivery: d.guid, err: e instanceof Error ? e.message : String(e) }, "redelivery refused");
+      }
+    }
+    if (asked) this.log.info({ asked }, "failed webhook deliveries asked again");
+    return asked;
+  }
+
   async sweep(): Promise<number> {
+    await this.redeliverFailed().catch(() => 0);
     // Our machines: retire, reconcile, top up the reserve, dispatch waiting jobs (every minute, with the sweep).
     if (this.pool) {
       try {

@@ -72,7 +72,15 @@ describe("the stack (shared properties)", async () => {
     assert.equal(work.VisibilityTimeout, 720);
     for (const [, q] of qs) assert.equal(q.Properties.SqsManagedSseEnabled, true);
     assert.equal(resources(t, "AWS::SQS::QueuePolicy").length, 2);
-    t.hasResourceProperties("AWS::Lambda::EventSourceMapping", { BatchSize: 5, FunctionResponseTypes: ["ReportBatchItemFailures"], ScalingConfig: { MaximumConcurrency: 2 } });
+    t.hasResourceProperties("AWS::Lambda::EventSourceMapping", { BatchSize: 5, FunctionResponseTypes: ["ReportBatchItemFailures"], ScalingConfig: { MaximumConcurrency: 10 } });
+    // Every function has an errors alarm; with the DLQ, throttles, API 5xx and the cache machine, all to one topic (G-1760).
+    const alarms = resources(t, "AWS::CloudWatch::Alarm");
+    for (const n of ["dead-letters", "http-errors", "worker-errors", "sweep-errors", "warmup-errors", "api-errors", "http-throttles", "worker-throttles", "api-5xx", "cache-machine"]) {
+      const a = alarms.find(([, x]) => x.Properties.AlarmName === `fenvix-prod-github-app-${n}`);
+      assert.ok(a, n);
+      assert.match(json(a[1].Properties.AlarmActions), /Alerts/, `${n} notifies the topic`);
+    }
+    for (const [, g] of resources(t, "AWS::Logs::LogGroup")) assert.equal(g.Properties.RetentionInDays, 90, "logs kept 90 days (G-1763)");
   });
 
   it("the sweep runs on an EventBridge Scheduler rate, invoking only the sweep function", () => {
@@ -105,10 +113,11 @@ describe("the stack (shared properties)", async () => {
     tc.hasOutput("SetupUrl", { Value: "https://api.fenvix.dev/github/setup" });
   });
 
-  it("logs: every log group kept 14 days", () => {
+  it("logs: every log group kept 90 days and kept when the stack is deleted (G-1763)", () => {
     const lgs = resources(t, "AWS::Logs::LogGroup");
-    assert.equal(lgs.length, 7, "http, api, worker, sweep, reaper, demo, API Gateway access logs");
+    assert.equal(lgs.length, 7, "http, api, worker, sweep, reaper, warmup, API Gateway access logs");
     for (const [, lg] of lgs) assert.equal(lg.Properties.RetentionInDays, s.logRetentionDays);
+    for (const [id] of lgs) assert.equal((t.toJSON().Resources as Record<string, { DeletionPolicy?: string }>)[id]!.DeletionPolicy, "Retain", id);
   });
 
   it("the dashboard API function: its own settings, its two parameters, may only send to the work queue", () => {
