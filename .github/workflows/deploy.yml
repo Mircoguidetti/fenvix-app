@@ -25,6 +25,14 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    # Roll back (G-1706, docs/DEPLOY-AWS.md "Roll back"): Run workflow on main with an earlier commit of main. The
+    # workflow file, the OIDC trust and the tests stay main's; only the code deployed is that commit's.
+    inputs:
+      rollback_to:
+        description: "Roll back: the full commit SHA of an earlier commit of main to deploy (empty: main as it is)"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -66,7 +74,17 @@ jobs:
       FENVIX_DASHBOARD_ON_AWS: ${{ vars.FENVIX_DASHBOARD_ON_AWS == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: { persist-credentials: false, fetch-depth: 0 }
+      # Roll back: only a commit that is on main (never a branch, a tag or a pull request's head).
+      - name: 0. Roll back to an earlier commit of main (only with the rollback_to input)
+        if: inputs.rollback_to != ''
+        env:
+          ROLLBACK_TO: ${{ inputs.rollback_to }}
+        run: |
+          [[ "$ROLLBACK_TO" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::rollback_to must be a full 40-character commit SHA"; exit 1; }
+          git merge-base --is-ancestor "$ROLLBACK_TO" "$GITHUB_SHA" || { echo "::error::$ROLLBACK_TO is not an earlier commit of main"; exit 1; }
+          git checkout --quiet --detach "$ROLLBACK_TO"
+          echo "::notice::Rolling back: deploying $ROLLBACK_TO (main is $GITHUB_SHA); the database keeps its schema (migrations only add)."
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -99,7 +117,9 @@ jobs:
           [ "$account" = "$AWS_ACCOUNT" ] || { echo "::error::signed in to AWS account $account, expected $AWS_ACCOUNT"; exit 1; }
           node deploy/cli.mjs preflight
 
+      # Not on a roll back: migrations only go forward and only add (an earlier commit runs on the newer schema).
       - name: 2. Database migrations
+        if: inputs.rollback_to == ''
         run: node deploy/cli.mjs migrate
 
       - name: 3. Database roles (passwords generated here, stored in SSM only)
@@ -146,9 +166,6 @@ jobs:
         working-directory: infra/github-app
         env:
           FENVIX_ALARM_EMAIL: ${{ vars.FENVIX_ALARM_EMAIL }}
-          # Optional, off by default: demo mode (one machine per demo, docs/DEPLOY-AWS.md) instead of per-job.
-          FENVIX_RUNNER_MODE: ${{ vars.FENVIX_RUNNER_MODE }}
-          FENVIX_DEMO_REPOSITORY: ${{ vars.FENVIX_DEMO_REPOSITORY }}
         run: |
           # The API's certificate is step 7c's (issued): the stack uses it by ARN and never waits for DNS.
           [ -n "${FENVIX_API_CERTIFICATE_ARN:-}" ] || { echo "::error::no API certificate from step 7c"; exit 1; }
@@ -178,19 +195,38 @@ jobs:
           aws s3 sync dist "s3://$bucket" --exclude "assets/*" --delete --cache-control "no-cache" --only-show-errors
           aws cloudfront create-invalidation --distribution-id "$dist" --paths "/*" --query Invalidation.Id --output text
 
-      - name: 11. Runner image (built when its recipe changed; does not wait)
+      # The machine image of our machines: built when its recipe changed (the engine pin is part of it), and WAITED FOR:
+      # a failed build or a failed image test (the engine and the agent must start on it) fails the deploy (G-1713,
+      # G-1745). Without an engine pin (cdk.json engineVersion/engineUrl/engineSha256) no image is built: the pool
+      # starts no machine and jobs wait, and the summary says why (fail closed, G-0186).
+      - name: 11. Machine image (built when its recipe changed; waited for)
+        timeout-minutes: 90
         run: |
           out=infra/github-app/cdk-outputs.json
           arn="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-github-app'].ImagePipelineArn")"
           ver="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-github-app'].RunnerImageVersion")"
-          states="$(aws imagebuilder list-image-pipeline-images --image-pipeline-arn "$arn" \
-                    --query "imageSummaryList[?starts_with(version, '$ver/')].state.status" --output text)"
-          if printf '%s' "$states" | grep -Eq 'AVAILABLE|PENDING|CREATING|BUILDING|TESTING|DISTRIBUTING|INTEGRATING'; then
-            echo "runner image $ver: $states"
-          else
-            aws imagebuilder start-image-pipeline-execution --image-pipeline-arn "$arn" --query imageBuildVersionArn --output text
-            echo "runner image $ver: build started (30-45 minutes; jobs wait for it)" | tee -a "$GITHUB_STEP_SUMMARY"
+          engine="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-github-app'].EngineVersion")"
+          if [ "$engine" = "none" ]; then
+            echo "::warning::no engine pinned in cdk.json: no machine image is built, our machines start nothing" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          status() { aws imagebuilder list-image-pipeline-images --image-pipeline-arn "$arn" \
+                     --query "imageSummaryList[?starts_with(version, '$ver/')].state.status" --output text; }
+          states="$(status)"
+          if ! printf '%s' "$states" | grep -Eq 'AVAILABLE|PENDING|CREATING|BUILDING|TESTING|DISTRIBUTING|INTEGRATING'; then
+            aws imagebuilder start-image-pipeline-execution --image-pipeline-arn "$arn" --query imageBuildVersionArn --output text
+            echo "machine image $ver (engine $engine): build started" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          for _ in $(seq 1 85); do
+            states="$(status)"
+            case "$states" in
+              *AVAILABLE*) echo "machine image $ver (engine $engine): available" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0 ;;
+              *FAILED*|*CANCELLED*) printf '%s' "$states" | grep -Eq 'PENDING|CREATING|BUILDING|TESTING|DISTRIBUTING|INTEGRATING' || {
+                echo "::error::machine image $ver failed ($states): see the Image Builder log; the previous image stays in use"; exit 1; } ;;
+            esac
+            sleep 60
+          done
+          echo "::error::machine image $ver not available after 85 minutes ($states)"; exit 1
 
       - name: 12. Check the deployed hosts
         run: node deploy/cli.mjs smoke --minutes 10

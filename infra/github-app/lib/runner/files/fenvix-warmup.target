@@ -1,3 +1,0 @@
-[Unit]
-Description=fenvix warm-up machine: the test job of one default-branch commit, outside GitHub Actions, then power off
-Wants=fenvix-imds-block.service fenvix-warmup.service fenvix-idle-watchdog.timer

@@ -17,6 +17,8 @@ describe("GitHub App not configured", () => {
     // No SSM_PREFIX, no WORK_QUEUE_URL, no secret: the configured path would throw on each.
     const app = await httpApp({ GITHUB_APP_ID: "", LOG_LEVEL: "silent" });
     const h = await app.fastify.inject({ method: "GET", url: "/healthz" });
+    const ready = await app.fastify.inject({ method: "GET", url: "/readyz" });
+    assert.deepEqual([ready.statusCode, ready.json()], [503, { ok: false, github: "not_configured" }], "the smoke test accepts exactly this");
     assert.deepEqual([h.statusCode, h.json()], [200, { ok: true, github: "not_configured" }]);
     for (const [method, url] of [["POST", "/webhooks/github"], ["GET", "/github/setup?code=x&state=y"], ["POST", "/v1/runner/summaries"], ["GET", "/anything"]] as const) {
       const r = await app.fastify.inject({ method, url, payload: method === "POST" ? '{"zen":"x"}' : undefined, headers: { "content-type": "application/json" } });

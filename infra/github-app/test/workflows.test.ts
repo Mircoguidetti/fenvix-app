@@ -109,7 +109,8 @@ describe("workflows: who may ask GitHub for the AWS deploy token", () => {
 
   it("deploy.yml: triggers are push to main and workflow_dispatch only", () => {
     const w = parse("deploy.yml");
-    assert.deepEqual(w.on, { push: { branches: ["main"] }, workflow_dispatch: null });
+    // The one input: a roll back to an earlier commit of main (G-1706); a string, never anything a job interpolates in a script.
+    assert.deepEqual(w.on, { push: { branches: ["main"] }, workflow_dispatch: { inputs: { rollback_to: { description: "Roll back: the full commit SHA of an earlier commit of main to deploy (empty: main as it is)", required: false, default: "", type: "string" } } } });
     assert.deepEqual(w.permissions, { contents: "read" });
   });
 
@@ -124,6 +125,16 @@ describe("workflows: who may ask GitHub for the AWS deploy token", () => {
     assert.equal(jobs.deploy!.uses, undefined, "the deploy job is written in deploy.yml (job_workflow_ref), not a reusable workflow");
     assert.equal(jobs.test!.uses, "./.github/workflows/test.yml");
     assert.deepEqual(jobs.test!.permissions, { contents: "read" });
+    // Roll back (G-1706): the SHA reaches the script only through env, is checked to be a full SHA and an ancestor of
+    // main's commit; the migrations are skipped then.
+    const steps = jobs.deploy!.steps as Obj[];
+    const rb = steps.find((s) => String(s.name).startsWith("0. Roll back"))!;
+    assert.deepEqual([rb.if, (rb.env as Obj).ROLLBACK_TO], ["inputs.rollback_to != ''", "${{ inputs.rollback_to }}"]);
+    assert.doesNotMatch(String(rb.run), /\$\{\{/, "no expression inside the script");
+    assert.match(String(rb.run), /\^\[0-9a-f\]\{40\}\$/);
+    assert.match(String(rb.run), /git merge-base --is-ancestor "\$ROLLBACK_TO" "\$GITHUB_SHA"/);
+    assert.equal(steps.find((s) => String(s.name).startsWith("2. Database migrations"))!.if, "inputs.rollback_to == ''");
+    for (const s of steps) if (s !== rb && typeof s.run === "string") assert.doesNotMatch(s.run, /inputs\./, `${String(s.name)}: no input in a script`);
     for (const s of (jobs.deploy!.steps as Obj[])) {
       if (typeof s.uses === "string" && !s.uses.startsWith("./")) assert.match(s.uses, /@[0-9a-f]{40}$/, `step ${s.uses} pinned to a commit`);
     }
@@ -145,5 +156,16 @@ describe("workflows: who may ask GitHub for the AWS deploy token", () => {
     assert.deepEqual(w.on, { pull_request: null, workflow_call: null });
     assert.deepEqual(w.permissions, { contents: "read" });
     for (const [n, j] of Object.entries(jobsOf(w))) assert.equal(j.uses, undefined, `test.yml: job ${n} calls a workflow`);
+  });
+
+  it("dependencies (G-2287, G-2328): CI audits all four lock files, build tools included; Dependabot proposes updates for them and the actions", () => {
+    const steps = (jobsOf(parse("test.yml")).test?.steps ?? Object.values(jobsOf(parse("test.yml")))[0]!.steps) as Obj[];
+    const audit = String(steps.find((x) => String(x.name).startsWith("Dependency audit"))!.run);
+    assert.match(audit, /for d in \. github-app deploy infra\/github-app; do/);
+    assert.match(audit, /npm audit --audit-level=high/);
+    assert.doesNotMatch(audit, /--omit=dev/, "the build and deploy tools are audited too");
+    const dep = YAML.parse(readFileSync(new URL("../dependabot.yml", dir), "utf8")) as { updates: { "package-ecosystem": string; directories?: string[] }[] };
+    assert.deepEqual(dep.updates.find((u) => u["package-ecosystem"] === "npm")!.directories, ["/", "/github-app", "/deploy", "/infra/github-app"]);
+    assert.ok(dep.updates.some((u) => u["package-ecosystem"] === "github-actions"));
   });
 });

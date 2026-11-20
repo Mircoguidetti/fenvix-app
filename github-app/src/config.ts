@@ -22,6 +22,8 @@ export interface Config {
   /** Connection string of the restricted role fenvix_github_app. Never logged. */
   databaseUrl: string;
   dbPoolMax: number;
+  /** Supabase's CA certificate (public, optional): the database TLS is verified with it (G-2323). */
+  databaseCa?: string;
 
   /** GitHub App settings page: "App ID". */
   appId: number;
@@ -31,6 +33,8 @@ export interface Config {
   privateKey: KeyObject;
   /** The webhook secret set on the App. Secret. */
   webhookSecret: string;
+  /** During a rotation (G-2322): deliveries signed with the previous secret are still accepted. */
+  webhookSecretPrevious: string;
   /** OAuth client of the App, used once per installation to confirm who installed it. The secret is a secret. */
   clientId: string;
   clientSecret: string;
@@ -190,10 +194,12 @@ export function loadConfig(env: Env = process.env, opts: { surface?: "all" | "wo
     nodeEnv,
     databaseUrl: required(env, "GITHUB_APP_DATABASE_URL"),
     dbPoolMax: int(env, "DB_POOL_MAX", 10, 1),
+    ...(env.DATABASE_CA_CERT ? { databaseCa: env.DATABASE_CA_CERT } : {}),
     appId,
     appSlug,
     privateKey: parsePrivateKey(secret(env, "GITHUB_APP_PRIVATE_KEY")),
     webhookSecret: http ? secret(env, "GITHUB_WEBHOOK_SECRET", { required: true, minLength: 20 }) : "",
+    webhookSecretPrevious: http ? secret(env, "GITHUB_WEBHOOK_SECRET_PREVIOUS", { required: false }) : "",
     clientId: required(env, "GITHUB_CLIENT_ID"),
     clientSecret: http ? secret(env, "GITHUB_CLIENT_SECRET") : "",
     apiUrl: httpsUrl(env, "GITHUB_API_URL", "https://api.github.com", nodeEnv),

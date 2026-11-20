@@ -1,4 +1,5 @@
 import pg from "pg";
+import { pgTls } from "../db-tls.ts";
 
 export type Row = Record<string, unknown>;
 
@@ -32,8 +33,8 @@ const types = {
 export class ApiDb {
   readonly pool: pg.Pool;
 
-  constructor(connectionString: string, max = 5) {
-    this.pool = new pg.Pool({ connectionString, max, idleTimeoutMillis: 30_000, application_name: "fenvix-api", statement_timeout: 15_000, types } as pg.PoolConfig);
+  constructor(connectionString: string, max = 5, ca?: string) {
+    this.pool = new pg.Pool({ ...pgTls(connectionString, ca), max, idleTimeoutMillis: 30_000, application_name: "fenvix-api", statement_timeout: 15_000, types } as pg.PoolConfig);
     this.pool.on("error", () => {});
   }
 

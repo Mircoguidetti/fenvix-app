@@ -3,14 +3,14 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { Match } from "aws-cdk-lib/assertions";
 import { appParameters } from "../lib/parameters.ts";
-import { DEMO, resources, synth } from "./helpers.ts";
+import { resources, synth } from "./helpers.ts";
 
 type Stmt = { Effect: string; Action: string | string[]; Resource: unknown; Sid?: string; Condition?: unknown };
 const arr = <T,>(x: T | T[]): T[] => (Array.isArray(x) ? x : [x]);
 const json = (x: unknown) => JSON.stringify(x);
 
-describe("the stack, demo mode (an option)", async () => {
-  const { template: t, s, nagErrors } = await synth(DEMO);
+describe("the stack (shared properties)", async () => {
+  const { template: t, s, nagErrors } = await synth();
   const fns = resources(t, "AWS::Lambda::Function");
   const roles = Object.fromEntries(resources(t, "AWS::IAM::Role").map(([id, r]) => [id, r]));
   const policies = resources(t, "AWS::IAM::Policy");
@@ -28,7 +28,7 @@ describe("the stack, demo mode (an option)", async () => {
   });
 
   it("functions: Node 22, x86_64, the plain settings only (no secret in any environment variable)", () => {
-    assert.deepEqual(fns.map(([, f]) => f.Properties.FunctionName).sort(), ["fenvix-prod-github-app-api", "fenvix-prod-github-app-demo", "fenvix-prod-github-app-http", "fenvix-prod-github-app-reaper", "fenvix-prod-github-app-sweep", "fenvix-prod-github-app-worker"]);
+    assert.deepEqual(fns.map(([, f]) => f.Properties.FunctionName).sort(), ["fenvix-prod-github-app-api", "fenvix-prod-github-app-http", "fenvix-prod-github-app-reaper", "fenvix-prod-github-app-sweep", "fenvix-prod-github-app-warmup", "fenvix-prod-github-app-worker"]);
     for (const [, f] of fns) {
       assert.equal(f.Properties.Runtime, "nodejs22.x");
       assert.deepEqual(f.Properties.Architectures, ["x86_64"]);
@@ -45,8 +45,9 @@ describe("the stack, demo mode (an option)", async () => {
   });
 
   it("least privilege: each function reads only its own parameters, by exact name; no managed policy, no '*' action", () => {
-    // Demo mode: the worker starts no machine, so it does not get the summary signing key.
-    const want = (who: string) => appParameters("prod").filter((p) => p.readers.includes(who as never) && !(who === "worker" && p.name.endsWith("/runner-token"))).map((p) => `parameter${p.name}`).sort();
+    // The launchers (worker, sweep) also read the cache signing key (its own prefix, below).
+    const want = (who: string) => [...appParameters("prod").filter((p) => p.readers.includes(who as never)).map((p) => `parameter${p.name}`),
+      ...(who === "worker" || who === "sweep" ? ["parameter/fenvix/prod/cache/signing-key"] : [])].sort();
     for (const who of ["http", "worker", "sweep", "api"] as const) {
       const roleId = fnRole(who);
       assert.equal(roles[roleId]!.Properties.ManagedPolicyArns, undefined, `${who}: no managed policy`);
@@ -58,7 +59,14 @@ describe("the stack, demo mode (an option)", async () => {
       for (const x of st) for (const a of arr(x.Action)) assert.ok(a !== "*" && !a.endsWith(":*"), `${who}: ${a}`);
     }
     assert.ok(!statementsOf(fnRole("worker")).some((x) => arr(x.Action).includes("sqs:SendMessage")), "the worker does not send");
-    assert.ok(!statementsOf(fnRole("sweep")).some((x) => json(x.Action).includes("sqs:") || json(x.Action).includes("s3:")), "the sweep touches neither queue nor bucket");
+    assert.ok(!statementsOf(fnRole("sweep")).some((x) => json(x.Action).includes("s3:")), "the sweep touches no bucket");
+    // On SQS only the dead-letter redrive (G-1736): consume the dead-letter queue, send to the work queue.
+    for (const x of statementsOf(fnRole("sweep")).filter((x) => json(x.Action).includes("sqs:"))) {
+      const send = arr(x.Action).includes("sqs:SendMessage");
+      assert.match(json(x.Resource), send ? /Work/ : /DeadLetters/);
+      if (!send) assert.ok(arr(x.Action).every((a) => /^sqs:(ReceiveMessage|DeleteMessage|ChangeMessageVisibility|GetQueueAttributes|GetQueueUrl)$/.test(a)), json(x.Action));
+    }
+    assert.ok(!statementsOf(fnRole("http")).some((x) => json(x.Action).includes("ec2:")), "the HTTP function calls no EC2 API");
     const httpS3 = statementsOf(fnRole("http")).filter((x) => json(x.Action).includes("s3:"));
     assert.deepEqual(httpS3.flatMap((x) => arr(x.Action)), ["s3:PutObject"]);
   });
@@ -67,10 +75,38 @@ describe("the stack, demo mode (an option)", async () => {
     const qs = resources(t, "AWS::SQS::Queue");
     const work = qs.find(([, q]) => q.Properties.QueueName === "fenvix-prod-github-app-work")![1].Properties;
     assert.equal((work.RedrivePolicy as { maxReceiveCount: number }).maxReceiveCount, 5);
-    assert.equal(work.VisibilityTimeout, 720);
+    assert.equal(work.VisibilityTimeout, 1800, "six times the 300 s worker timeout (G-1747)");
     for (const [, q] of qs) assert.equal(q.Properties.SqsManagedSseEnabled, true);
     assert.equal(resources(t, "AWS::SQS::QueuePolicy").length, 2);
-    t.hasResourceProperties("AWS::Lambda::EventSourceMapping", { BatchSize: 5, FunctionResponseTypes: ["ReportBatchItemFailures"], ScalingConfig: { MaximumConcurrency: 2 } });
+    t.hasResourceProperties("AWS::Lambda::EventSourceMapping", { BatchSize: 5, FunctionResponseTypes: ["ReportBatchItemFailures"], ScalingConfig: { MaximumConcurrency: 10 } });
+    // Every function has an errors alarm; with the DLQ, throttles, API 5xx and the cache machine, all to one topic (G-1760).
+    const alarms = resources(t, "AWS::CloudWatch::Alarm");
+    for (const n of ["dead-letters", "http-errors", "worker-errors", "sweep-errors", "warmup-errors", "api-errors", "http-throttles", "worker-throttles", "api-5xx", "cache-machine"]) {
+      const a = alarms.find(([, x]) => x.Properties.AlarmName === `fenvix-prod-github-app-${n}`);
+      assert.ok(a, n);
+      assert.match(json(a[1].Properties.AlarmActions), /Alerts/, `${n} notifies the topic`);
+    }
+    for (const [, g] of resources(t, "AWS::Logs::LogGroup")) assert.equal(g.Properties.RetentionInDays, 90, "logs kept 90 days (G-1763)");
+    // Error reporting and traces (G-1762): every function traced by X-Ray; a logged error (App "error", Fastify 50) of
+    // any function is an alarm on the same topic.
+    for (const [, f] of resources(t, "AWS::Lambda::Function")) assert.deepEqual(f.Properties.TracingConfig, { Mode: "Active" }, String(f.Properties.FunctionName));
+    const filters = resources(t, "AWS::Logs::MetricFilter");
+    assert.equal(filters.length, 5);
+    for (const [, f] of filters) assert.equal(f.Properties.FilterPattern, '{ ($.level = "error") || ($.level >= 50) }');
+    for (const n of ["http", "worker", "sweep", "warmup", "api"]) {
+      const a = alarms.find(([, x]) => x.Properties.AlarmName === `fenvix-prod-github-app-${n}-logged-errors`);
+      assert.ok(a, n);
+      assert.match(json(a[1].Properties.AlarmActions), /Alerts/);
+    }
+    // The sweep redrives dead-lettered work once (G-1736): it may receive and delete on the DLQ and send to the work queue.
+    const sweepFn = resources(t, "AWS::Lambda::Function").find(([, f]) => String(f.Properties.FunctionName).endsWith("-sweep"))![1];
+    const sweepEnv = (sweepFn.Properties.Environment as { Variables: Record<string, unknown> }).Variables;
+    assert.match(json(sweepEnv.DEAD_LETTER_QUEUE_URL), /DeadLetters/);
+    assert.match(json(sweepEnv.WORK_QUEUE_URL), /Work/);
+    const sweepRole = (sweepFn.Properties.Role as { "Fn::GetAtt": string[] })["Fn::GetAtt"][0]!;
+    const st = resources(t, "AWS::IAM::Policy").filter(([, p]) => json(p.Properties.Roles).includes(`"${sweepRole}"`)).map(([, p]) => json(p.Properties.PolicyDocument)).join(" ");
+    assert.match(st, /sqs:ReceiveMessage.*DeadLetters|DeadLetters[^]*sqs:ReceiveMessage/);
+    assert.match(st, /sqs:SendMessage/);
   });
 
   it("the sweep runs on an EventBridge Scheduler rate, invoking only the sweep function", () => {
@@ -103,66 +139,26 @@ describe("the stack, demo mode (an option)", async () => {
     tc.hasOutput("SetupUrl", { Value: "https://api.fenvix.dev/github/setup" });
   });
 
-  it("logs: every log group kept 14 days", () => {
+  it("logs: every log group kept 90 days and kept when the stack is deleted (G-1763)", () => {
     const lgs = resources(t, "AWS::Logs::LogGroup");
-    assert.equal(lgs.length, 7, "http, api, worker, sweep, reaper, demo, API Gateway access logs");
+    assert.equal(lgs.length, 7, "http, api, worker, sweep, reaper, warmup, API Gateway access logs");
     for (const [, lg] of lgs) assert.equal(lg.Properties.RetentionInDays, s.logRetentionDays);
-  });
-
-  it("demo mode: no machine in the stack (demo-up starts one), the runner image, the launch template, no cache machine", () => {
-    assert.equal(resources(t, "AWS::EC2::Instance").length, 0);
-    assert.equal(resources(t, "AWS::EC2::LaunchTemplate").length, 1);
-    assert.equal(resources(t, "AWS::ImageBuilder::ImagePipeline").length, 1);
-    assert.equal(resources(t, "AWS::EC2::SecurityGroupIngress").length, 0, "no inbound rule at all in demo mode");
-    const sgs = resources(t, "AWS::EC2::SecurityGroup");
-    assert.equal(sgs.length, 1);
-    assert.equal(sgs[0]![1].Properties.SecurityGroupIngress, undefined);
-    assert.deepEqual((sgs[0]![1].Properties.SecurityGroupEgress as { FromPort: number; IpProtocol: string }[]).map((e) => `${e.IpProtocol}/${e.FromPort}`).sort(), ["tcp/443", "tcp/80"]);
-    assert.equal(resources(t, "AWS::EC2::NatGateway").length, 0, "no NAT gateway (it costs by the hour)");
-    t.hasOutput("DemoFunctionName", {});
-  });
-
-  it("the demo function: reads the App key and the summary signing key; starts only runner-demo machines from the template, terminates only those", () => {
-    const roleId = fnRole("demo");
-    const st = statementsOf(roleId);
-    const ssm = st.filter((x) => arr(x.Action).some((a) => a.startsWith("ssm:")));
-    assert.deepEqual(ssm.flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]).sort(), ["parameter/fenvix/prod/github-app/private-key", "parameter/fenvix/prod/github-app/runner-token"]);
-    const tagged = st.find((x) => x.Sid === "OnlyTaggedJobMachines")!.Condition as Record<string, Record<string, unknown>>;
-    assert.deepEqual(tagged.StringEquals, { "aws:RequestTag/fenvix:role": "runner-demo", "ec2:InstanceType": "c6i.large" });
-    assert.match(json(tagged.ArnEquals), /launch-template\//);
-    assert.deepEqual(st.find((x) => x.Sid === "TerminateOnlyTheseMachines")!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-demo" } });
-    const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-demo")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
-    assert.equal(vars.DEMO_REPOSITORY, "Mircoguidetti/fenvix-demo");
-    assert.equal(vars.FENVIX_MACHINE_FENVIX_SUMMARIES_URL, "https://api.fenvix.dev/v1/runner/summaries");
-    assert.equal(vars.FENVIX_MACHINE_FENVIX_CACHE_URL, undefined, "no shared cache in a demo");
-    // The worker never starts machines in demo mode.
-    assert.ok(!statementsOf(fnRole("worker")).some((x) => arr(x.Action).includes("ec2:RunInstances")));
-  });
-
-  it("the reaper takes forgotten demo machines down after 12 hours and deregisters their runners; the machines' role may do nothing", () => {
-    const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-reaper")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
-    assert.equal(vars.REAP, "runner-demo:12");
-    assert.equal(vars.DEREGISTER_DEMO_RUNNERS, "1");
-    assert.deepEqual(statementsOf(fnRole("reaper")).find((x) => x.Sid === "TerminateOnlyTheseMachines")!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-demo" } });
-    const reaperReads = statementsOf(fnRole("reaper")).filter((x) => json(x.Action).includes("ssm:")).flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]);
-    assert.deepEqual(reaperReads, ["parameter/fenvix/prod/github-app/private-key"]);
-    const jobRole = Object.keys(roles).find((id) => id.startsWith("FleetJobRole"))!;
-    assert.deepEqual(statementsOf(jobRole), [], "no permission: a machine's credentials are its own, in its user data");
-    assert.equal(roles[jobRole]!.Properties.ManagedPolicyArns, undefined);
+    for (const [id] of lgs) assert.equal((t.toJSON().Resources as Record<string, { DeletionPolicy?: string }>)[id]!.DeletionPolicy, "Retain", id);
   });
 
   it("the dashboard API function: its own settings, its two parameters, may only send to the work queue", () => {
     const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-api")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
-    assert.deepEqual(Object.keys(vars).sort(), ["DASHBOARD_URL", "DB_POOL_MAX", "GITHUB_APP_SLUG", "LOG_LEVEL", "NODE_ENV", "NODE_OPTIONS", "SSM_PREFIX", "SUPABASE_URL", "WORK_QUEUE_URL"]);
+    assert.deepEqual(Object.keys(vars).sort(), ["DASHBOARD_URL", "DB_POOL_MAX", "FENVIX_MACHINE_REGIONS", "GITHUB_APP_SLUG", "LOG_LEVEL", "NODE_ENV", "NODE_OPTIONS", "SSM_PREFIX", "SUPABASE_URL", "WORK_QUEUE_URL"]);
     assert.equal(vars.DASHBOARD_URL, "https://console.fenvix.dev");
     assert.equal(vars.DB_POOL_MAX, "1");
+    assert.equal(vars.FENVIX_MACHINE_REGIONS, "eu", "only regions with machines (audit G-0190)");
     const st = statementsOf(fnRole("api"));
     const reads = st.filter((x) => arr(x.Action).some((a) => a.startsWith("ssm:"))).flatMap((x) => arr(x.Resource)).map((r) => json(r).match(/parameter\/fenvix[^"]*/)![0]).sort();
-    assert.deepEqual(reads, ["parameter/fenvix/prod/github-app/api-database-url", "parameter/fenvix/prod/github-app/state-signing-key"], "no App key, webhook or client secret, no runner token");
+    assert.deepEqual(reads, ["parameter/fenvix/prod/github-app/api-database-url", "parameter/fenvix/prod/github-app/database-ca-cert", "parameter/fenvix/prod/github-app/state-signing-key"], "no App key, webhook or client secret, no runner token");
     const actions = st.flatMap((x) => arr(x.Action)).sort();
-    assert.deepEqual([...new Set(actions)], ["logs:CreateLogStream", "logs:PutLogEvents", "sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:SendMessage", "ssm:GetParameters"]);
+    assert.deepEqual([...new Set(actions)], ["logs:CreateLogStream", "logs:PutLogEvents", "sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:SendMessage", "ssm:GetParameters", "xray:PutTelemetryRecords", "xray:PutTraceSegments"]);
     // The App's functions never read the API's database URL.
-    for (const who of ["http", "worker", "sweep", "demo", "reaper"]) assert.doesNotMatch(json(statementsOf(fnRole(who))), /api-database-url/, who);
+    for (const who of ["http", "worker", "sweep", "warmup", "reaper"]) assert.doesNotMatch(json(statementsOf(fnRole(who))), /api-database-url/, who);
   });
 
   it("routes: /v1/* to the dashboard API (CORS answered there), /v1/runner/* and everything else to the App's HTTP function", () => {

@@ -40,6 +40,19 @@ let seq = 1000;
 const nextId = () => ++seq;
 
 export class FakeGitHub {
+  /** Jobs re-run (POST /repos/{o}/{r}/actions/jobs/{id}/rerun). */
+  jobReruns: { repo: string; jobId: number }[] = [];
+  /** The App's webhook deliveries (GET /app/hook/deliveries) and the redeliveries asked (POST .../attempts). */
+  hookDeliveries: { id: number; guid: string; delivered_at: string; redelivery: boolean; status_code: number; event: string; action: string | null }[] = [];
+  redeliveryRequests: number[] = [];
+  /** Organization runner groups and organization just-in-time runners; refuseRunnerGroups: a plan without groups. */
+  orgRunnerGroups: { org: string; id: number; name: string; visibility: string; repos: number[] }[] = [];
+  orgJitRunners: { org: string; id: number; name: string; groupId: number; labels: string[] }[] = [];
+  refuseRunnerGroups = false;
+  /** Permissions an installation reports in GET /app/installations. */
+  installationPermissions = new Map<number, Record<string, string>>();
+  /** Workflow runs cancelled (POST /repos/{o}/{r}/actions/runs/{id}/cancel). */
+  runCancels: { repo: string; runId: number }[] = [];
   readonly exchanges: Exchange[] = [];
   readonly repos = new Map<string, FakeRepo>();
   readonly installations = new Map<number, FakeInstallation>();
@@ -189,7 +202,45 @@ export class FakeGitHub {
       const ex = exampleResponse("GET", "/user/memberships/orgs/{org}", 200);
       return [200, { ...ex, state: "active", role, organization: { ...(ex.organization as Json), login: org }, user: { ...(ex.user as Json), login: u.login, id: u.id } }];
     }
+    // ---- organization runner groups and organization just-in-time runners (installation token)
+    if ((m = /^\/orgs\/([^/]+)\/actions\/(runner-groups|runners\/generate-jitconfig|runners\/(\d+))$/.exec(p))) {
+      if (!this.installationOf(auth)) return [401, { message: "Bad credentials", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      const org = decodeURIComponent(m[1]!);
+      if (m[2] === "runner-groups" && method === "POST") {
+        if (this.refuseRunnerGroups) return [403, { message: "Runner groups are not available on this plan", documentation_url: "https://docs.github.com/rest", status: "403" }];
+        const b = body as { name: string; visibility: string; selected_repository_ids?: number[] };
+        if (this.orgRunnerGroups.some((g) => g.org === org && g.name === b.name)) return [409, { message: "Already exists", documentation_url: "https://docs.github.com/rest", status: "409" }];
+        const g = { org, id: nextId(), name: b.name, visibility: b.visibility, repos: b.selected_repository_ids ?? [] };
+        this.orgRunnerGroups.push(g);
+        return [201, { id: g.id, name: g.name, visibility: g.visibility, default: false, allows_public_repositories: true }];
+      }
+      if (m[2] === "runner-groups" && method === "GET") {
+        return [200, { total_count: this.orgRunnerGroups.filter((g) => g.org === org).length, runner_groups: this.orgRunnerGroups.filter((g) => g.org === org).map((g) => ({ id: g.id, name: g.name, visibility: g.visibility, default: false })) }];
+      }
+      if (m[2] === "runners/generate-jitconfig" && method === "POST") {
+        const b = body as { name: string; runner_group_id: number; labels: string[] };
+        if (this.orgJitRunners.some((r) => r.org === org && r.name === b.name)) return [409, { message: "Already exists - A runner with the name already exists.", documentation_url: "https://docs.github.com/rest", status: "409" }];
+        const id = nextId();
+        this.orgJitRunners.push({ org, id, name: b.name, groupId: b.runner_group_id, labels: b.labels });
+        return [201, { runner: { id, name: b.name, os: "linux", status: "offline", busy: false, labels: [] }, encoded_jit_config: Buffer.from(JSON.stringify({ ".runner": id, name: b.name })).toString("base64") }];
+      }
+      if (m[3] && method === "DELETE") {
+        const i = this.orgJitRunners.findIndex((r) => r.org === org && r.id === Number(m![3]));
+        if (i < 0) return this.notFound();
+        this.orgJitRunners.splice(i, 1);
+        return [204, null];
+      }
+    }
     // ---- as the App
+    if (p === "/app/hook/deliveries" && method === "GET") {
+      if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      return [200, this.hookDeliveries];
+    }
+    if ((m = /^\/app\/hook\/deliveries\/(\d+)\/attempts$/.exec(p)) && method === "POST") {
+      if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      this.redeliveryRequests.push(Number(m[1]));
+      return [202, {}];
+    }
     if ((m = /^\/app\/installations\/(\d+)\/access_tokens$/.exec(p)) && method === "POST") {
       if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];
       const id = Number(m[1]);
@@ -206,6 +257,24 @@ export class FakeGitHub {
       const ex = exampleResponse("POST", "/app/installations/{installation_id}/access_tokens", 201);
       delete ex.repositories;
       return [201, { ...ex, token, expires_at: new Date(Date.now() + 3600_000).toISOString().replace(/\.\d+Z$/, "Z"), repository_selection: this.installations.get(id)!.selection }];
+    }
+    if (p === "/app/installations" && method === "GET") {
+      if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      const ex = (exampleResponse("GET", "/app/installations", 200) as unknown as Json[])[0]!;
+      // GitHub's description of this list says allOf(Simple User, Enterprise) for the account, where the single
+      // installation says anyOf: the listed account must carry the Enterprise fields too to match it.
+      return [200, [...this.installations.keys()].map((id) => {
+        const j = this.installationJson(id, ex);
+        const a = j.account as Json;
+        return { ...j, account: { ...a, name: a.login, slug: a.login, created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z" }, permissions: this.installationPermissions.get(id) ?? {} };
+      })];
+    }
+    if (p === "/installation/repositories" && method === "GET") {
+      const inst = this.installationOf(auth);
+      if (!inst) return [401, { message: "Bad credentials", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      const repos = [...this.repos.values()].filter((r) => this.installations.get(inst)!.repos.includes(r.id));
+      const ex = (exampleResponse("GET", "/installation/repositories", 200).repositories as Json[])[0]!;
+      return [200, { total_count: repos.length, repositories: repos.map((r) => this.repoJson(r, ex)) }];
     }
     if ((m = /^\/app\/installations\/(\d+)$/.exec(p)) && method === "GET") {
       if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];
@@ -334,6 +403,14 @@ export class FakeGitHub {
       if (repo.runners[i]!.busy) return [422, { message: "Bad request - Runner \"x\" is still running a job\"", documentation_url: "https://docs.github.com/rest", status: "422" }];
       repo.runners.splice(i, 1);
       return [204, null];
+    }
+    if (method === "POST" && (m = /^\/actions\/runs\/(\d+)\/cancel$/.exec(rest))) {
+      this.runCancels.push({ repo: repo.fullName, runId: Number(m[1]) });
+      return [202, {}];
+    }
+    if (method === "POST" && (m = /^\/actions\/jobs\/(\d+)\/rerun$/.exec(rest))) {
+      this.jobReruns.push({ repo: repo.fullName, jobId: Number(m[1]) });
+      return [201, {}];
     }
     if (method === "POST" && rest === "/actions/runners/generate-jitconfig") {
       const b = body as { name: string; runner_group_id: number; labels: string[]; work_folder?: string };

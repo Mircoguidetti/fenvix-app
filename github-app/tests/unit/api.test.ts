@@ -215,7 +215,7 @@ describe("settings and the Lambda entry", () => {
 
   it("the API's SSM parameters: its database URL and the state signing key, nothing of the App's", async () => {
     const prefix = "/fenvix/prod/github-app";
-    assert.deepEqual(parameterNames(prefix, "api"), [`${prefix}/state-signing-key`, `${prefix}/api-database-url`]);
+    assert.deepEqual(parameterNames(prefix, "api"), [`${prefix}/state-signing-key`, `${prefix}/api-database-url`, `${prefix}/database-ca-cert`]);
     assert.ok(!parameterNames(prefix, "all").includes(`${prefix}/api-database-url`), "the App's functions never get the API's database URL");
     const asked: string[][] = [];
     const ssm = { send: async (cmd: { input: { Names: string[] } }) => {
@@ -223,7 +223,7 @@ describe("settings and the Lambda entry", () => {
       return { Parameters: [{ Name: `${prefix}/state-signing-key`, Value: "k".repeat(40) }, { Name: `${prefix}/api-database-url`, Value: "postgresql://fenvix_api:x@db:6543/postgres" }] };
     } };
     const cfg = await apiConfig({ ...ENV, API_DATABASE_URL: undefined, STATE_SIGNING_KEY: undefined, SSM_PREFIX: prefix }, ssm as never);
-    assert.deepEqual(asked, [[`${prefix}/state-signing-key`, `${prefix}/api-database-url`]]);
+    assert.deepEqual(asked, [[`${prefix}/state-signing-key`, `${prefix}/api-database-url`, `${prefix}/database-ca-cert`]]);
     assert.equal(cfg.databaseUrl, "postgresql://fenvix_api:x@db:6543/postgres");
     assert.equal(cfg.dbPoolMax, 1, "one connection per Lambda container");
     await assert.rejects(apiConfig({ ...ENV }, ssm as never), /SSM_PREFIX/);

@@ -40,6 +40,14 @@ jobs:
           (cd github-app && npm ci --no-audit --no-fund)
           (cd infra/github-app && npm ci --no-audit --no-fund)
           (cd deploy && npm ci --no-audit --no-fund)
+      # Known advisories, high or critical, fail the run (G-2287): in what ships, and in the build and deploy tools,
+      # which run with the deploy role (G-2328). Moderate ones are listed in the log; .github/dependabot.yml proposes
+      # the updates once a fixed version exists.
+      - name: Dependency audit (what ships, and the build and deploy tools)
+        run: |
+          for d in . github-app deploy infra/github-app; do
+            (cd "$d" && npm audit --audit-level=high)
+          done
       - name: Lint this workflow (actionlint)
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
       - name: The one-click AWS template matches the policy files

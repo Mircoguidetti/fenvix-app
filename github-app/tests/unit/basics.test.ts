@@ -96,13 +96,14 @@ describe("per-machine credentials (R-012 F1, F3)", () => {
 
   it("a cache token: one organization per installation, RSA-signed, write only when asked", () => {
     const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-    const t = signCacheToken(privateKey, { installationId: 42, write: false, exp, jobId: 5 });
+    const t = signCacheToken(privateKey, { installationId: 42, repositoryId: 7, write: false, exp, jobId: 5 });
     const [p, body, sig] = t.split(".");
     assert.equal(p, "fxs1");
-    assert.deepEqual(JSON.parse(Buffer.from(body!, "base64url").toString()), { org: "gh-42", w: false, exp, job: 5 });
+    assert.deepEqual(JSON.parse(Buffer.from(body!, "base64url").toString()), { org: "gh-42-r7", w: false, exp, job: 5 });
     assert.ok(createVerify("sha256").update(`fxs1.${body}`).verify(publicKey, Buffer.from(sig!, "base64url")));
-    assert.equal(cacheOrgOf(7), "gh-7");
-    assert.throws(() => signCacheToken(publicKey, { installationId: 1, write: true, exp, jobId: 1 }), /private key/);
+    assert.equal(cacheOrgOf(7, 70001), "gh-7-r70001");
+    assert.throws(() => cacheOrgOf(7, 0), /repository/);
+    assert.throws(() => signCacheToken(publicKey, { installationId: 1, repositoryId: 7, write: true, exp, jobId: 1 }), /private key/);
   });
 });
 

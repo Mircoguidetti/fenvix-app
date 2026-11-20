@@ -3,15 +3,15 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
-import { DEMO, synth } from "./helpers.ts";
+import { synth } from "./helpers.ts";
 
 describe("the bundled functions (esbuild, ESM)", async () => {
-  const { stack } = await synth(DEMO);
+  const { stack } = await synth();
   const outdir = (stack.node.root as unknown as { outdir: string }).outdir;
   const assets = readdirSync(outdir).filter((d) => d.startsWith("asset."));
 
   it("six bundles; each loads in Node and exports `handler` (nothing runs at import: config is read on the first call)", async () => {
-    assert.equal(assets.length, 6, "http, api, worker, sweep, reaper, demo (demo mode)");
+    assert.equal(assets.length, 6, "http, api, worker, sweep, reaper, warmup");
     for (const a of assets) {
       const file = join(outdir, a, "index.mjs");
       assert.ok(readFileSync(file).length < 5 * 1024 * 1024);

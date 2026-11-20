@@ -10,7 +10,7 @@ class FakeLauncher implements RunnerLauncher {
   launches: RunnerLaunch[] = [];
   refuseNext: Error | null = null;
   /** The regions with a placement (RUNNER_PLACEMENT). */
-  regions: Region[] = ["us"];
+  regions: Region[] = ["eu"];
   canPlace(region: Region) { return this.regions.includes(region); }
   async launch(l: RunnerLaunch) {
     if (this.refuseNext) { const e = this.refuseNext; this.refuseNext = null; throw e; }
@@ -50,9 +50,9 @@ describe("one machine per job: workflow_job.queued starts a runner machine", () 
     assert.equal(launcher.launches.length, 1);
     const l = launcher.launches[0]!;
     // In the organization's region; shadow mode: linking the installation started the 30-day trial.
-    assert.deepEqual({ ...l, jitConfig: "", summaryToken: "" }, { jobId: 901, runId: 9301, repositoryId: REPOS.shop.id, repositoryFullName: "acme/shop", installationId: INSTALLATION_ID, runnerName: "fenvix-j901", jitConfig: "", cacheAccess: "write", summaryToken: "", region: "us", mode: "shadow" });
+    assert.deepEqual({ ...l, jitConfig: "", summaryToken: "" }, { jobId: 901, runId: 9301, repositoryId: REPOS.shop.id, repositoryFullName: "acme/shop", installationId: INSTALLATION_ID, runnerName: "fenvix-j901", jitConfig: "", cacheAccess: "write", summaryToken: "", region: "eu", mode: "shadow", workspaceId: org.workspaceId, skipWithProof: true });
     // The region and the mode the machine gets are recorded on the job: the run's mode is this one (review R-016 F4).
-    assert.deepEqual((await admin.query("select region, mode from gh_jobs where job_id = 901")).rows[0], { region: "us", mode: "shadow" });
+    assert.deepEqual((await admin.query("select region, mode from gh_jobs where job_id = 901")).rows[0], { region: "eu", mode: "shadow" });
     // The machine's own summary credential: this runner, this repository, this run (R-012 F1), this attempt (R-016 F7).
     const scope = verifySummaryCredential([RUNNER_TOKEN], `Bearer ${l.summaryToken}`)!;
     assert.deepEqual({ ...scope, exp: 0 }, { runnerName: "fenvix-j901", repositoryId: REPOS.shop.id, runId: 9301, runAttempt: 1, exp: 0 });
@@ -108,7 +108,7 @@ describe("one machine per job: workflow_job.queued starts a runner machine", () 
   });
 
   it("an EU organization with no EU placement: no machine anywhere, no just-in-time runner; the job stays queued", async () => {
-    await admin.query("update workspaces set region = 'eu' where id = $1", [org.workspaceId]);
+    await admin.query("update workspaces set region = 'us' where id = $1", [org.workspaceId]);
     const before = launcher.launches.length;
     const jitBefore = h.gh.repos.get("acme/shop")!.jitRunners.length;
     const sha = "9".repeat(40);
@@ -117,17 +117,17 @@ describe("one machine per job: workflow_job.queued starts a runner machine", () 
     assert.equal(launcher.launches.length, before, "never placed in the US");
     assert.equal(h.gh.repos.get("acme/shop")!.jitRunners.length, jitBefore);
     const job = (await admin.query("select status, region from gh_jobs where job_id = 909")).rows[0];
-    assert.deepEqual(job, { status: "queued", region: "eu" });
+    assert.deepEqual(job, { status: "queued", region: "us" });
     // Handled (not retried by the queue): GitHub times the job out.
     assert.ok((await admin.query("select processed_at from gh_webhook_deliveries where delivery_id = 'q-909'")).rows[0].processed_at);
 
     // With an EU placement, the next job starts there; after the trial, in enforce mode.
-    launcher.regions = ["us", "eu"];
+    launcher.regions = ["eu", "us"];
     await admin.query("update ci_subscriptions set trial_started_at = now() - interval '40 days', trial_ends_at = now() - interval '10 days' where workspace_id = $1", [org.workspaceId]);
     h.gh.addRun("acme/shop", 9309, { event: "push", headSha: sha, headBranch: "main", message: "x" });
     await h.send("workflow_job", workflowJob("queued", { id: 910, runId: 9309, sha, branch: "main" }));
-    assert.deepEqual({ region: launcher.launches.at(-1)!.region, mode: launcher.launches.at(-1)!.mode, job: launcher.launches.at(-1)!.jobId }, { region: "eu", mode: "enforce", job: 910 });
-    await admin.query("update workspaces set region = 'us' where id = $1", [org.workspaceId]);
+    assert.deepEqual({ region: launcher.launches.at(-1)!.region, mode: launcher.launches.at(-1)!.mode, job: launcher.launches.at(-1)!.jobId }, { region: "us", mode: "enforce", job: 910 });
+    await admin.query("update workspaces set region = 'eu' where id = $1", [org.workspaceId]);
   });
 });
 

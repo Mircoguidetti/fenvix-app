@@ -371,13 +371,13 @@ The Usage record's `runsUsed` is the count of billable usage events of the month
 
 ## What the runner sends
 
-The runner is the fenvix machine's side (another repository): the GitHub Actions runner plus `runner/fenvix-run`, which
-wraps the job's test command in the engine (`detpy` for Python/pytest, `detjs` for Node vitest/jest). It sends four
+The runner is the fenvix machine's side (fenvix-agent and fenvix-slot in infra/github-app/lib/runner/files, with the
+GitHub Actions runner and the engine's trunk artifact), which runs the job's test command in the engine (`detpy` for Python/pytest, `detjs` for Node vitest/jest). It sends four
 kinds of records to the App (`https://api.fenvix.dev/v1`, operations tagged `runner` in `openapi/fenvix-api.yaml`;
 the request schemas there are the contract and the App checks every body against them).
 
 **Credential.** Every call carries the machine's own credential, `Authorization: Bearer fxr1....`, minted by the App for
-that machine (file `/etc/fenvix/summary-token`, root only): it names the runner, the repository and, on a per-job
+that job (inside the lease, never in user data): it names the runner, the repository and, on a per-job
 machine, the run and (since review R-016) the run attempt. A body that names another runner, repository, run or attempt
 is refused (`403`); no credential or a bad one
 is `401`; a body that does not match the schema is `400` with `error.field` naming the field. Accepted records are
@@ -388,22 +388,74 @@ Every record of a job names it the same way: `runId` (`GITHUB_RUN_ID`), `runAtte
 and optionally `repositoryId` and `runnerName`, which must match the credential. Repository + run + attempt + runner
 name is one job (a runner runs one job at a time).
 
-### What the machine receives
+### What the machine receives (our machines, since 2026-11-20)
 
-A per-job machine's user data writes `/etc/fenvix/runner.env` (root only) with the plain settings and these per-job
-values the runner reads:
+A machine (github-app/src/machines/) belongs to ONE customer at a time and runs each of that customer's jobs in its own
+slot (a sandbox: own user, home, mount and PID namespaces; fenvix-slot). Nothing job-specific is in its user data.
 
-| Variable | Value |
-| --- | --- |
-| `FENVIX_MODE` | `shadow` while the organization's 30-day trial runs, else `enforce` (see Trial). The runner runs the engine in that mode. It is the run's mode: the App records it on the job when it starts the machine, and a `mode` the runner reports back is ignored (review R-016 F4) |
-| `FENVIX_REGION` | `us` or `eu`: the organization's region; the machine runs there (the App never starts an EU organization's job anywhere else; with no machine available in the region the job stays queued and GitHub times it out) |
-| `FENVIX_MACHINE` | `per-job` (a demo machine: `demo`, with `FENVIX_MODE=enforce`) |
-| `FENVIX_RUNNER_NAME`, `FENVIX_JOB_ID` | the just-in-time runner's name and the GitHub job id |
-| `FENVIX_CACHE_ACCESS`, `FENVIX_CACHE_URL`, `FENVIX_CACHE_ORG` | the shared cache: `write` only on trusted refs; the installation's own cache organization |
+**Boot.** The user data holds plain settings only: `FENVIX_MACHINE_ID`, `FENVIX_API_URL`, `FENVIX_CACHE_URL` (base),
+`FENVIX_SUMMARIES_URL`, and `FENVIX_BOOT_SECRET`, a single-use secret (its sha256 is in `gh_machines`; a reserve
+machine gets a new one each time it is started).
 
-and the credentials `/etc/fenvix/summary-token` (the App credential above), `/etc/fenvix/cache-token` (shared cache),
-`/etc/fenvix/jitconfig` (GitHub's just-in-time runner configuration). Until 2026-11-18 `FENVIX_MODE` held the kind of
-machine (`per-job`, `demo`); that is `FENVIX_MACHINE` now.
+**`POST /v1/runner/machine/hello`** `{machineId, bootSecret, engineVersion}` -> `200 {token, mode, pollSeconds}`: the
+session credential `fxm1.<payload>.<HMAC>` (machine id and session generation; checked against `gh_machines` on every
+call, so it dies when the machine retires, is stopped into the reserve, or says hello again). `mode` is `work`, or
+`prepare` for a machine that is being made a reserve machine (it reports `prepared` and is stopped). A used or unknown
+boot secret: `401`. `engineVersion` is `/opt/fenvix/ENGINE` of the image (`<version> sha256=<sha256>`).
+
+**`POST /v1/runner/machine/poll`** `{holding: [leaseId...]}` with `Authorization: Bearer fxm1...` -> `200 {leases, stop,
+retire}`. `leases`: the work offered to this machine's slots, each given ONCE (deleted from the database when taken):
+
+```json
+{"leaseId": 7, "slot": 1, "kind": "job", "work": {
+  "kind": "job", "runnerName": "fenvix-j901", "jitConfig": "<GitHub's encoded just-in-time configuration>",
+  "summaryToken": "fxr1....", "cacheToken": "fxs1.... | null",
+  "env": {"FENVIX_MODE": "shadow|enforce", "FENVIX_SKIP": "1|0", "FENVIX_REGION": "eu", "FENVIX_RUNNER_NAME": "fenvix-j901",
+          "FENVIX_JOB_ID": "901", "FENVIX_RUN_ID": "9301", "FENVIX_REPOSITORY_ID": "70001",
+          "FENVIX_CACHE_ACCESS": "write|read", "FENVIX_CACHE_URL": "http://10.42.0.10:8787/gh-4242-r70001", "FENVIX_CACHE_ORG": "gh-4242-r70001"}}}
+```
+
+`stop`: leases in `holding` that ended on the service's side (the slot is wiped). `retire: true`: shut down (EC2
+terminates the machine). A machine sees only its own leases; another machine's lease id in `holding` comes back in
+`stop` and is otherwise ignored.
+
+**`POST /v1/runner/machine/events`** `{type, leaseId?, detail?}`: `finished` (a slot's job ended, the slot is wiped),
+`prepared` (a reserve machine is ready to be stopped), `interrupted` (EC2's spot interruption notice: the machine is
+retired, and a job that then fails on GitHub is re-run once).
+
+The job's records (progress, results, summaries below) go with the JOB's credential `summaryToken`, never the
+machine's: a job can only report on itself.
+
+#### Replays (`kind: "replay"`, the dashboard's "replay N times")
+
+The API enqueues Work `{kind: "replay", runId, testId, times}` (1 to 50). The App records `gh_replays` (status
+`waiting` -> `running` -> `done` | `failed`, with `detail`) and leases a slot on a machine of the SAME customer. The
+lease's work: `{kind: "replay", replayId, repository, commitSha, checkoutToken, testId, times, seed, fingerprint,
+language}` (`checkoutToken`: contents read, that one repository, one hour). In the slot, `fenvix-replay` checks out the
+commit, makes the project's Python environment, runs `fenvix repro TEST --seed <seed|fixed> --confirm N --json` and
+the machine sends, with its session credential, **`POST /v1/runner/replays`** `{leaseId, done, fails,
+identicalFingerprint, matchesDefect}` (`matchesDefect`: the replayed fingerprint is the defect's stored one, or null).
+Verdict stored: `reproduced` (failed every time, one fingerprint, the defect's), `passed` (never failed), `flaky`
+(anything else); `null` when nothing ran (the detail says why, e.g. the engine has no repro for that runner yet).
+
+#### The engine contract in a job's slot (runner side owns it, engine side honours it)
+
+Every step of the job sees these variables (the slot's runner `.env`):
+
+| Variable | Values | What the engine must do |
+| --- | --- | --- |
+| `FENVIX_MODE` | `enforce` | run deterministically; reuse a test's result only with proof, when `FENVIX_SKIP=1` |
+| | `shadow` (the organization's 30-day trial) | run EVERY test, reuse nothing, and report per test `wouldSkip` (results) and `wouldSkipTests`/`wouldSaveMs` (summary): what enforce would have skipped |
+| `FENVIX_SKIP` | `1` (default) | skip-with-proof allowed (enforce only) |
+| | `0` (the project's "skip with proof" is off) | never skip and never consult the shared cache for reuse; still run deterministically |
+| `FENVIX_TEST_COMMAND` | the project's test command (dashboard setting), when set | the command the engine wraps when the job asks it to run the project's tests |
+| `FENVIX_OUT` | the slot's output directory | write `summary.json` there (the machine reads it as the slot user and sends it with the job's credential) |
+| `FENVIX_CACHE_URL`, `FENVIX_CACHE_ACCESS` | the repository's own cache organization | write only when `FENVIX_CACHE_ACCESS=write` |
+| `FENVIX_HOME` | `/opt/fenvix` | the installed trunk artifact (`fenvix` on `PATH`) |
+
+The job log prints `fenvix: engine <version> sha256=<sha256>` and the mode (fenvix-job-started). Until the engine
+reads `FENVIX_MODE` and `FENVIX_SKIP` (engine trunk, not this repository), a shadow run and a run with skip off still
+get no cache credential for reuse only if the engine honours them: see docs/REPORT-our-machines.md, G-0187/G-0191.
 
 ### 1. Progress, while the job runs: `POST /v1/runner/progress`
 
@@ -420,6 +472,12 @@ next poll.
 `seq` increases with every record of the job (start at 0): a record that arrives after a newer one is ignored.
 `testsTotal` is null until collection ends. A record sent before GitHub reported the job as started, for a job whose
 repository has no project yet, or after the run finished is accepted and not stored. Body at most 64 KB.
+
+Optional since 2026-11-20 (the dashboard's live test view, P-049): `finished`, the tests finished since the previous
+record (at most 500), each `{testId, outcome, durationMs, worker?, failure?}` as in the results; and `workers`, the
+engine's workers now (at most 64), each `{id, currentTest|null, testsDone}`. The results chunks at the end stay
+authoritative. A run may be stopped from the dashboard (Work `stop_run`, `now` or `first_failure`): the first progress
+record with a failed test fires a `first_failure` stop (the App cancels the GitHub workflow run; `gh_jobs.stop_state`).
 
 ### 2. Results, before the summary: `POST /v1/runner/results`
 
@@ -588,7 +646,7 @@ configuration). `/etc/fenvix/runner.env` with the plain settings and:
 | `FENVIX_MODE` | `enforce`: skip with proof what is already proven, run the rest, write the results to the cache |
 | `FENVIX_REGION` | the organization's region |
 | `FENVIX_WARMUP_ID`, `FENVIX_RUNNER_NAME` | the warm-up and this machine's name (`fenvix-w<id>`, `fenvix-w<id>-<attempt>` after a preemption) |
-| `FENVIX_CACHE_ACCESS`, `FENVIX_CACHE_URL`, `FENVIX_CACHE_ORG` | `write`, the installation's own cache organization (`gh-<installation id>`) |
+| `FENVIX_CACHE_ACCESS`, `FENVIX_CACHE_URL`, `FENVIX_CACHE_ORG` | `write`, the repository's own cache organization (`gh-<installation id>-r<repository id>`, audit G-0192) |
 | `FENVIX_WARMUPS_URL` | `https://api.fenvix.dev/v1/runner/warmups` |
 
 and the files `/etc/fenvix/warmup.json`:
@@ -695,6 +753,8 @@ The dashboard reads them only through the fenvix API (`openapi/fenvix-api.yaml`,
 database directly.
 
 ## Changes
+
+- 2026-11-20 (P-047, our machines): what a machine receives is a lease over HTTPS (hello, poll, events), never user data; `FENVIX_SKIP` and the engine contract of `FENVIX_MODE`; the cache organization is per repository (`gh-<installation>-r<repository>`); progress gains `finished` and `workers`; usage events carry `machine_size`, `instance_type`, `machine_market`, `machine_id`.
 
 - 2026-11-19 (review R-016b): **whether a job is billable comes from GitHub's data only**: a job that started on our
   machine is billed its held minutes whatever its summary and conclusion (`cancelled_before_tests` now means "never

@@ -515,11 +515,11 @@ export class Warmups {
       });
       const exp = Math.floor(Date.now() / 1000) + this.w.maxRunSeconds + 3600;
       const summaryToken = signSummaryCredential(this.d.summaryKey, { runnerName, repositoryId: repo.repository_id, warmupId: row.id, exp });
-      const cacheToken = this.d.cacheSigningKey ? signCacheToken(this.d.cacheSigningKey, { installationId: repo.installation_id, write: true, exp, warmupId: row.id }) : undefined;
+      const cacheToken = this.d.cacheSigningKey ? signCacheToken(this.d.cacheSigningKey, { installationId: repo.installation_id, repositoryId: repo.repository_id, write: true, exp, warmupId: row.id }) : undefined;
       const res = await this.launcher!.launchWarmup!({
         warmupId: row.id, attempt, repositoryId: repo.repository_id, repositoryFullName: repo.full_name, installationId: repo.installation_id,
         commitSha: row.commit_sha, ref: row.ref, workflowPath: repo.onboarding_workflow_path!, job: repo.onboarding_job!, runnerName,
-        checkoutToken: tok.data.token, summaryToken, ...(cacheToken ? { cacheToken } : {}), region,
+        checkoutToken: tok.data.token, summaryToken, ...(cacheToken ? { cacheToken } : {}), region, ...(repo.workspace_id ? { workspaceId: repo.workspace_id } : {}),
       });
       await this.db.q("update gh_warmups set instance_id = $2 where id = $1", [row.id, res.instanceId]);
       slot!.running++;

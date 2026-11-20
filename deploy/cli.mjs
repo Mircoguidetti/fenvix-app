@@ -37,7 +37,8 @@ import { readFounderValue } from "./lib/bootstrap.mjs";
 import { exportEnv, info, mask, notice, Stop, summary, warning } from "./lib/log.mjs";
 import { migrate, readMigrations } from "./lib/migrate.mjs";
 import { recoverFailedCreates } from "./lib/recover.mjs";
-import { ensureRoles } from "./lib/roles.mjs";
+import { ensureRoles, syncDatabaseCa } from "./lib/roles.mjs";
+import { smokeVerdict } from "./lib/smoke.mjs";
 import { ensureGenerated } from "./lib/secrets.mjs";
 import { adminClientConfig, checkAnonKey, parseAdminUrl, parseCaCert } from "./lib/supabase.mjs";
 
@@ -140,6 +141,9 @@ const steps = {
     try {
       const r = await ensureRoles(client, a, ssm(), { env: ENV });
       summary(`**Database roles:** ${Object.entries(r).map(([k, v]) => `${k} ${v === "kept" ? "unchanged" : "new password (stored in SSM only)"}`).join(", ")}.`);
+      // The services verify the pooler's certificate when the founder saved Supabase's CA (G-2323).
+      const ca = await syncDatabaseCa(ssm(), parseCaCert(await founder("caCert")), { env: ENV });
+      summary(`**Database TLS of the services:** ${ca === "set" || ca === "kept" ? "verified against SUPABASE_CA_CERT (verify-full)" : "encrypted, certificate not verified (no supabase-ca-cert parameter)"}.`);
     } finally { await client.end(); }
   },
 
@@ -235,6 +239,8 @@ const steps = {
     const deadline = Date.now() + Number(arg("minutes", "10")) * 60_000;
     const checks = [
       { url: `https://${API_DOMAIN}/healthz`, ok: (r) => r.status === 200 },
+      // The App's database answers (G-1707); before the GitHub App is configured, its own "not configured" answer.
+      { url: `https://${API_DOMAIN}/readyz`, ok: async (r) => r.status === 200 || (r.status === 503 && (await r.json().catch(() => ({}))).github === "not_configured") },
       { url: `https://${API_DOMAIN}/v1/me`, ok: (r) => r.status === 401 },
     ];
     if (DASHBOARD_ON_AWS && process.env.FENVIX_DASHBOARD_CERTIFICATE_ARN) checks.push({ url: `https://${APP_DOMAIN}/`, ok: (r) => r.status === 200 });
@@ -244,13 +250,13 @@ const steps = {
       for (;;) {
         try {
           const r = await fetch(c.url, { redirect: "manual", signal: AbortSignal.timeout(15_000) });
-          if (c.ok(r)) { info(`${c.url}: ${r.status} (expected)`); break; }
+          if (await c.ok(r)) { info(`${c.url}: ${r.status} (expected)`); break; }
           last = `HTTP ${r.status}`;
         } catch (e) { last = /** @type {Error} */ (e).cause?.code ?? /** @type {Error} */ (e).message; }
         if (Date.now() > deadline) {
           const msg = `${c.url} does not answer as expected yet (${last}).`;
-          if (strict) throw new Stop(`${msg} The deploy finished; look at the API's log (docs/DEPLOY-AWS.md, "When something fails").`);
-          warning(`${msg} If the DNS records in the summary are not added yet, that is expected.`);
+          if (smokeVerdict({ strict, last }) === "stop") throw new Stop(`${msg} The deploy finished; look at the API's log (docs/DEPLOY-AWS.md, "When something fails").`);
+          warning(`${msg} The name does not resolve yet: if the DNS records in the summary were just added, that is expected.`);
           break;
         }
         await new Promise((r) => setTimeout(r, 15_000));

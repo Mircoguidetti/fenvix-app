@@ -83,20 +83,21 @@ describe("secrets from SSM", () => {
   const all = Object.fromEntries(["database-url", "private-key", "webhook-secret", "client-secret", "state-signing-key", "runner-token"].map((n) => [`${prefix}/${n}`, `value-of-${n}`]));
 
   it("the HTTP function reads every secret; the worker and the sweep only the database URL and the private key", async () => {
-    assert.equal(parameterNames(prefix, "all").length, 7);
-    assert.deepEqual(parameterNames(prefix, "worker"), [`${prefix}/database-url`, `${prefix}/private-key`]);
+    assert.equal(parameterNames(prefix, "all").length, 9, "with the optional previous webhook secret (G-2322) and the optional database CA (G-2323)");
+    assert.deepEqual(parameterNames(prefix, "worker"), [`${prefix}/database-url`, `${prefix}/private-key`, `${prefix}/database-ca-cert`]);
     const seen: GetParametersCommand[] = [];
     const env = await loadSecrets(ssm(all, seen) as never, prefix, "all");
     assert.equal(seen[0]!.input.WithDecryption, true);
     assert.equal(env.GITHUB_WEBHOOK_SECRET, "value-of-webhook-secret");
     assert.equal(env.RUNNER_TOKEN, "value-of-runner-token");
     assert.equal(env.RUNNER_TOKEN_PREVIOUS, undefined, "optional");
+    assert.equal(env.GITHUB_WEBHOOK_SECRET_PREVIOUS, undefined, "optional");
     const w = await loadSecrets(ssm(all) as never, prefix, "worker");
     assert.deepEqual(Object.keys(w).sort(), ["GITHUB_APP_DATABASE_URL", "GITHUB_APP_PRIVATE_KEY"]);
   });
 
   it("the per-job worker (launcher) also reads the summary signing key, never the HTTP-only secrets (R-012 F1)", async () => {
-    assert.deepEqual(parameterNames(prefix, "launcher"), [`${prefix}/database-url`, `${prefix}/private-key`, `${prefix}/runner-token`]);
+    assert.deepEqual(parameterNames(prefix, "launcher"), [`${prefix}/database-url`, `${prefix}/private-key`, `${prefix}/runner-token`, `${prefix}/database-ca-cert`]);
     const w = await loadSecrets(ssm(all) as never, prefix, "launcher");
     assert.deepEqual(Object.keys(w).sort(), ["GITHUB_APP_DATABASE_URL", "GITHUB_APP_PRIVATE_KEY", "RUNNER_TOKEN"]);
   });

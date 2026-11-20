@@ -81,19 +81,26 @@ Fill in, top to bottom:
 | Permission | Access | Why |
 |---|---|---|
 | Actions | **Read-only** | read the workflow run of a job (its trigger, commit message and pull request); needed for the `workflow_job` event |
-| **Administration** | **Read and write** | one machine per job (`DEPLOY-AWS.md`): `POST /repos/{owner}/{repo}/actions/runners/generate-jitconfig` creates the just-in-time runner of one queued job, on that repository only. Used for nothing else |
+| **Administration** | **Read and write** | personal accounts only need it in practice (GitHub offers nothing narrower there), and organizations whose plan has no extra runner groups: `POST /repos/{owner}/{repo}/actions/runners/generate-jitconfig` creates the just-in-time runner of one queued job, on that repository only. Used for nothing else |
 | Checks | **Read and write** | the `fenvix` check run on each commit |
 | Contents | **Read and write** | read the workflow files; create the `fenvix/runs-on` branch and commit the one-line change on it |
 | Metadata | **Read-only** | mandatory for every App (GitHub sets it) |
 | Pull requests | **Read and write** | open the onboarding pull request; the one comment per pull request, updated in place |
 | **Workflows** | **Read and write** | **required by GitHub to change any file under `.github/workflows/`**: without it the commit of the onboarding change is refused (Contents: write is not enough). Not in the original list of P-017; see the session report |
 
-**Organization permissions**: none. **Account permissions**: none.
+**Organization permissions**: **Self-hosted runners: Read and write** (least privilege for organizations, audit
+G-1796/G-1726). **Account permissions**: none.
 
-> Just-in-time runners (one machine per job, `DEPLOY-AWS.md`) use **Administration: Read and write** on the
-> repository. The organization permission **Self-hosted runners: Read and write** would also allow it, but not for
-> personal accounts, and its runners could take any repository's jobs; it is not used. Customers who installed the App
-> before must approve the added permission.
+> How a job's just-in-time runner is registered (github-app/src/service.ts `runnerTarget`):
+> - **Organization installation with Self-hosted runners: write**: `POST /orgs/{org}/actions/runners/generate-jitconfig`,
+>   in a runner group `fenvix-<repository id>` that only that repository may use (created once,
+>   `POST /orgs/{org}/actions/runner-groups`, visibility selected). The runner can never take another repository's job.
+> - **Personal account**, or an organization whose plan cannot make runner groups: the repository-level call, which needs
+>   **Administration: Read and write** (GitHub has nothing narrower for personal accounts).
+>
+> Founder action: App settings → Permissions & events → Organization permissions → **Self-hosted runners** → **Read and
+> write** → Save. Installed organizations must approve the new permission (GitHub asks their owners); until they do,
+> their runners stay repository-level.
 
 ### 3. Events
 

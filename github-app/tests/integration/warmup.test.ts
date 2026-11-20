@@ -20,12 +20,12 @@ class FakeFleet implements RunnerLauncher {
   live = new Map<number, Region>();
   busy = 0;
   max = 4;
-  regions: Region[] = ["us"];
+  regions: Region[] = ["eu"];
   private used(region: Region) { return this.busy + [...this.live.values()].filter((r) => r === region).length; }
   canPlace(region: Region) { return this.regions.includes(region); }
-  async hasCapacity(region: Region = "us") { return this.used(region) < this.max; }
+  async hasCapacity(region: Region = "eu") { return this.used(region) < this.max; }
   async launch(l: RunnerLaunch) {
-    if (this.used(l.region ?? "us") >= this.max) throw new RetryLater("full");
+    if (this.used(l.region ?? "eu") >= this.max) throw new RetryLater("full");
     this.jobs.push(l); this.busy++;
     return { instanceId: `i-j${l.jobId}`, already: false };
   }
@@ -92,7 +92,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     const head = h.gh.repos.get("acme/shop")!.branches.get("main")!.sha;
     assert.deepEqual({ ...l, checkoutToken: "", summaryToken: "", cacheToken: undefined }, {
       warmupId: l.warmupId, attempt: 1, repositoryId: REPOS.shop.id, repositoryFullName: "acme/shop", installationId: INSTALLATION_ID, commitSha: head, ref: "refs/heads/main",
-      workflowPath: ".github/workflows/ci.yml", job: "test", runnerName: `fenvix-w${l.warmupId}`, checkoutToken: "", summaryToken: "", cacheToken: undefined, region: "us",
+      workflowPath: ".github/workflows/ci.yml", job: "test", runnerName: `fenvix-w${l.warmupId}`, checkoutToken: "", summaryToken: "", cacheToken: undefined, region: "eu", workspaceId: org.workspaceId,
     });
     // The machine's App credential names this warm-up only.
     const scope = verifySummaryCredential([RUNNER_TOKEN], `Bearer ${l.summaryToken}`)!;
@@ -105,7 +105,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     assert.equal((await as("/repos/acme/web")).status, 404, "another repository of the installation");
     assert.equal((await as("/repos/acme/shop/check-runs", "POST", { name: "x", head_sha: head })).status, 403, "no check run with it");
     const row = await one(head);
-    assert.deepEqual({ status: row.status, region: row.region, attempts: row.attempts, runner: row.runner_name }, { status: "dispatched", region: "us", attempts: 1, runner: `fenvix-w${l.warmupId}` });
+    assert.deepEqual({ status: row.status, region: row.region, attempts: row.attempts, runner: row.runner_name }, { status: "dispatched", region: "eu", attempts: 1, runner: `fenvix-w${l.warmupId}` });
   });
 
   it("the machine reports; its credential works for warm-ups only, and a job's credential is refused there", async () => {
@@ -224,10 +224,10 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
 
   it("customers come first: a customer job queued in the region blocks warm-ups; the reserve stays free", async () => {
     await due();
-    await admin.query("insert into gh_jobs (job_id, repository_id, installation_id, run_id, head_sha, status, region, created_at) values (990, $1, $2, 1, $3, 'queued', 'us', now())",
+    await admin.query("insert into gh_jobs (job_id, repository_id, installation_id, run_id, head_sha, status, region, created_at) values (990, $1, $2, 1, $3, 'queued', 'eu', now())",
       [REPOS.shop.id, INSTALLATION_ID, "e".repeat(40)]);
     assert.equal((await h.app.service.warmups.tick()).dispatched, 0);
-    assert.match(String((await one(shaN(14))).detail), /a customer job is waiting for a machine in us/);
+    assert.match(String((await one(shaN(14))).detail), /a customer job is waiting for a machine in eu/);
     await admin.query("update gh_jobs set status = 'completed' where job_id = 990");
     fleet.busy = 3;
     assert.equal((await h.app.service.warmups.tick()).dispatched, 0);
@@ -311,20 +311,20 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     assert.equal((w.not_before as Date).getTime(), oldest.getTime() + 86_400_000, "it waits for the window, then runs");
   });
 
-  it("an EU organization: never placed in the US; with an EU placement, there", async () => {
+  it("an organization in a region without machines (us): never placed elsewhere; with a placement there, there", async () => {
     await admin.query("update gh_warmups set status = 'cancelled', finished_at = now() where status in ('pending', 'dispatched', 'running')");
     // A new day for the cap (the case above filled it).
     await admin.query("update gh_warmups set dispatched_at = dispatched_at - interval '2 days' where dispatched_at is not null");
     for (const id of [...fleet.live.keys()]) fleet.done(id);
-    await admin.query("update workspaces set region = 'eu' where id = $1", [org.workspaceId]);
+    await admin.query("update workspaces set region = 'us' where id = $1", [org.workspaceId]);
     await pushTo(shaN(30), 1_795_500_600);
     await due();
     assert.equal((await h.app.service.warmups.tick()).dispatched, 0);
-    assert.match(String((await one(shaN(30))).detail), /\(eu\) yet: a warm-up never runs in another region/);
-    fleet.regions = ["us", "eu"];
+    assert.match(String((await one(shaN(30))).detail), /\(us\) yet: a warm-up never runs in another region/);
+    fleet.regions = ["eu", "us"];
     assert.equal((await h.app.service.warmups.tick()).dispatched, 1);
-    assert.equal(fleet.warmups.at(-1)!.region, "eu");
-    assert.equal((await one(shaN(30))).region, "eu");
+    assert.equal(fleet.warmups.at(-1)!.region, "us");
+    assert.equal((await one(shaN(30))).region, "us");
   });
 
   it("a machine that never starts is given up and tried again; one that runs too long is stopped", async () => {
@@ -335,7 +335,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     assert.equal(back.status === "pending" || back.status === "dispatched", true, String(back.status));
     assert.ok(fleet.terminated.includes(Number(w30.id)));
     await admin.query("update gh_warmups set status = 'running', started_at = now() - interval '4 hours', dispatched_at = now() - interval '4 hours' where id = $1", [w30.id]);
-    fleet.live.set(Number(w30.id), "eu");
+    fleet.live.set(Number(w30.id), "us");
     await h.app.service.warmups.tick();
     const stopped = await one(shaN(30));
     assert.equal(stopped.status, "failed");
@@ -344,7 +344,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
   });
 
   it("suspended or uninstalled: warm-ups in flight are cancelled and their machines terminated", async () => {
-    await admin.query("update workspaces set region = 'us' where id = $1", [org.workspaceId]);
+    await admin.query("update workspaces set region = 'eu' where id = $1", [org.workspaceId]);
     await pushTo(shaN(40), 1_795_500_700);
     await due();
     await h.app.service.warmups.tick();

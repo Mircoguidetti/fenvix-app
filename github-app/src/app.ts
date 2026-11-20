@@ -1,3 +1,4 @@
+import { gunzipSync } from "node:zlib";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { SessionVerifier, verifyState } from "./auth.ts";
 import type { Config } from "./config.ts";
@@ -6,8 +7,10 @@ import { GitHubApp, GitHubError } from "./github/client.ts";
 import { verifySignature } from "./github/signature.ts";
 import { parseExploration, parseProgress, parseResults, parseWarmupReport, RecordError, type RunnerJob, type RunnerWarmupReport } from "./results/runner-records.ts";
 import { SummaryError, parseSummary, trimSummary } from "./results/summary.ts";
-import { verifySummaryCredential } from "./runners/credentials.ts";
+
 import type { RunnerLauncher } from "./runners/launcher.ts";
+import type { MachinePool } from "./machines/pool.ts";
+import { verifyMachineCredential, verifySummaryCredential } from "./runners/credentials.ts";
 import { GitHubService, type Logger } from "./service.ts";
 import { describeWork, InProcessQueue, type Work, type WorkQueue } from "./work.ts";
 
@@ -27,14 +30,17 @@ export interface Deps {
   /** Where checked webhooks and runner summaries go. Default: this process, in the background (node server mode). */
   queue?: WorkQueue;
   /** "One machine per job": started for each queued fenvix job (in Lambda mode only the worker has one). */
-  launcher?: RunnerLauncher;
+  launcher?: RunnerLauncher | ((db: Db) => RunnerLauncher);
+  /** Our machines' API (hello, poll, events) on a server with no launcher (the HTTP function). */
+  machines?: (db: Db) => MachinePool;
 }
 
 export interface Core { service: GitHubService; db: Db; gh: GitHubApp }
 
 /** The database, the GitHub client and the service: what the HTTP side, the worker and the sweep share. */
-export function buildCore(cfg: Config, log: Logger, launcher: RunnerLauncher | null = null): Core {
-  const db = new Db(cfg.databaseUrl, cfg.dbPoolMax);
+export function buildCore(cfg: Config, log: Logger, launcherOrFactory: RunnerLauncher | ((db: Db) => RunnerLauncher) | null = null): Core {
+  const db = new Db(cfg.databaseUrl, cfg.dbPoolMax, cfg.databaseCa);
+  const launcher = typeof launcherOrFactory === "function" ? launcherOrFactory(db) : launcherOrFactory;
   const gh = new GitHubApp({ apiUrl: cfg.apiUrl, appId: cfg.appId, privateKey: cfg.privateKey, timeoutMs: cfg.githubTimeoutMs });
   const service = new GitHubService(db, gh, {
     runsOnLabel: cfg.runsOnLabel, onboardingBranch: cfg.onboardingBranch, onboardAllRepositories: cfg.onboardAllRepositories,
@@ -74,7 +80,23 @@ export async function buildApp(deps: Deps): Promise<App> {
 
   // The raw bytes are kept: the webhook signature is computed over them, not over re-serialised JSON.
   fastify.addContentTypeParser("application/json", { parseAs: "buffer" }, (req, body, done) => {
-    req.rawBody = body as Buffer;
+    let raw = body as Buffer;
+    // Our machines gzip large records (a big suite's summary): API Gateway and Lambda cap a request at 6 MB on the wire
+    // (G-1739). Only /v1/runner/* accepts it; the inflated body keeps the route's own limit (summaries: 32 MB).
+    if (String(req.headers["content-encoding"] ?? "").toLowerCase() === "gzip") {
+      if (!req.url.startsWith("/v1/runner/")) {
+        const e = new Error("Content-Encoding gzip is accepted on /v1/runner/* only.") as Error & { statusCode: number };
+        e.statusCode = 415;
+        return done(e, undefined);
+      }
+      try { raw = gunzipSync(raw, { maxOutputLength: 33 * 1024 * 1024 }); } catch {
+        const e = new Error("The gzip body could not be read (or is over 33 MB inflated).") as Error & { statusCode: number };
+        e.statusCode = 413;
+        return done(e, undefined);
+      }
+    }
+    req.rawBody = raw;
+    body = raw;
     if ((body as Buffer).length === 0) return done(null, {});
     try { done(null, JSON.parse((body as Buffer).toString("utf8"))); } catch {
       const e = new Error("The body is not JSON.") as Error & { statusCode: number };
@@ -97,6 +119,63 @@ export async function buildApp(deps: Deps): Promise<App> {
   };
 
   fastify.get("/healthz", async () => ({ ok: true }));
+  // Ready: the secrets loaded (this function started) AND the database answers (G-1707: the deploy's smoke test reads it).
+  fastify.get("/readyz", async (_req, reply) => {
+    try {
+      await db.q("select 1");
+      return { ok: true, database: true };
+    } catch {
+      return reply.code(503).send({ ok: false, database: false });
+    }
+  });
+
+  // ---------------------------------------------------------------- our machines: hello, poll, events
+  // src/machines/pool.ts. A machine boots with a single-use boot secret, exchanges it for its session credential, then
+  // fetches the work offered to its own slots. docs/data-contract.md "Our machines".
+  const machines: MachinePool | null = service.pool?.pool ?? deps.machines?.(db) ?? null;
+  if (machines) {
+    fastify.post("/v1/runner/machine/hello", { bodyLimit: 4 * 1024 }, async (req, reply) => {
+      const b = (req.body ?? {}) as { machineId?: unknown; bootSecret?: unknown; engineVersion?: unknown };
+      if (typeof b.machineId !== "number" || typeof b.bootSecret !== "string") return fail(reply, 400, "bad_request", "machineId and bootSecret are required.");
+      const ev = typeof b.engineVersion === "string" && /^[\x20-\x7e]{1,200}$/.test(b.engineVersion) ? b.engineVersion : null;
+      const r = await machines.hello(b.machineId, b.bootSecret, ev);
+      if (!r) return fail(reply, 401, "unauthorized", "Unknown machine, or its boot secret was already used.");
+      return reply.send(r);
+    });
+    fastify.post("/v1/runner/machine/poll", { bodyLimit: 4 * 1024 }, async (req, reply) => {
+      const scope = verifyMachineCredential(cfg.runnerTokens, req.headers.authorization);
+      if (!scope) return fail(reply, 401, "unauthorized", "This machine's session credential is required.");
+      const b = (req.body ?? {}) as { holding?: unknown };
+      const holding = Array.isArray(b.holding) ? b.holding.filter((x): x is number => typeof x === "number") : [];
+      const r = await machines.poll(scope, holding);
+      if (!r) return fail(reply, 401, "unauthorized", "This session ended: say hello again (or retire).");
+      return reply.header("cache-control", "no-store").send(r);
+    });
+    fastify.post("/v1/runner/replays", { bodyLimit: 8 * 1024 }, async (req, reply) => {
+      const scope = verifyMachineCredential(cfg.runnerTokens, req.headers.authorization);
+      if (!scope || !(await machines.alive(scope))) return fail(reply, 401, "unauthorized", "This machine's current session credential is required.");
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const n = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1000;
+      if (!n(b.leaseId) || !n(b.done) || !n(b.fails) || (b.fails as number) > (b.done as number) || typeof b.identicalFingerprint !== "boolean"
+        || !(b.matchesDefect === null || typeof b.matchesDefect === "boolean") || (b.detail !== undefined && typeof b.detail !== "string")) {
+        return fail(reply, 400, "bad_request", "leaseId, done, fails (<= done), identicalFingerprint, matchesDefect (boolean or null) are required.");
+      }
+      const ok = await service.receiveReplay(scope.machineId, { leaseId: b.leaseId as number, done: b.done as number, fails: b.fails as number,
+        identicalFingerprint: b.identicalFingerprint as boolean, matchesDefect: b.matchesDefect as boolean | null, detail: String(b.detail ?? "") });
+      if (!ok) return fail(reply, 403, "forbidden", "This lease is not a replay of this machine.");
+      return reply.code(202).send({ ok: true });
+    });
+    fastify.post("/v1/runner/machine/events", { bodyLimit: 16 * 1024 }, async (req, reply) => {
+      const scope = verifyMachineCredential(cfg.runnerTokens, req.headers.authorization);
+      if (!scope) return fail(reply, 401, "unauthorized", "This machine's session credential is required.");
+      const b = (req.body ?? {}) as { type?: unknown; leaseId?: unknown; detail?: unknown };
+      if (b.type !== "finished" && b.type !== "prepared" && b.type !== "interrupted" && b.type !== "log") return fail(reply, 400, "bad_request", "type is finished, prepared, interrupted or log.");
+      if (b.leaseId !== undefined && (typeof b.leaseId !== "number" || !Number.isSafeInteger(b.leaseId))) return fail(reply, 400, "bad_request", "leaseId is a number.");
+      const ok = await machines.event(scope, { type: b.type, ...(typeof b.leaseId === "number" ? { leaseId: b.leaseId } : {}), ...(typeof b.detail === "string" ? { detail: b.detail } : {}) });
+      if (!ok) return fail(reply, 401, "unauthorized", "This session ended.");
+      return reply.code(202).send({ ok: true });
+    });
+  }
 
   // ---------------------------------------------------------------- GitHub webhooks
   // GitHub caps webhook payloads at 25 MB (an installation on "All repositories" lists every repository).
@@ -104,7 +183,8 @@ export async function buildApp(deps: Deps): Promise<App> {
     const event = String(req.headers["x-github-event"] ?? "");
     const delivery = String(req.headers["x-github-delivery"] ?? "");
     if (!req.rawBody) return fail(reply, 415, "unsupported_media_type", "Set the webhook's content type to application/json.");
-    if (!verifySignature(cfg.webhookSecret, req.rawBody, req.headers["x-hub-signature-256"] as string | undefined)) {
+    const sig = req.headers["x-hub-signature-256"] as string | undefined;
+    if (!verifySignature(cfg.webhookSecret, req.rawBody, sig) && !(cfg.webhookSecretPrevious && verifySignature(cfg.webhookSecretPrevious, req.rawBody, sig))) {
       return fail(reply, 401, "bad_signature", "The X-Hub-Signature-256 header does not match the body.");
     }
     if (!event || !delivery || delivery.length > 100) return fail(reply, 400, "bad_request", "X-GitHub-Event and X-GitHub-Delivery are required.");
@@ -174,7 +254,7 @@ export async function buildApp(deps: Deps): Promise<App> {
 
   // Written at once (no queue): the live view polls it. A record older than the stored one is ignored; a job whose
   // run row does not exist yet stores nothing. Both answer 202 like a stored one (the runner does not retry them).
-  fastify.post("/v1/runner/progress", { bodyLimit: 64 * 1024 }, async (req, reply) => {
+  fastify.post("/v1/runner/progress", { bodyLimit: 2 * 1024 * 1024 }, async (req, reply) => {
     const r = runnerBody(req, reply, parseProgress);
     if (!r) return reply;
     const p = r.body;

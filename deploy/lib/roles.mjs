@@ -116,3 +116,26 @@ export async function ensureRoles(admin, a, ssm, { env = "prod", login = tryLogi
   }
   return out;
 }
+
+/**
+ * Supabase's CA certificate for the services (audit G-2323). With SUPABASE_CA_CERT set, the App and the API verify
+ * the pooler's certificate against it (verify-full, github-app/src/db-tls.ts); without it, encrypted only. The
+ * certificate is public: a plain String parameter next to the connection strings, removed when the founder removes
+ * the bootstrap one. Returns what it did.
+ */
+export async function syncDatabaseCa(ssm, ca, { env = "prod" } = {}) {
+  const name = `${appPrefix(env)}/database-ca-cert`;
+  if (ca) {
+    let stored = null;
+    try { stored = (await ssm.send(new GetParameterCommand({ Name: name }))).Parameter?.Value ?? null; } catch (e) {
+      if (/** @type {{ name?: string }} */ (e).name !== "ParameterNotFound") throw e;
+    }
+    if (stored === ca) return "kept";
+    await ssm.send(new PutParameterCommand({ Name: name, Type: "String", Value: ca, Overwrite: true, Description: "fenvix: Supabase's CA certificate (public); the services verify the pooler against it. Copied from the bootstrap parameter supabase-ca-cert by the deploy pipeline." }));
+    return "set";
+  }
+  try { await ssm.send(new DeleteParameterCommand({ Name: name })); return "removed"; } catch (e) {
+    if (/** @type {{ name?: string }} */ (e).name === "ParameterNotFound") return "none";
+    throw e;
+  }
+}

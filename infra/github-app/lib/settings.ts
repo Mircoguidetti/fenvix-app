@@ -81,26 +81,27 @@ export interface Settings {
   secondCacheUrl: string;
   // ---------------------------------------------------------------- runner machines
   /**
-   * "demo" (default): no runner machine between demos; scripts/demo-up.sh starts one fresh machine from the runner
-   * image and registers it on one repository, scripts/demo-down.sh deregisters and terminates it. Its cache is local to
-   * it, so nothing crosses demos. "per-job": each queued fenvix job starts one machine with a just-in-time runner;
-   * the shared cache runs on a small private machine. Customer mode (Firecracker on a c7i host) is a design in
-   * docs/DEPLOY-AWS.md.
+   * "pool", the only mode since 2026-11-20 (our machines, github-app/src/machines/): a machine belongs to one customer
+   * at a time, each job in its own sandboxed slot; one machine always on, a stopped reserve, spot for bursts. The
+   * per-job and demo modes were retired (their image built the engine from an old pinned commit, audit G-0186).
    */
-  runnerMode: "demo" | "per-job";
+  runnerMode: "pool";
   /**
-   * demo: the ONLY repository demo-up may register a runner on (owner/name; the founder's own, private). The demo
-   * function refuses any other, so it can never put our runner on a customer's repository (R-012 F13).
+   * Our machines (github-app/src/machines/settings.ts, FENVIX_POOL): JSON with the sizes ({name: {instanceType, slots}}),
+   * the default size, the always-on and reserve counts, the region's machine limit, the spot threshold, the per-customer
+   * caps and the timings. The founder's design of 2026-11-20 by default: c7a.xlarge always on, 2 in reserve.
    */
-  demoRepository: string;
-  /** demo: the reaper terminates a demo machine older than this (somebody forgot demo-down). */
-  demoMaxHours: number;
-  /** per-job: most machines at once; more queued jobs wait (the queue retries). */
-  runnerMaxRunning: number;
-  /** per-job: the reaper terminates a machine older than this. */
+  pool: string;
+  /**
+   * The engine the runner image installs: the trunk artifact of fenvix-engine-cli (claude/release-1), by version, URL
+   * and sha256 (fenvix-engine-<version>-r<run>.<sha7>-linux-x86_64.tar.gz). The image build fails closed on a
+   * missing pin or a different checksum (audit G-0186). Set them when the packages session publishes a build.
+   */
+  engineVersion: string;
+  engineUrl: string;
+  engineSha256: string;
+  /** The reaper's backstop: it terminates a pool machine older than this plus one hour (the pool's own maxHours first). */
   runnerMaxHours: number;
-  /** per-job: a machine whose job did not start within this powers off. */
-  runnerIdleMinutes: number;
   // ---------------------------------------------------------------- warm-up runs (per-job only; github-app/src/warmup/)
   /** per-job: warm the shared cache of onboarded repositories' default branches (never billed). Default true. */
   warmupEnabled: boolean;
@@ -120,17 +121,15 @@ export interface Settings {
   /**
    * per-job: the public half of the cache signing key (base64 DER; the deploy pipeline generates the pair and passes it as FENVIX_CACHE_SIGNING_PUBLIC_KEY). The worker
    * signs one token per job with the private half (SSM); the cache machine verifies with this. Each customer
-   * installation is its own cache organization (gh-<installation id>); pull requests get read-only tokens.
+   * repository is its own cache organization (gh-<installation id>-r<repository id>); pull requests get read-only tokens.
    */
   cacheSigningPublicKey: string;
   /**
-   * Runner machines (demo and per-job): the instance type and its disk. Default c6i.large (not burstable): a T3 gets
-   * no launch credits, so a fresh one in "standard" mode runs at its 20% baseline (R-012 F8); T3 types run "unlimited".
+   * The launch template's instance type (the pool's default size; each launch names its size's type) and the disk.
+   * Default c7a.xlarge (4 physical cores, not burstable); a T3 gets no launch credits, so T3 types run "unlimited".
    */
   runnerInstanceType: string;
   runnerVolumeGb: number;
-  /** Commit of Mircoguidetti/fenvix-engine-cli whose runner/bootstrap.sh the machine runs. */
-  engineCliCommit: string;
 }
 
 type Ctx = (key: string) => unknown;
@@ -143,10 +142,8 @@ const ENV: Record<keyof Settings, string> = {
   logRetentionDays: "FENVIX_LOG_RETENTION_DAYS", alarmEmail: "FENVIX_ALARM_EMAIL", apiCorsOrigins: "FENVIX_API_CORS_ORIGINS",
   fenvixRegion: "FENVIX_RUNNER_REGION", secondFenvixRegion: "FENVIX_SECOND_RUNNER_REGION", secondAwsRegion: "FENVIX_SECOND_AWS_REGION",
   secondLaunchTemplateId: "FENVIX_SECOND_LAUNCH_TEMPLATE_ID", secondCacheUrl: "FENVIX_SECOND_CACHE_URL",
-  runnerInstanceType: "FENVIX_RUNNER_INSTANCE_TYPE", runnerVolumeGb: "FENVIX_RUNNER_VOLUME_GB", engineCliCommit: "FENVIX_ENGINE_CLI_COMMIT",
-  demoRepository: "FENVIX_DEMO_REPOSITORY", demoMaxHours: "FENVIX_DEMO_MAX_HOURS",
-  runnerMode: "FENVIX_RUNNER_MODE", runnerMaxRunning: "FENVIX_RUNNER_MAX_RUNNING", runnerMaxHours: "FENVIX_RUNNER_MAX_HOURS",
-  runnerIdleMinutes: "FENVIX_RUNNER_IDLE_MINUTES", warmupEnabled: "FENVIX_WARMUP_ENABLED", warmupDailyCap: "FENVIX_WARMUP_DAILY_CAP",
+  runnerInstanceType: "FENVIX_RUNNER_INSTANCE_TYPE", runnerVolumeGb: "FENVIX_RUNNER_VOLUME_GB", pool: "FENVIX_POOL", engineVersion: "FENVIX_ENGINE_VERSION", engineUrl: "FENVIX_ENGINE_URL", engineSha256: "FENVIX_ENGINE_SHA256",
+  runnerMode: "FENVIX_RUNNER_MODE", runnerMaxHours: "FENVIX_RUNNER_MAX_HOURS", warmupEnabled: "FENVIX_WARMUP_ENABLED", warmupDailyCap: "FENVIX_WARMUP_DAILY_CAP",
   warmupOrgConcurrency: "FENVIX_WARMUP_ORG_CONCURRENCY", warmupReserve: "FENVIX_WARMUP_RESERVE", warmupGraceSeconds: "FENVIX_WARMUP_GRACE_SECONDS", cacheInstanceType: "FENVIX_CACHE_INSTANCE_TYPE", cachePrivateIp: "FENVIX_CACHE_PRIVATE_IP",
   cacheVolumeGb: "FENVIX_CACHE_VOLUME_GB", cacheAmiId: "FENVIX_CACHE_AMI_ID",
   cacheSigningPublicKey: "FENVIX_CACHE_SIGNING_PUBLIC_KEY",
@@ -188,17 +185,18 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
     dashboardUrl: https("dashboardUrl"), supabaseUrl: https("supabaseUrl"), runsOnLabel: need("runsOnLabel"),
     summaryWaitSeconds: int("summaryWaitSeconds", 60, 86_400), sweepMinutes: int("sweepMinutes", 1, 60),
     logRetentionDays: int("logRetentionDays", 1, 365), alarmEmail: get("alarmEmail"),
-    apiCorsOrigins: get("apiCorsOrigins"), fenvixRegion: (get("fenvixRegion") || "us") as Settings["fenvixRegion"],
+    apiCorsOrigins: get("apiCorsOrigins"), fenvixRegion: (get("fenvixRegion") || "eu") as Settings["fenvixRegion"],
     secondFenvixRegion: get("secondFenvixRegion"), secondAwsRegion: get("secondAwsRegion"), secondLaunchTemplateId: get("secondLaunchTemplateId"),
     secondCacheUrl: get("secondCacheUrl"),
-    runnerMode: need("runnerMode") as Settings["runnerMode"], runnerMaxRunning: int("runnerMaxRunning", 1, 100),
-    runnerMaxHours: int("runnerMaxHours", 1, 120), runnerIdleMinutes: int("runnerIdleMinutes", 5, 120),
+    runnerMode: need("runnerMode") as Settings["runnerMode"],
+    runnerMaxHours: int("runnerMaxHours", 1, 120),
     warmupEnabled: (get("warmupEnabled") || "true") === "true", warmupDailyCap: int("warmupDailyCap", 1, 48),
     warmupOrgConcurrency: int("warmupOrgConcurrency", 1, 20), warmupReserve: int("warmupReserve", 0, 99), warmupGraceSeconds: int("warmupGraceSeconds", 0, 3600),
     cacheInstanceType: need("cacheInstanceType"), cachePrivateIp: need("cachePrivateIp"), cacheVolumeGb: int("cacheVolumeGb", 8, 500),
     cacheAmiId: get("cacheAmiId"), cacheSigningPublicKey: get("cacheSigningPublicKey").replace(/\s+/g, ""),
-    demoRepository: get("demoRepository"), demoMaxHours: int("demoMaxHours", 1, 72), runnerInstanceType: need("runnerInstanceType"),
-    runnerVolumeGb: int("runnerVolumeGb", 20, 500), engineCliCommit: need("engineCliCommit"),
+    runnerInstanceType: need("runnerInstanceType"),
+    runnerVolumeGb: int("runnerVolumeGb", 20, 500), pool: need("pool"),
+    engineVersion: get("engineVersion"), engineUrl: get("engineUrl"), engineSha256: get("engineSha256"),
   };
   if (!/^\d{12}$/.test(s.account)) throw new Error('Setting "account" must be a 12-digit AWS account id');
   if (!/^[a-z]{2}-[a-z]+-\d$/.test(s.region)) throw new Error('Setting "region" is not an AWS region');
@@ -224,26 +222,32 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
   if (!/^[A-Za-z0-9._-]{1,100}$/.test(s.runsOnLabel)) throw new Error('Setting "runsOnLabel" must be one runner label');
   if (!RETENTIONS.includes(s.logRetentionDays)) throw new Error(`Setting "logRetentionDays" must be one of ${RETENTIONS.join(", ")}`);
   if (s.alarmEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.alarmEmail)) throw new Error('Setting "alarmEmail" is not an email address');
-  if (s.runnerMode !== "demo" && s.runnerMode !== "per-job") throw new Error('Setting "runnerMode" must be demo or per-job');
+  if ((s.runnerMode as string) !== "pool") throw new Error('Setting "runnerMode" must be pool (our machines, 2026-11-20); per-job and demo were retired with it');
+  checkPool(s.pool);
+  checkEngine(s);
   if (!["true", "false"].includes(get("warmupEnabled") || "true")) throw new Error('Setting "warmupEnabled" must be true or false');
-  if (s.warmupReserve >= s.runnerMaxRunning) throw new Error('Setting "warmupReserve" must be below "runnerMaxRunning" (warm-ups would never get a machine)');
+  const poolMax = (JSON.parse(s.pool) as { maxMachines?: number }).maxMachines ?? 8;
+  if (s.warmupReserve >= poolMax) throw new Error('Setting "warmupReserve" must be below the pool\'s maxMachines (warm-ups would never get a machine)');
   for (const o of s.apiCorsOrigins.split(",").map((x) => x.trim()).filter(Boolean)) {
     let u: URL | null = null;
     try { u = new URL(o); } catch { u = null; }
     if (!u || u.protocol !== "https:" || u.origin !== o.replace(/\/+$/, "")) throw new Error('Setting "apiCorsOrigins" must be https:// origins (scheme://host, no path), comma separated');
   }
   if (s.fenvixRegion !== "us" && s.fenvixRegion !== "eu") throw new Error('Setting "fenvixRegion" must be us or eu');
+  // The label must be where the machines are (audit G-0185, G-0190): an eu-* AWS region is "eu", a us-* one "us".
+  const continent = (awsRegion: string) => (awsRegion.startsWith("eu-") ? "eu" : awsRegion.startsWith("us-") ? "us" : null);
+  if (continent(s.region) !== s.fenvixRegion) throw new Error(`Setting "fenvixRegion" is "${s.fenvixRegion}" but the machines run in ${s.region}: the label must be ${continent(s.region) ?? "a region fenvix offers (us-*, eu-*)"}`);
   const second = [s.secondFenvixRegion, s.secondAwsRegion, s.secondLaunchTemplateId];
   if (second.some(Boolean)) {
     if (!second.every(Boolean)) throw new Error('Settings "secondFenvixRegion", "secondAwsRegion" and "secondLaunchTemplateId": all three, or none');
     if (!["us", "eu"].includes(s.secondFenvixRegion) || s.secondFenvixRegion === s.fenvixRegion) throw new Error('Setting "secondFenvixRegion" must be the other of us and eu');
     if (!/^[a-z]{2}-[a-z]+-\d$/.test(s.secondAwsRegion)) throw new Error('Setting "secondAwsRegion" is not an AWS region');
+    if (continent(s.secondAwsRegion) !== s.secondFenvixRegion) throw new Error(`Setting "secondFenvixRegion" is "${s.secondFenvixRegion}" but its machines run in ${s.secondAwsRegion}`);
     if (!/^lt-[0-9a-f]{8,17}$/.test(s.secondLaunchTemplateId)) throw new Error('Setting "secondLaunchTemplateId" must look like lt-0123456789abcdef0');
   }
   if (s.secondCacheUrl && (!s.secondFenvixRegion || !/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(s.secondCacheUrl))) {
     throw new Error('Setting "secondCacheUrl" must be the other region\'s cache origin (http://<private address>:8787), with the second region set');
   }
-  if (s.demoRepository && !/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(s.demoRepository)) throw new Error('Setting "demoRepository" must be owner/name');
   if (!/^t4g\.(nano|micro|small)$/.test(s.cacheInstanceType)) throw new Error('Setting "cacheInstanceType" must be t4g.nano, t4g.micro or t4g.small (arm64)');
   if (!/^10\.42\.0\.([4-9]|[1-5][0-9]|6[0-2])$/.test(s.cachePrivateIp)) throw new Error('Setting "cachePrivateIp" must be an address of the runner subnet 10.42.0.0/26 (10.42.0.4 to 10.42.0.62)');
   if (s.cacheAmiId && !/^ami-[0-9a-f]{8,17}$/.test(s.cacheAmiId)) throw new Error('Setting "cacheAmiId" must look like ami-0123456789abcdef0');
@@ -254,16 +258,38 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
       bits = k.asymmetricKeyType === "rsa" ? (k.asymmetricKeyDetails?.modulusLength ?? 0) : 0;
     } catch { bits = 0; }
     if (bits < 2048) throw new Error('Setting "cacheSigningPublicKey" must be an RSA public key of 2048 bits or more, base64 DER (the deploy pipeline generates it)');
-  } else if (s.runnerMode === "per-job") {
-    throw new Error('Setting "cacheSigningPublicKey" is required in per-job mode (the deploy pipeline generates the key pair: FENVIX_CACHE_SIGNING_PUBLIC_KEY)');
+  } else {
+    throw new Error('Setting "cacheSigningPublicKey" is required (the deploy pipeline generates the key pair: FENVIX_CACHE_SIGNING_PUBLIC_KEY)');
   }
-  if (s.runnerMode === "demo" && !s.githubConfigured) {
-    throw new Error('Setting "runnerMode" demo needs the GitHub App (githubAppId, githubAppSlug, githubClientId): demo-up registers its runner through it. Use per-job (the default) until the App is configured');
-  }
-  if (s.runnerMode === "demo" && !s.demoRepository) {
-    throw new Error('Setting "demoRepository" is required in demo mode: the only repository demo-up may register a runner on (your own, private)');
-  }
-  if (!/^t3\.(medium|large|xlarge)$|^(c6i|m6i)\.(large|xlarge)$/.test(s.runnerInstanceType)) throw new Error('Setting "runnerInstanceType" must be an x86_64 type like c6i.large');
-  if (!/^[0-9a-f]{40}$/.test(s.engineCliCommit)) throw new Error('Setting "engineCliCommit" must be a full 40-character commit SHA');
+  if (!/^t3\.(medium|large|xlarge)$|^(c6i|m6i)\.(large|xlarge)$|^c7a\.(large|xlarge|2xlarge|4xlarge)$/.test(s.runnerInstanceType)) throw new Error('Setting "runnerInstanceType" must be an x86_64 type like c7a.xlarge');
   return s;
+}
+
+/** The instance types every policy allows (cfn-exec-policy-fleet.json "Ec2OnlyTheseSizes", the boundary). */
+export const POOL_TYPES = /^(c7a\.(large|xlarge|2xlarge|4xlarge)|c6i\.(large|xlarge)|m6i\.(large|xlarge)|t3\.(medium|large|xlarge))$/;
+
+function checkPool(raw: string): void {
+  let p: { sizes?: Record<string, { instanceType?: string; slots?: number }>; defaultSize?: string };
+  try { p = JSON.parse(raw); } catch { throw new Error('Setting "pool" is not JSON'); }
+  const sizes = Object.entries(p.sizes ?? {});
+  if (!sizes.length) throw new Error('Setting "pool": at least one size');
+  for (const [n, z] of sizes) {
+    if (!/^[a-z][a-z0-9-]{0,30}$/.test(n)) throw new Error(`Setting "pool": bad size name "${n}"`);
+    if (!z.instanceType || !POOL_TYPES.test(z.instanceType)) throw new Error(`Setting "pool": size ${n} must be an allowed x86_64 type (c7a, c6i, m6i, t3), not "${z.instanceType}"`);
+    if (!Number.isInteger(z.slots) || z.slots! < 1 || z.slots! > 16) throw new Error(`Setting "pool": size ${n} slots must be 1 to 16`);
+  }
+  if (!p.defaultSize || !p.sizes![p.defaultSize]) throw new Error('Setting "pool": defaultSize must be one of the sizes');
+}
+
+/** The engine pin: all three or none (none: the image build stops, nothing is installed). */
+function checkEngine(s: Settings): void {
+  const pin = [s.engineVersion, s.engineUrl, s.engineSha256];
+  if (!pin.some(Boolean)) return;
+  if (!pin.every(Boolean)) throw new Error('Settings "engineVersion", "engineUrl" and "engineSha256": all three, or none');
+  if (!/^[0-9a-f]{64}$/.test(s.engineSha256)) throw new Error('Setting "engineSha256" must be 64 lowercase hex digits');
+  if (!/^[0-9A-Za-z.+-]{1,80}$/.test(s.engineVersion)) throw new Error('Setting "engineVersion" is not a version');
+  const file = `fenvix-engine-${s.engineVersion}-linux-x86_64.tar.gz`;
+  if (!/^https:\/\/github\.com\/Mircoguidetti\/fenvix-engine-cli\/releases\/download\/engine-[0-9A-Za-z.+-]{1,80}\/[^/]+$/.test(s.engineUrl) || !s.engineUrl.endsWith(`/${file}`)) {
+    throw new Error(`Setting "engineUrl" must be the fenvix-engine-cli release asset of that version (.../releases/download/engine-${s.engineVersion}/${file})`);
+  }
 }

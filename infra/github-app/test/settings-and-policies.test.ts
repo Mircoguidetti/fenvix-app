@@ -18,15 +18,14 @@ describe("settings", () => {
     assert.throws(() => readSettings((k) => ctx[k], {}), /Missing setting "supabaseUrl" .*SUPABASE_URL/);
     const s = readSettings((k) => ctx[k], { SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co", FENVIX_CACHE_SIGNING_PUBLIC_KEY: SAMPLE.cacheSigningPublicKey });
     assert.equal(s.githubConfigured, false);
-    assert.equal(s.runnerMode, "per-job", "per-job is the default");
+    assert.equal(s.runnerMode, "pool", "our machines: the only mode");
     assert.equal(s.dashboardUrl, "https://console.fenvix.dev");
     assert.equal(s.dashboardDomain, "console.fenvix.dev");
   });
 
-  it("the GitHub App: all three of id, slug and client id, or none; demo mode needs it", async () => {
+  it("the GitHub App: all three of id, slug and client id, or none", async () => {
     await assert.rejects(settings({ githubAppId: "", githubAppSlug: "", githubClientId: "Iv1.x" }), /all three, or none \(missing: githubAppId, githubAppSlug\)/);
     await assert.rejects(settings({ githubAppId: "abc" }), /numeric/);
-    await assert.rejects(settings({ githubAppId: "", githubAppSlug: "", githubClientId: "", runnerMode: "demo" }), /demo needs the GitHub App/);
     assert.equal((await settings({ githubAppId: "", githubAppSlug: "", githubClientId: "" })).githubConfigured, false);
     assert.equal((await settings()).githubConfigured, true);
     await assert.rejects(settings({ dashboardCertificateArn: "arn:aws:acm:eu-west-1:865859654353:certificate/12345678-1234-1234-1234-123456789012" }), /us-east-1/);
@@ -39,13 +38,24 @@ describe("settings", () => {
 
   it("refuses values that would break the deploy or the machine", async () => {
     await assert.rejects(settings({ dashboardUrl: "http://console.fenvix.dev" }), /https/);
-    await assert.rejects(settings({ demoRepository: "https://github.com/x/y" }), /owner\/name/);
-    await assert.rejects(settings({ runnerMode: "always-on" }), /demo or per-job/);
+    await assert.rejects(settings({ runnerMode: "per-job" }), /must be pool/);
+    await assert.rejects(settings({ runnerMode: "demo" }), /must be pool/);
+    // The pool: allowed x86_64 sizes only (the execution policy's list), a default size among them.
+    await assert.rejects(settings({ pool: JSON.stringify({ sizes: { big: { instanceType: "p5.48xlarge", slots: 2 } }, defaultSize: "big" }) }), /allowed x86_64 type/);
+    await assert.rejects(settings({ pool: JSON.stringify({ sizes: { arm: { instanceType: "c7g.xlarge", slots: 2 } }, defaultSize: "arm" }) }), /allowed x86_64 type/);
+    await assert.rejects(settings({ pool: JSON.stringify({ sizes: { s: { instanceType: "c7a.xlarge", slots: 2 } }, defaultSize: "x" }) }), /defaultSize/);
+    await assert.rejects(settings({ pool: "{" }), /not JSON/);
+    // The engine pin (audit G-0186): all three, a sha256, and the URL of that version's trunk release asset.
+    const v = "0.4.0-r17.abc1234";
+    const url = `https://github.com/Mircoguidetti/fenvix-engine-cli/releases/download/engine-${v}/fenvix-engine-${v}-linux-x86_64.tar.gz`;
+    await assert.rejects(settings({ engineVersion: v }), /all three, or none/);
+    await assert.rejects(settings({ engineVersion: v, engineUrl: url, engineSha256: "abc" }), /64 lowercase hex/);
+    await assert.rejects(settings({ engineVersion: v, engineUrl: url.replace("Mircoguidetti", "someone"), engineSha256: "a".repeat(64) }), /release asset of that version/);
+    await assert.rejects(settings({ engineVersion: v, engineUrl: url.replace(v + "-linux", "0.1.0-linux"), engineSha256: "a".repeat(64) }), /release asset of that version/);
+    assert.equal((await settings({ engineVersion: v, engineUrl: url, engineSha256: "a".repeat(64) })).engineUrl, url);
     await assert.rejects(settings({ cachePrivateIp: "10.42.1.10" }), /cachePrivateIp/);
     await assert.rejects(settings({ cacheSigningPublicKey: "abc" }), /RSA public key/);
-    await assert.rejects(settings({ runnerMode: "per-job", cacheSigningPublicKey: "" }), /required in per-job mode/);
-    await assert.rejects(settings({ runnerMode: "demo", demoRepository: "" }), /demoRepository" is required in demo mode/);
-    await assert.rejects(settings({ engineCliCommit: "main" }), /40-character/);
+    await assert.rejects(settings({ cacheSigningPublicKey: "" }), /is required \(the deploy pipeline/);
     await assert.rejects(settings({ logRetentionDays: "10" }), /one of/);
     await assert.rejects(settings({ runnerInstanceType: "t4g.medium" }), /x86_64/);
     await assert.rejects(settings({ domainName: "https://api.fenvix.dev" }), /host name/);
@@ -55,17 +65,20 @@ describe("settings", () => {
     await assert.rejects(settings({ apiCorsOrigins: "http://preview.fenvix.dev" }), /apiCorsOrigins/);
     await assert.rejects(settings({ fenvixRegion: "asia" }), /us or eu/);
     await assert.rejects(settings({ secondFenvixRegion: "eu" }), /all three, or none/);
-    await assert.rejects(settings({ secondFenvixRegion: "us", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "lt-0123456789abcdef0" }), /the other of us and eu/);
-    await assert.rejects(settings({ secondFenvixRegion: "eu", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "template" }), /lt-/);
+    await assert.rejects(settings({ secondFenvixRegion: "eu", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "lt-0123456789abcdef0" }), /the other of us and eu/);
+    // Audit G-0185/G-0190: the label is where the machines are. eu-west-1 machines are never "us".
+    await assert.rejects(settings({ fenvixRegion: "us" }), /fenvixRegion" is "us" but the machines run in eu-west-1/);
+    await assert.rejects(settings({ secondFenvixRegion: "us", secondAwsRegion: "eu-central-1", secondLaunchTemplateId: "lt-0123456789abcdef0" }), /machines run in eu-central-1/);
+    await assert.rejects(settings({ secondFenvixRegion: "us", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "template" }), /lt-/);
     await assert.rejects(settings({ secondCacheUrl: "http://10.43.0.10:8787" }), /secondCacheUrl/);
     const s = await settings();
     assert.equal(s.domainName, "api.fenvix.dev");
-    assert.equal(s.runnerInstanceType, "c6i.large");
-    assert.equal(s.runnerMode, "per-job");
-    assert.equal(s.demoMaxHours, 12);
+    assert.equal(s.runnerInstanceType, "c7a.xlarge", "the always-on size of the design (4 physical cores)");
+    assert.equal(s.runnerMode, "pool");
+    assert.equal(JSON.parse(s.pool).sizes.standard.instanceType, "c7a.xlarge");
     assert.equal(s.runnerVolumeGb, 30);
     assert.equal(s.region, "eu-west-1");
-    assert.equal(s.fenvixRegion, "us", "this stack's machines serve the us region unless set");
+    assert.equal(s.fenvixRegion, "eu", "this stack's machines (eu-west-1) serve the eu region");
     assert.equal(s.apiCorsOrigins, "");
   });
 });

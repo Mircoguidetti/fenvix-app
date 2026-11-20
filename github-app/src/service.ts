@@ -9,6 +9,8 @@ import { projectStack, type Stack } from "./results/detect.ts";
 import { parseResults, progressRecord, type RunnerExploration, type RunnerProgress, type RunnerResults } from "./results/runner-records.ts";
 import { signCacheToken, signSummaryCredential } from "./runners/credentials.ts";
 import { type Region, RetryLater, type RunMode, type RunnerLauncher } from "./runners/launcher.ts";
+import type { PoolLauncher } from "./machines/launcher.ts";
+import { sizeOfLabels } from "./machines/settings.ts";
 import { DEFAULT_WARMUP, type WarmupSettings } from "./warmup/policy.ts";
 import { Warmups } from "./warmup/warmups.ts";
 
@@ -444,7 +446,11 @@ export class GitHubService {
          updated_at = now()`,
       [job.id, repo.id, installationId, job.run_id, job.run_attempt ?? 1, job.workflow_name ?? "", job.name, job.head_sha, job.head_branch ?? null,
         job.labels, job.runner_name || null, status, job.conclusion ?? null, job.created_at ?? null, job.started_at ?? null, job.completed_at ?? null]);
-    if (status === "queued" && p.action === "queued" && this.launcher) await this.launchRunner(job.id, installationId, repo);
+    if (status === "queued" && p.action === "queued" && this.launcher) {
+      await this.db.q("update gh_jobs set queued_at = coalesce(queued_at, now()) where job_id = $1", [job.id]);
+      await this.launchRunner(job.id, installationId, repo);
+    }
+    if (status === "completed" && this.pool) await this.onPooledJobCompleted(job.id, job.conclusion ?? null);
     if (status === "in_progress") {
       await this.startRun(job.id);
       await this.startCheckRun(job.id, job.html_url ?? null);
@@ -520,9 +526,177 @@ export class GitHubService {
    * "Administration: Read and write"), then the machine. Only for installations linked to an organization, so a
    * stranger installing the App cannot start machines; only while the job is still queued.
    */
+  /** Our machines (src/machines/), when the launcher is the pool. */
+  get pool(): PoolLauncher | null {
+    const l = this.launcher as (RunnerLauncher & { pooled?: true }) | null;
+    return l?.pooled ? (l as unknown as PoolLauncher) : null;
+  }
+
+  /**
+   * A pooled job ended (GitHub's workflow_job completed): its slot is free, the machine it ran on goes into its usage
+   * event (metering), and the jobs waiting for a slot are dispatched now. A job whose spot machine was taken back is
+   * re-run once by GitHub (a deterministic run gives the same result).
+   */
+  private async onPooledJobCompleted(jobId: number, conclusion: string | null): Promise<void> {
+    const m = await this.pool!.pool.jobCompleted(jobId);
+    if (m?.interrupted && conclusion && conclusion !== "success") {
+      const [j] = await this.db.q<{ installation_id: number; repository_id: number; interrupted_reruns: number }>(
+        "update gh_jobs set interrupted_reruns = interrupted_reruns + 1 where job_id = $1 and interrupted_reruns < 2 returning installation_id, repository_id, interrupted_reruns", [jobId]);
+      const repo = j ? await this.repo(j.repository_id) : null;
+      if (j && repo) {
+        await this.gh.installation(j.installation_id).request("POST", `${repoPath(repo.full_name)}/actions/jobs/${jobId}/rerun`, { allow: [403, 409, 422] })
+          .then(() => this.log.info({ job: jobId }, "job re-run after a spot interruption"))
+          .catch((e: unknown) => this.log.warn({ job: jobId, err: e instanceof Error ? e.message : String(e) }, "could not re-run a job after a spot interruption"));
+      }
+    }
+    await this.dispatchPending();
+  }
+
+  /**
+   * Replay one defect of a run N times on our machines (the dashboard's live view, P-049). Recorded at once
+   * (gh_replays, status waiting) and given a slot on a machine of the SAME customer when one is free.
+   */
+  async requestReplay(ciRunId: string, testId: string, times: number): Promise<number | null> {
+    const [j] = await this.db.q<{ installation_id: number; repository_id: number }>(
+      "select installation_id, repository_id from gh_jobs where ci_run_id = $1 order by job_id desc limit 1", [ciRunId]);
+    const [inst] = j ? await this.db.q<{ workspace_id: string | null }>("select workspace_id from gh_installations where installation_id = $1", [j.installation_id]) : [];
+    if (!j || !inst?.workspace_id) { this.log.warn({ run: ciRunId }, "replay: no such run of a linked installation"); return null; }
+    const [r] = await this.db.q<{ id: number }>(
+      "insert into gh_replays (workspace_id, ci_run_id, repository_id, test_id, times) values ($1, $2, $3, $4, $5) returning id",
+      [inst.workspace_id, ciRunId, j.repository_id, testId, times]);
+    await this.dispatchReplay(r!.id);
+    return r!.id;
+  }
+
+  /** Gives a waiting replay a slot and its work: the run's commit, a read-only checkout token, the defect's seed. */
+  async dispatchReplay(replayId: number): Promise<"leased" | "waiting" | "failed"> {
+    if (!this.pool) return "waiting";
+    const [rp] = await this.db.q<{ id: number; workspace_id: string; ci_run_id: string; repository_id: number; test_id: string; times: number; status: string }>(
+      "select * from gh_replays where id = $1", [replayId]);
+    if (!rp || rp.status !== "waiting") return "failed";
+    const repo = await this.repo(rp.repository_id);
+    const fail = async (why: string) => { await this.db.q("update gh_replays set status = 'failed', detail = left($2, 1000), finished_at = now() where id = $1", [replayId, why]); return "failed" as const; };
+    if (!repo) return fail("the repository is no longer installed");
+    const ctx = await this.db.tx(rp.workspace_id, async (c) => {
+      const run = (await c.query<{ commit_sha: string; project_id: string }>("select commit_sha, project_id from ci_runs where id = $1", [rp.ci_run_id])).rows[0];
+      const defect = run ? (await c.query<{ id: string; seed: number | null; fingerprint: string; language: string }>(
+        "select id, seed, fingerprint, language from ci_defects where project_id = $1 and test_id = $2 order by last_seen_at desc limit 1", [run.project_id, rp.test_id])).rows[0] : undefined;
+      const region = (await this.orgContext(c)).region;
+      return { run, defect, region };
+    });
+    if (!ctx.run) return fail("the run is gone");
+    const a = await this.pool.pool.allocate({ kind: "replay", replayId, workspaceId: rp.workspace_id, region: ctx.region, size: this.pool.pool.s.defaultSize });
+    if ("wait" in a) { await this.db.q("update gh_replays set detail = left($2, 1000) where id = $1", [replayId, `waiting: ${a.wait}`]); return "waiting"; }
+    try {
+      const tok = await this.gh.app.request<{ token: string }>("POST", `/app/installations/${repo.installation_id}/access_tokens`, {
+        body: { repository_ids: [repo.repository_id], permissions: { contents: "read", metadata: "read" } },
+      });
+      await this.pool.pool.offer(a.leaseId, {
+        kind: "replay", replayId, repository: repo.full_name, commitSha: ctx.run.commit_sha, checkoutToken: tok.data.token,
+        testId: rp.test_id, times: rp.times, seed: ctx.defect?.seed ?? null, fingerprint: ctx.defect?.fingerprint ?? null, language: ctx.defect?.language ?? null,
+        env: { FENVIX_REPLAY_ID: String(replayId), FENVIX_REGION: ctx.region },
+      });
+    } catch (e) {
+      await this.pool.pool.release(a.leaseId, "replay: no checkout token");
+      return fail(`no checkout token: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    await this.db.q("update gh_replays set status = 'running', defect_id = $2, started_at = now(), detail = '' where id = $1", [replayId, ctx.defect?.id ?? null]);
+    return "leased";
+  }
+
+  /**
+   * POST /v1/runner/replays (the machine's credential; the lease must be this machine's, for this replay). The
+   * verdict is the engine's numbers against the defect's stored fingerprint: reproduced (failed every time, one
+   * fingerprint), passed (never failed), flaky (anything between).
+   */
+  async receiveReplay(machineId: number, b: { leaseId: number; done: number; fails: number; identicalFingerprint: boolean; matchesDefect: boolean | null; detail: string }): Promise<boolean> {
+    const [l] = await this.db.q<{ replay_id: number | null }>("select replay_id from gh_leases where id = $1 and machine_id = $2 and kind = 'replay'", [b.leaseId, machineId]);
+    if (!l?.replay_id) return false;
+    const verdict = b.done === 0 ? null : b.fails === 0 ? "passed"
+      : b.fails === b.done && b.identicalFingerprint && b.matchesDefect !== false ? "reproduced" : "flaky";
+    await this.db.q(
+      `update gh_replays set status = 'done', done = $2, fails = $3, identical_fingerprint = $4, verdict = $5, detail = left($6, 1000), finished_at = now()
+        where id = $1 and status in ('running', 'waiting')`,
+      [l.replay_id, b.done, b.fails, b.identicalFingerprint, verdict, b.detail]);
+    return true;
+  }
+
+  /**
+   * The organization-level runner group of one repository (created once, `fenvix-<repository id>`, visibility: that
+   * repository only), or the repository itself. Organization level needs the installation's organization permission
+   * "Self-hosted runners: write"; a plan without extra runner groups (GitHub answers 403/422) falls back to the
+   * repository.
+   */
+  private async runnerTarget(installationId: number, repo: RepoFull): Promise<{ base: string; groupId: number; level: "organization" | "repository" }> {
+    const repoTarget = { base: repoPath(repo.full_name), groupId: 1, level: "repository" as const };
+    const [inst] = await this.db.q<{ account_type: string; account_login: string; permissions: Record<string, string> | null }>(
+      "select account_type, account_login, permissions from gh_installations where installation_id = $1", [installationId]);
+    if (!inst || inst.account_type !== "Organization" || inst.permissions?.organization_self_hosted_runners !== "write") return repoTarget;
+    const org = `/orgs/${encodeURIComponent(inst.account_login)}`;
+    const [known] = await this.db.q<{ group_id: number }>("select group_id from gh_runner_groups where installation_id = $1 and repository_id = $2", [installationId, repo.id]);
+    if (known) return { base: org, groupId: known.group_id, level: "organization" };
+    const gh = this.gh.installation(installationId);
+    const name = `fenvix-${repo.id}`;
+    const made = await gh.request<{ id: number }>("POST", `${org}/actions/runner-groups`, {
+      body: { name, visibility: "selected", selected_repository_ids: [repo.id], allows_public_repositories: true }, allow: [403, 409, 422],
+    });
+    let groupId: number | null = made.status === 201 ? made.data.id : null;
+    if (made.status === 409) {
+      const list = await gh.request<{ runner_groups: { id: number; name: string }[] }>("GET", `${org}/actions/runner-groups`, { query: { per_page: "100" } });
+      groupId = list.data.runner_groups.find((g) => g.name === name)?.id ?? null;
+    }
+    if (!groupId) {
+      this.log.warn({ installation: installationId, repository: repo.full_name, status: made.status }, "no organization runner group (plan or permission): the runner is registered in the repository");
+      return repoTarget;
+    }
+    await this.db.q("insert into gh_runner_groups (installation_id, repository_id, group_id) values ($1, $2, $3) on conflict do nothing", [installationId, repo.id, groupId]);
+    return { base: org, groupId, level: "organization" };
+  }
+
+  /** Jobs waiting for a slot, oldest first (every free slot and every tick). */
+  async dispatchPending(limit = 20): Promise<number> {
+    if (!this.pool) return 0;
+    const due = await this.db.q<{ job_id: number; installation_id: number; repository_id: number }>(
+      `select job_id, installation_id, repository_id from gh_jobs where dispatch_state = 'pending' and status = 'queued'
+        order by queued_at nulls last, job_id limit $1`, [limit]);
+    let leased = 0;
+    for (const j of due) {
+      const r = await this.repo(j.repository_id);
+      if (!r) continue;
+      try {
+        await this.launchRunner(j.job_id, j.installation_id, { id: r.repository_id, full_name: r.full_name, default_branch: r.default_branch ?? undefined } as RepoFull);
+        const [s] = await this.db.q<{ dispatch_state: string | null }>("select dispatch_state from gh_jobs where job_id = $1", [j.job_id]);
+        if (s?.dispatch_state === "leased") leased++;
+        else break; // the next one would wait for the same reason (FIFO)
+      } catch (e) {
+        this.log.warn({ job: j.job_id, err: e instanceof Error ? e.message : String(e) }, "a pending job could not be dispatched");
+      }
+    }
+    return leased;
+  }
+
+  /** The machine pool's minute: machines retired and topped up, then waiting jobs dispatched. */
+  async poolTick(): Promise<{ retired: number; lost: number; orphans: number; started: number; launched: number; leased: number }> {
+    if (!this.pool) return { retired: 0, lost: 0, orphans: 0, started: 0, launched: 0, leased: 0 };
+    const t = await this.pool.pool.tick();
+    // Jobs GitHub already finished or cancelled while they waited never get a slot.
+    await this.db.q("update gh_jobs set dispatch_state = 'none', dispatch_detail = 'GitHub ended the job before it got a machine' where dispatch_state = 'pending' and status <> 'queued'");
+    const leased = await this.dispatchPending();
+    // Replays waiting for a slot (customer jobs first: they were dispatched above).
+    for (const r of await this.db.q<{ id: number }>("select id from gh_replays where status = 'waiting' order by created_at limit 10")) {
+      if (await this.dispatchReplay(r.id) === "waiting") break;
+    }
+    // A replay whose machine went away is failed, with the reason (the dashboard may ask again).
+    await this.db.q(`update gh_replays r set status = 'failed', detail = 'its machine went away', finished_at = now()
+      where r.status = 'running' and exists (select 1 from gh_leases l where l.replay_id = r.id and l.state = 'lost')
+        and not exists (select 1 from gh_leases l where l.replay_id = r.id and l.state in ('offered', 'running'))`);
+    return { ...t, leased };
+  }
+
   private async launchRunner(jobId: number, installationId: number, repo: RepoFull): Promise<void> {
-    const [row] = await this.db.q<{ status: string; run_id: number; run_attempt: number; head_sha: string }>("select status, run_id, run_attempt, head_sha from gh_jobs where job_id = $1", [jobId]);
-    if (!row || row.status !== "queued") return;
+    const [row] = await this.db.q<{ status: string; run_id: number; run_attempt: number; head_sha: string; labels: string[]; dispatch_state: string | null }>(
+      "select status, run_id, run_attempt, head_sha, labels, dispatch_state from gh_jobs where job_id = $1", [jobId]);
+    if (!row || row.status !== "queued" || row.dispatch_state === "leased") return;
     const [inst] = await this.db.q<{ workspace_id: string | null; suspended_at: Date | null; deleted_at: Date | null }>(
       "select workspace_id, suspended_at, deleted_at from gh_installations where installation_id = $1", [installationId]);
     if (!inst?.workspace_id || inst.suspended_at || inst.deleted_at) {
@@ -531,6 +705,19 @@ export class GitHubService {
     }
     // The machine runs in the organization's region, or not at all: an EU organization's job never runs in the US.
     const org = await this.db.tx(inst.workspace_id, (c) => this.orgContext(c));
+    // The project's "skip with proof" switch reaches the machine (audit G-0191, G-1732): off means FENVIX_SKIP=0.
+    const project = (await this.db.tx(inst.workspace_id, (c) => c.query<{ skip_with_proof: boolean; test_command: string }>(
+      `select p.skip_with_proof, p.test_command from ci_projects p join gh_repositories r on r.project_id = p.id where r.repository_id = $1`, [repo.id]))).rows[0];
+    const skipWithProof = project?.skip_with_proof !== false;
+    const testCommand = project?.test_command?.trim() || undefined;
+    const size = this.pool ? sizeOfLabels(row.labels ?? [], this.s.runsOnLabel, this.pool.pool.s) : null;
+    if (this.pool && !size) {
+      await this.db.q("update gh_jobs set dispatch_state = 'none', dispatch_detail = $2 where job_id = $1", [jobId,
+        `unknown machine size in runs-on (${(row.labels ?? []).join(", ")}); sizes: ${Object.keys(this.pool.pool.s.sizes).map((s) => `${this.s.runsOnLabel}-${s}`).join(", ")}`]);
+      this.log.warn({ job: jobId, labels: row.labels }, "no machine: the job asks for an unknown size");
+      return;
+    }
+    if (size) await this.db.q("update gh_jobs set size = $2 where job_id = $1", [jobId, size]);
     // The mode the machine gets (FENVIX_MODE) is the run's mode, whatever the job later reports (review R-016 F4).
     await this.db.q("update gh_jobs set region = $2, mode = $3 where job_id = $1", [jobId, org.region, org.mode]);
     if (this.launcher!.canPlace && !this.launcher!.canPlace(org.region)) {
@@ -558,22 +745,41 @@ export class GitHubService {
       });
       if (!freed || !(await this.launcher!.hasCapacity(org.region))) throw new RetryLater(`the fleet is full; job ${jobId} waits`);
     }
+    // Our machines: no just-in-time runner is registered for a job that would get no slot (customer caps, region full).
+    if (this.pool && (this.s.summaryKey !== undefined)) {
+      const busy = await this.pool.pool.db.q<{ n: number; cap: number | null }>(
+        `select count(*)::int as n, (select max_concurrent_jobs from public.workspaces where id = $1) as cap
+           from gh_leases where workspace_id = $1 and state in ('offered', 'running')`, [inst.workspace_id]);
+      if (busy[0] && busy[0].n >= (busy[0].cap ?? this.pool.pool.s.jobsPerCustomer)) {
+        await this.db.q("update gh_jobs set dispatch_state = 'pending', dispatch_detail = $2 where job_id = $1", [jobId, `this organization already runs ${busy[0].n} jobs at once`]);
+        return;
+      }
+    }
     // A retry after a partial failure finds the first name taken (409): a fresh one; EC2 still starts one machine.
     type Jit = { encoded_jit_config: string; runner?: { id?: number } };
+    // The runner carries the job's fenvix labels (`fenvix`, and `fenvix-<size>` when it asked for a size): GitHub gives a
+    // runner only a job whose every label it has.
+    const runnerLabels = [this.s.runsOnLabel, ...(row.labels ?? []).filter((l) => l.startsWith(`${this.s.runsOnLabel}-`)).slice(0, 1)];
+    // Where the runner is registered (G-1796 / G-1726, least privilege): an organization installation with the
+    // organization permission "Self-hosted runners" registers it in the organization, in a runner group that only THIS
+    // repository may use (so it can never take another repository's job, and its credentials, bound to this repository,
+    // always match); otherwise (a personal account, or an organization whose plan has no extra runner groups) in the
+    // repository, which needs the repository permission "Administration".
+    const target = await this.runnerTarget(installationId, repo);
     let runnerName = `fenvix-j${jobId}`;
-    let jit = await gh.request<Jit>("POST", `${base}/actions/runners/generate-jitconfig`, {
-      body: { name: runnerName, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" }, allow: [409],
+    let jit = await gh.request<Jit>("POST", `${target.base}/actions/runners/generate-jitconfig`, {
+      body: { name: runnerName, runner_group_id: target.groupId, labels: runnerLabels, work_folder: "_work" }, allow: [409],
     });
     if (jit.status === 409) {
       runnerName = `fenvix-j${jobId}-${Date.now().toString(36)}`;
-      jit = await gh.request<Jit>("POST", `${base}/actions/runners/generate-jitconfig`, {
-        body: { name: runnerName, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" },
+      jit = await gh.request<Jit>("POST", `${target.base}/actions/runners/generate-jitconfig`, {
+        body: { name: runnerName, runner_group_id: target.groupId, labels: runnerLabels, work_folder: "_work" },
       });
     }
     const unregister = async (why: string) => {
       const id = jit.data.runner?.id;
       if (!id) return;
-      await gh.request("DELETE", `${base}/actions/runners/${id}`, { allow: [404, 422] })
+      await gh.request("DELETE", `${target.base}/actions/runners/${id}`, { allow: [404, 422] })
         .catch((e: unknown) => this.log.warn({ job: jobId, runner: runnerName, err: e instanceof Error ? e.message : String(e) }, "could not delete an unused just-in-time runner"));
       this.log.info({ job: jobId, runner: runnerName, why }, "unused just-in-time runner deleted");
     };
@@ -582,18 +788,28 @@ export class GitHubService {
     const exp = Math.floor(Date.now() / 1000) + JOB_CREDENTIAL_SECONDS;
     const cacheAccess = trusted ? "write" as const : "read" as const;
     const summaryToken = signSummaryCredential(this.s.summaryKey, { runnerName, repositoryId: repo.id, runId: row.run_id, runAttempt: row.run_attempt, exp });
-    const cacheToken = this.s.cacheSigningKey ? signCacheToken(this.s.cacheSigningKey, { installationId, write: trusted, exp, jobId }) : undefined;
+    // A shadow run or skip-with-proof off may reuse nothing: until the engine honours FENVIX_MODE and FENVIX_SKIP, such a
+    // job gets no cache credential (its slot starts empty), so every test runs (G-0187, G-0191).
+    const noReuse = !!this.pool && !this.pool.pool.s.engineHonoursMode && (org.mode === "shadow" || !skipWithProof);
+    const cacheToken = this.s.cacheSigningKey && !noReuse ? signCacheToken(this.s.cacheSigningKey, { installationId, repositoryId: repo.id, write: trusted, exp, jobId }) : undefined;
     let res: { instanceId: string | null; already: boolean };
     try {
       res = await this.launcher!.launch({
         jobId, runId: row.run_id, repositoryId: repo.id, repositoryFullName: repo.full_name, installationId, runnerName,
         jitConfig: jit.data.encoded_jit_config, cacheAccess, summaryToken, ...(cacheToken ? { cacheToken } : {}), region: org.region, mode: org.mode,
+        workspaceId: inst.workspace_id, skipWithProof, ...(testCommand ? { testCommand } : {}), ...(size ? { size } : {}),
       });
     } catch (e) {
       await unregister(e instanceof RetryLater ? "the fleet is full" : "the machine did not start");
+      // Our machines: the job waits in the database and is dispatched by the next free slot (no queue retry).
+      if (this.pool && e instanceof RetryLater) {
+        await this.db.q("update gh_jobs set dispatch_state = 'pending', dispatch_detail = left($2, 1000) where job_id = $1", [jobId, e.message]);
+        this.log.info({ job: jobId, why: e.message }, "job waits for a machine");
+        return;
+      }
       throw e;
     }
-    await this.db.q("update gh_jobs set launched_at = coalesce(launched_at, now()) where job_id = $1", [jobId]);
+    await this.db.q("update gh_jobs set launched_at = coalesce(launched_at, now()), dispatch_state = case when $2 then 'leased' else dispatch_state end, leased_at = case when $2 then now() else leased_at end, dispatch_detail = '' where job_id = $1", [jobId, !!this.pool]);
     // A redelivery after a partial failure: EC2 returned the first machine (same client token), which has the first
     // just-in-time configuration; this one would never be used.
     if (res.already) await unregister("the job's machine already exists");
@@ -642,6 +858,40 @@ export class GitHubService {
    * than the stored one and the run is still running. "no_run": the job or its run row is not known yet (the
    * workflow_job event that starts it has not arrived, or the repository has no project): nothing is stored.
    */
+  /**
+   * Stops a running fenvix job (the dashboard's live view): "now" cancels its GitHub workflow run at once;
+   * "first_failure" arms it, and the first progress record with a failed test cancels it; "off" disarms it. The state
+   * (requested, done, failed) and the reason are on gh_jobs.stop_state and stop_detail for the API to show.
+   */
+  async stopRun(ciRunId: string, when: "now" | "first_failure" | "off"): Promise<void> {
+    const [j] = await this.db.q<{ job_id: number; status: string }>("select job_id, status from gh_jobs where ci_run_id = $1 order by job_id desc limit 1", [ciRunId]);
+    if (!j) return;
+    if (when === "off") {
+      await this.db.q("update gh_jobs set stop_when = null, stop_state = null, stop_detail = 'stop withdrawn' where job_id = $1 and stop_state is distinct from 'done'", [j.job_id]);
+      return;
+    }
+    await this.db.q("update gh_jobs set stop_when = $2, stop_state = 'requested', stop_detail = '', stop_requested_at = now() where job_id = $1 and stop_state is distinct from 'done'", [j.job_id, when]);
+    if (when === "now") await this.cancelJob(j.job_id, "stopped from the dashboard");
+  }
+
+  private async cancelJob(jobId: number, why: string): Promise<void> {
+    const [j] = await this.db.q<{ installation_id: number; repository_id: number; run_id: number; status: string }>("select installation_id, repository_id, run_id, status from gh_jobs where job_id = $1", [jobId]);
+    const repo = j ? await this.repo(j.repository_id) : null;
+    if (!j || !repo) return;
+    if (j.status === "completed") {
+      await this.db.q("update gh_jobs set stop_state = 'failed', stop_detail = 'the job had already ended' where job_id = $1", [jobId]);
+      return;
+    }
+    try {
+      const r = await this.gh.installation(j.installation_id).request("POST", `${repoPath(repo.full_name)}/actions/runs/${j.run_id}/cancel`, { allow: [409] });
+      const done = r.status !== 409;
+      await this.db.q("update gh_jobs set stop_state = $2, stop_detail = $3 where job_id = $1", [jobId, done ? "done" : "failed", done ? why : "GitHub could not cancel the run (it is ending already)"]);
+      this.log.info({ job: jobId, why, done }, "job stop requested on GitHub");
+    } catch (e) {
+      await this.db.q("update gh_jobs set stop_state = 'failed', stop_detail = left($2, 1000) where job_id = $1", [jobId, `GitHub refused the cancel: ${e instanceof Error ? e.message : String(e)}`]);
+    }
+  }
+
   async receiveProgress(o: { repositoryId: number; runId: number; runAttempt: number; runnerName: string; progress: RunnerProgress }): Promise<"stored" | "stale" | "no_run"> {
     const [j] = await this.db.q<{ ci_run_id: string; workspace_id: string | null }>(
       `select j.ci_run_id, i.workspace_id from gh_jobs j join gh_installations i on i.installation_id = j.installation_id
@@ -653,6 +903,12 @@ export class GitHubService {
       `update ci_runs set progress = $2::jsonb, progress_at = now()
        where id = $1 and status = 'running' and coalesce((progress->>'seq')::bigint, -1) < $3`,
       [j.ci_run_id, JSON.stringify(progressRecord(o.progress)), o.progress.seq]));
+    // A stop armed for the first failure fires on the first record that has one.
+    if (o.progress.failed > 0 || o.progress.finished?.some((t) => t.outcome === "failed")) {
+      const armed = await this.db.q<{ job_id: number }>(
+        "update gh_jobs set stop_when = 'now' where ci_run_id = $1 and stop_when = 'first_failure' and stop_state = 'requested' returning job_id", [j.ci_run_id]);
+      for (const a of armed) await this.cancelJob(a.job_id, "stopped at the first failed test");
+    }
     return updated.rowCount ? "stored" : "stale";
   }
 
@@ -793,7 +1049,101 @@ export class GitHubService {
   }
 
   /** Completed jobs whose summary never came (or whose publication failed) are published after the wait. */
+  /**
+   * Missed webhooks (audit G-1771): GitHub does not retry a delivery our API failed (down, 5xx, timeout). Every sweep
+   * lists the App's recent deliveries and asks GitHub to deliver again, once, each one that failed and that we never
+   * processed. A queued workflow_job lost that way would otherwise leave the customer's job queued for good.
+   */
+  async redeliverFailed(maxAgeMinutes = 180): Promise<number> {
+    type D = { id: number; guid: string; delivered_at: string; redelivery: boolean; status_code: number; event: string };
+    let r;
+    try { r = await this.gh.app.request<D[]>("GET", "/app/hook/deliveries", { query: { per_page: "100" } }); } catch (e) {
+      this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "could not list the App's webhook deliveries");
+      return 0;
+    }
+    const since = Date.now() - maxAgeMinutes * 60_000;
+    const failed = (r.data ?? []).filter((d) => !d.redelivery && (d.status_code === 0 || d.status_code >= 400) && Date.parse(d.delivered_at) >= since);
+    let asked = 0;
+    for (const d of failed) {
+      const [seen] = await this.db.q("select 1 from gh_webhook_deliveries where delivery_id = $1 and processed_at is not null", [d.guid]);
+      if (seen) continue;
+      const fresh = await this.db.q("insert into gh_redeliveries (github_delivery_id, guid, event) values ($1, $2, $3) on conflict do nothing returning github_delivery_id", [d.id, d.guid, d.event]);
+      if (!fresh.length) continue;
+      try {
+        const x = await this.gh.app.request("POST", `/app/hook/deliveries/${d.id}/attempts`, { allow: [422] });
+        await this.db.q("update gh_redeliveries set status = $2 where github_delivery_id = $1", [d.id, x.status]);
+        asked++;
+      } catch (e) {
+        this.log.warn({ delivery: d.guid, err: e instanceof Error ? e.message : String(e) }, "redelivery refused");
+      }
+    }
+    if (asked) this.log.info({ asked }, "failed webhook deliveries asked again");
+    return asked;
+  }
+
+  /**
+   * Installations and repositories from GitHub itself, every 15 minutes (G-1746): an installation webhook over API
+   * Gateway's 6 MB limit (an account on "All repositories") never reaches us, nor does any delivery lost while we were
+   * down for longer than the redelivery window. New installations and repositories are recorded.
+   */
+  async reconcileInstallations(force = false): Promise<{ installations: number; repositories: number; deleted: number }> {
+    const out = { installations: 0, repositories: 0, deleted: 0 };
+    if (!force) {
+      const [due] = await this.db.q<{ due: boolean }>(
+        `insert into gh_service_marks (name, at) values ('reconcile_installations', now())
+           on conflict (name) do update set at = now() where gh_service_marks.at < now() - interval '15 minutes'
+         returning true as due`);
+      if (!due) return out;
+    }
+    const seen: number[] = [];
+    let complete = true;
+    for (let page = 1; page <= 10; page++) {
+      const r = await this.gh.app.request<InstallationP[]>("GET", "/app/installations", { query: { per_page: "100", page: String(page) } });
+      for (const i of r.data) {
+        seen.push(i.id);
+        const known = (await this.db.q("select 1 from gh_installations where installation_id = $1", [i.id])).length > 0;
+        await this.upsertInstallation(i);
+        if (!known) out.installations++;
+        const repos: RepoLite[] = [];
+        for (let rp = 1; rp <= 50; rp++) {
+          const x = await this.gh.installation(i.id).request<{ repositories: RepoLite[] }>("GET", "/installation/repositories", { query: { per_page: "100", page: String(rp) } }).catch(() => null);
+          if (!x) { complete = false; break; }
+          repos.push(...x.data.repositories);
+          if (x.data.repositories.length < 100) break;
+        }
+        const have = new Set((await this.db.q<{ repository_id: number }>("select repository_id from gh_repositories where installation_id = $1 and removed_at is null", [i.id])).map((y) => y.repository_id));
+        const missing = repos.filter((y) => !have.has(y.id));
+        if (missing.length) { await this.upsertRepositories(i.id, missing); out.repositories += missing.length; }
+      }
+      if (r.data.length < 100) break;
+      if (page === 10) complete = false;
+    }
+    // Nothing is marked deleted from a listing: one incomplete or wrong answer must never stop a customer's machines.
+    // A deletion arrives as its own (small) webhook, and lost ones are asked again (redeliverFailed).
+    void complete;
+    if (out.installations || out.repositories || out.deleted) this.log.info(out, "installations reconciled with GitHub");
+    return out;
+  }
+
+  /** True at most once per `minutes` across every function and container (a row in gh_service_marks). */
+  async markDue(name: string, minutes: number): Promise<boolean> {
+    const [due] = await this.db.q<{ due: boolean }>(
+      `insert into gh_service_marks (name, at) values ($1, now())
+         on conflict (name) do update set at = now() where gh_service_marks.at < now() - make_interval(mins => $2)
+       returning true as due`, [name, minutes]);
+    return !!due;
+  }
+
   async sweep(): Promise<number> {
+    await this.redeliverFailed().catch(() => 0);
+    await this.reconcileInstallations().catch((e: unknown) => { this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "installations not reconciled"); });
+    // Our machines: retire, reconcile, top up the reserve, dispatch waiting jobs (every minute, with the sweep).
+    if (this.pool) {
+      try {
+        const t = await this.poolTick();
+        if (t.retired || t.lost || t.orphans || t.started || t.launched || t.leased) this.log.info(t, "pool tick");
+      } catch (e) { this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "pool tick failed"); }
+    }
     // Old staged results and summaries, and old link completions go (review R-016 F7, R-016b G2, R-016 F2).
     await this.db.q("delete from gh_run_results where received_at < now() - make_interval(days => $1)", [RESULTS_KEEP_DAYS]);
     await this.db.q("delete from gh_run_summaries where received_at < now() - make_interval(days => $1)", [RESULTS_KEEP_DAYS]);
@@ -922,9 +1272,11 @@ export class GitHubService {
       }
       await c.query(
         `insert into ci_usage_events (installation_id, repository_id, repository_full_name, project_id, ci_run_id, github_job_id, github_run_id,
-           github_run_attempt, billable, reason, plan_id, conclusion, test_minutes_ran, minutes_saved, other_step_minutes, held_minutes, occurred_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, round($13::numeric, 2), round($14::numeric, 2), round($15::numeric, 2),
-           round($16::numeric, 2), $17)
+           github_run_attempt, billable, reason, plan_id, conclusion, test_minutes_ran, minutes_saved, other_step_minutes, held_minutes, occurred_at,
+           machine_size, instance_type, machine_market, machine_id)
+         select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, round($13::numeric, 2), round($14::numeric, 2), round($15::numeric, 2),
+           round($16::numeric, 2), $17, m.size, m.instance_type, m.market, m.id
+           from (select 1) one left join lateral (select machine_id from gh_leases where job_id = $6 order by id desc limit 1) l on true left join gh_machines m on m.id = l.machine_id
          on conflict (github_job_id) do nothing`,
         [job.installation_id, job.repository_id, repo.full_name, projectId, ciRunId, job.job_id, job.run_id, job.run_attempt, billable, reason,
           planId, job.conclusion, minutes.ran, minutes.saved, minutes.other, minutes.held, completedAt]);

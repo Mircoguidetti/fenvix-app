@@ -223,7 +223,7 @@ workflow"): first the same tests, then the job **Deploy to production**, only on
    the objects each of 0011 to 0017 creates, records 0001 to 0017 as already applied ("found") and runs none of them
    again. Each probe checks a migration's first objects **and its last effects**: a migration that ran only partly
    (first there, last missing) stops the deploy, changing nothing, as does a database where a later migration's
-   objects exist but an earlier one's do not. An applied migration whose file changes stops the deploy too: a change goes in a new migration file.
+   objects exist but an earlier one's do not. An applied migration whose file changes stops the deploy too: a change goes in a new migration file. From 0019 on a migration may only **add** (G-1705): it runs before the functions are deployed, and a failed deploy or a roll back runs the previous code on the new schema, so a file that drops, renames, retypes or deletes stops the deploy unless it carries the line `-- fenvix: contract step approved by the founder on YYYY-MM-DD` (shipped only after the code that stopped using it).
 5. **Database roles** (`deploy/lib/roles.mjs`): logs in as `fenvix_github_app` (pooler, session mode, port 5432) and
    `fenvix_api` (pooler, transaction mode, port 6543) with the connection strings stored in SSM. The first time (none
    stored), or if the database answers "wrong password" (SQLSTATE 28P01) to the stored string four times in a row
@@ -378,31 +378,38 @@ In Parameter Store (like section A, step 2):
 
 | Name | Type | Effect |
 |---|---|---|
-| `/fenvix/prod/bootstrap/supabase-ca-cert` | String | Supabase's CA certificate (public): Supabase → Project Settings → Database → **SSL Configuration** → **Download certificate**, open the file in a text editor and paste all of it. The pipeline then verifies the pooler's certificate (like `sslmode=verify-full`) on its admin connection, which carries the database password. Without it the connection is encrypted but the certificate is not checked. If the deploy then stops with "did not verify against SUPABASE_CA_CERT", download it again or delete the parameter. |
+| `/fenvix/prod/bootstrap/supabase-ca-cert` | String | Supabase's CA certificate (public): Supabase → Project Settings → Database → **SSL Configuration** → **Download certificate**, open the file in a text editor and paste all of it. The pipeline then verifies the pooler's certificate (like `sslmode=verify-full`) on its admin connection, which carries the database password, and copies it to `/fenvix/prod/github-app/database-ca-cert`, so the App and the API verify the pooler the same way (G-2323). Without it the connection is encrypted but the certificate is not checked. If the deploy then stops with "did not verify against SUPABASE_CA_CERT", download it again or delete the parameter. |
 
 As repository variables (GitHub → this repository → **Settings → Secrets and variables → Actions → Variables** tab →
 **New repository variable**; available on GitHub Free; not secret):
 
 | Variable | Effect |
 |---|---|
-| `FENVIX_ALARM_EMAIL` | an email for the dead-letter alarm (confirm the subscription email AWS sends) |
+| `FENVIX_ALARM_EMAIL` | the email every alarm goes to (dead letters, function errors and throttles, API 5xx, the cache machine); confirm the subscription email AWS sends |
 | `CLOUDFLARE_ZONE_ID` | the zone's id (Cloudflare → fenvix.dev → Overview, right column), if the token cannot read zones |
-| `FENVIX_RUNNER_MODE` / `FENVIX_DEMO_REPOSITORY` | `demo` and `owner/name`: demo mode (section E) instead of per-job. Needs the GitHub App. |
 
 There is no approval step before a deploy (it needs a GitHub environment, which GitHub Free does not offer for a
 private repository): merging is the approval.
 
-Other settings (instance types, limits, warm-ups, log retention) are in `infra/github-app/cdk.json` (`context`):
+Other settings (the pool: sizes, always-on and reserve counts, caps; the engine pin; warm-ups; log retention) are in `infra/github-app/cdk.json` (`context`):
 change them in a pull request.
 
-## E. Demo mode (an option, off)
+## E. Demo mode (retired)
 
-One fresh c6i.large per demo, registered as a runner on one repository of yours, terminated after the demo. Set the
-repository variables (section D) `FENVIX_RUNNER_MODE` = `demo` and `FENVIX_DEMO_REPOSITORY` = `owner/name` (a private repository
-of yours, with the App installed), run the workflow. Then, in the AWS console → Lambda →
-`fenvix-prod-github-app-demo` → **Test**: event JSON `{"action":"up"}` before the demo, `{"action":"status"}` to see the
-runner, `{"action":"down"}` after it. The reaper terminates a forgotten demo machine after 12 hours. Remove the two
-variables and run the workflow to go back to per-job.
+Demo mode and per-job mode were retired on 2026-11-20 with the design of our machines (section "Our machines" below).
+The repository variables `FENVIX_RUNNER_MODE` and `FENVIX_DEMO_REPOSITORY` are no longer read; delete them.
+
+## Roll back (G-1706)
+
+To put the previous code back without a revert and a review: GitHub → the repository → **Actions** → **Deploy** →
+**Run workflow**, branch **main**, and in **rollback_to** the full 40-character SHA of the earlier commit of `main`
+(the commit page shows it; the last good deploy is the previous green **Deploy** run). The run still uses `main`'s
+workflow file, the same AWS trust (the branch `main` only) and runs the tests first; then it checks out that commit
+(refused if it is not an earlier commit of `main`), skips the database migrations (they only go forward and only add:
+the earlier code runs on the newer schema) and deploys that commit's functions, image recipe and settings. To go
+forward again, push to `main` or run the workflow with **rollback_to** empty. Limits: an earlier commit must have the
+deploy steps `main`'s workflow calls (any commit from this change on); there are no Lambda aliases or gradual traffic
+shift, so a roll back replaces all functions at once (ESTIMATED: tests plus deploy, about as long as a normal deploy).
 
 ## When something fails
 
@@ -429,8 +436,26 @@ variables and run the workflow to go back to per-job.
 | every dashboard call answers **500** / **503** | the API log (`password authentication failed`, `timeout`) | run the workflow: the role check sets a new password when the stored one is refused |
 | a GitHub delivery shows **503** `github_not_configured` | | section C is not finished (C5) |
 | a GitHub delivery shows **401** | the App's webhook secret vs `/fenvix/prod/github-app/webhook-secret` | make them equal (C1, C2), then redeliver |
-| a fenvix job stays **Queued**; the worker logs `the installation is not linked` / `no runner image yet` / `limit 4` | `/aws/lambda/fenvix-prod-github-app-worker` | link the installation from the dashboard / wait for the image build (EC2 Image Builder → Images) / 4 machines busy (retried for about an hour) |
-| the dead-letter alarm fires | `/aws/lambda/fenvix-prod-github-app-worker` | fix the cause, then SQS → `fenvix-prod-github-app-dead-letters` → **Start DLQ redrive** |
+| a fenvix job stays **Queued**; the job's `dispatch_detail` (table `gh_jobs`) or the worker log says `the installation is not linked` / `no runner image yet` / a cap | `/aws/lambda/fenvix-prod-github-app-worker`, `-sweep` | link the installation from the dashboard / wait for the image build (EC2 Image Builder → Images) / the customer's or the region's cap is reached: the job waits in the database and gets the next free slot (the sweep, every minute) |
+| the dead-letter alarm fires | `/aws/lambda/fenvix-prod-github-app-worker` | the sweep already put each dead-lettered work message back once (at most every 15 minutes, G-1736); what is still there failed again after that, or is a failed schedule call. Fix the cause, then SQS → `fenvix-prod-github-app-dead-letters` → **Start DLQ redrive** |
+
+### Alarms: what each one means and what to do first (G-1765)
+
+Every alarm mails the address in the repository variable `FENVIX_ALARM_EMAIL` (topic `fenvix-prod-github-app-alerts`).
+Today the founder is the only person on call; the mail is the page. For each: open CloudWatch → Alarms → the alarm (its
+graph shows when), then the log group named here (CloudWatch → Log groups → **Search all log streams**, filter
+`{ ($.level = "error") || ($.level >= 50) }`), then the X-Ray traces of that function (CloudWatch → X-Ray traces) for slow
+calls. Write what happened, when it started, what you did and when it ended in a GitHub issue labelled `incident`.
+
+| Alarm (`fenvix-prod-github-app-…`) | What it means | First steps |
+|---|---|---|
+| `http-errors`, `http-logged-errors`, `http-throttles`, `api-5xx` | webhooks, machine calls or the dashboard got errors | log `/aws/lambda/fenvix-prod-github-app-http`. Database errors: the "500 / 503" row above. Throttles: many deliveries at once; GitHub retries nothing, the sweep asks GitHub again for failed deliveries (G-1771) |
+| `worker-errors`, `worker-logged-errors`, `worker-throttles` | queued work (webhooks, results) failed; it is retried 5 times, then dead-lettered | log `-worker`; a GitHub API error names the call. Fix, then the dead letters are redriven by the sweep |
+| `dead-letters` | work failed 5 times and once more after its redrive, or a schedule call failed | the dead-letter row above |
+| `sweep-errors`, `sweep-logged-errors` | the machine pool's minute fails: waiting jobs are not dispatched, idle machines not retired | log `-sweep`; EC2 errors name the call (`InsufficientInstanceCapacity`: AWS has no machines of that type; `VcpuLimitExceeded`: the quota, founder step 4). While it fails, check EC2 → Instances for machines tagged `fenvix:role = runner-pool` older than 6 hours: terminate them |
+| `warmup-errors`, `warmup-logged-errors` | the warm-up scheduler fails (warm-ups are off today) | log `-warmup` |
+| `api-errors`, `api-logged-errors` | the dashboard API fails | log `-api`; database errors: the "500 / 503" row above |
+| `cache-machine` | the shared cache machine fails its status checks: jobs cannot use the shared cache (how the engine behaves then is UNKNOWN until G-1742's check) | EC2 → Instances → the cache machine → **Instance state → Reboot**; if it stays failed, **Stop** then **Start** |
 
 ### Rotating a secret (AWS console → Systems Manager → Parameter Store)
 
@@ -446,9 +471,15 @@ Every function reloads its secrets every **5 minutes**, so a rotation needs no d
   between fail with 401 and can be redelivered.
 - **state-signing-key**: delete it and run the workflow. An install link made with the old key fails (ask for a new
   link).
-- **The App's private key or client secret:** generate a new one on the App's page, then Parameter Store →
-  `/fenvix/prod/github-app/private-key` (or `client-secret`) → **Edit** → paste → **Save changes**. The functions load
-  it within 5 minutes; no deploy needed.
+- **The App's private key** (G-2321; every 6 months, and at once if it may have leaked): GitHub accepts every key the
+  App has, so there is no gap. 1. The App's page (github.com → Settings → Developer settings → GitHub Apps → fenvix →
+  **General** → **Private keys**) → **Generate a private key** (a `.pem` downloads). 2. Parameter Store →
+  `/fenvix/prod/github-app/private-key` → **Edit** → paste the whole `.pem` → **Save changes**. 3. Wait **10 minutes**
+  (every function reloads within 5). 4. Back on the App's page, **Delete** the OLD key (the one not created today).
+  5. Delete the `.pem` from your computer. If something fails after step 4, the new key is not in SSM: redo step 2.
+- **The App's client secret:** generate a new one on the App's page, then Parameter Store →
+  `/fenvix/prod/github-app/client-secret` → **Edit** → paste → **Save changes**, wait 10 minutes, delete the old one on
+  the App's page.
 - **Cache signing key:** delete `/fenvix/prod/cache/signing-public-key` and run the workflow: a new pair is made, the
   cache machine is replaced and the shared cache starts empty.
 - **Supabase's database password** (the one in `supabase-db-url`): reset it in Supabase, then Parameter Store →
@@ -508,276 +539,52 @@ replaced, the cache starts empty, and the next runs record it again.
 
 **One cache organization per customer installation.** The service scopes every entry, file fact and run to the
 organization of the token. The worker signs one token per job (RSA, the key in SSM that only it reads) naming
-`gh-<installation id>`, read or write, and an expiry; the cache machine checks it with the public key (setting
+`gh-<installation id>-r<repository id>` (one per repository, audit G-0192), read or write, and an expiry; the cache machine checks it with the public key (setting
 `cacheSigningPublicKey`). A job of one customer therefore never reads or writes another customer's cache, and a pull
 request never writes. Nothing role-wide is on a job machine to steal.
 
-## Time from a queued job to the first test (ESTIMATE, not measured)
+## Our machines (the design of 2026-11-20; github-app/src/machines/, infra/github-app/lib/runner/files/)
 
-No AWS account was available, so none of this was measured.
+The per-job, demo and Firecracker "customer mode" designs that stood here were replaced on 2026-11-20. The report with
+the evidence for every audit gap is `docs/REPORT-our-machines.md`.
 
-These estimates assume the machine runs at full speed, which is why the default is a c6i.large and not a T3 (a fresh
-T3 in "standard" mode has no credits and runs at 20% of a vCPU).
+- **One customer per machine.** A job goes to its customer's machine with a free slot, else the clean always-on
+  machine, else a stopped reserve machine (started), else a new machine. The machine then belongs to that customer
+  until it is terminated: the database refuses to give it to anyone else or to make it clean again
+  (`gh_machines_one_customer`). Different customers never share a kernel, a disk or memory.
+- **Slots.** The same customer's jobs share a machine, each in a slot (`fenvix-slot`): its own user, home, mount and
+  PID namespaces, private `/tmp`, no privileges, cgroup limits, wiped after the job. The metadata service is root-only.
+- **Always on and reserve.** `FENVIX_POOL` (cdk.json `pool`): one clean c7a.xlarge running, two prepared machines
+  stopped (only their disk is paid). When the clean machine is taken, a reserve machine starts at once.
+- **Spot** above `spotAbove` running machines; an interrupted job is re-run once by GitHub.
+- **Caps** per customer (`workspaces.max_machines`, `max_concurrent_jobs`, else the pool's defaults). A job without a
+  slot waits in the database and takes the next free slot at once (no queue retry).
+- **Credentials.** A machine boots with a single-use boot secret, exchanges it for a session credential, and fetches
+  each job's work over HTTPS (`/v1/runner/machine/hello`, `poll`, `events`). No job credential is ever in user data.
+- **Engine.** The image installs the fenvix-engine-cli trunk artifact by version, URL and sha256 (cdk.json
+  `engineVersion`, `engineUrl`, `engineSha256`); without a pin, or with another checksum, no image is built.
+- **Metering.** Each usage event names the machine size, type and market; `gh_machine_minutes` sums machine minutes
+  per customer, region, size and day.
 
-**Demo mode.** The machine is started before the demo, and the demo function's `up` returns once it is started; the runner is online a minute or two later. A job then
-starts within a few seconds of being queued, as on any self-hosted runner. The first test runs after the job's own
-setup (checkout, `uv venv`, install: 10 to 60 s depending on the project). Starting the demo machine takes about 1 to
-2 minutes, before the demo.
+### Start latency (ESTIMATED until measured; `infra/github-app/scripts/our-machines/measure.mjs` measures it)
 
-**Per-job mode** (a machine is started per job):
-
-| Stage | Estimate |
-|---|---|
-| GitHub queues the job → webhook at API Gateway | about 1 s |
-| HTTP Lambda → SQS → worker Lambda (warm; cold start adds 1–2 s) | under 1 s |
-| worker: workflow run, `generate-jitconfig`, newest image, RunInstances | 1–2 s |
-| EC2 pending → running | 10–20 s |
-| Ubuntu boot → user data → runner connected and assigned the job | 30–50 s |
-| **job starts (Set up job)** | **≈ 45–75 s after queued** |
-| checkout, `uv venv`, project and engine install | 10–60 s, depending on the project; the first reads of the disk are slower, because a volume made from an image loads its blocks on first access |
-| **first test runs** | **≈ 1–2.5 minutes after queued** |
-
-A GitHub-hosted runner usually starts a job within seconds. The time lost here is the price of starting nothing when
-no job runs. To cut it later: keep one warm, stopped machine to start, or turn on EBS fast snapshot restore (billed
-per hour).
-
-## Monthly cost
-
-**Added by the pipeline (ESTIMATE; prices not re-read in this session):** the dashboard on S3 + CloudFront (a few MB
-of files; CloudFront's always-free tier covers 1 TB and 10 million requests a month as last read, before this
-session), the CDK assets bucket (the functions' zips, a few MB per deploy), the ACM certificates (free) and GitHub
-Actions minutes (free for a public repository; on a private one they count against the plan's included minutes: a
-deploy run takes about 15 to 25 minutes of tests and 10 to 15 of deploy, ESTIMATE). Expected well under $1 a month
-at this size; not measured.
-
-All prices are for eu-west-1, on demand, in USD, read on **2026-11-18**. Each price is marked **DECLARED**: it is
-AWS's published price, read today, and not a measured bill.
-
-The regional numbers come from AWS's official **Price List API**
-(`https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/<service>/current/eu-west-1/index.json`, with SKU and
-publication date). The aws.amazon.com pricing pages load those same numbers in the browser from a data host that this
-container's network refused, so the pages could not be read for them. The aws.amazon.com pages were read for the free
-tiers, the metering units, the billing granularity and the flat prices.
-
-| Item | Price (DECLARED) | Source (read 2026-11-18) |
+| Path | Estimate | Derivation |
 |---|---|---|
-| EC2 c6i.large, Linux (runner machines and the image build, default) | $0.0912 per hour; **billed per second, 60-second minimum** | Price List API AmazonEC2, SKU MY34M56N9KVPBWDG (as read by review R-012 on 2026-11-18; not re-read in this session, see below); aws.amazon.com/ec2/pricing/on-demand ("by the hour or second (minimum of 60 seconds)") |
-| EC2 t3.medium, Linux (only if chosen; runs "unlimited") | $0.0456 per hour, plus $0.05 per vCPU-hour of surplus credits above the 20% baseline: ≈ $0.1256 per hour at full speed | Price List API AmazonEC2, SKU 47NTBKB4KMUU98P8; surplus credits SKU Z25C5STUBANBQC5Y (R-012) |
-| EC2 t4g.nano, Linux | $0.0046 per hour | Price List API AmazonEC2, SKU 2WUM3HJN9JGXQ3A8 |
-| EBS gp3 | $0.088 per GB-month; billed per second, 60-second minimum; 3,000 IOPS and 125 MB/s included | Price List API AmazonEC2, SKU TXACT7E3PV6ZX2NM; aws.amazon.com/ebs/pricing |
-| EBS snapshot, Standard tier (the runner images) | $0.05 per GB-month of data stored (incremental) | Price List API AmazonEC2, SKU UZ7N3QU3DRSU25FK; aws.amazon.com/ebs/pricing |
-| Public IPv4 address | $0.005 per hour | aws.amazon.com/vpc/pricing (and Price List API AmazonVPC) |
-| EC2 Image Builder | no cost besides the resources it uses | aws.amazon.com/image-builder (its pricing page answered 404) |
-| EC2 c7i.xlarge, Linux (customer-mode host) | $0.19152 per hour | Price List API AmazonEC2, SKU UGSWTF5QKT6FFUDJ |
-| EC2 c7i.2xlarge, Linux (customer-mode host for 3 full-speed jobs) | $0.38304 per hour | Price List API AmazonEC2, SKU QC3ZMNBVRWVYJ3M2 |
-| Nested virtualization on C7i (the KVM fallback) | no additional cost | docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html (re-read 2026-11-18: "There is no additional cost for using nested virtualization"; C7i listed) |
-| EC2 c5n.metal, Linux (the cheapest x86 bare metal in eu-west-1, of 72; no longer the fallback) | $4.392 per hour | Price List API AmazonEC2, SKU 5WTB2K6WFG5VB34R |
-| Nitro Enclaves / Nitro Sandboxes | no additional charge ("you pay the standard charges for the Amazon EC2 instance") | docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nitro-sandboxes.html; aws.amazon.com/ec2/nitro/nitro-enclaves/faqs |
-| Lambda (x86) | $0.0000166667 per GB-second, $0.20 per 1M requests; free tier 400,000 GB-s and 1M requests per month | Price List API AWSLambda; aws.amazon.com/lambda/pricing |
-| SQS standard | $0.40 per 1M requests (64 KB = 1 request); 1M per month free | Price List API AWSQueueService; aws.amazon.com/sqs/pricing |
-| API Gateway HTTP API | $1.11 per 1M requests; 1M per month free for 12 months for accounts created before 2025-07-15 (newer accounts get Free Tier credits instead; not material at this volume) | Price List API AmazonApiGateway; aws.amazon.com/api-gateway/pricing |
-| EventBridge Scheduler | 14M invocations per month free, then $1.00 per 1M | aws.amazon.com/eventbridge/pricing |
-| SSM Parameter Store, standard | no additional charge | aws.amazon.com/systems-manager/pricing |
-| CloudWatch Logs | $0.57 per GB ingested, $0.03 per GB-month; 5 GB per month free | Price List API AmazonCloudWatch; aws.amazon.com/cloudwatch/pricing |
-| CloudWatch alarm | $0.10 per alarm-month; first 10 free | Price List API AmazonCloudWatch |
-| ACM certificate for API Gateway | no cost | aws.amazon.com/certificate-manager/pricing |
-| Data transfer out | 100 GB per month free | aws.amazon.com/ec2/pricing/on-demand |
+| a slot on the customer's machine, or the always-on machine | 3-8 s from queued to "Set up job" | webhook 1 s + worker under 1 s + the agent's 2 s poll + runner connect 2-4 s |
+| reserve machine (stopped, started) | 25-45 s | start of a stopped EBS instance 10-20 s + boot and agent 10-20 s + the above |
+| new machine (cold) | 50-90 s | RunInstances to running 10-20 s + first boot 30-50 s + the above |
 
-### Option: demo mode
+### Monthly cost (DECLARED prices, ESTIMATED usage)
 
-**Assumptions** (ESTIMATE, not measured): the runner image holds about 6 GB of data; 10 demos a month, each machine
-up for 2 hours; the serverless part runs as in per-job mode at 0 jobs.
+Prices: c7a.xlarge $0.220/h, c7a.2xlarge $0.440/h on demand, spot about $0.096 and $0.214/h in eu-west-1 (DECLARED by a
+third-party price list, devzero.io, read 2026-11-20; verify on the AWS price page); gp3 $0.088 per GB-month and public
+IPv4 $0.005/h (DECLARED in the earlier version of this page).
 
-| | Monthly |
-|---|---|
-| Runner image snapshot (~6 GB × $0.05) | $0.30 |
-| Demo machines: 20 hours × ($0.0912 c6i.large + $0.005 IPv4 + 30 GB gp3 at $0.088 ÷ 730 h) = 20 × $0.0998 | $2.00 |
-| Lambda, SQS, logs, alarm (without free tier; free at this volume with it) | $0.43 |
-| API Gateway, Scheduler, SSM, ACM, S3 | $0.00 |
-| **Total without free tiers** | **≈ $2.73** |
-| **Total with free tiers** | **≈ $2.30** |
-
-Each extra demo hour costs about $0.10. Image builds add about $0.08 each (45 minutes of c6i.large, its IPv4 address
-and disk). Between demos nothing runs, so the cost
-is the image snapshot and the serverless part.
-
-### Default: one machine per job
-
-**Assumptions** (ESTIMATE, not measured):
-
-- A job machine lives about **10 minutes** in all: about 1.5 minutes to boot, the job itself, and power-off.
-- A runner image holds about **6 GB** of data (Ubuntu, build tools, Rust, Python, the engine build, the GitHub
-  runner).
-- Each job brings about 10 webhooks and runner requests.
-- The sweep runs every minute (43,800 times a month) and the reaper every 10 minutes (4,380).
-- The idle SQS trigger polls about 660,000 times a month.
-
-**Per job:**
-
-| Item | Calculation | Cost |
+| Item | Monthly | Derivation |
 |---|---|---|
-| c6i.large | $0.0912 × 1/6 h | $0.01520 |
-| public IPv4 | $0.005 × 1/6 h | $0.00083 |
-| 30 GB gp3 disk | 30 × $0.088 ÷ 730 h × 1/6 h | $0.00060 |
-| **Total** | | **≈ $0.0166** |
+| The always-on machine | ≈ $164 | 730 h × ($0.220 + $0.005) |
+| Two reserve machines, stopped | ≈ $5.3 | 2 × 30 GB × $0.088 |
+| Per customer job-hour on a c7a.xlarge (2 slots) | ≈ $0.11 | $0.225 / 2 slots, while the machine is busy |
+| Shared cache machine, serverless part | as before | t4g.nano, Lambda, SQS, logs |
 
-**Monthly:**
-
-| | 0 jobs | 100 jobs | 1,000 jobs |
-|---|---|---|---|
-| Cache machine t4g.nano (730 h) | $3.36 | $3.36 | $3.36 |
-| Cache disk 8 GB gp3 | $0.70 | $0.70 | $0.70 |
-| Runner image snapshot (~6 GB) | $0.30 | $0.30 | $0.30 |
-| Job machines (≈ $0.0166 each) | $0.00 | $1.66 | $16.64 |
-| Lambda (without free tier) | $0.06 | $0.07 | $0.25 |
-| SQS (without free tier) | $0.26 | $0.26 | $0.28 |
-| API Gateway (without free tier) | $0.00 | $0.00 | $0.01 |
-| CloudWatch Logs and alarm (without free tier) | $0.11 | $0.11 | $0.12 |
-| Scheduler, SSM, ACM, S3, data transfer | $0.00 | $0.00 | $0.00 |
-| **Total without free tiers** | **≈ $4.79** | **≈ $6.46** | **≈ $21.66** |
-| **Total with free tiers** (Lambda, SQS, logs, alarm free at this volume) | **≈ $4.36** | **≈ $6.02** | **≈ $21.01** |
-
-Image builds add about $0.08 each: 45 minutes of c6i.large, its IPv4 address and disk.
-
-A job that runs longer costs proportionally more. Each extra 10 minutes of job time adds $0.0166. At 1,000 jobs of
-20 minutes, the job machines cost about $33.
-
-Warm-up runs (ESTIMATE): one machine like a job's per warm-up, at most `warmupDailyCap` (6) per repository a day, and
-none for a commit the customer's own push run covers. At 10 repositories with 6 warm-ups each every working day (22
-days), that is 1,320 machines of about 10 minutes: about $22 a month, never billed to the customer. The warm-up
-function runs every minute (43,800 invocations a month, within Lambda's free tier).
-
-## Customer mode (design; spike in `infra/customer-mode/spike/`; not built)
-
-**The plan.** Customer jobs run on **c7i** hosts, each job in its own **Firecracker microVM**, using Firecracker's
-**Nitro Sandboxes** backend (v1.18.0, released with `PUT /enclave`). The microVM is destroyed after the job. More hosts
-are added as customers grow. There is no Docker-per-job path.
-
-**Why a c7i and not a T3 or a metal host.** Nitro Sandboxes run on the instance types that support Nitro Enclaves:
-"not currently available on bare metal instances, burstable instance types (e.g. T3), and instances with only 1 CPU
-core" (Nitro Enclaves FAQ, read 2026-11-18). C7i is supported except c7i.large and the metal sizes (EC2 User Guide,
-Nitro Sandboxes). A sandbox needs no `/dev/kvm`: Firecracker drives `/dev/nitro_enclaves`.
-
-**The real trust boundary is the parent, not only the Nitro Hypervisor.** The Nitro Hypervisor isolates a sandbox's
-memory and vCPUs. In direct mode, though, "the trust model is equivalent to that of a nested virtual machine" (AWS):
-what a hostile guest attacks is Firecracker's device emulation in the parent, the parent's TAP networking and
-anything of the guest's the parent reads. One escape there must not reach other tenants or our credentials. So
-(R-012 F17):
-
-- **Firecracker runs under the jailer**, one per sandbox: its own uid, a chroot holding only that job's files, its own
-  cgroup, Firecracker's seccomp filter. Never as root.
-- **No credential of ours on the path a guest can reach.** The host agent that polls the queue holds only its queue
-  role; each job's summary credential (signed by the worker for that job's runner name, repository and run, as in
-  per-job mode) is handed over with the job. It is read by `fenvix-post`, a separate user that never reads guest
-  bytes. The parent's metadata service has hop limit 1 and is unreachable from any TAP.
-- **The host never mounts a disk a guest wrote** (F9). The guest writes its result to a raw 16 MiB disk as one
-  length-prefixed record; an unprivileged user (`fenvix-parse`) reads it in userspace with a size cap
-  (`read-result.py`). The repository, run, attempt and runner name of the summary come from the host's own job record,
-  never from the guest. (vsock is the alternative; the raw disk needs no listener on the host.)
-- **The firewall is keyed on the interface** (F10): every rule matches `-i fctap+`; `FORWARD` defaults to DROP; each
-  TAP accepts only its own sandbox's source address, and `rp_filter` is strict; only the VPC's DNS
-  (`169.254.169.253:53`) is reachable in `169.254.0.0/16`; a sandbox reaches no port of the parent and no other
-  sandbox; IPv6 is off on every TAP and dropped by `ip6tables`. Each sandbox has a connection limit (4,096 tracked
-  connections), a new-connection rate limit and Firecracker's own bandwidth and packet-rate limiters, so one sandbox
-  cannot exhaust the connection-tracking table the others share.
-- **The memory pool is mandatory** (F11): "With a memory pool, the parent instance has 4 slots. Without a pool, it has
-  0" (EC2 User Guide, "Run Nitro Sandboxes with Firecracker", re-read 2026-11-18). `host-setup.sh` stops unless
-  `nitro_enclaves.mempool=` is on the kernel command line (`grubby` and a reboot first) and then sets 12 slots
-  (slots grow from 4 in steps of 8; each step uses 128 MiB of the pool).
-- Direct mode leaves sandbox memory readable by the parent (us). Confidential mode, with a DMB-patched guest kernel,
-  closes that if customers ask for it.
-
-### How a job runs
-
-```
-GitHub ── workflow_job.queued ──▶ App (worker Lambda): linked installation? → generate-jitconfig (one job)
-                                    → the job's summary credential and cache token (signed per job)
-                                    └▶ SQS "jobs" queue (per host group)            [to build: SqsHostLauncher]
-c7i host agent (polls the queue; holds no fleet secret):
-   1. under /srv/jailer/firecracker/<id>/root, owned by the jail's uid: a copy of the guest disk (reflink), a
-      read-only input disk with the jitconfig, an empty raw result disk
-   2. TAP device fctap<N> owned by the jail's uid, IPv6 off, its source-address rule
-   3. jailer → firecracker --config-file (2 vCPUs, 2 GiB, direct mode, rate limiters)
-   4. guest: systemd → fenvix-guest-job → just-in-time runner takes exactly one job → result record onto the raw disk
-      → poweroff → the sandbox is torn down (vCPUs and memory back to the pools)
-   5. host: fenvix-parse reads the record; fenvix-post sends the summary with the job's credential and the host's ids;
-      everything of the job is deleted (also on failure: trap)
-```
-
-- **Shared cache.** The same private cache machine as per-job mode, one organization per customer installation,
-  per-job tokens; write only for trusted refs.
-- **Capacity** (F16; ESTIMATE until measured). A c7i.xlarge has 4 vCPUs on **2 physical cores**. "The Nitro Enclaves
-  driver keeps the first core of the parent instance for the parent, and the other cores form the CPU pool" (EC2
-  User Guide). Without CPU overcommit, a c7i.xlarge therefore runs **one** 2-vCPU sandbox at full speed. With CPU
-  overcommit (the spike's setting), three 2-vCPU, 2 GiB jobs fit by memory but time-share 2 cores with the parent,
-  roughly 0.6 core each. For **3 jobs at full speed, plan a c7i.2xlarge** (8 vCPUs, 4 cores: 3 for the pool) at
-  $0.38304 per hour, or a Graviton host (one thread per core) if jobs can be arm64. Measure it (test 6 below).
-- **Hosts:** one to start; add a host when the queue waits. Scale-out by queue depth is a later step.
-
-### Docker inside the job (`services:`, testcontainers, docker compose)
-
-**Inside a Nitro Sandbox microVM:** expected to work, not yet run.
-
-- Docker needs no hardware virtualization, only Linux kernel features in the guest, and the guest is a normal Linux
-  VM.
-- The spike's check (`guest-kernel-docker-check.sh`) on Firecracker's CI x86_64 6.18 guest kernel config plus its EFI
-  fragment finds **every required option present**: namespaces, cgroups (memory, pids, cpu, devices, freezer, bpf),
-  seccomp, keys, overlayfs, ext4, veth, bridge, bridge netfilter, iptables NAT and MASQUERADE, addrtype and conntrack
-  matches. Only the optional IP_VS, MACVLAN and IPVLAN are absent; swarm and those network drivers are not needed for
-  CI.
-- The guest image installs `docker.io`, and the job user is in the `docker` group, inside its own VM.
-- Each job starts with an empty image store, so every `docker pull` downloads again. A pull-through registry mirror on
-  the host would help; this needs measuring.
-
-**Inside a KVM Firecracker microVM on the fallback (nested virtualization on the same C7i):** same answer, the same
-guest kernel and image. Docker runs in Firecracker KVM guests routinely.
-
-### Must be tested on a real host before the first customer
-
-1. **Start time per job.** Run `run-job.sh` 20 times and record each stage (preparing the disks; sandbox start →
-   guest up; guest up → runner online → job assigned; the job's setup). Target: a job starts within about 30 s of
-   being queued.
-2. **The jailer with the Nitro Sandboxes backend.** Firecracker under the jailer with `/dev/nitro_enclaves` created
-   in the chroot for the jail's uid, its seccomp filter, cgroup v2: the sandbox starts; as the jail's uid the VMM
-   cannot read another sandbox's disk or any credential (F17). Not verified anywhere yet.
-3. **From a guest, as root** (F10): spoof the source address (`ip addr add 10.42.0.99/32 dev eth0`,
-   `curl --interface 10.42.0.99 169.254.169.254`); reach another sandbox's `172.16.N.2` with a spoofed source; reach
-   the parent over IPv6 link-local (`ping6 fe80::...%eth0`, `nc -6`). All must fail. `169.254.169.254` (IMDSv1 and
-   v2), `169.254.169.123` and the VPC resolver's other addresses fail; `169.254.169.253:53` answers; the cache machine
-   answers only with the job's own customer's token.
-4. **Conntrack exhaustion** from one guest (`hping3 --flood` to many ports): other sandboxes' jobs keep their network.
-5. **The result disk** (F9): a guest writes a symlink, a corrupted record, a record of 2 GiB, another job's ids: the
-   host neither follows, mounts nor accepts them, and the summary carries the host's ids.
-6. **CPU** (F16): 1, 2 and 3 concurrent 2-vCPU jobs (`stress-ng --cpu 2` plus a real pytest suite), with and without
-   CPU overcommit, on c7i.xlarge and c7i.2xlarge; the same on the fallback (nested virtualization).
-7. **Memory pool sizing** (F11): `mempool` for 3 × (2048 + 2) MiB plus 256 MiB for 12 slots (7G); a fourth start fails
-   cleanly.
-8. **Host reboot mid-job:** no disk of a previous job remains under `/srv/jailer` or `/var/lib/fenvix-sandboxes`.
-9. **Docker:** `docker run hello-world`; a job with `services: postgres`; testcontainers (Python and Java);
-   `docker compose up`; image pull time with and without a registry mirror; overlay2 on the guest's ext4.
-10. **The engine:** `strace -f` inside the guest; `fenvix-run` with the shared cache from the guest; a warm cache
-    across two jobs (two microVMs).
-11. **Failure handling:** a guest that hangs is killed by the host (killing Firecracker tears the sandbox down); a
-    sandbox that never got its job.
-12. **Limits of Nitro Sandboxes to live with:** no snapshots or pause, so no warm-start from a snapshot; no virtio
-    device reset; memory is not overcommitted.
-
-**Fallback if Nitro Sandboxes fails a must-have** (start time, Docker, isolation, the jailer): **KVM Firecracker with
-nested virtualization on the same C7i type** ("There is no additional cost for using nested virtualization"; C7i is
-supported; EC2 User Guide, re-read 2026-11-18). Same guest image and agent, same price per host, and KVM adds
-snapshots (faster starts) and memory overcommit. Nested virtualization and Nitro Sandboxes are not on at the same time
-on one instance, which suits a fallback. A bare-metal host (c5n.metal, $4.392 an hour) is no longer needed.
-
-### Customer mode: monthly cost per host (DECLARED prices; usage ESTIMATED)
-
-| | c7i.xlarge | c7i.2xlarge |
-|---|---|---|
-| instance, 730 h | $139.81 | $279.62 |
-| host disk 50 GB gp3 | $4.40 | $4.40 |
-| public IPv4 | $3.65 | $3.65 |
-| **per host per month** | **≈ $147.86** | **≈ $287.67** |
-| jobs at once (2 vCPU, 2 GiB) at full speed | 1 (3 time-sharing 2 cores) | 3 |
-
-The same figures hold for the fallback (KVM with nested virtualization on the same type). A job costs nothing extra
-on a host that is already running; the host is the cost. The serverless part and the cache machine are as in per-job
-mode, about $4.80 a month.
+Cost per minute per size (DECLARED prices): c7a.xlarge $0.00367 (spot $0.0016), c7a.2xlarge $0.00733 (spot $0.00357).

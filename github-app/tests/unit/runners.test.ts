@@ -55,8 +55,8 @@ describe("per-job runner machines", () => {
   it("user data: the machine's own credentials (root only) and its installation's cache organization; no SSM parameter", () => {
     const ud = jobUserData({ ...launch, summaryToken: "fxr1.abc.def", cacheToken: "fxs1.ghi.jkl" },
       { ...MACHINE, FENVIX_CACHE_URL: "http://10.42.0.10:8787", FENVIX_CACHE_WRITE_TOKEN_PARAM: "/fenvix/prod/cache/write-token" });
-    assert.match(ud, /^FENVIX_CACHE_URL=http:\/\/10\.42\.0\.10:8787\/gh-4242$/m);
-    assert.match(ud, /^FENVIX_CACHE_ORG=gh-4242$/m);
+    assert.match(ud, /^FENVIX_CACHE_URL=http:\/\/10\.42\.0\.10:8787\/gh-4242-r70001$/m);
+    assert.match(ud, /^FENVIX_CACHE_ORG=gh-4242-r70001$/m);
     assert.doesNotMatch(ud, /TOKEN_PARAM/);
     assert.match(ud, /umask 077\n(.*\n)*printf '%s' 'fxr1\.abc\.def' >\/etc\/fenvix\/summary-token\nprintf '%s' 'fxs1\.ghi\.jkl' >\/etc\/fenvix\/cache-token\n/);
     assert.throws(() => jobUserData({ ...launch, summaryToken: "x'; reboot #" }, MACHINE), /credential format/);
@@ -157,7 +157,7 @@ describe("region placement (RUNNER_PLACEMENT)", () => {
     const ud = Buffer.from(run.input.UserData!, "base64").toString();
     assert.match(ud, /^FENVIX_MODE=shadow$/m);
     assert.match(ud, /^FENVIX_REGION=eu$/m);
-    assert.match(ud, /^FENVIX_CACHE_URL=http:\/\/10\.52\.0\.10:8787\/gh-4242$/m);
+    assert.match(ud, /^FENVIX_CACHE_URL=http:\/\/10\.52\.0\.10:8787\/gh-4242-r70001$/m);
     const tags = Object.fromEntries(run.input.TagSpecifications![0]!.Tags!.map((t) => [t.Key, t.Value]));
     assert.equal(tags["fenvix:region"], "eu");
 

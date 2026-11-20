@@ -16,7 +16,7 @@ import { App } from "aws-cdk-lib";
 import { Template } from "aws-cdk-lib/assertions";
 import { FenvixDashboardStack } from "../lib/dashboard.ts";
 import { synthesizer } from "../lib/synthesizer.ts";
-import { DEMO, NO_APP, PER_JOB, settings, synth } from "./helpers.ts";
+import { NO_APP, PER_JOB, settings, synth } from "./helpers.ts";
 
 type Stmt = { Sid?: string; Effect: "Allow" | "Deny"; Action: string | string[]; Resource: string | string[]; Condition?: Record<string, Record<string, unknown>> };
 type Perms = { create: string[]; update: string[]; delete: string[]; read: string[]; tagging: string[]; taggable: boolean; tagOnCreate: boolean; notIamActions: string[] };
@@ -85,6 +85,8 @@ const ARN: Record<string, string> = {
   "AWS::Lambda::Function": `arn:aws:lambda:${R}:${A}:function:fenvix-prod-github-app-http`,
   "AWS::Lambda::Permission": `arn:aws:lambda:${R}:${A}:function:fenvix-prod-github-app-http`,
   "AWS::Logs::LogGroup": `arn:aws:logs:${R}:${A}:log-group:/aws/lambda/fenvix-prod-github-app-http`,
+  // A metric filter has no ARN of its own: IAM authorizes it on its log group (G-1762).
+  "AWS::Logs::MetricFilter": `arn:aws:logs:${R}:${A}:log-group:/aws/lambda/fenvix-prod-github-app-http`,
   "app AWS::S3::Bucket": `arn:aws:s3:::fenvix-prod-github-app-overflowabc-1a2b3c`,
   "app AWS::S3::BucketPolicy": `arn:aws:s3:::fenvix-prod-github-app-overflowabc-1a2b3c`,
   "dashboard AWS::S3::Bucket": `arn:aws:s3:::fenvix-prod-dashboard-${A}`,
@@ -114,7 +116,7 @@ const CREATE: Record<string, string[]> = {
   "AWS::ImageBuilder::ImagePipeline": ["imagebuilder:CreateImagePipeline"], "AWS::ImageBuilder::ImageRecipe": ["imagebuilder:CreateImageRecipe"],
   "AWS::ImageBuilder::InfrastructureConfiguration": ["imagebuilder:CreateInfrastructureConfiguration"],
   "AWS::Lambda::EventSourceMapping": ["lambda:CreateEventSourceMapping"], "AWS::Lambda::Function": ["lambda:CreateFunction"], "AWS::Lambda::Permission": ["lambda:AddPermission"],
-  "AWS::Logs::LogGroup": ["logs:CreateLogGroup"], "AWS::S3::Bucket": ["s3:CreateBucket"], "AWS::S3::BucketPolicy": ["s3:PutBucketPolicy"],
+  "AWS::Logs::LogGroup": ["logs:CreateLogGroup"], "AWS::Logs::MetricFilter": ["logs:PutMetricFilter"], "AWS::S3::Bucket": ["s3:CreateBucket"], "AWS::S3::BucketPolicy": ["s3:PutBucketPolicy"],
   "AWS::SNS::Subscription": ["sns:Subscribe"], "AWS::SNS::Topic": ["sns:CreateTopic"], "AWS::SNS::TopicPolicy": ["sns:SetTopicAttributes"],
   "AWS::SQS::Queue": ["sqs:CreateQueue"], "AWS::SQS::QueuePolicy": ["sqs:SetQueueAttributes"], "AWS::Scheduler::Schedule": ["scheduler:CreateSchedule"],
 };
@@ -219,7 +221,7 @@ async function templates(): Promise<Synth[]> {
     // Resources the template gives tags: CloudFormation tags them on create, with the service's tag action.
     tagged: new Set(res(t).filter((r) => TAG_PROPS.some((k) => r.Properties?.[k] !== undefined) || JSON.stringify(r.Properties?.LaunchTemplateData ?? {}).includes("TagSpecifications")).map((r) => r.Type)),
   });
-  for (const [name, over] of Object.entries({ "per-job": PER_JOB, demo: DEMO, "no GitHub App": NO_APP, "alarm email": { alarmEmail: "alerts@fenvix.dev" } })) {
+  for (const [name, over] of Object.entries({ pool: PER_JOB, "no GitHub App": NO_APP, "alarm email": { alarmEmail: "alerts@fenvix.dev" } })) {
     out.push({ stack: "app", name, ...typesOf((await synth(over)).template) });
   }
   for (const [name, over] of Object.entries<Record<string, string>>({ "with certificate": { dashboardCertificateArn: CERT }, "without certificate": {} })) {

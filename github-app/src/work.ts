@@ -29,7 +29,11 @@ export type Work =
   /** The dashboard API linked an installation (POST /v1/github/installations/complete): its repositories get projects. */
   | { kind: "installation_linked"; installationId: number }
   /** A project page loaded with a default branch older than a few minutes: read it again from GitHub (by repository id). */
-  | { kind: "refresh_default_branch"; repositoryId: number };
+  | { kind: "refresh_default_branch"; repositoryId: number }
+  /** The dashboard asked to stop a running run (ci_runs.id): now, at its first failed test, or not any more. */
+  | { kind: "stop_run"; runId: string; when: "now" | "first_failure" | "off" }
+  /** The dashboard asked to replay one defect of a run (ci_runs.id, its test id) N times on our machines. */
+  | { kind: "replay"; runId: string; testId: string; times: number };
 
 export interface WorkQueue {
   /** Resolves once the work is accepted (queued durably, or started in this process). Rejects if it was not. */
@@ -45,6 +49,8 @@ export function describeWork(w: Work): string {
     case "onboard": return `onboard ${w.repositoryId}`;
     case "installation_linked": return `installation_linked ${w.installationId}`;
     case "refresh_default_branch": return `refresh_default_branch ${w.repositoryId}`;
+    case "stop_run": return `stop_run ${w.runId} ${w.when}`;
+    case "replay": return `replay ${w.runId} x${w.times}`;
   }
 }
 
@@ -80,6 +86,14 @@ export async function runWork(service: GitHubService, w: Work): Promise<void> {
     await service.refreshDefaultBranch(w.repositoryId);
     return;
   }
+  if (w.kind === "stop_run") {
+    await service.stopRun(w.runId, w.when);
+    return;
+  }
+  if (w.kind === "replay") {
+    await service.requestReplay(w.runId, w.testId, w.times);
+    return;
+  }
   throw new Error(`unknown work kind ${(w as { kind?: unknown }).kind}`);
 }
 
@@ -110,6 +124,13 @@ export function parseWork(v: unknown): Work {
   if (o?.kind === "onboard" && posInt(o.repositoryId)) return { kind: "onboard", repositoryId: o.repositoryId as number };
   if (o?.kind === "installation_linked" && posInt(o.installationId)) return { kind: "installation_linked", installationId: o.installationId as number };
   if (o?.kind === "refresh_default_branch" && posInt(o.repositoryId)) return { kind: "refresh_default_branch", repositoryId: o.repositoryId as number };
+  if (o?.kind === "stop_run" && typeof o.runId === "string" && /^[0-9a-f-]{36}$/.test(o.runId) && (o.when === "now" || o.when === "first_failure" || o.when === "off")) {
+    return { kind: "stop_run", runId: o.runId, when: o.when };
+  }
+  if (o?.kind === "replay" && typeof o.runId === "string" && /^[0-9a-f-]{36}$/.test(o.runId) && typeof o.testId === "string" && o.testId.length >= 1
+    && o.testId.length <= 2000 && Number.isInteger(o.times) && (o.times as number) >= 1 && (o.times as number) <= 50) {
+    return { kind: "replay", runId: o.runId, testId: o.testId, times: o.times as number };
+  }
   throw new Error("not a work message");
 }
 

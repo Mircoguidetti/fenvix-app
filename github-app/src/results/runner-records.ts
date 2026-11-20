@@ -1,3 +1,4 @@
+import { redact } from "./redact.ts";
 /**
  * What fenvix machines send besides the run summary (openapi/fenvix-api.yaml, tag `runner`; docs/data-contract.md
  * "What the runner sends"): live progress, per-test results in chunks, and nightly explorations. The request schemas
@@ -14,6 +15,13 @@ export interface RunnerJob { runId: number; runAttempt: number; repositoryId?: n
 export interface RunnerProgress extends RunnerJob {
   seq: number; phase: Phase; testsTotal: number | null; testsDone: number; passed: number; failed: number; skippedWithProof: number;
   currentTest: string | null; elapsedMs: number; mode?: RunMode;
+  /** The live test view (docs/data-contract.md "Run progress"): tests finished since the previous record (at most 500). */
+  finished?: RunnerFinishedTest[];
+  /** The engine's workers right now (at most 64). */
+  workers?: { id: string; currentTest: string | null; testsDone: number }[];
+}
+export interface RunnerFinishedTest {
+  testId: string; outcome: "passed" | "failed" | "skipped_with_proof"; durationMs: number; worker?: string; failure?: RunnerFailure | null;
 }
 
 export interface RunnerFailure {
@@ -143,6 +151,20 @@ export function parseProgress(raw: unknown): RunnerProgress {
     currentTest: opt(o, "currentTest", "", orNull((v, p) => text(v, p, 2000))) ?? null,
     elapsedMs: nonNeg("elapsedMs"),
     mode: opt(o, "mode", "", (v, p) => oneOf(v, p, MODES)),
+    finished: opt(o, "finished", "", (v, p) => list(v, p, (x, q) => {
+      const t = obj(x, q);
+      return def({
+        testId: text(need(t, "testId", q), at(q, "testId"), 2000),
+        outcome: oneOf(need(t, "outcome", q), at(q, "outcome"), ["passed", "failed", "skipped_with_proof"] as const),
+        durationMs: int(need(t, "durationMs", q), at(q, "durationMs"), 0),
+        worker: opt(t, "worker", q, (y, r) => text(y, r, 64)),
+        failure: opt(t, "failure", q, orNull(failure)),
+      });
+    }, { max: 500 })),
+    workers: opt(o, "workers", "", (v, p) => list(v, p, (x, q) => {
+      const w = obj(x, q);
+      return { id: text(need(w, "id", q), at(q, "id"), 64), currentTest: opt(w, "currentTest", q, orNull((y, r) => text(y, r, 2000))) ?? null, testsDone: int(need(w, "testsDone", q), at(q, "testsDone"), 0) };
+    }, { max: 64 })),
   });
 }
 
@@ -152,7 +174,7 @@ function failure(v: unknown, path: string): RunnerFailure {
     kind: oneOf(need(o, "kind", path), at(path, "kind"), ["real", "flaky_defect"] as const),
     phase: opt(o, "phase", path, (x, p) => text(x, p)),
     exceptionType: opt(o, "exceptionType", path, (x, p) => text(x, p)),
-    message: opt(o, "message", path, (x, p) => text(x, p, 4000)),
+    message: opt(o, "message", path, (x, p) => redact(text(x, p, 4000))),
     location: opt(o, "location", path, (x, p) => text(x, p)),
     defectFingerprint: opt(o, "defectFingerprint", path, (x, p) => text(x, p, undefined, HEX32)),
   });
@@ -206,6 +228,7 @@ export function parseDefect(v: unknown, path: string): RunnerDefect {
   const rp = at(path, "replay");
   const exception = fields(["type", "phase", "message", "location"])(need(o, "exception", path), at(path, "exception"));
   if (exception.message.length > 4000) throw new RecordError(at(path, "exception.message"), "must be at most 4000 characters");
+  exception.message = redact(exception.message);
   return def({
     testId: text(need(o, "testId", path), at(path, "testId"), 2000),
     status: oneOf(need(o, "status", path), at(path, "status"), ["reproduced", "replay_unstable"] as const),
@@ -225,7 +248,7 @@ export function parseDefect(v: unknown, path: string): RunnerDefect {
     exception,
     divergence: opt(o, "divergence", path, orNull((x, p) => {
       const d = obj(x, p);
-      return { index: int(need(d, "index", p), at(p, "index")), reason: text(need(d, "reason", p), at(p, "reason")), description: text(need(d, "description", p), at(p, "description")) };
+      return { index: int(need(d, "index", p), at(p, "index")), reason: text(need(d, "reason", p), at(p, "reason")), description: redact(text(need(d, "description", p), at(p, "description"))) };
     })),
     engineVersion: opt(o, "engineVersion", path, (x, p) => text(x, p)),
     language: opt(o, "language", path, (x, p) => oneOf(x, p, ["python", "node"] as const)),
@@ -320,6 +343,7 @@ export function progressRecord(p: RunnerProgress): Record<string, unknown> {
   return {
     seq: p.seq, phase: p.phase, testsTotal: p.testsTotal, testsDone: p.testsDone, passed: p.passed, failed: p.failed,
     skippedWithProof: p.skippedWithProof, currentTest: p.currentTest, elapsedMs: p.elapsedMs,
+    ...(p.finished ? { finished: p.finished } : {}), ...(p.workers ? { workers: p.workers } : {}),
   };
 }
 

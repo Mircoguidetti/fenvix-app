@@ -84,9 +84,9 @@ describe("warm-up credentials", () => {
 
   it("the cache token of a warm-up names it and writes", () => {
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-    const t = signCacheToken(privateKey, { installationId: 4242, write: true, exp: exp(), warmupId: 17 });
+    const t = signCacheToken(privateKey, { installationId: 4242, repositoryId: 70001, write: true, exp: exp(), warmupId: 17 });
     const payload = JSON.parse(Buffer.from(t.split(".")[1]!, "base64url").toString());
-    assert.deepEqual({ ...payload, exp: 0 }, { org: "gh-4242", w: true, exp: 0, warm: 17 });
+    assert.deepEqual({ ...payload, exp: 0 }, { org: "gh-4242-r70001", w: true, exp: 0, warm: 17 });
   });
 });
 
@@ -96,7 +96,7 @@ describe("warm-up machine: user data", () => {
   it("the settings, the description (base64 JSON), the credentials root only, then fenvix-warmup.target; no just-in-time runner", () => {
     const ud = warmupUserData(warm(), MACHINE);
     for (const line of ["FENVIX_MACHINE=per-job", "FENVIX_KIND=warmup", "FENVIX_MODE=enforce", "FENVIX_REGION=us", "FENVIX_RUNNER_NAME=fenvix-w17",
-      "FENVIX_WARMUP_ID=17", "FENVIX_CACHE_ACCESS=write", "FENVIX_CACHE_URL=http://10.42.0.10:8787/gh-4242", "FENVIX_CACHE_ORG=gh-4242",
+      "FENVIX_WARMUP_ID=17", "FENVIX_CACHE_ACCESS=write", "FENVIX_CACHE_URL=http://10.42.0.10:8787/gh-4242-r70001", "FENVIX_CACHE_ORG=gh-4242-r70001",
       "FENVIX_WARMUPS_URL=https://api.fenvix.dev/v1/runner/warmups"]) assert.match(ud, new RegExp(`^${line.replace(/[./]/g, "\\$&")}$`, "m"), line);
     const spec = JSON.parse(Buffer.from(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d >\/etc\/fenvix\/warmup\.json/.exec(ud)![1]!, "base64").toString());
     assert.deepEqual(spec, { v: 1, warmupId: 17, attempt: 1, repository: { id: 70001, fullName: "acme/shop" }, installationId: 4242, commitSha: "a".repeat(40), ref: "refs/heads/main", workflowPath: ".github/workflows/ci.yml", job: "test" });

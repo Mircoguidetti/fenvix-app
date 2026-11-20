@@ -24,6 +24,7 @@ const run = (d: string, t: string, extra: Record<string, string> = {}) => {
     writeFileSync(join(dir, ".github/workflows/test.yml"), t);
     for (const [f, s] of Object.entries(extra)) writeFileSync(join(dir, ".github/workflows", f), s);
     cpSync(join(root, "infra/github-app/test/workflows.test.ts"), join(dir, "infra/github-app/test/workflows.test.ts"));
+    cpSync(join(root, ".github/dependabot.yml"), join(dir, ".github/dependabot.yml"));
     // NODE_TEST_CONTEXT is set in a file that node --test runs in its own process; a `node --test` child that inherits it
     // skips every file and exits 0 ("run() is being called recursively"), which would make every case look green.
     const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;

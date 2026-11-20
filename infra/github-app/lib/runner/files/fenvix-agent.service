@@ -1,0 +1,17 @@
+[Unit]
+Description=fenvix machine agent (our machines: leases one customer's jobs into sandboxed slots)
+Wants=network-online.target
+After=network-online.target fenvix-imds-block.service
+Requires=fenvix-imds-block.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I /opt/fenvix/bin/fenvix-agent
+Restart=on-failure
+RestartSec=5
+# The agent is root (it makes the slot sandboxes); its state directory is root-only.
+StateDirectory=fenvix-agent
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

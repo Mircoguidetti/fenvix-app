@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# A replay of one defect, in its slot, as the slot user (fenvix-slot runs it instead of the GitHub runner). The run's
+# commit is checked out with a read-only token for that one repository; the project's Python environment is made
+# (pytest, the project, its requirements files, the engine's wheel); the engine rebuilds the defect under the stored
+# seed and replays it N times: `fenvix repro TEST --seed S --confirm N --json`. The outcome goes to
+# $FENVIX_OUT/replay.json: {done, fails, identicalFingerprint, matchesDefect, detail}; fenvix-agent sends it.
+# Never exits non-zero for a project problem: the outcome says what happened.
+set -uo pipefail
+spec="${1:?replay.json}"
+out="${FENVIX_OUT:?}"
+git_base="${FENVIX_GIT_BASE:-https://github.com}"
+fenvix_bin="${FENVIX_BIN:-/opt/fenvix/bin/fenvix}"
+wheels="${FENVIX_WHEELS:-/opt/fenvix/wheels}"
+field() { python3 -I -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$spec" "$1"; }
+finish() { # done fails identical matches detail
+  python3 -I - "$out/replay.json" "$@" <<'PY'
+import json, sys
+path, done, fails, ident, match, detail = sys.argv[1:7]
+json.dump({"done": int(done), "fails": int(fails), "identicalFingerprint": ident == "true",
+           "matchesDefect": None if match == "" else match == "true", "detail": detail[:900]}, open(path, "w"))
+PY
+  exit 0
+}
+repo="$(field repository)"; sha="$(field commitSha)"; test_id="$(field testId)"; times="$(field times)"; seed="$(field seed)"; want="$(field fingerprint)"
+if ! [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$sha" =~ ^[0-9a-f]{40}$ && "$times" =~ ^[0-9]+$ ]]; then finish 0 0 false "" "bad replay description"; fi
+[ -n "$test_id" ] || finish 0 0 false "" "no test id"
+src="$HOME/work/src"
+mkdir -p "$src" "$out"
+token="$(cat "$HOME/.fenvix/checkout-token" 2>/dev/null)"; rm -f "$HOME/.fenvix/checkout-token"
+auth=(); [ -n "$token" ] && auth=(-c "http.extraHeader=Authorization: Basic $(printf 'x-access-token:%s' "$token" | base64 -w0)")
+unset token
+if ! { git init -q "$src" && git -C "$src" "${auth[@]}" fetch -q --depth 1 "$git_base/$repo.git" "$sha" && git -C "$src" -c advice.detachedHead=false checkout -q FETCH_HEAD; }; then
+  finish 0 0 false "" "could not check out $repo at $sha"
+fi
+cd "$src" || finish 0 0 false "" "no checkout"
+venv="$HOME/work/venv"
+python3 -m venv "$venv" >/dev/null 2>&1 || finish 0 0 false "" "python3 -m venv failed"
+pip=("$venv/bin/pip" install -q --disable-pip-version-check)
+"${pip[@]}" pytest >/dev/null 2>&1
+for w in "$wheels"/fenvix-*.whl "$wheels"/detpy-*.whl; do [ -f "$w" ] && "${pip[@]}" --no-deps "$w" >/dev/null 2>&1; done
+for r in requirements.txt requirements-dev.txt requirements-test.txt requirements/test.txt requirements/dev.txt; do [ -f "$r" ] && "${pip[@]}" -r "$r" >/dev/null 2>&1; done
+if [ -f pyproject.toml ] || [ -f setup.py ]; then "${pip[@]}" -e . >/dev/null 2>&1; fi
+seed_arg=fixed; [[ "$seed" =~ ^[0-9]+$ ]] && seed_arg="$seed"
+res="$out/repro.json"
+"$fenvix_bin" repro "$test_id" --python "$venv/bin/python" --seed "$seed_arg" --confirm "$times" --json --out "$out/repro" >"$res" 2>"$out/repro.err"
+python3 -I - "$res" "$want" "$out/repro.err" "$out/replay.json" <<'PY'
+import json, sys
+res, want, err, path = sys.argv[1:5]
+try:
+    b = json.load(open(res))
+except (OSError, ValueError):
+    tail = open(err, errors="replace").read().strip().splitlines()[-1:] or ["no output"]
+    json.dump({"done": 0, "fails": 0, "identicalFingerprint": False, "matchesDefect": None, "detail": ("the engine gave no result: " + tail[0])[:900]}, open(path, "w"))
+    sys.exit(0)
+rp = b.get("replay") or {}
+fps = [f for f in (rp.get("fingerprints") or []) if f]
+match = None if not want or not fps else (len(set(fps)) == 1 and fps[0] == want)
+json.dump({"done": int(rp.get("runs") or 0), "fails": int(rp.get("fails") or 0), "identicalFingerprint": bool(rp.get("identical_fingerprint")),
+           "matchesDefect": match, "detail": (f"{b.get('status', '')}: {b.get('cause') or ''}").strip(": ")[:900]}, open(path, "w"))
+PY
+exit 0
