@@ -39,6 +39,6 @@ FIRECRACKER_SHA256=<from the v1.18.0 release page> bash host-setup.sh
 KERNEL=<bzImage-6.18 CI artifact> BASE=<ubuntu-24.04.squashfs CI artifact> bash build-guest.sh
 # 3. one job (the values a worker would put in the job's queue message)
 JITCONFIG=<encoded_jit_config> SLOT=1 REPOSITORY_ID=<id> RUN_ID=<id> RUN_ATTEMPT=1 RUNNER_NAME=fenvix-j<job id> \
-  SUMMARY_TOKEN_FILE=<file, 0400 fenvix-post> FENVIX_SUMMARIES_URL=https://github.fenvix.dev/v1/runner/summaries \
+  SUMMARY_TOKEN_FILE=<file, 0400 fenvix-post> FENVIX_SUMMARIES_URL=https://api.fenvix.dev/v1/runner/summaries \
   bash run-job.sh
 ```

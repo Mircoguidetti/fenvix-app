@@ -373,7 +373,7 @@ The Usage record's `runsUsed` is the count of billable usage events of the month
 
 The runner is the fenvix machine's side (another repository): the GitHub Actions runner plus `runner/fenvix-run`, which
 wraps the job's test command in the engine (`detpy` for Python/pytest, `detjs` for Node vitest/jest). It sends four
-kinds of records to the App (`https://github.fenvix.dev/v1`, operations tagged `runner` in `openapi/fenvix-api.yaml`;
+kinds of records to the App (`https://api.fenvix.dev/v1`, operations tagged `runner` in `openapi/fenvix-api.yaml`;
 the request schemas there are the contract and the App checks every body against them).
 
 **Credential.** Every call carries the machine's own credential, `Authorization: Bearer fxr1....`, minted by the App for
@@ -589,7 +589,7 @@ configuration). `/etc/fenvix/runner.env` with the plain settings and:
 | `FENVIX_REGION` | the organization's region |
 | `FENVIX_WARMUP_ID`, `FENVIX_RUNNER_NAME` | the warm-up and this machine's name (`fenvix-w<id>`, `fenvix-w<id>-<attempt>` after a preemption) |
 | `FENVIX_CACHE_ACCESS`, `FENVIX_CACHE_URL`, `FENVIX_CACHE_ORG` | `write`, the installation's own cache organization (`gh-<installation id>`) |
-| `FENVIX_WARMUPS_URL` | `https://github.fenvix.dev/v1/runner/warmups` |
+| `FENVIX_WARMUPS_URL` | `https://api.fenvix.dev/v1/runner/warmups` |
 
 and the files `/etc/fenvix/warmup.json`:
 

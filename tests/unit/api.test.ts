@@ -7,7 +7,7 @@ import { ApiError, normalizeApiUrl } from "../../src/data/api-errors.ts";
 import { configProblem } from "../../src/lib/env.ts";
 
 const ORG = "0b6f2c1e-7a4d-4e1b-9c55-1f2e3d4c5b01";
-const BASE = "https://github.fenvix.dev/v1";
+const BASE = "https://api.fenvix.dev/v1";
 
 interface Seen {
   method: string;
@@ -162,8 +162,8 @@ test("organizations: /me, the organization's members and invitations, accepting 
 });
 
 test("the API address and what the sign-in page says when the build is missing a setting", () => {
-  assert.equal(normalizeApiUrl("https://github.fenvix.dev"), "https://github.fenvix.dev/v1");
-  assert.equal(normalizeApiUrl(" https://github.fenvix.dev/v1/ "), "https://github.fenvix.dev/v1");
+  assert.equal(normalizeApiUrl("https://api.fenvix.dev"), "https://api.fenvix.dev/v1");
+  assert.equal(normalizeApiUrl(" https://api.fenvix.dev/v1/ "), "https://api.fenvix.dev/v1");
   assert.equal(normalizeApiUrl("http://localhost:8787/v1"), "http://localhost:8787/v1");
   const ok = { backend: "api" as const, apiUrl: BASE, supabaseUrl: "https://abcd.supabase.co", supabaseAnonKey: "anon" };
   assert.equal(configProblem(ok), null);

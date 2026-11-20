@@ -30,7 +30,7 @@ class FakeEc2 {
   }
 }
 
-const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://github.fenvix.dev/v1/runner/summaries" };
+const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://api.fenvix.dev/v1/runner/summaries" };
 
 describe("demo mode: one fresh machine per demo (demo-up / demo-down)", () => {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });

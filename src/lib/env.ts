@@ -14,7 +14,7 @@ const raw: Partial<ImportMetaEnv> = import.meta.env ?? {};
 export const backend: Backend = raw.VITE_DATA_BACKEND === "mock" ? "mock" : "api";
 
 /**
- * The fenvix API, including /v1 (for example https://github.fenvix.dev/v1). A bare host gets /v1 added. Every screen
+ * The fenvix API, including /v1 (for example https://api.fenvix.dev/v1). A bare host gets /v1 added. Every screen
  * reads and changes data through it; Supabase only signs people in. Not a secret.
  */
 export const apiUrl: string = normalizeApiUrl(raw.VITE_API_URL ?? "");

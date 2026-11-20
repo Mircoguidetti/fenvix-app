@@ -5,7 +5,7 @@ info:
   license: { name: Proprietary, url: "https://fenvix.dev" }
   description: |
     The one API the fenvix dashboard talks to (the dashboard never reaches the database). Served by the GitHub App
-    service (github-app/src/api/) on AWS Lambda behind API Gateway, at https://github.fenvix.dev/v1.
+    service (github-app/src/api/) on AWS Lambda behind API Gateway, at https://api.fenvix.dev/v1.
 
     **Source of truth.** The dashboard's typed client (src/api/schema.d.ts) is generated from this file
     (`npm run api:generate`) and src/data/types.ts re-exports these schemas: changing a field here breaks the dashboard
@@ -23,7 +23,7 @@ info:
     Conventions: JSON, camelCase, times ISO 8601 UTC, durations in milliseconds unless the name says otherwise, shares
     from 0 to 1. Errors are `{ "error": { "code", "message", "field"? } }` with a message a person can read.
 servers:
-  - url: https://github.fenvix.dev/v1
+  - url: https://api.fenvix.dev/v1
 security:
   - session: []
 tags:

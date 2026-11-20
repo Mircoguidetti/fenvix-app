@@ -59,14 +59,19 @@ describe("the workflow: concurrency, the Cloudflare token, the dashboard's host"
   });
   it("the Cloudflare token is in no step's environment: the steps that call Cloudflare read it from SSM themselves", () => {
     // REPORT-deploy-pipeline-4: was "CLOUDFLARE_API_TOKEN only in steps 6, 8 (watcher) and 9". Now no GitHub secret
-    // exists; cli.mjs reads /fenvix/prod/bootstrap/cloudflare-api-token in dashboard-certificate, watch-certificate and
-    // dns only, and preflight exports only whether it is set.
+    // exists; cli.mjs reads /fenvix/prod/bootstrap/cloudflare-api-token in dashboard-certificate, api-certificate and
+    // dns only, and preflight exports only whether it is set. P-037: the API's certificate is issued before CDK (step
+    // 7c), so the CDK step has no watcher and CloudFormation never waits for a DNS record.
     assert.doesNotMatch(wf, /CLOUDFLARE_API_TOKEN|FENVIX_CF_TOKEN|secrets\./);
-    const cdk = wf.split(/\n      - name: /).slice(1).find((s) => s.startsWith("8. "));
-    assert.match(cdk, /node \.\.\/\.\.\/deploy\/cli\.mjs watch-certificate --timeout-minutes 90 &/);
+    const steps = wf.split(/\n      - name: /).slice(1);
+    const cdk = steps.find((s) => s.startsWith("8. "));
+    assert.doesNotMatch(cdk, /watch-certificate|CLOUDFLARE/);
+    assert.match(cdk, /\[ -n "\$\{FENVIX_API_CERTIFICATE_ARN:-\}" \] \|\| \{/);
+    const cert = steps.findIndex((s) => s.startsWith("7c. ") && /node deploy\/cli\.mjs api-certificate --wait-minutes \d+/.test(s));
+    assert.ok(cert >= 0 && cert < steps.indexOf(cdk), "7c (API certificate) runs before CDK");
     const cli = readFileSync(join(ROOT, "deploy/cli.mjs"), "utf8");
     const users = cli.split(/\n  (?:async )?(?="?[a-z-]+"?\(\))/).filter((x) => /await cloudflare\(\)/.test(x)).map((x) => /^"?([a-z-]+)/.exec(x)[1]);
-    assert.deepEqual(users, ["dashboard-certificate", "watch-certificate", "dns"]);
+    assert.deepEqual(users, ["dashboard-certificate", "api-certificate", "dns"]);
   });
   it("the dashboard is console.fenvix.dev everywhere (app.fenvix.dev nowhere)", () => {
     const cdk = JSON.parse(readFileSync(join(ROOT, "infra/github-app/cdk.json"), "utf8")).context;

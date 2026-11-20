@@ -48,7 +48,9 @@ describe("settings", () => {
     await assert.rejects(settings({ engineCliCommit: "main" }), /40-character/);
     await assert.rejects(settings({ logRetentionDays: "10" }), /one of/);
     await assert.rejects(settings({ runnerInstanceType: "t4g.medium" }), /x86_64/);
-    await assert.rejects(settings({ domainName: "https://github.fenvix.dev" }), /host name/);
+    await assert.rejects(settings({ domainName: "https://api.fenvix.dev" }), /host name/);
+    await assert.rejects(settings({ apiCertificateArn: "arn:aws:acm:us-east-1:865859654353:certificate/12345678-1234-1234-1234-123456789012" }), /apiCertificateArn.*in eu-west-1/);
+    await assert.rejects(settings({ apiCertificateArn: "arn:aws:acm:eu-west-1:111111111111:certificate/12345678-1234-1234-1234-123456789012" }), /apiCertificateArn.*account 865859654353/);
     await assert.rejects(settings({ apiCorsOrigins: "https://preview.fenvix.dev/path" }), /apiCorsOrigins/);
     await assert.rejects(settings({ apiCorsOrigins: "http://preview.fenvix.dev" }), /apiCorsOrigins/);
     await assert.rejects(settings({ fenvixRegion: "asia" }), /us or eu/);
@@ -57,7 +59,7 @@ describe("settings", () => {
     await assert.rejects(settings({ secondFenvixRegion: "eu", secondAwsRegion: "us-east-1", secondLaunchTemplateId: "template" }), /lt-/);
     await assert.rejects(settings({ secondCacheUrl: "http://10.43.0.10:8787" }), /secondCacheUrl/);
     const s = await settings();
-    assert.equal(s.domainName, "github.fenvix.dev");
+    assert.equal(s.domainName, "api.fenvix.dev");
     assert.equal(s.runnerInstanceType, "c6i.large");
     assert.equal(s.runnerMode, "per-job");
     assert.equal(s.demoMaxHours, 12);

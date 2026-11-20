@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import { Match } from "aws-cdk-lib/assertions";
 import { appParameters } from "../lib/parameters.ts";
 import { DEMO, resources, synth } from "./helpers.ts";
 
@@ -78,17 +79,28 @@ describe("the stack, demo mode (an option)", async () => {
     assert.match(json(sch.Properties.Target), /Sweep/);
   });
 
-  it("HTTPS only on github.fenvix.dev: ACM certificate validated by DNS, the execute-api URL off, throttled, access logs", () => {
-    t.hasResourceProperties("AWS::CertificateManager::Certificate", { DomainName: "github.fenvix.dev", ValidationMethod: "DNS" });
+  it("HTTPS only on api.fenvix.dev: ACM certificate validated by DNS, the execute-api URL off, throttled, access logs", () => {
+    t.hasResourceProperties("AWS::CertificateManager::Certificate", { DomainName: "api.fenvix.dev", ValidationMethod: "DNS" });
     const [, cert] = resources(t, "AWS::CertificateManager::Certificate")[0]!;
     assert.equal(cert.Properties.DomainValidationOptions, undefined, "no Route 53 zone: the record goes to Cloudflare by hand");
-    t.hasResourceProperties("AWS::ApiGatewayV2::DomainName", { DomainName: "github.fenvix.dev" });
+    t.hasResourceProperties("AWS::ApiGatewayV2::DomainName", { DomainName: "api.fenvix.dev" });
     t.hasResourceProperties("AWS::ApiGatewayV2::Api", { ProtocolType: "HTTP", DisableExecuteApiEndpoint: true });
     t.hasResourceProperties("AWS::ApiGatewayV2::Stage", { StageName: "$default", AutoDeploy: true, DefaultRouteSettings: { ThrottlingRateLimit: 50, ThrottlingBurstLimit: 100 } });
     const [, stage] = resources(t, "AWS::ApiGatewayV2::Stage")[0]!;
     assert.ok(stage.Properties.AccessLogSettings);
     t.hasResourceProperties("AWS::ApiGatewayV2::Integration", { IntegrationType: "AWS_PROXY", PayloadFormatVersion: "2.0" });
     t.hasOutput("DnsTarget", {});
+  });
+
+  it("the deploy pipeline's certificate (apiCertificateArn, P-037): used by ARN, no certificate resource, no DNS wait", async () => {
+    const arn = "arn:aws:acm:eu-west-1:865859654353:certificate/12345678-1234-1234-1234-123456789012";
+    const { template: tc } = await synth({ apiCertificateArn: arn });
+    assert.equal(resources(tc, "AWS::CertificateManager::Certificate").length, 0, "CloudFormation never waits for a DNS record");
+    tc.hasResourceProperties("AWS::ApiGatewayV2::DomainName", { DomainName: "api.fenvix.dev", DomainNameConfigurations: [Match.objectLike({ CertificateArn: arn })] });
+    tc.hasOutput("CertificateArn", { Value: arn });
+    tc.hasOutput("CustomDomain", { Value: "api.fenvix.dev" });
+    tc.hasOutput("WebhookUrl", { Value: "https://api.fenvix.dev/webhooks/github" });
+    tc.hasOutput("SetupUrl", { Value: "https://api.fenvix.dev/github/setup" });
   });
 
   it("logs: every log group kept 14 days", () => {
@@ -121,7 +133,7 @@ describe("the stack, demo mode (an option)", async () => {
     assert.deepEqual(st.find((x) => x.Sid === "TerminateOnlyTheseMachines")!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-demo" } });
     const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-demo")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
     assert.equal(vars.DEMO_REPOSITORY, "Mircoguidetti/fenvix-demo");
-    assert.equal(vars.FENVIX_MACHINE_FENVIX_SUMMARIES_URL, "https://github.fenvix.dev/v1/runner/summaries");
+    assert.equal(vars.FENVIX_MACHINE_FENVIX_SUMMARIES_URL, "https://api.fenvix.dev/v1/runner/summaries");
     assert.equal(vars.FENVIX_MACHINE_FENVIX_CACHE_URL, undefined, "no shared cache in a demo");
     // The worker never starts machines in demo mode.
     assert.ok(!statementsOf(fnRole("worker")).some((x) => arr(x.Action).includes("ec2:RunInstances")));
@@ -162,7 +174,7 @@ describe("the stack, demo mode (an option)", async () => {
     assert.match(fnOf(routes["ANY /v1/runner/{proxy+}"]!), /"Http[0-9A-F]+"/);
     assert.match(fnOf(routes.$default!), /"Http[0-9A-F]+"/);
     assert.equal(resources(t, "AWS::ApiGatewayV2::Api")[0]![1].Properties.CorsConfiguration, undefined, "no API Gateway CORS: preflights reach the API, which allows the dashboard's origin only");
-    t.hasOutput("DashboardApiUrl", { Value: "https://github.fenvix.dev/v1" });
+    t.hasOutput("DashboardApiUrl", { Value: "https://api.fenvix.dev/v1" });
   });
 
   it("every role carries the permissions boundary the execution policy requires (R-012 F4)", () => {

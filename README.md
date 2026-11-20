@@ -45,7 +45,7 @@ chosen organization as `X-Fenvix-Workspace`. Every value below is public by desi
 
 | Variable | What it is |
 | --- | --- |
-| `VITE_API_URL` | The fenvix API, including `/v1`, for example `https://github.fenvix.dev/v1` (a bare host gets `/v1` added) |
+| `VITE_API_URL` | The fenvix API, including `/v1`, for example `https://api.fenvix.dev/v1` (a bare host gets `/v1` added) |
 | `VITE_SUPABASE_URL` | Supabase project URL, `https://<project-ref>.supabase.co` (Project settings → API), for sign-in only |
 | `VITE_SUPABASE_ANON_KEY` | The `anon` `public` key (Project settings → API), for sign-in only |
 | `VITE_DATA_BACKEND` | Optional. `mock` for local development and the checks; anything else (or nothing) uses the API |
@@ -83,14 +83,14 @@ Vite bakes these in when it builds, so change them and build again. If one of `V
 ## Deploy on Vercel
 
 The production dashboard (`https://console.fenvix.dev`) is hosted on Vercel; the API stays on AWS
-(`https://github.fenvix.dev`). The founder's step-by-step setup is `docs/DEPLOY-VERCEL.md` (Italian). `vercel.json`
+(`https://api.fenvix.dev`). The founder's step-by-step setup is `docs/DEPLOY-VERCEL.md` (Italian). `vercel.json`
 holds the whole build (`npm ci`, `npm run build`, output `dist`), the SPA rewrite (every path except `/assets/*` and
 `/favicon.svg` is answered with `index.html`) and the security headers. Environment variables (Project → Settings →
 Environment Variables):
 
 | Name | Environments | Value |
 | --- | --- | --- |
-| `VITE_API_URL` | all | `https://github.fenvix.dev/v1` |
+| `VITE_API_URL` | all | `https://api.fenvix.dev/v1` |
 | `VITE_SUPABASE_URL` | all | the Project URL |
 | `VITE_SUPABASE_ANON_KEY` | all | the anon (public) key |
 | `VITE_DATA_BACKEND` | Preview only | `mock` (previews never call the API: its CORS accepts `https://console.fenvix.dev` only) |

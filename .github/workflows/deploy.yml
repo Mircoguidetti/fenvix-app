@@ -1,5 +1,6 @@
-# Deploy on merge to main (docs/DEPLOY-AWS.md): every test (test.yml), then the database, the secrets, the API and the
-# runners (CDK, infra/github-app) and the API's DNS record. Nobody runs anything by hand.
+# Deploy on merge to main (docs/DEPLOY-AWS.md): every test (test.yml), then the database, the secrets, the API's
+# certificate, the API and the runners (CDK, infra/github-app) and the API's DNS record. Nobody runs anything by hand.
+# The API's host is ONE setting, infra/github-app/cdk.json domainName; no step here names it.
 #
 # The dashboard is hosted on Vercel (docs/DEPLOY-VERCEL.md), which builds it from this repository by itself: the AWS
 # account cannot create CloudFront resources until AWS verifies it. The AWS dashboard (stack fenvix-<env>-dashboard:
@@ -90,7 +91,7 @@ jobs:
           role-duration-seconds: 7200
           mask-aws-account-id: false
 
-      # Steps 1-3, 5, 6, 8 (the watcher) and 9 read the founder's values they need from SSM Parameter Store
+      # Steps 1-3, 5, 6, 7c and 9 read the founder's values they need from SSM Parameter Store
       # (/fenvix/prod/bootstrap/*) themselves and mask them before any use (deploy/lib/bootstrap.mjs).
       - name: 1. Check the one-time setup
         run: |
@@ -132,42 +133,44 @@ jobs:
       - name: 7b. Clear a failed first create (a stack in ROLLBACK_COMPLETE, its empty retained bucket)
         run: node deploy/cli.mjs recover-failed-creates
 
+      # Before CDK, so CloudFormation never waits for a DNS record: requested once, its validation CNAME put in
+      # Cloudflare (or, without a Cloudflare token, listed in the summary and waited for), then waited for. Not issued
+      # in time: the run stops here with the record to add, nothing else changed; the next run finds it and goes on.
+      - name: 7c. API certificate (the stack's region; validated before CDK)
+        env:
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+        run: node deploy/cli.mjs api-certificate --wait-minutes 20
+
       # FENVIX_DASHBOARD_ON_AWS (job env) is the CDK setting dashboardOnAws: off, `--all` is the API stack only.
       - name: 8. API, runners (and the AWS dashboard hosting only with FENVIX_DASHBOARD_ON_AWS) (CDK)
         working-directory: infra/github-app
         env:
-          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
           FENVIX_ALARM_EMAIL: ${{ vars.FENVIX_ALARM_EMAIL }}
           # Optional, off by default: demo mode (one machine per demo, docs/DEPLOY-AWS.md) instead of per-job.
           FENVIX_RUNNER_MODE: ${{ vars.FENVIX_RUNNER_MODE }}
           FENVIX_DEMO_REPOSITORY: ${{ vars.FENVIX_DEMO_REPOSITORY }}
         run: |
-          # While CloudFormation waits for the API's certificate (first deploy), its validation record is put in
-          # Cloudflare (or listed in the run's summary). The watcher reads the Cloudflare token from SSM itself; no
-          # environment of this step holds it.
-          node ../../deploy/cli.mjs watch-certificate --timeout-minutes 90 &
-          watcher=$!
-          rc=0
+          # The API's certificate is step 7c's (issued): the stack uses it by ARN and never waits for DNS.
+          [ -n "${FENVIX_API_CERTIFICATE_ARN:-}" ] || { echo "::error::no API certificate from step 7c"; exit 1; }
           npx --no-install cdk deploy --all --require-approval never --progress events --outputs-file cdk-outputs.json \
             -c "githubAppId=$FENVIX_CDK_GITHUB_APP_ID" -c "githubAppSlug=$FENVIX_CDK_GITHUB_APP_SLUG" \
-            -c "githubClientId=$FENVIX_CDK_GITHUB_CLIENT_ID" || rc=$?
-          kill "$watcher" 2>/dev/null || true
-          exit "$rc"
+            -c "githubClientId=$FENVIX_CDK_GITHUB_CLIENT_ID"
 
+      # Without a Cloudflare token: lists the record, waits for it in public DNS, and stops with it if it is not there.
       - name: 9. DNS records (Cloudflare)
         env:
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
-        run: node deploy/cli.mjs dns --outputs infra/github-app/cdk-outputs.json
+        run: node deploy/cli.mjs dns --outputs infra/github-app/cdk-outputs.json --wait-minutes 20
 
       - name: 10. Dashboard on AWS (build, upload, refresh the cache; only with FENVIX_DASHBOARD_ON_AWS)
         if: env.FENVIX_DASHBOARD_ON_AWS == 'true'
-        env:
-          VITE_API_URL: https://github.fenvix.dev
         run: |
-          # VITE_SUPABASE_ANON_KEY (public, checked and masked) comes from step 1.
-          export VITE_SUPABASE_URL="$SUPABASE_URL"
-          npm run build
+          # VITE_SUPABASE_ANON_KEY (public, checked and masked) comes from step 1. The API's URL is the stack's own
+          # output (https://<cdk.json domainName>/v1), never a literal here.
           out=infra/github-app/cdk-outputs.json
+          VITE_API_URL="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-github-app'].DashboardApiUrl")"
+          export VITE_API_URL VITE_SUPABASE_URL="$SUPABASE_URL"
+          npm run build
           bucket="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-dashboard'].DashboardBucket")"
           dist="$(node -p "require('./$out')['fenvix-$FENVIX_ENV-dashboard'].DistributionId")"
           # Hashed files are kept for a year; old ones stay, so a page loaded before this deploy keeps working.

@@ -308,11 +308,12 @@ export class FenvixGitHubAppStack extends Stack {
     }
 
     // ---------------------------------------------------------------- HTTPS on the custom domain
-    const certificate = new acm.Certificate(this, "Certificate", {
-      domainName: s.domainName,
-      // DNS stays on Cloudflare: while CloudFormation waits, the deploy pipeline puts the validation CNAME there.
-      validation: acm.CertificateValidation.fromDns(),
-    });
+    // The deploy pipeline requests the certificate and waits for it before CDK (deploy/cli.mjs api-certificate) and
+    // passes its ARN: CloudFormation never waits for a DNS record. Without one (a stack deployed by hand) the stack
+    // requests it and CloudFormation waits until its validation CNAME is in Cloudflare.
+    const certificate = s.apiCertificateArn
+      ? acm.Certificate.fromCertificateArn(this, "ApiCertificate", s.apiCertificateArn)
+      : new acm.Certificate(this, "Certificate", { domainName: s.domainName, validation: acm.CertificateValidation.fromDns() });
     const domain = new apigw.DomainName(this, "Domain", { domainName: s.domainName, certificate, securityPolicy: apigw.SecurityPolicy.TLS_1_2 });
     const httpIntegration = new HttpLambdaIntegration("Http", http, { payloadFormatVersion: apigw.PayloadFormatVersion.VERSION_2_0 });
     const api = new apigw.HttpApi(this, "Api", {
@@ -352,7 +353,7 @@ export class FenvixGitHubAppStack extends Stack {
 
 
     // ---------------------------------------------------------------- what the founder needs after the deploy
-    new CfnOutput(this, "CustomDomain", { value: s.domainName, description: "The App's host" });
+    new CfnOutput(this, "CustomDomain", { value: s.domainName, description: "The API's host (dashboard API, GitHub App, runner reports)" });
     new CfnOutput(this, "DnsTarget", { value: domain.regionalDomainName, description: `Cloudflare: CNAME ${s.domainName} -> this value (DNS only, grey cloud)` });
     new CfnOutput(this, "WebhookUrl", { value: `https://${s.domainName}/webhooks/github` });
     new CfnOutput(this, "SetupUrl", { value: `https://${s.domainName}/github/setup` });
