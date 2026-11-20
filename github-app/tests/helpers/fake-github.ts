@@ -52,6 +52,12 @@ export class FakeGitHub {
    */
   readonly users = new Map<string, { login: string; id: number }>();
   readonly orgRoles = new Map<string, "admin" | "member">();
+  /**
+   * G-1631: a person's permission on a repository (GET /repos/{o}/{r}/collaborators/{login}/permission), keyed
+   * `owner/repo:login` (lower case login). Absent: `defaultPermission`. "unknown" answers 404 (no such user).
+   */
+  readonly repoAccess = new Map<string, string>();
+  defaultPermission = "write";
   private readonly tokens = new Map<string, number>();
   /** Tokens asked for with `repository_ids` / `permissions` (POST access_tokens): limited to those, as GitHub does. */
   readonly tokenScopes = new Map<string, { repositoryIds: number[] | null; permissions: Record<string, string> | null }>();
@@ -186,6 +192,11 @@ export class FakeGitHub {
       if (!u) return [401, { message: "Bad credentials", documentation_url: "https://docs.github.com/rest", status: "401" }];
       return [200, { ...exampleResponse("GET", "/user", 200), login: u.login, id: u.id, type: "User" }];
     }
+    // A GitHub user by id (G-1631: the current login of a person whose login changed).
+    if ((m = /^\/user\/(\d+)$/.exec(p)) && method === "GET") {
+      const u = [...this.users.values()].find((x) => x.id === Number(m![1]));
+      return u ? [200, { ...exampleResponse("GET", "/user/{account_id}", 200), login: u.login, id: u.id }] : this.notFound();
+    }
     if ((m = /^\/user\/memberships\/orgs\/([^/]+)$/.exec(p)) && method === "GET") {
       const t = /^Bearer (gho_\w+)$/.exec(auth)?.[1];
       const u = t ? this.users.get(t) : undefined;
@@ -243,6 +254,13 @@ export class FakeGitHub {
     const rest = m[3] ?? "";
 
     if (method === "GET" && rest === "") return [200, this.repoJson(repo, exampleResponse("GET", "/repos/{owner}/{repo}", 200))];
+    if (method === "GET" && (m = /^\/collaborators\/([^/]+)\/permission$/.exec(rest))) {
+      const login = decodeURIComponent(m[1]!).toLowerCase();
+      const perm = this.repoAccess.get(`${repo.fullName}:${login}`) ?? this.defaultPermission;
+      if (perm === "unknown") return this.notFound();
+      const ex = exampleResponse("GET", "/repos/{owner}/{repo}/collaborators/{username}/permission", 200);
+      return [200, { ...ex, permission: perm, role_name: perm, user: { ...((ex as Json).user as Json), login, role_name: perm } }];
+    }
 
     if (method === "GET" && (m = /^\/contents\/(.+)$/.exec(rest))) {
       const path = decodeURIComponent(m[1]!);

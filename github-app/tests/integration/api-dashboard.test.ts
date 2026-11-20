@@ -401,6 +401,8 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       deleteProject: async (who, role) => {
         const p = (await admin.query("insert into ci_projects (workspace_id, full_name, language, test_runner, installation_id) values ($1, $2, 'python', 'pytest', 990001) returning id",
           [ws, `matrix/delete-${role}-${githubId()}`])).rows[0].id;
+        // G-1631: one disconnects only a project one sees (GitHub said so).
+        await admin.query("insert into gh_repo_access (user_id, project_id, can_see, basis) values ($1, $2, true, 'admin')", [who.userId, p]);
         return (await call(api, "deleteProject", { token: who.token, ws, params: { projectId: p } })).status;
       },
       stopRun: async (who) => {

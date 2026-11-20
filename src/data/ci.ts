@@ -385,7 +385,7 @@ export function replayCommand(d: Pick<Defect, "id" | "seed" | "language" | "test
  * organization (API keys page), scope read.
  */
 export const pullCommand = (d: Pick<Defect, "id">) =>
-  `mkdir -p ${bundleDir(d)} && curl -fsSL -H "Authorization: Bearer $FENVIX_API_KEY" https://api.fenvix.dev/v1/defects/${d.id}/bundle | tar -xz -C ${bundleDir(d)}`;
+  `mkdir -p ${bundleDir(d)} && curl -fsSL -H "Authorization: Bearer $FENVIX_API_KEY" https://api.fenvix.dev/v1/defects/${d.id}/bundle/download | tar -xz -C ${bundleDir(d)}`;
 
 /** The workflow change the setup pull request makes: the test job moves to fenvix machines. */
 export function setupChange(_project: Pick<Project, "language">): SetupChange {

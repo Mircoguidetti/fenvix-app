@@ -13,6 +13,7 @@
 --   And: the writer path is anchored (the App naming A cannot put a project, a run, an occurrence or a bundle into B);
 --   a key cannot change a defect's state, manage keys or stop a run; deleting and unlinking are owner/admin only;
 --   an orphan organization goes with its last member; an invited sign-up gets no organization of its own.
+--   G-1631: a member (and a key they made) sees a private repository's project only with a fresh "yes" from GitHub.
 
 begin;
 
@@ -58,7 +59,11 @@ begin
     insert into public.ci_replays (workspace_id, project_id, defect_id, test_id, commit_sha, requested_via) values (ws, p, d, 't::flaky', repeat('a', 40), 'dashboard');
     insert into public.ci_usage_events (workspace_id, installation_id, repository_id, repository_full_name, project_id, ci_run_id, github_job_id, github_run_id, billable, reason, held_minutes, occurred_at)
       values (ws, inst, inst * 10, 'acct' || inst || '/repo', p, run, inst * 100, inst * 1000, true, 'completed', 1, now());
-    insert into public.ci_api_keys (id, workspace_id, name, prefix, key_hash, scopes) values (k, ws, 'key', 'fxk_abcdef', encode(sha256(k::text::bytea), 'hex'), '{read,replay}');
+    insert into public.ci_api_keys (id, workspace_id, name, prefix, key_hash, scopes, created_by)
+      values (k, ws, 'key', 'fxk_abcdef', encode(sha256(k::text::bytea), 'hex'), '{read,replay}', (select user_id from public.workspace_members where workspace_id = ws and role = 'owner'));
+    -- GitHub said (just now) that the organization's members can see the repository (G-1631).
+    insert into public.gh_repo_access (user_id, project_id, can_see, basis, checked_at)
+      select m.user_id, p, true, 'write', now() from public.workspace_members m where m.workspace_id = ws;
   end loop;
   insert into public.ci_api_keys (id, workspace_id, name, prefix, key_hash, scopes, revoked_at) values (r.key_revoked, r.a, 'old', 'fxk_zzzzzz', repeat('9', 64), '{read}', now());
 end $$;
@@ -255,6 +260,112 @@ begin
     insert into public.ci_defect_bundles (workspace_id, defect_id, sha256, size_bytes, content) values ((select a from be_ids), current_setting('be.bd')::uuid, repeat('1', 64), 1, '\x01');
     assert false, 'ANCHOR: a bundle went into B''s defect from A';
   exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+
+-- ---------------------------------------------------------------- G-1631: a project only for those GitHub says can see its repository
+-- X: an admin of A for whom GitHub has no answer yet. Every row of A's project is hidden from X (and from a key X made)
+-- until a fresh answer says X sees the repository; an old answer (over 10 minutes) or a "no" hides it again; a public
+-- repository is seen by all; nobody but the App writes the answers.
+insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) values ('8fffffff-0000-4000-8000-000000000006', 'be.x@fenvix.invalid', '{}', now());
+delete from public.workspaces where id = (select workspace_id from public.workspace_members where user_id = '8fffffff-0000-4000-8000-000000000006');
+insert into public.workspace_members (workspace_id, user_id, role) select a, '8fffffff-0000-4000-8000-000000000006', 'admin' from be_ids;
+insert into public.ci_api_keys (id, workspace_id, name, prefix, key_hash, scopes, created_by)
+  select 'dddddddd-1111-4000-8000-000000000004', a, 'x', 'fxk_xxxxxx', repeat('8', 64), '{read,replay}', '8fffffff-0000-4000-8000-000000000006' from be_ids;
+create temporary table be_project_tables on commit drop as select unnest(array['ci_projects', 'ci_runs', 'ci_test_results', 'ci_skip_receipts',
+  'ci_audit_reruns', 'ci_defects', 'ci_defect_occurrences', 'ci_defect_bundles', 'ci_replays', 'ci_explorations', 'ci_exploration_jobs',
+  'ci_usage_events', 'gh_repositories']) as t;
+grant select on be_project_tables to fenvix_api;
+create or replace function pg_temp.be_seen(p_user text, p_key text) returns int language plpgsql as $$
+declare t text; n int; total int := 0;
+begin
+  perform set_config('app.user_id', p_user, true), set_config('app.workspace_id', (select a from be_ids)::text, true), set_config('app.api_key_id', p_key, true);
+  for t in select be_project_tables.t from be_project_tables loop
+    execute format('select count(*) from public.%I', t) into n;
+    total := total + n;
+  end loop;
+  return total;
+end $$;
+
+set local role fenvix_api;
+do $$
+declare n int; p uuid := (select id from public.ci_projects where installation_id = 801);
+begin
+  -- No answer: nothing, as the person and as their key; no writes either.
+  assert pg_temp.be_seen('8fffffff-0000-4000-8000-000000000006', '') = 0, 'VISIBILITY LEAK: a member GitHub said nothing about sees the project';
+  assert pg_temp.be_seen('', 'dddddddd-1111-4000-8000-000000000004') = 0, 'VISIBILITY LEAK: their key sees the project';
+  perform pg_temp.be_seen('8fffffff-0000-4000-8000-000000000006', '');
+  update public.ci_defects set state = 'muted'; get diagnostics n = row_count;
+  assert n = 0, 'VISIBILITY LEAK: a member who cannot see the repository changed a defect';
+  update public.ci_runs set stop_state = 'requested'; get diagnostics n = row_count;
+  assert n = 0, 'VISIBILITY LEAK: a member who cannot see the repository stopped a run';
+  update public.ci_projects set test_command = 'x'; get diagnostics n = row_count;
+  assert n = 0, 'VISIBILITY LEAK: a member who cannot see the repository changed its settings';
+  begin
+    insert into public.ci_replays (workspace_id, project_id, test_id, commit_sha, requested_via) values ((select a from be_ids), p, 't', repeat('a', 40), 'dashboard');
+    assert false, 'VISIBILITY LEAK: a member who cannot see the repository asked for a replay';
+  -- Refused by the policy, or before it by the parent check, which cannot see the project either (an assert is not caught).
+  exception when others then null; end;
+  assert not public.api_delete_project(p), 'VISIBILITY LEAK: an admin who cannot see the repository disconnected the project';
+  -- The owner (fresh answer: write) still sees all of it.
+  assert pg_temp.be_seen('8aaaaaaa-0000-4000-8000-000000000001', '') >= 13, 'the owner GitHub said sees the repository does not see the project';
+  -- Nobody but the App writes answers.
+  assert not has_table_privilege('fenvix_api', 'public.gh_repo_access', 'insert') and not has_table_privilege('fenvix_api', 'public.gh_repo_access', 'select'),
+    'the API can read or forge a GitHub answer';
+end $$;
+reset role;
+do $$ begin
+  assert not has_table_privilege('authenticated', 'public.gh_repo_access', 'select') and not has_table_privilege('anon', 'public.gh_repo_access', 'select'),
+    'the browser reads the GitHub answers';
+end $$;
+
+-- GitHub said no: still nothing. GitHub said read, 11 minutes ago: nothing (deny when unknown). Said read now: all of it.
+insert into public.gh_repo_access (user_id, project_id, can_see, basis) select '8fffffff-0000-4000-8000-000000000006', id, false, 'none' from public.ci_projects where installation_id = 801;
+set local role fenvix_api;
+do $$ begin assert pg_temp.be_seen('8fffffff-0000-4000-8000-000000000006', '') = 0, 'VISIBILITY LEAK: GitHub said no, the member sees the project'; end $$;
+reset role;
+update public.gh_repo_access set can_see = true, basis = 'read', checked_at = now() - interval '11 minutes' where user_id = '8fffffff-0000-4000-8000-000000000006';
+set local role fenvix_api;
+do $$ begin assert pg_temp.be_seen('8fffffff-0000-4000-8000-000000000006', '') = 0, 'VISIBILITY LEAK: an answer 11 minutes old still shows the project'; end $$;
+reset role;
+update public.gh_repo_access set checked_at = now() where user_id = '8fffffff-0000-4000-8000-000000000006';
+set local role fenvix_api;
+do $$ begin
+  assert pg_temp.be_seen('8fffffff-0000-4000-8000-000000000006', '') >= 13, 'a member GitHub says sees the repository does not see the project';
+  assert pg_temp.be_seen('', 'dddddddd-1111-4000-8000-000000000004') >= 13, 'their key does not see it';
+  -- Still nothing of B's, whatever A's answers say.
+  perform set_config('app.workspace_id', (select b from be_ids)::text, true);
+  assert (select count(*) from public.ci_projects) = 0, 'READ LEAK: A''s member reads B''s project';
+end $$;
+reset role;
+-- The key's maker leaves A: the key sees nothing private any more.
+update public.gh_repo_access set can_see = false where user_id = '8fffffff-0000-4000-8000-000000000006';
+update public.gh_repositories set private = false where installation_id = 801;
+set local role fenvix_api;
+do $$ begin
+  -- A public repository: seen without any answer.
+  assert pg_temp.be_seen('8fffffff-0000-4000-8000-000000000006', '') >= 13, 'a public repository''s project is hidden';
+end $$;
+reset role;
+update public.gh_repositories set private = true where installation_id = 801;
+update public.gh_repo_access set can_see = true where user_id = '8fffffff-0000-4000-8000-000000000006';
+delete from public.workspace_members where user_id = '8fffffff-0000-4000-8000-000000000006';
+set local role fenvix_api;
+do $$ begin
+  assert pg_temp.be_seen('', 'dddddddd-1111-4000-8000-000000000004') = 0, 'VISIBILITY LEAK: a key whose maker left the organization sees a private project';
+end $$;
+reset role;
+-- The App: whose GitHub identity (GitHub sign-in first), and which answers are due (never asked first).
+set local role fenvix_github_app;
+do $$ begin
+  assert (select count(*) from public.gh_repo_access_due(100) where user_id = '8ccccccc-0000-4000-8000-000000000003') = 0, 'a fresh answer is asked again';
+end $$;
+reset role;
+update public.gh_repo_access set checked_at = now() - interval '5 minutes' where user_id = '8ccccccc-0000-4000-8000-000000000003';
+set local role fenvix_github_app;
+do $$ begin
+  assert (select count(*) from public.gh_repo_access_due(100) where user_id = '8ccccccc-0000-4000-8000-000000000003') = 1, 'an answer 5 minutes old is not asked again';
+  assert public.gh_repo_access_forget(801, null, null) >= 1, 'the answers of an installation are not forgotten';
 end $$;
 reset role;
 

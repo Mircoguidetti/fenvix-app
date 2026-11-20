@@ -51,7 +51,9 @@ declare module "fastify" {
 }
 
 const EVENTS = new Set(["installation", "installation_repositories", "installation_target", "repository", "push", "pull_request", "workflow_job",
-  "workflow_run", "check_run", "check_suite", "github_app_authorization", "ping"]);
+  "workflow_run", "check_run", "check_suite", "github_app_authorization", "ping",
+  // Who can see a repository changed (G-1631; optional in the App's settings, docs/GITHUB-APP.md).
+  "member", "organization", "membership", "team"]);
 
 /**
  * The request log: never the Authorization or signature headers, and never the query string, since /github/setup

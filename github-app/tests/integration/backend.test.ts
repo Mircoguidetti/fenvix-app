@@ -26,7 +26,7 @@ import { signSummaryCredential } from "../../src/runners/credentials.ts";
 import type { Region, RunnerLaunch, RunnerLauncher, TaskLaunch } from "../../src/runners/launcher.ts";
 import { responseProblems } from "../api/helpers.ts";
 import {
-  ACCOUNT, ADMIN_URL, CI_YAML, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, REPOS, resetDb, RUNNER_TOKEN, runnerCredential,
+  ACCOUNT, addMember, ADMIN_URL, CI_YAML, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, REPOS, resetDb, RUNNER_TOKEN, runnerCredential,
   SUPABASE, workflowJob,
 } from "../helpers/harness.ts";
 
@@ -106,6 +106,8 @@ describe("service back-end: runner → API stores → PR comment + check runs + 
     await h.app.service.onInstallationLinked(INSTALLATION_ID);
     await h.app.service.idle();
     assert.ok((await admin.query("select project_id from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].project_id, "the project exists");
+    // G-1631: the members see the private repository's project once GitHub said so (the App asks at each sweep).
+    assert.deepEqual(await h.app.service.refreshRepoAccess(), { checked: 1, denied: 0, failed: 0 });
     // The pull request both jobs run for.
     const shop = h.gh.repos.get("acme/shop")!;
     shop.pulls.push({ number: 12, headRef: "feature", headSha: PR_SHA, state: "open", title: "Currency", body: "" } as never);
@@ -163,7 +165,7 @@ describe("service back-end: runner → API stores → PR comment + check runs + 
     assert.match(c[0]!.body, /runs diverge at event 412 \(outcome-only\): config\.CURRENCY read 'USD'/);
     assert.match(c[0]!.body, /seed 3 · minimal order `tests\/test_config\.py::test_set_currency` → `tests\/test_money\.py::test_default_currency_is_eur`/);
     assert.match(c[0]!.body, new RegExp(`pytest --det --det-seed=3 --det-order=\\.fenvix/defects/${defectId}/order\\.txt -n 0`));
-    assert.match(c[0]!.body, new RegExp(`curl -fsSL -H "Authorization: Bearer \\$FENVIX_API_KEY" https://api\\.fenvix\\.dev/v1/defects/${defectId}/bundle`));
+    assert.match(c[0]!.body, new RegExp(`curl -fsSL -H "Authorization: Bearer \\$FENVIX_API_KEY" https://api\\.fenvix\\.dev/v1/defects/${defectId}/bundle/download \\| tar`));
     assert.match(c[0]!.body, new RegExp(`\\[replay it on fenvix\\]\\(https://app\\.fenvix\\.test/defects/${defectId}\\?replay=1\\)`));
   });
 
@@ -378,5 +380,66 @@ describe("service back-end: runner → API stores → PR comment + check runs + 
     assert.equal(checks.length, 1);
     assert.deepEqual([checks[0]!.name, checks[0]!.conclusion], ["fenvix / test", "action_required"]);
     assert.match(String((checks[0]!.output as Row).summary), /not connected to a fenvix organization/);
+  });
+
+  it("13. G-1631: a member sees the private repository's project only while GitHub says they can see the repository; the API, a key and MCP alike", async () => {
+    // Three more members: GitHub says read for one, none for another; the third signed in without GitHub.
+    const reader = await addMember(admin, org.workspaceId, "backend-reader", "member");
+    const outsider = await addMember(admin, org.workspaceId, "backend-outsider", "admin");
+    const noGitHub = await addMember(admin, org.workspaceId, "backend-google", "member");
+    await admin.query("delete from auth.identities where user_id = $1", [noGitHub]);
+    h.gh.repoAccess.set("acme/shop:backend-reader", "read");
+    h.gh.repoAccess.set("acme/shop:backend-outsider", "none");
+    // Before GitHub was asked: unknown, so nothing (deny when unknown).
+    const pid = (await admin.query("select project_id from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].project_id as string;
+    assert.deepEqual((await call("listProjects", "/v1/projects", { auth: await token(reader), ws: org.workspaceId })).json().items, []);
+    assert.deepEqual(await h.app.service.refreshRepoAccess(), { checked: 3, denied: 2, failed: 0 });
+    assert.deepEqual((await admin.query("select basis from gh_repo_access where user_id = any($1::uuid[]) order by basis", [[reader, outsider, noGitHub]])).rows.map((r) => r.basis),
+      ["no_github_identity", "none", "read"]);
+    const asked = h.gh.exchanges.filter((x) => /\/collaborators\/[^/]+\/permission$/.test(x.path)).map((x) => x.path);
+    assert.ok(asked.includes("/repos/acme/shop/collaborators/backend-outsider/permission"), "asked GitHub with the installation's token");
+    // The reader sees the project, its runs and the defect.
+    const tr = await token(reader);
+    assert.deepEqual((await call("listProjects", "/v1/projects", { auth: tr, ws: org.workspaceId })).json().items.map((x: Row) => x.id), [pid]);
+    assert.equal((await call("getDefect", `/v1/defects/${defectId}`, { auth: tr, ws: org.workspaceId })).statusCode, 200);
+    // The outsider (an admin of the fenvix organization) and the person without GitHub see none of it, and change none of it.
+    const runId = (await admin.query("select id from ci_runs where project_id = $1 order by number limit 1", [pid])).rows[0].id as string;
+    for (const who of [outsider, noGitHub]) {
+      const t = await token(who);
+      assert.deepEqual((await call("listProjects", "/v1/projects", { auth: t, ws: org.workspaceId })).json().items, []);
+      assert.equal((await call("getProject", `/v1/projects/${pid}`, { auth: t, ws: org.workspaceId })).statusCode, 404);
+      assert.equal((await call("listRuns", `/v1/projects/${pid}/runs`, { auth: t, ws: org.workspaceId })).statusCode, 404);
+      assert.equal((await call("getRun", `/v1/runs/${runId}`, { auth: t, ws: org.workspaceId })).statusCode, 404);
+      assert.deepEqual((await call("listDefects", "/v1/defects", { auth: t, ws: org.workspaceId })).json().items, []);
+      assert.equal((await call("getDefect", `/v1/defects/${defectId}`, { auth: t, ws: org.workspaceId })).statusCode, 404);
+      assert.equal((await call("downloadDefectBundle", `/v1/defects/${defectId}/bundle/download`, { auth: t, ws: org.workspaceId })).statusCode, 404);
+      assert.equal((await call("setDefectState", `/v1/defects/${defectId}/state`, { method: "POST", auth: t, ws: org.workspaceId, body: { state: "muted", reason: "x" } })).statusCode, 404);
+      assert.deepEqual((await call("listFailures", `/v1/failures?runId=${runId}`, { auth: t, ws: org.workspaceId })).json().items, []);
+    }
+    // A key made by the outsider acts as the outsider: MCP finds nothing either.
+    const k = await call("createApiKey", "/v1/api-keys", { method: "POST", auth: await token(outsider), ws: org.workspaceId, body: { name: "outsider's agent" } });
+    const key = k.json().key as string;
+    assert.deepEqual((await call("listDefects", "/v1/defects", { auth: key })).json().items, []);
+    const listed = (await mcp(key, { jsonrpc: "2.0", id: 31, method: "tools/call", params: { name: "list_defects", arguments: {} } })).json().result;
+    assert.equal(JSON.stringify(listed).includes(defectId), false);
+    const got = (await mcp(key, { jsonrpc: "2.0", id: 32, method: "tools/call", params: { name: "get_defect", arguments: { defectId } } })).json().result;
+    assert.equal(got.isError, true);
+    const failures = (await mcp(key, { jsonrpc: "2.0", id: 33, method: "tools/call", params: { name: "failures_for", arguments: { runId } } })).json().result;
+    assert.equal(JSON.stringify(failures).includes(EUR), false);
+    // GitHub says the reader was removed from the repository: the answer goes at once (no 10-minute wait).
+    await h.send("member", { action: "removed", member: { id: (await admin.query("select provider_id from auth.identities where user_id = $1", [reader])).rows[0].provider_id, login: "backend-reader" },
+      repository: { id: REPOS.shop.id, full_name: REPOS.shop.full_name }, installation: { id: INSTALLATION_ID } });
+    assert.deepEqual((await call("listProjects", "/v1/projects", { auth: tr, ws: org.workspaceId })).json().items, []);
+    // An answer older than 10 minutes counts as none (GitHub could not be asked again).
+    h.gh.repoAccess.set("acme/shop:backend-reader", "read");
+    await h.app.service.refreshRepoAccess();
+    assert.equal((await call("listProjects", "/v1/projects", { auth: tr, ws: org.workspaceId })).json().items.length, 1);
+    await admin.query("update gh_repo_access set checked_at = now() - interval '11 minutes' where user_id = $1", [reader]);
+    assert.deepEqual((await call("listProjects", "/v1/projects", { auth: tr, ws: org.workspaceId })).json().items, []);
+    // A public repository's project: every member sees it, without asking GitHub.
+    await h.send("repository", { action: "publicized", repository: { id: REPOS.shop.id, full_name: REPOS.shop.full_name, private: false }, installation: { id: INSTALLATION_ID } });
+    assert.equal((await call("listProjects", "/v1/projects", { auth: await token(outsider), ws: org.workspaceId })).json().items.length, 1);
+    await h.send("repository", { action: "privatized", repository: { id: REPOS.shop.id, full_name: REPOS.shop.full_name, private: true }, installation: { id: INSTALLATION_ID } });
+    assert.deepEqual((await call("listProjects", "/v1/projects", { auth: await token(outsider), ws: org.workspaceId })).json().items, []);
   });
 });

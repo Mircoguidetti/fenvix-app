@@ -49,10 +49,11 @@ describe("service back-end: the audit rows, one regression test per family", () 
   let projectId = "";
   const token = (userId: string, claims: Row = {}) => new SignJWT(claims).setProtectedHeader({ alg: "ES256", kid: "k1" }).setIssuer(`${SUPABASE}/auth/v1`)
     .setAudience("authenticated").setSubject(userId).setIssuedAt().setExpirationTime("1h").sign(signKey);
-  const call = async (method: string, url: string, auth: string, ws: string | null, body?: unknown) => api.fastify.inject({
+  // The App's sweep asks GitHub who sees which private project (G-1631) every minute; here before each call.
+  const call = async (method: string, url: string, auth: string, ws: string | null, body?: unknown) => h.app.service.refreshRepoAccess().then(() => api.fastify.inject({
     method: method as "GET", url, headers: { authorization: `Bearer ${auth}`, ...(ws ? { "x-fenvix-workspace": ws } : {}), ...(body !== undefined ? { "content-type": "application/json" } : {}) },
     ...(body !== undefined ? { payload: JSON.stringify(body) } : {}),
-  });
+  }));
   const shop = () => h.gh.repos.get("acme/shop")!;
 
   before(async () => {

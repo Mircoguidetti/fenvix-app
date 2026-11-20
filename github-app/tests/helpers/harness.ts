@@ -64,11 +64,32 @@ export async function resetDb(): Promise<pg.Client> {
   return admin;
 }
 
+let githubIds = 0;
+/**
+ * The person's GitHub sign-in, as Supabase Auth keeps it (auth.identities): GitHub login = `name`, a fresh GitHub user
+ * id (returned). G-1631 reads it to ask GitHub whether the person sees a repository.
+ */
+export async function linkGitHub(admin: pg.Client, userId: string, login: string): Promise<number> {
+  const id = 5_000_000 + (process.pid % 1000) * 10_000 + ++githubIds;
+  await admin.query("delete from auth.identities where provider = 'github' and provider_id = $1", [String(id)]);
+  await admin.query("insert into auth.identities (provider_id, user_id, identity_data, provider) values ($1, $2, $3, 'github')",
+    [String(id), userId, JSON.stringify({ user_name: login, sub: String(id), provider_id: String(id) })]);
+  return id;
+}
+
+/** G-1631: every member's answer kept as "sees it" now, for tests about something else (the real path: refreshRepoAccess). */
+export async function seeAllProjects(admin: pg.Client): Promise<void> {
+  await admin.query(`insert into gh_repo_access (user_id, project_id, can_see, basis, checked_at)
+    select m.user_id, p.id, true, 'write', now() from workspace_members m join ci_projects p on p.workspace_id = m.workspace_id
+    on conflict (user_id, project_id) do update set can_see = true, checked_at = now()`);
+}
+
 /** A person and the organization created for them at sign-up (0001's trigger), on the given plan. */
 export async function makeOrg(admin: pg.Client, name: string, plan = "team"): Promise<{ userId: string; workspaceId: string }> {
   const u = await admin.query<{ id: string }>("insert into auth.users (email, raw_user_meta_data, email_confirmed_at) values ($1, $2, now()) returning id",
     [`${name}@gh.fenvix.invalid`, JSON.stringify({ full_name: name })]);
   const userId = u.rows[0]!.id;
+  await linkGitHub(admin, userId, name);
   const w = await admin.query<{ workspace_id: string }>("select workspace_id from workspace_members where user_id = $1", [userId]);
   const workspaceId = w.rows[0]!.workspace_id;
   await admin.query("insert into ci_subscriptions (workspace_id, plan_id) values ($1, $2)", [workspaceId, plan]);
@@ -78,6 +99,7 @@ export async function makeOrg(admin: pg.Client, name: string, plan = "team"): Pr
 export async function addMember(admin: pg.Client, workspaceId: string, name: string, role: "admin" | "member"): Promise<string> {
   const u = await admin.query<{ id: string }>("insert into auth.users (email, raw_user_meta_data, email_confirmed_at) values ($1, '{}', now()) returning id", [`${name}@gh.fenvix.invalid`]);
   const id = u.rows[0]!.id;
+  await linkGitHub(admin, id, name);
   await admin.query("delete from workspaces where id in (select workspace_id from workspace_members where user_id = $1)", [id]);
   await admin.query("insert into workspace_members (workspace_id, user_id, role) values ($1, $2, $3)", [workspaceId, id, role]);
   return id;

@@ -136,6 +136,10 @@ end $$;
 reset role;
 
 -- ---------------------------------------------------------------- fenvix_api as the member: reads W, nothing of XW, changes nothing
+-- G-1631: GitHub said (just now) that every member sees every repository (the App's answers; backend-rls.sql tests them).
+insert into public.gh_repo_access (user_id, project_id, can_see, basis, checked_at)
+  select m.user_id, p.id, true, 'write', now() from public.workspace_members m join public.ci_projects p on p.workspace_id = m.workspace_id
+  on conflict (user_id, project_id) do update set can_see = true, checked_at = now();
 set local role fenvix_api;
 do $$
 declare r api_ids%rowtype; n int; t text;
@@ -212,6 +216,10 @@ end $$;
 reset role;
 
 -- ---------------------------------------------------------------- the admin: settings, region, project settings, members, invitations of W only
+-- G-1631: GitHub said (just now) that every member sees every repository (the App's answers; backend-rls.sql tests them).
+insert into public.gh_repo_access (user_id, project_id, can_see, basis, checked_at)
+  select m.user_id, p.id, true, 'write', now() from public.workspace_members m join public.ci_projects p on p.workspace_id = m.workspace_id
+  on conflict (user_id, project_id) do update set can_see = true, checked_at = now();
 set local role fenvix_api;
 do $$
 declare r api_ids%rowtype; n int;
@@ -320,6 +328,10 @@ end $$;
 reset role;
 
 -- ---------------------------------------------------------------- the owner: the last owner never leaves; the functions
+-- G-1631: GitHub said (just now) that every member sees every repository (the App's answers; backend-rls.sql tests them).
+insert into public.gh_repo_access (user_id, project_id, can_see, basis, checked_at)
+  select m.user_id, p.id, true, 'write', now() from public.workspace_members m join public.ci_projects p on p.workspace_id = m.workspace_id
+  on conflict (user_id, project_id) do update set can_see = true, checked_at = now();
 set local role fenvix_api;
 do $$
 declare r api_ids%rowtype; ws uuid;
@@ -356,6 +368,10 @@ begin
 end $$;
 reset role;
 
+-- G-1631: GitHub said (just now) that every member sees every repository (the App's answers; backend-rls.sql tests them).
+insert into public.gh_repo_access (user_id, project_id, can_see, basis, checked_at)
+  select m.user_id, p.id, true, 'write', now() from public.workspace_members m join public.ci_projects p on p.workspace_id = m.workspace_id
+  on conflict (user_id, project_id) do update set can_see = true, checked_at = now();
 set local role fenvix_api;
 do $$
 declare r api_ids%rowtype; acc record;

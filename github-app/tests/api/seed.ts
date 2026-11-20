@@ -142,5 +142,9 @@ export async function seedOrg(admin: pg.Client, workspaceId: string, account: st
   await event(shop, repoIds.shop, "shop", 25, true, [3, 6, 1.5]);
   await event(shop, repoIds.shop, "shop", 2, false, [0, 0, 0]);
 
+  // G-1631: GitHub said every member can see both repositories (asked by the App; tests/integration/backend.test.ts step 13).
+  await q(`insert into public.gh_repo_access (user_id, project_id, can_see, basis, checked_at)
+           select m.user_id, p.id, true, 'write', now() from public.workspace_members m join public.ci_projects p on p.workspace_id = m.workspace_id
+            where m.workspace_id = $1 on conflict (user_id, project_id) do update set can_see = true, checked_at = now()`, [workspaceId]);
   return { workspaceId, installationId, repoIds, projects: { shop, web }, runs: { latest, failed, running, reused, shadow, lastMonth }, receipt, defects: { open, fixed }, exploration };
 }

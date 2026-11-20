@@ -105,6 +105,10 @@ Under **Subscribe to events**, tick:
 - **Repository** (the box is there with Metadata: Read-only; fenvix reads `edited` with a new default branch, so the dashboard follows it, and `renamed`, `transferred`, `archived`, `unarchived`, `deleted`)
 - **Workflow run** (a run completed while one of its fenvix jobs had lost its events: the job is read back from GitHub)
 - **Check run** and **Check suite** (the Re-run buttons of fenvix check runs)
+- Optional, **Member**, **Organization**, **Membership** and **Team**: someone lost access to a repository on GitHub,
+  so fenvix forgets at once that they could see its project (G-1631). The last three also need the organization
+  permission **Members: Read-only**. Without them, fenvix asks GitHub again every few minutes, and an answer lives 10
+  minutes at most.
 
 `installation`, `installation_repositories`, `installation_target` (the account was renamed) and `github_app_authorization` are sent to every GitHub App without a box to tick. Any other event is recorded and answered 202 (ignored). Every sweep the App also lists its recent deliveries (`GET /app/hook/deliveries`) and asks GitHub to send again the ones that failed, and reads back fenvix jobs still queued with no machine after three minutes.
 

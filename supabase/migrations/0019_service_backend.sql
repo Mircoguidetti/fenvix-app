@@ -499,6 +499,8 @@ returns boolean language plpgsql security definer set search_path = public, pg_t
 declare v_ws uuid := public.api_admin_workspace();
 begin
   if v_ws is null then raise exception 'Only an owner or admin can disconnect a project.' using errcode = '42501'; end if;
+  -- Only a project they see (G-1631; api_visible_projects() is in section 13).
+  if not exists (select 1 from public.api_visible_projects() v where v = p_project) then return false; end if;
   update public.gh_repositories set disconnected_at = now(), updated_at = now() where project_id = p_project and workspace_id = v_ws;
   delete from public.ci_projects where id = p_project and workspace_id = v_ws;
   return found;
@@ -849,3 +851,172 @@ language sql stable security definer set search_path = public, pg_temp as $$
 $$;
 revoke all on function public.api_signed_bundle(uuid, uuid, uuid) from public, anon, authenticated;
 grant execute on function public.api_signed_bundle(uuid, uuid, uuid) to fenvix_api;
+
+-- ================================================================ 13. a project only for those who can see its repository on GitHub (G-1631)
+
+-- A member (or an API key, which acts as the member who made it) sees a project only while GitHub says that person can
+-- see the project's repository: a public repository, or a fresh answer from GitHub that their GitHub identity has at
+-- least read access. The App asks GitHub (GET /repos/{owner}/{repo}/collaborators/{login}/permission, with the
+-- installation's token) and keeps the answer here for 10 minutes at most; it asks again after 4. No answer, an old
+-- answer, no GitHub identity (a person who signed in with Google or an email link only): no project. Every table
+-- the API reads that carries a project's data (runs, tests, defects, bundles, replays, receipts, explorations,
+-- warm-ups, usage) follows the project.
+create table if not exists public.gh_repo_access (
+  user_id uuid not null references auth.users (id) on delete cascade,
+  project_id uuid not null references public.ci_projects (id) on delete cascade,
+  can_see boolean not null,
+  -- What GitHub said: the permission (admin, write, read, none), or no_github_identity, not_found.
+  basis text not null check (basis ~ '^[a-z_]{1,40}$'),
+  github_user_id bigint,
+  checked_at timestamptz not null default now(),
+  primary key (user_id, project_id)
+);
+create index if not exists gh_repo_access_project on public.gh_repo_access (project_id);
+create index if not exists gh_repo_access_github_user on public.gh_repo_access (github_user_id);
+alter table public.gh_repo_access enable row level security;
+revoke all on public.gh_repo_access from public, anon, authenticated;
+grant select, insert, update, delete on public.gh_repo_access to fenvix_github_app;
+drop policy if exists gh_repo_access_github_app on public.gh_repo_access;
+create policy gh_repo_access_github_app on public.gh_repo_access for all to fenvix_github_app using (true) with check (true);
+
+-- A person's GitHub identity: the GitHub sign-in Supabase Auth verified (auth.identities), else the GitHub user who
+-- completed an installation link for them (checked by OAuth at /github/setup). Never what a person typed.
+create or replace function public.gh_github_identity(p_user uuid)
+returns table (github_user_id bigint, github_login text)
+language sql stable security definer set search_path = public, pg_temp as $$
+  select x.id, x.login from (
+    select i.provider_id::bigint as id, coalesce(i.identity_data ->> 'user_name', i.identity_data ->> 'preferred_username') as login, 0 as pref, i.updated_at as at
+      from auth.identities i
+     where i.user_id = p_user and i.provider = 'github' and i.provider_id ~ '^[0-9]{1,18}$'
+    union all
+    select c.github_user_id, c.github_login, 1, c.completed_at
+      from public.gh_install_completions c
+     where c.user_id = p_user and c.completed_at is not null
+  ) x
+  where x.login is not null and x.login <> ''
+  order by x.pref, x.at desc nulls last
+  limit 1
+$$;
+revoke all on function public.gh_github_identity(uuid) from public, anon, authenticated;
+grant execute on function public.gh_github_identity(uuid) to fenvix_github_app;
+
+-- Who looks: the signed-in person, or the member who made the API key of this transaction (while still a member).
+create or replace function public.api_viewer() returns uuid
+language sql stable security definer set search_path = public, pg_temp as $$
+  select coalesce(public.api_user(),
+    (select k.created_by from public.ci_api_keys k
+      where k.id = public.api_key_id() and k.workspace_id = public.api_workspace()
+        and exists (select 1 from public.workspace_members m where m.workspace_id = k.workspace_id and m.user_id = k.created_by)))
+$$;
+
+-- The projects of this transaction's organization the viewer may see.
+create or replace function public.api_visible_projects() returns setof uuid
+language sql stable security definer set search_path = public, pg_temp as $$
+  select p.id from public.ci_projects p
+   where p.workspace_id = public.api_workspace()
+     and (exists (select 1 from public.gh_repositories r
+                   where r.project_id = p.id and r.workspace_id = p.workspace_id and r.private = false and r.removed_at is null)
+          or exists (select 1 from public.gh_repo_access a
+                      where a.project_id = p.id and a.user_id = public.api_viewer() and a.can_see
+                        and a.checked_at > now() - interval '10 minutes'))
+$$;
+do $$
+declare f text;
+begin
+  foreach f in array array['api_viewer()', 'api_visible_projects()']
+  loop
+    execute format('revoke all on function public.%s from public, anon, authenticated', f);
+    execute format('grant execute on function public.%s to fenvix_api', f);
+  end loop;
+end $$;
+
+-- The reads: a project's rows only for those who see the project.
+do $$
+declare t text;
+begin
+  foreach t in array array['ci_runs', 'ci_defects', 'ci_explorations', 'ci_replays', 'ci_exploration_jobs']
+  loop
+    execute format('drop policy if exists %I on public.%I', t || '_api_read', t);
+    execute format('create policy %I on public.%I for select to fenvix_api using (workspace_id = public.api_workspace() and project_id in (select public.api_visible_projects()))', t || '_api_read', t);
+  end loop;
+  -- Through their run (ci_runs' own policy applies inside).
+  foreach t in array array['ci_test_results', 'ci_skip_receipts', 'ci_audit_reruns']
+  loop
+    execute format('drop policy if exists %I on public.%I', t || '_api_read', t);
+    execute format('create policy %I on public.%I for select to fenvix_api using (workspace_id = public.api_workspace() and exists (select 1 from public.ci_runs r where r.id = run_id))', t || '_api_read', t);
+  end loop;
+  -- Through their defect.
+  foreach t in array array['ci_defect_occurrences', 'ci_defect_bundles']
+  loop
+    execute format('drop policy if exists %I on public.%I', t || '_api_read', t);
+    execute format('create policy %I on public.%I for select to fenvix_api using (workspace_id = public.api_workspace() and exists (select 1 from public.ci_defects d where d.id = defect_id))', t || '_api_read', t);
+  end loop;
+end $$;
+drop policy if exists ci_projects_api_read on public.ci_projects;
+create policy ci_projects_api_read on public.ci_projects for select to fenvix_api
+  using (workspace_id = public.api_workspace() and id in (select public.api_visible_projects()));
+drop policy if exists ci_usage_events_api_read on public.ci_usage_events;
+create policy ci_usage_events_api_read on public.ci_usage_events for select to fenvix_api
+  using (workspace_id = public.api_workspace() and (project_id is null or project_id in (select public.api_visible_projects())));
+-- A repository not yet a project shows its name only (the organization's owners connect it); one of a project follows it.
+drop policy if exists gh_repositories_api_read on public.gh_repositories;
+create policy gh_repositories_api_read on public.gh_repositories for select to fenvix_api
+  using (workspace_id = public.api_workspace() and (project_id is null or project_id in (select public.api_visible_projects())));
+drop policy if exists gh_warmups_api_read on public.gh_warmups;
+create policy gh_warmups_api_read on public.gh_warmups for select to fenvix_api
+  using (workspace_id = public.api_workspace() and exists (select 1 from public.gh_repositories r where r.repository_id = gh_warmups.repository_id));
+
+-- The writes: only on a project the person sees.
+drop policy if exists ci_projects_api_admin on public.ci_projects;
+create policy ci_projects_api_admin on public.ci_projects for update to fenvix_api
+  using (workspace_id = public.api_admin_workspace() and id in (select public.api_visible_projects()))
+  with check (workspace_id = public.api_admin_workspace());
+drop policy if exists ci_defects_api_state on public.ci_defects;
+create policy ci_defects_api_state on public.ci_defects for update to fenvix_api
+  using (workspace_id = public.api_workspace() and public.api_user() is not null and project_id in (select public.api_visible_projects()))
+  with check (workspace_id = public.api_workspace());
+drop policy if exists ci_runs_api_stop on public.ci_runs;
+create policy ci_runs_api_stop on public.ci_runs for update to fenvix_api
+  using (workspace_id = public.api_admin_workspace() and project_id in (select public.api_visible_projects()))
+  with check (workspace_id = public.api_admin_workspace());
+drop policy if exists ci_replays_api_insert on public.ci_replays;
+create policy ci_replays_api_insert on public.ci_replays for insert to fenvix_api
+  with check (workspace_id = public.api_workspace() and project_id in (select public.api_visible_projects()));
+drop policy if exists ci_exploration_jobs_api_insert on public.ci_exploration_jobs;
+create policy ci_exploration_jobs_api_insert on public.ci_exploration_jobs for insert to fenvix_api
+  with check (workspace_id = public.api_admin_workspace() and project_id in (select public.api_visible_projects()));
+
+-- What the App asks GitHub next: members' private projects never checked first, then the oldest answers (older than
+-- 4 minutes). Public repositories need no answer.
+create or replace function public.gh_repo_access_due(p_limit int)
+returns table (user_id uuid, project_id uuid, installation_id bigint, full_name text, github_user_id bigint, github_login text)
+language sql stable security definer set search_path = public, pg_temp as $$
+  select m.user_id, p.id, p.installation_id, p.full_name, g.github_user_id, g.github_login
+    from public.workspace_members m
+    join public.ci_projects p on p.workspace_id = m.workspace_id
+    left join public.gh_repo_access a on a.user_id = m.user_id and a.project_id = p.id
+    left join lateral public.gh_github_identity(m.user_id) g on true
+   where not exists (select 1 from public.gh_repositories r where r.project_id = p.id and r.private = false and r.removed_at is null)
+     and (a.checked_at is null or a.checked_at < now() - interval '4 minutes')
+   order by a.checked_at nulls first, m.user_id
+   limit greatest(p_limit, 0)
+$$;
+revoke all on function public.gh_repo_access_due(int) from public, anon, authenticated;
+grant execute on function public.gh_repo_access_due(int) to fenvix_github_app;
+
+-- A change GitHub reported (a collaborator or member removed, a team changed, a repository made private): the answers
+-- it may have made wrong go at once, so the project is hidden until GitHub is asked again. Null matches everything.
+create or replace function public.gh_repo_access_forget(p_installation bigint, p_repository bigint, p_github_user bigint)
+returns int language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_n int;
+begin
+  delete from public.gh_repo_access a using public.ci_projects p
+   where a.project_id = p.id
+     and (p_installation is null or p.installation_id = p_installation)
+     and (p_repository is null or p.id in (select r.project_id from public.gh_repositories r where r.repository_id = p_repository))
+     and (p_github_user is null or a.github_user_id = p_github_user);
+  get diagnostics v_n = row_count;
+  return v_n;
+end $$;
+revoke all on function public.gh_repo_access_forget(bigint, bigint, bigint) from public, anon, authenticated;
+grant execute on function public.gh_repo_access_forget(bigint, bigint, bigint) to fenvix_github_app;

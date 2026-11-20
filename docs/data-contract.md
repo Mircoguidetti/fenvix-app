@@ -235,7 +235,7 @@ set).
 
 **Replay command.** The runner sends the engine's command; when it did not, the dashboard builds one. Python: `pytest --det --det-seed=S --det-order=<bundle>/order.txt` (no `--det-seed` when the seed
 is null), after the pull command writes the bundle to `<bundle>`: `curl -H "Authorization: Bearer $FENVIX_API_KEY"
-https://api.fenvix.dev/v1/defects/<id>/bundle | tar -xz -C .fenvix/defects/<id>` (an API key; the `fenvix` CLI has no
+https://api.fenvix.dev/v1/defects/<id>/bundle/download | tar -xz -C .fenvix/defects/<id>` (an API key; the `fenvix` CLI has no
 `defects pull` command). Node: the engine has no `--det-order`,
 minimiser or bundle yet (branch `claude/node-l0`), so the command is the seed only:
 `detjs vitest run --det --det-seed=S` (or `detjs jest --det --det-seed=S`), and the dashboard says that the order is
@@ -863,7 +863,17 @@ in transactions that name the organization (row level security keeps the others 
 The dashboard reads them only through the fenvix API (`openapi/fenvix-api.yaml`, role `fenvix_api`), never from the
 database directly.
 
+**Who sees a project (G-1631).** A member, or an API key (acting as the member who made it), sees a project and every
+record of it only while GitHub says that member's GitHub identity can see the project's repository: a public
+repository, or an answer the App got from GitHub less than 10 minutes ago (it asks again every few minutes). No answer,
+an old one, no GitHub sign-in: the project is not there (lists leave it out, its ids answer 404, like another
+organization's). The dashboard can tell a person who signed in with Google or an email link that they see private
+repositories' projects once they sign in with GitHub.
+
 ## Changes
+
+- 2026-11-20 (P-048, round 3): **projects follow GitHub's access** (G-1631, "Who sees a project" above); the pull
+  command downloads `/v1/defects/{id}/bundle/download`.
 
 - 2026-11-20 (P-048, migration 0019, docs/REPORT-service-backend.md): **one defect per flaky test** with its history
   (Defect occurrence), defects from the summary's `flaky[]` without a bundle (`reported`), more causes, defect state

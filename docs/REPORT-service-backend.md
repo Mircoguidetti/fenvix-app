@@ -18,8 +18,8 @@ things outside this session block "DONE" as the founder defines it:
    off, or paused", the shadow-mode note). The end-to-end test uses the fake GitHub and fake machines instead.
 2. **CI round on GitHub**: the tests are green locally (below); the pull request's CI run is what proves them in CI.
    It runs when the coordinator's PR check runs; I push once.
-3. **Founder decisions and settings**: the DECIDE rows (G-1631, G-1726, G-0599, G-0618, G-0625, G-1723, G-2299), the
-   App permission "Actions: Read and write" (needed for the Re-run button and for Stop to cancel the GitHub job; the
+3. **Founder settings** (the coordinator collects them): the DECIDE rows are decided (G-1631 built; G-0599, G-0618,
+   G-0625, G-1723, G-2299 out of scope; G-1726 with P-047), the App permission "Actions: Read and write" (needed for the Re-run button and for Stop to cancel the GitHub job; the
    code works without it and says so), a mail provider credential (G-1756, G-2310), and the DNS record + certificate
    for `mcp.fenvix.dev` (infra/deploy: the MCP server answers at `https://api.fenvix.dev/v1/mcp` today).
 
@@ -55,11 +55,27 @@ things outside this session block "DONE" as the founder defines it:
   first-failure stop, failures and log); `api-dashboard.test.ts` (68 operations, the admin matrix with `stopRun`,
   `replayTest`).
 
+## Round 3 (G-1631 and the decided rows)
+
+- **G-1631 built** (row above): `gh_repo_access` (the App's answers), `gh_github_identity()` (the GitHub sign-in
+  Supabase Auth verified, else the GitHub user an install link was completed with; never typed text),
+  `api_viewer()`, `api_visible_projects()`, the read and write policies of every project table, `gh_repo_access_due()`
+  and `gh_repo_access_forget()` (migration 0019, section 13); `github-app/src/access/visibility.ts` (asked each sweep,
+  200 answers per sweep at most, DECLARED); the revocation events. A person who signed in with Google or an email
+  link sees public repositories' projects only, until they sign in with GitHub once (P-049: the dashboard can say so).
+  The events `member`, `organization`, `membership` and `team` reach the App only if they are ticked in its settings
+  (the organization ones also need the organization permission "Members: Read-only"); without them an answer lives 10
+  minutes at most. Founder action, optional.
+- **The bundle pull command** in the PR comment and the API now downloads `/v1/defects/{id}/bundle/download` (the
+  bytes); `/bundle` answers the signed link since round 2, so the old command would have fed JSON to `tar`.
+- **Out of scope with the rule**: G-0599, G-0618, G-0625, G-1723, G-2299.
+- **G-1726**: proposal to P-047 (row above).
+
 ## Numbers
 
 - Tests, MEASURED on this branch, locally (`npm test` in `github-app`, local Postgres 16 + local Supabase from
-  `scripts/local-supabase/up.sh`, 2026-11-20): unit **141/141**, integration **205/205** (on `main`: 141 + 136 with the two local-Supabase API suites skipped,
-  MEASURED the same way before any change). New: `backend.test.ts` (12 steps), `backend-gaps.test.ts` (23),
+  `scripts/local-supabase/up.sh`, 2026-11-20): unit **141/141**, integration **206/206** (on `main`: 141 + 136 with the two local-Supabase API suites skipped,
+  MEASURED the same way before any change). New: `backend.test.ts` (13 steps), `backend-gaps.test.ts` (23),
   `api-dashboard.test.ts` +1 test and +11 matrix rows.
 - Row level security, MEASURED: `npm run test:rls` 6/6 files OK on scratch Postgres 16, and `backend-rls.sql` OK on the
   real Supabase image `supabase/postgres:15.8.1.085` (new CI step). A mutation check (an API read policy opened to
@@ -102,7 +118,7 @@ Status words: **FIXED** (with the regression test), **OUT OF SCOPE** (with the s
 | G-1628 | FIXED | Defects and families take `limit`/`offset`, answer `total`. | `backend-gaps.test.ts` "G-1628" |
 | G-1629 | OPEN | `listRuns?since=` still answers up to 20,000 runs (BUILD-LATER; the dashboard P-049 depends on it). | — |
 | G-1630 | OPEN | Overview/usage/billing totals still computed in memory (BUILD-LATER). | — |
-| G-1631 | BLOCKED | DECIDE row: per-project permissions are a founder decision. | — |
+| G-1631 | FIXED | Founder decision (coordinator, 2026-11-20): a member sees a project only while GitHub says their GitHub identity can see its repository. The App asks GitHub with the installation's token (`GET /repos/{o}/{r}/collaborators/{login}/permission`, Metadata: read), keeps the answer 10 minutes at most and asks again after 4 (each sweep); no answer, an old answer, "none", or no GitHub identity (Google or email sign-in only) hides the project and **every** row of it (runs, tests, receipts, defects, occurrences, bundles, replays, explorations, warm-ups, usage) from the API, keys (a key acts as the member who made it, and sees nothing private once they leave) and MCP; writes (state, stop, settings, replay, disconnect) follow. Public repositories: every member. Revocation events (`member`, `organization`, `membership`, `team`, `repository.privatized`) drop the answers at once. | `backend.test.ts` step 13; `backend-rls.sql` "G-1631" (scratch + Supabase image; a mutation opening `api_visible_projects()` fails it with "VISIBILITY LEAK") |
 | G-2228 | OUT OF SCOPE | The dashboard client (P-049) decides whether to call getOrganization. | — |
 | G-2229, G-2230, G-2231 | FIXED | `/healthz`, `/webhooks/github` (answers, headers, events) and `/github/setup` (every redirect reason) are in the contract (tag `app`). | `npm run api:lint` |
 | G-2232 | OPEN | `GET /github/repositories` not paginated (MINOR). | — |
@@ -135,9 +151,9 @@ Status words: **FIXED** (with the regression test), **OUT OF SCOPE** (with the s
 | Row | Status | What is now true / why | Evidence |
 | --- | --- | --- | --- |
 | G-0598 | BLOCKED | The App exists (App ID 5846807, DECLARED in the task). A real-GitHub run needs P-047's machines. | — |
-| G-0599 | OUT OF SCOPE | Other code hosts (GHES) are out of the go-live scope. | — |
+| G-0599 | OUT OF SCOPE | GitHub Enterprise Server. Rule: go-live scope: github.com only, Linux x86_64 only, GitHub Actions only, jobs only on our machines, no billing (coordinator, 2026-11-20). | — |
 | G-1725 | FIXED | A 403 from `generate-jitconfig` gives an `action_required` check run naming the permission, no silent retries. | `backend-gaps.test.ts` "G-1725" |
-| G-1726 | BLOCKED | DECIDE row (Administration permission): founder. | — |
+| G-1726 | HANDED TO P-047 | Decision (coordinator, 2026-11-20): least privilege. Organization installations use the organization permission "Self-hosted runners: Read and write"; repository "Administration: Read and write" is used only where GitHub offers nothing narrower (personal accounts), and the user is told at install. P-047 owns the runner code (`generate-jitconfig` in `github-app/src/service.ts`), so this branch does not change it, to avoid conflicting edits. Proposal sent to P-047 (2026-11-20): one fenvix runner group per repository (`POST /orgs/{org}/actions/runner-groups`, visibility `selected`, that repository only), then `POST /orgs/{org}/actions/runners/generate-jitconfig` into it, so no organization runner takes another repository's job; personal accounts keep the repository endpoint; the 403 check run names the permission for the account type; `docs/GITHUB-APP.md` lists both permissions. P-047 had not answered at push time; their report holds the outcome. | — |
 | G-1727 | FIXED | The GitHub client reads `retry-after` / `x-ratelimit-*`, waits up to 10 s once, else fails with when to retry. | `backend-gaps.test.ts` "G-1727" |
 | G-2293 | OPEN | No App manifest (MINOR); the missing-permission case is now visible (G-1725). | — |
 | G-2294 | OPEN | "All repositories" still needs a click per repository (MINOR). | — |
@@ -147,7 +163,7 @@ Status words: **FIXED** (with the regression test), **OUT OF SCOPE** (with the s
 | G-2296 | FIXED | workflow_run completed reads back its jobs that lost their events. | `backend-gaps.test.ts` "G-1729, G-2296" (path) |
 | G-2297 | FIXED | repository renamed/transferred/archived/unarchived/deleted handled. | `backend-gaps.test.ts` "G-2297" |
 | G-2298 | FIXED | installation_target renamed updates the login. | `backend-gaps.test.ts` "G-2298" |
-| G-2299 | OUT OF SCOPE | Marketplace is billing. | — |
+| G-2299 | OUT OF SCOPE | Marketplace and billing. Rule: go-live scope: github.com only, Linux x86_64 only, GitHub Actions only, jobs only on our machines, no billing (coordinator, 2026-11-20). | — |
 | G-2300 | FIXED | github_app_authorization handled and recorded (the App keeps no user token). | `service.ts` route |
 | G-2301 | FIXED | A replayed installation.created no longer brings back an uninstalled installation. | `backend-gaps.test.ts` "G-2301" |
 | G-2302 | FIXED | Ignored events are recorded. | `backend-gaps.test.ts` "G-2302" |
@@ -207,7 +223,7 @@ Status words: **FIXED** (with the regression test), **OUT OF SCOPE** (with the s
 | G-1749 | FIXED (service compares) / OUT OF SCOPE (naming the event) | The service compares fingerprints across sightings; naming the first divergent event is the engine's replay. | `backend.test.ts` "9." |
 | G-0597 | FIXED (service) | Scheduler, machines through `launchTask`, task credentials. The machine executor is P-047's. | `backend-gaps.test.ts` |
 | G-1720, G-1721, G-1722 | FIXED | Switch schedules nightly at its hour; time cap, seeds, `unstable` targeting; scheduled explorations stored whatever else stored that day. | `backend-gaps.test.ts` |
-| G-1723 | OUT OF SCOPE | Jobs and exploration run only on our machines. | — |
+| G-1723 | OUT OF SCOPE | Exploration on customer runners. Rule: go-live scope: github.com only, Linux x86_64 only, GitHub Actions only, jobs only on our machines, no billing (coordinator, 2026-11-20). | — |
 | G-1724 | OUT OF SCOPE | Buying the add-on is billing. | — |
 | G-1756, G-2310 | BLOCKED | E-mail needs a mail provider and its credential (founder). | — |
 | G-1757 | FIXED | A wrong skip pauses skip with proof for the project (no cache for its machines) until an admin resumes; the project says why. | `backend-gaps.test.ts` "G-1757" |
@@ -216,10 +232,10 @@ Status words: **FIXED** (with the regression test), **OUT OF SCOPE** (with the s
 | G-1700 | FIXED | Unlink an installation. | `backend-gaps.test.ts` |
 | G-2283 | FIXED | Organization export. | `backend-gaps.test.ts` "G-2283" |
 | G-0617 | FIXED | Setup PR only for pytest/Vitest/Jest jobs (`npm test` resolved through package.json). | `backend-gaps.test.ts` "G-0617" |
-| G-0618 | OUT OF SCOPE | Linux x86_64 only. | — |
+| G-0618 | OUT OF SCOPE | macOS, Windows, arm64. Rule: go-live scope: github.com only, Linux x86_64 only, GitHub Actions only, jobs only on our machines, no billing (coordinator, 2026-11-20). | — |
 | G-1758, G-1759 | OPEN | One job per repository; reusable workflows (BUILD-LATER). | — |
 | G-2312 | OPEN | `testCommand` setting still unused (MINOR; the setting is the dashboard's, P-049). | — |
-| G-0625 | OUT OF SCOPE | The shared cache serves only our machines (jobs only on our machines). | — |
+| G-0625 | OUT OF SCOPE | The shared cache off our machines. Rule: go-live scope: github.com only, Linux x86_64 only, GitHub Actions only, jobs only on our machines, no billing (coordinator, 2026-11-20). | — |
 | G-1804, G-2330, G-2331 | OUT OF SCOPE | Cache machine and its tenants are Infra (P-047). | — |
 | G-1632 | FIXED | Audit log (see G-1805). | `backend.test.ts` "5." |
 | G-2309 | FIXED | Retention (see G-1816). | retention test |

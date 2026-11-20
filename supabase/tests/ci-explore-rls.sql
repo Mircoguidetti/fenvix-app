@@ -33,6 +33,10 @@ do $$ declare n int; begin
   begin select count(*) into n from public.ci_explorations; assert false, 'a signed-in browser can read explorations'; exception when insufficient_privilege then null; end;
 end $$;
 reset role;
+-- G-1631: GitHub said (just now) that every member sees every repository (the App's answers; backend-rls.sql tests them).
+insert into public.gh_repo_access (user_id, project_id, can_see, basis, checked_at)
+  select m.user_id, p.id, true, 'write', now() from public.workspace_members m join public.ci_projects p on p.workspace_id = m.workspace_id
+  on conflict (user_id, project_id) do update set can_see = true, checked_at = now();
 set local role fenvix_api;
 do $$ declare r ex_ids%rowtype; begin
   select * into r from ex_ids;

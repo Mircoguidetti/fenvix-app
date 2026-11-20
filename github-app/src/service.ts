@@ -1,5 +1,6 @@
 import type { Client, Db } from "./db.ts";
 import { GitHubError, type GitHubApp, type GitHubHttp, repoPath } from "./github/client.ts";
+import { forgetRepoAccess, refreshRepoAccess } from "./access/visibility.ts";
 import { onboardRepository, type OnboardingResult } from "./onboarding/onboard.ts";
 import { COMMENT_MARKER, checkName, checkRunOutput, conclusionOf, type RenderContext } from "./results/render.ts";
 import { combinedComment, type DefectView, type JobView } from "./results/comment.ts";
@@ -34,6 +35,8 @@ export interface ServiceSettings {
    * enforce.
    */
   shadowMode?: boolean;
+  /** Repository access answers asked of GitHub per sweep (G-1631; default 200). */
+  accessBatch?: number;
   /** The API's own address (https://api.fenvix.dev): what task machines are told to call. */
   apiUrl?: string;
 }
@@ -182,6 +185,8 @@ export class GitHubService {
       case "check_run": return this.onCheckRun(p);
       case "check_suite": return this.onCheckSuite(p);
       case "installation_target": return this.onInstallationTarget(p);
+      // Who can see a repository changed (G-1631): the answers it may have made wrong go; the next sweep asks again.
+      case "member": case "organization": case "membership": case "team": return this.onAccessChange(event, p);
       // A person revoked their authorization of the App: the App keeps no person's token (the OAuth token of the setup
       // callback is used once and dropped), so there is nothing to forget. Recorded (G-2300).
       case "github_app_authorization": return true;
@@ -385,11 +390,55 @@ export class GitHubService {
       await this.warmups.cancelRepositories([repo.id], p.action === "deleted" ? "the repository was deleted" : "the repository was archived");
       return r.length > 0;
     }
+    // Made private or public (G-1631): a public repository's project is seen by every member; a private one's only
+    // by those GitHub says can see it, asked again at the next sweep.
+    if (p.action === "privatized" || p.action === "publicized") {
+      const r = await this.db.q("update gh_repositories set private = $2, updated_at = now() where repository_id = $1 returning 1", [repo.id, p.action === "privatized"]);
+      await forgetRepoAccess(this.db, { repositoryId: repo.id });
+      return r.length > 0;
+    }
     if (p.action === "unarchived") {
       const r = await this.db.q("update gh_repositories set removed_at = null, updated_at = now() where repository_id = $1 returning 1", [repo.id]);
       return r.length > 0;
     }
     return false;
+  }
+
+  /**
+   * G-1631: a collaborator removed from a repository (`member.removed`, or `edited` to a lower permission), a person
+   * removed from the organization (`organization.member_removed`), a team's members or repositories changed
+   * (`membership`, `team`): the kept answers they may have made wrong go at once.
+   */
+  private async onAccessChange(event: string, p: Record<string, unknown>): Promise<boolean> {
+    const installationId = (p.installation as { id?: number } | undefined)?.id;
+    if (!installationId) return false;
+    const action = String(p.action ?? "");
+    const repoId = (p.repository as { id?: number } | undefined)?.id;
+    if (event === "member") {
+      if (action !== "removed" && action !== "edited") return false;
+      const userId = (p.member as { id?: number } | undefined)?.id;
+      if (!userId) return false;
+      await forgetRepoAccess(this.db, { installationId, githubUserId: userId, ...(repoId ? { repositoryId: repoId } : {}) });
+      return true;
+    }
+    if (event === "organization") {
+      if (action !== "member_removed") return false;
+      const userId = (p.membership as { user?: { id?: number } } | undefined)?.user?.id;
+      if (!userId) return false;
+      await forgetRepoAccess(this.db, { installationId, githubUserId: userId });
+      return true;
+    }
+    if (event === "membership") {
+      if (action !== "removed") return false;
+      const userId = (p.member as { id?: number } | undefined)?.id;
+      if (!userId) return false;
+      await forgetRepoAccess(this.db, { installationId, githubUserId: userId });
+      return true;
+    }
+    // team: a repository taken from a team, a team deleted or its permissions edited: everyone's answers on it go.
+    if (!["removed_from_repository", "deleted", "edited"].includes(action)) return false;
+    await forgetRepoAccess(this.db, { installationId, ...(repoId ? { repositoryId: repoId } : {}) });
+    return true;
   }
 
   /** installation_target.renamed (G-2298): the account's new login. */
@@ -1091,6 +1140,9 @@ export class GitHubService {
   }
 
   /** Completed jobs whose summary never came (or whose publication failed) are published after the wait. */
+  /** G-1631: ask GitHub again who sees which private project (the oldest answers first). */
+  refreshRepoAccess() { return refreshRepoAccess(this.db, this.gh, this.log, this.s.accessBatch); }
+
   async sweep(): Promise<number> {
     // Old staged results and summaries, and old link completions go (review R-016 F7, R-016b G2, R-016 F2).
     await this.db.q("delete from gh_run_results where received_at < now() - make_interval(days => $1)", [RESULTS_KEEP_DAYS]);
@@ -1106,6 +1158,8 @@ export class GitHubService {
     for (const r of await this.db.q<{ run_id: string; workspace_id: string }>("select run_id, workspace_id from public.gh_cancel_requests()")) {
       await this.tasks.cancelRun(r.workspace_id, r.run_id).catch((e: unknown) => this.log.warn({ run: r.run_id, err: e instanceof Error ? e.message : String(e) }, "sweep: stop failed"));
     }
+    // Who may see which private project (G-1631): GitHub asked again for the oldest answers.
+    await this.refreshRepoAccess().catch((e: unknown) => this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "sweep: repository access failed"));
     await this.tasks.tick().catch((e: unknown) => this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "sweep: tasks failed"));
     await this.recoverLostWebhooks().catch((e: unknown) => this.log.warn({ err: e instanceof Error ? e.message : String(e) }, "sweep: webhook recovery failed"));
     const kept = await this.db.q<{ out: Record<string, number> }>("select public.gh_retention_sweep() as out").catch((e: unknown) => {
