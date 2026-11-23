@@ -11,9 +11,12 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
 import type pg from "pg";
+import { loadApiConfig } from "../../src/api/config.ts";
+import { type Api, buildApi } from "../../src/api/server.ts";
 import { signState } from "../../src/auth.ts";
+import { admin as localAdmin, call, LOCAL, type Person, RecordingQueue, signUp, STATE_KEY } from "../api/helpers.ts";
 import { checkWebhook } from "../helpers/schemas.ts";
-import { ACCOUNT, CI_YAML, completeLink, DASHBOARD, githubSetup, githubUser, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, push, REPOS, resetDb, workflowJob } from "../helpers/harness.ts";
+import { ACCOUNT, ADMIN_URL, CI_YAML, completeLink, DASHBOARD, githubSetup, githubUser, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, push, REPOS, resetDb, workflowJob } from "../helpers/harness.ts";
 
 const summary = (name: string) => JSON.parse(readFileSync(new URL(`../fixtures/runner/${name}.summary.json`, import.meta.url), "utf8")) as Record<string, unknown>;
 
@@ -142,6 +145,94 @@ describe("recorded end to end: installation → onboarding pull request → work
       [[1, "main", "failed", 0, 1, null], [2, "tax-change", "failed", 45, 0, 2], [3, "tax-change", "passed", 46, 0, 2]]);
 
     if (process.env.RECORD === "1") write(h, webhooks, runner, admin, org.workspaceId);
+  });
+
+  // ---------------------------------------------------------------- proof to the customer (Part C): Node parallel runs
+  // Real summaries of runner/fenvix-run with `proof` (tests/fixtures/runner/README.md), posted as the runner does. The
+  // run is read back through the dashboard API (GET /runs/{runId}) started on the same database the App writes to,
+  // with a real Supabase Auth token (signUp, as tests/integration/api-dashboard.test.ts) for a person added to this
+  // organization. Without the local Supabase (scripts/local-supabase/up.sh) no token can be issued: the API reads are
+  // then not made (said in the test's diagnostics); CI always has it.
+  let api: Api | null = null;
+  let reader: Person | null = null;
+  const apiRun = async (jobId: number) => {
+    if (!LOCAL) return null;
+    if (!api) {
+      const local = await localAdmin();
+      try { reader = await signUp(local, `e2e-proof-${process.pid}`, "Proof Reader"); } finally { await local.end(); }
+      // The same person in the App's database, an owner of the end to end's organization.
+      await admin.query("insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) values ($1, $2, '{}', now())", [reader!.userId, reader!.email]);
+      await admin.query("delete from workspaces where id in (select workspace_id from workspace_members where user_id = $1)", [reader!.userId]);
+      await admin.query("insert into workspace_members (workspace_id, user_id, role) values ($1, $2, 'owner')", [org.workspaceId, reader!.userId]);
+      const u = new URL(ADMIN_URL); u.username = "fenvix_api"; u.password = "local-test-only";
+      const cfg = loadApiConfig({ NODE_ENV: "test", API_DATABASE_URL: u.toString(), SUPABASE_URL: LOCAL.supabaseUrl, STATE_SIGNING_KEY: STATE_KEY,
+        DASHBOARD_URL: DASHBOARD, GITHUB_APP_SLUG: "fenvix-test", DB_POOL_MAX: "2", LOG_LEVEL: "silent" });
+      api = buildApi({ cfg, queue: new RecordingQueue(), logger: false });
+    }
+    const runId = (await admin.query("select ci_run_id from gh_jobs where job_id = $1", [jobId])).rows[0].ci_run_id as string;
+    const r = await call(api, "getRun", { token: reader!.token, ws: org.workspaceId, params: { runId } });
+    assert.equal(r.status, 200, r.text);
+    return (r.body as { run: { status: string; tests: { notProven: number }; proof: { workers: number; rerunOneLane: number; proven: number; ranExecuted: number } | null } }).run;
+  };
+  after(async () => { await api?.close(); });
+
+  /** One job on main with a Node runner summary: push, in_progress, summary, completed. The check run and the run row. */
+  const nodeJob = async (o: { jobId: number; runId: number; sha: string; fixture: string; conclusion: string; at: string }) => {
+    await deliver("push", push(o.sha, "refs/heads/main", 1795440000 + o.runId - 31000));
+    h.gh.addRun("acme/shop", o.runId, { event: "push", headSha: o.sha, headBranch: "main", message: `Node parallel run ${o.runId}` });
+    await deliver("workflow_job", workflowJob("in_progress", { id: o.jobId, runId: o.runId, sha: o.sha, branch: "main", startedAt: `${o.at}:00Z` }));
+    const t = performance.now();
+    const r = await h.summary({ runId: o.runId, summary: summary(o.fixture) });
+    runner.push({ runId: o.runId, summaryFile: `tests/fixtures/runner/${o.fixture}.summary.json`, status: r.statusCode, at: t });
+    assert.equal(r.statusCode, 202, r.body);
+    await deliver("workflow_job", workflowJob("completed", { id: o.jobId, runId: o.runId, sha: o.sha, branch: "main", conclusion: o.conclusion, startedAt: `${o.at}:00Z`, completedAt: `${o.at}:40Z` }));
+    await h.app.service.idle();
+    const cr = [...h.gh.repos.get("acme/shop")!.checkRuns.values()].find((c) => c.head_sha === o.sha)!;
+    const run = (await admin.query("select status, tests_not_proven from ci_runs where commit_sha = $1", [o.sha])).rows[0];
+    return { cr, output: cr.output as { title: string; summary: string }, run, raw: summary(o.fixture) as { proof: { proven: number } } };
+  };
+
+  // protects=a real parallel run with every test proven reaches the customer green, with the honest proven row and the
+  // proof in the API; fails_when=the check fails, the old words, or the API has no proof; no_claim=lane conflicts the
+  // engine did not record.
+  it("9. a Node parallel run (vitest, 2 lanes), every test proven: passed, a green check with the proven row, the proof in the API", async (t) => {
+    const x = await nodeJob({ jobId: 81009, runId: 31009, sha: "9a".repeat(20), fixture: "node-vitest-parallel-proof", conclusion: "success", at: "2026-11-23T11:00" });
+    assert.equal(x.run.status, "passed");
+    assert.equal(x.cr.conclusion, "success");
+    assert.match(x.output.summary, new RegExp(`Proven: no conflict between lanes \\| ${x.raw.proof.proven} of 4`));
+    const a = await apiRun(81009);
+    if (!a) { t.diagnostic("no local Supabase: the API read was not made"); return; }
+    assert.equal(a.status, "passed");
+    assert.equal(a.proof!.workers, 2);
+    assert.equal(a.tests.notProven, 0);
+  });
+
+  // protects=a run whose files in conflict ran again in one lane is still proven and says how many re-ran;
+  // fails_when=the re-run makes it red, or rerunOneLane is 0 in the API; no_claim=the re-run's own correctness.
+  it("10. a Node parallel run with a cross-lane hazard: the files ran again in one lane, passed, rerunOneLane > 0 in the API", async (t) => {
+    const x = await nodeJob({ jobId: 81010, runId: 31010, sha: "10".repeat(20), fixture: "node-vitest-parallel-hazard", conclusion: "success", at: "2026-11-23T11:10" });
+    assert.equal(x.run.status, "passed");
+    assert.equal(x.cr.conclusion, "success");
+    assert.match(x.output.summary, new RegExp(`Proven: no conflict between lanes \\| ${x.raw.proof.proven} of 4`));
+    const a = await apiRun(81010);
+    if (!a) { t.diagnostic("no local Supabase: the API read was not made"); return; }
+    assert.equal(a.status, "passed");
+    assert.equal(a.proof!.workers, 2);
+    assert.equal(a.tests.notProven, 0);
+    assert.ok(a.proof!.rerunOneLane > 0, `rerunOneLane ${a.proof!.rerunOneLane}`);
+  });
+
+  // protects=a run whose one-lane re-run did not account for 2 tests is never green, and the customer reads why;
+  // fails_when=passed, a green or neutral check, N other than 2, or no causes list; no_claim=the engine's re-run.
+  it("11. a Node parallel run with 2 tests not proven (edited from 10): not_proven, the check fails, the cause listed", async (t) => {
+    const x = await nodeJob({ jobId: 81011, runId: 31011, sha: "11".repeat(20), fixture: "node-vitest-parallel-notproven", conclusion: "failure", at: "2026-11-23T11:20" });
+    assert.deepEqual(x.run, { status: "not_proven", tests_not_proven: 2 });
+    assert.equal(x.cr.conclusion, "failure");
+    assert.match(x.output.summary, /### Not proven\n\n- b\.test\.js: the one-lane re-run ran 0 of its 2 test\(s\): 2 test\(s\)/);
+    const a = await apiRun(81011);
+    if (!a) { t.diagnostic("no local Supabase: the API read was not made"); return; }
+    assert.equal(a.status, "not_proven");
+    assert.equal(a.tests.notProven, 2);
   });
 });
 

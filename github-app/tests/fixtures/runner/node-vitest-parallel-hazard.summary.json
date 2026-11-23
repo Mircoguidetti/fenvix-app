@@ -1,0 +1,116 @@
+{
+ "language": "node",
+ "test_runner": "vitest",
+ "engine": "detjs",
+ "engine_version": "0.1.0",
+ "project": "/home/fenvix/work/vitest-hazard",
+ "commit": "",
+ "cache_dir": "/home/fenvix/work/cacheB/fixture_vitest-hazard-12a160cc-node22",
+ "cache_was_warm": false,
+ "exit": 0,
+ "wall_seconds": 1.959,
+ "tests": 4,
+ "reused_with_proof": 0,
+ "ran": 4,
+ "test_seconds_saved": 0,
+ "test_seconds_run": 0.265,
+ "share_of_test_time_saved": 0.0,
+ "failed": [],
+ "not_proven": 0,
+ "status": {
+  "failed": 0,
+  "not_proven": 0,
+  "passed": 4,
+  "skipped": 0
+ },
+ "provable_absent": null,
+ "not_proven_outside": 0,
+ "flaky": [],
+ "reruns": [],
+ "outcome_counts": {
+  "passed": 4
+ },
+ "not_cached": {
+  "touched-a-path-or-port-another-test-file": 6
+ },
+ "not_reused_reasons": {
+  "new": 2
+ },
+ "reason_texts": {
+  "touched-a-path-or-port-another-test-file": "touched a path or port another test file running in parallel also touched",
+  "new": "new"
+ },
+ "cache_check_seconds": 0,
+ "cache_record_seconds": 0.002,
+ "epoch_ns": 1795392000000000000,
+ "receipts": "/home/fenvix/work/out-b/receipts.jsonl",
+ "outcomes_file": "/home/fenvix/work/out-b/outcomes.json",
+ "trace_file": "/home/fenvix/work/out-b/trace.jsonl",
+ "cache_summary_file": "/home/fenvix/work/out-b/cache-summary.json",
+ "outcomes": {
+  "a.test.js::a writes the shared file": "passed",
+  "a.test.js::a writes it again": "passed",
+  "b.test.js::b writes the shared file": "passed",
+  "b.test.js::b writes it again": "passed"
+ },
+ "reused_outcomes": {},
+ "reused_files": [],
+ "runner_args": [
+  "run",
+  "--det-workers=2"
+ ],
+ "detjs_args": [
+  "--det",
+  "--det-cache=/home/fenvix/work/cacheB/fixture_vitest-hazard-12a160cc-node22",
+  "--det-cache-receipts=/home/fenvix/work/out-b/receipts.jsonl",
+  "--det-cache-summary=/home/fenvix/work/out-b/cache-summary.json",
+  "--det-outcomes=/home/fenvix/work/out-b/outcomes.json",
+  "--det-trace=/home/fenvix/work/out-b/trace.jsonl",
+  "run",
+  "--det-workers=2"
+ ],
+ "cache_arg": "--det-cache=/home/fenvix/work/cacheB/fixture_vitest-hazard-12a160cc-node22",
+ "runtime": {
+  "digest": "e5b4b939886de49f1415cffe3532f42a",
+  "config": "ea70716a36c6482751d1e2128b01a190",
+  "engine": "detjs",
+  "dist_list": [
+   "detjs@0.1.0"
+  ],
+  "node": "v22.23.5",
+  "runner_version": "5.1.0",
+  "parts": {
+   "node": "0785e1f9aab7514934eb7dfa0ccce8dc",
+   "executable": "5d3b0020ee98c39c07e452c86c4431f5",
+   "native": "259995f20b59e5fe9fc7f6130a30c488",
+   "libc": "21ba848483eee9a51d0d2919ada5deae",
+   "tz": "ae1c52feb2c8e94e40ad2636d675929c",
+   "locale": "329a9c8cc592fac2b530dba2fb58d95c",
+   "cpu": "5bbd3c6307a3887e3d2add430b313d99",
+   "lockfiles": "c0dbaf6c9a9692aeff0d8983e15455c3",
+   "packages": "a55266893c82168b01f93e1158a88880"
+  },
+  "identity_seconds": 0.061
+ },
+ "runtime_changed_since_previous_job": [],
+ "machine": {
+  "hostname": "vm",
+  "runner_name": null,
+  "machine_id": "a0a011aeb8aa",
+  "boot_id": "d46b3bfe6612",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "cpus": 4
+ },
+ "shared_cache": null,
+ "reused_from_shared_cache": 0,
+ "proof": {
+  "workers": 2,
+  "proven": 4,
+  "not_proven": 0,
+  "rerun_one_lane": 4,
+  "parallel_seconds": 0.076,
+  "serial_seconds_estimate": 0.107,
+  "order_digest": "a237d0d48cfc8cbba771141f3e119f53",
+  "not_proven_causes": []
+ }
+}

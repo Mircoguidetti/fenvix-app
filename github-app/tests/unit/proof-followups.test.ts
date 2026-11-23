@@ -184,3 +184,25 @@ describe("A2 the check run's proof rows and causes list", () => {
     assert.equal(parseSummary(stored).notProven, 0);
   });
 });
+
+describe("the runner's real proof summaries (tests/fixtures/runner/node-vitest-parallel-*)", () => {
+  // protects=the App reads what the patched runner really sends: proof not null, the warm run passed (A1.3's
+  // skipped_ran), the hazard run passed with its one-lane re-run, the edited one not proven with exact N;
+  // fails_when=a real summary is refused, loses its proof, or is not proven for a field mismatch; no_claim=other
+  // runners or versions.
+  it("parseSummary accepts them with proof; proof, warm and hazard parse to passed; the edited one to not_proven, N 2", () => {
+    const read = (f: string) => parseSummary(trimSummary(fixture(f)));
+    for (const f of ["node-vitest-parallel-proof", "node-vitest-parallel-warm", "node-vitest-parallel-hazard"]) {
+      const sum = read(f);
+      assert.notEqual(sum.proof, null, f);
+      assert.equal(sum.proof!.workers, 2, f);
+      assert.deepEqual([sum.notProven, runStatus("success", sum)], [0, "passed"], f);
+      assert.equal(sum.proof!.proven + sum.proof!.notProven, sum.ranExecuted, f);
+    }
+    const warm = read("node-vitest-parallel-warm");
+    assert.ok(warm.reusedWithProof > 0 && warm.ranExecuted === 1, `warm: reused ${warm.reusedWithProof}, ranExecuted ${warm.ranExecuted}`);
+    assert.ok(read("node-vitest-parallel-hazard").proof!.rerunOneLane > 0);
+    const np = read("node-vitest-parallel-notproven");
+    assert.deepEqual([np.notProven, np.notProvenReason, runStatus("failure", np), conclusionOf(np, "failure")], [2, null, "not_proven", "failure"]);
+  });
+});
