@@ -780,7 +780,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/Project"
         - type: object
-          required: [runsThisMonth, medianSkipShare, openDefects, minutesThisMonth, minutesSavedThisMonth, lastRunAt, lastRunStatus]
+          required: [runsThisMonth, medianSkipShare, openDefects, minutesThisMonth, minutesSavedThisMonth, lastRunAt, lastRunStatus, lastRunNotProven]
           properties:
             runsThisMonth: { type: integer }
             medianSkipShare: { type: [number, "null"] }
@@ -789,6 +789,7 @@ components:
             minutesSavedThisMonth: { type: number }
             lastRunAt: { type: [string, "null"], format: date-time }
             lastRunStatus: { oneOf: [{ $ref: "#/components/schemas/RunStatus" }, { type: "null" }] }
+            lastRunNotProven: { type: integer, description: "The last run's tests not proven (its pill always shows the count)." }
     RunTests:
       type: object
       required: [total, ran, passed, failed, skippedWithProof, flakyDefects, notProven]

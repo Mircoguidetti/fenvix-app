@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
-import { client, type Run, type RunFile, type SkipReceipt, type TestOutcome } from "../data";
-import { BadgeCheck, Check, X } from "lucide-react";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
+import { client, type Run, type RunFile, type RunProof, type SkipReceipt, type TestOutcome } from "../data";
+import { BadgeCheck, Check, ShieldQuestion, X } from "lucide-react";
 import { Card, Message, PageHeader } from "../components/PageHeader";
-import { MinuteSum, OutcomePill, SAVED_NOTE, triggerLabel } from "../components/ci";
+import { ChartSkeleton, ListSkeleton, PageSkeleton } from "../components/Skeleton";
+import { MinuteSum, NO_CAUSE, OutcomePill, SAVED_NOTE, triggerLabel } from "../components/ci";
 import { RunStatusPill } from "../components/StateBadge";
 import { Pagination } from "../components/Pagination";
 import { Segmented } from "../components/Segmented";
@@ -163,6 +164,96 @@ function SuiteSquares({ files }: { files: RunFile[] }) {
   );
 }
 
+/** "read a file outside the project": the engine's cause as the verb phrase of a sentence about tests. */
+const CAUSE_PHRASES: Record<string, string> = {
+  "file read outside the project": "read a file outside the project",
+  "environment variable read outside any test": "read an environment variable outside any test",
+};
+
+const testCount = (n: number) => `${formatCount(n)} ${n === 1 ? "test" : "tests"}`;
+
+/** After the sentence: what the run did with them. The run exits non-zero only when the summary said so. */
+function exitClause(run: Pick<Run, "exitCode">): string {
+  return `Their serial result is reported; ${run.exitCode !== null && run.exitCode !== 0 ? `the run exits ${run.exitCode}` : "the check on GitHub is marked failed"}.`;
+}
+
+/** One sentence about the tests not proven, from the largest cause the runner reported. */
+export function notProvenSentence(run: Pick<Run, "exitCode" | "tests">, proof: Pick<RunProof, "notProvenCauses"> | null): string {
+  const n = run.tests.notProven;
+  const top = proof ? [...proof.notProvenCauses].sort((a, b) => b.tests - a.tests)[0] : undefined;
+  if (!top) return `${testCount(n)} ${n === 1 ? "was" : "were"} not proven identical. ${NO_CAUSE}. ${exitClause(run)}`;
+  const what = CAUSE_PHRASES[top.cause] ?? `were not proven (${top.cause})`;
+  return `${testCount(top.tests)} ${what}, so the parallel result could not be proven equal to the serial one. ${exitClause(run)}`;
+}
+
+/**
+ * The run's test command ran in parallel lanes, then each test was checked against the serial run (the summary's
+ * proof). Not shown while running (the proof exists once the run has finished) nor for a serial run.
+ */
+function ProofCard({ run, proof, testsLink }: { run: Run; proof: RunProof; testsLink: string }) {
+  const n = proof.notProven;
+  return (
+    <Card id="proof" title="Parallel with proof" description="Ran in parallel, then checked test by test against the serial run.">
+      <dl className="facts facts-4">
+        <div>
+          <dt>Result</dt>
+          <dd>{n === 0 ? "Identical to the serial run" : `Not proven for ${testCount(n)}`}</dd>
+        </div>
+        <div>
+          <dt>Workers</dt>
+          <dd className="mono">{formatCount(proof.workers)}</dd>
+        </div>
+        <div>
+          <dt>Proven</dt>
+          <dd className="mono">
+            {formatCount(proof.proven)} of {formatCount(proof.proven + proof.notProven)}
+          </dd>
+        </div>
+        <div>
+          <dt>Re-run in one lane</dt>
+          <dd className="mono">{formatCount(proof.rerunOneLane)}</dd>
+        </div>
+        <div>
+          <dt>Not proven</dt>
+          <dd className="mono">{formatCount(n)}</dd>
+        </div>
+        <div>
+          <dt>Parallel time</dt>
+          <dd className="mono">{formatDuration(proof.parallelMs)}</dd>
+        </div>
+        {proof.serialMsEstimate !== null && (
+          <div>
+            <dt>Serial time (estimate)</dt>
+            <dd className="mono">{formatDuration(proof.serialMsEstimate)}</dd>
+          </div>
+        )}
+        <div>
+          <dt>Order digest</dt>
+          <dd className="mono break-anywhere">{proof.orderDigest ?? "Not reported"}</dd>
+        </div>
+      </dl>
+      {n > 0 && (
+        <div className="callout callout-warning" role="note" id="not-proven-note">
+          <p className="callout-row">
+            <ShieldQuestion size={16} aria-hidden="true" />
+            <span>
+              {notProvenSentence({ ...run, tests: { ...run.tests, notProven: n } }, proof)}{" "}
+              <Link to={testsLink} className="row-link">
+                See the {testCount(n)}
+              </Link>
+            </span>
+          </p>
+        </div>
+      )}
+      <p className="small">
+        <a href="#tests" className="row-link">
+          How this was proven
+        </a>
+      </p>
+    </Card>
+  );
+}
+
 const PHASES: Record<NonNullable<Run["progress"]>["phase"], string> = { setup: "Setting up the machine", collecting: "Collecting tests", testing: "Running tests", reporting: "Reporting results" };
 
 /** The runner's latest progress record of a running run, refreshed by the live view. */
@@ -214,7 +305,8 @@ function LiveProgress({ run, polling }: { run: Run; polling: boolean }) {
 export function RunPage() {
   const { projectId = "", runId = "" } = useParams();
   const [params, setParams] = useSearchParams();
-  const outcome = (["passed", "failed", "skipped_with_proof"].includes(params.get("outcome") ?? "") ? params.get("outcome") : "all") as TestOutcome | "all";
+  const outcome = (["passed", "failed", "skipped_with_proof", "not_proven"].includes(params.get("outcome") ?? "") ? params.get("outcome") : "all") as TestOutcome | "all";
+  const location = useLocation();
   const page = Math.max(1, Number(params.get("page")) || 1);
   const receiptId = params.get("receipt");
   const [search, setSearch] = useState(params.get("q") ?? "");
@@ -226,6 +318,13 @@ export function RunPage() {
   const tests = useAsync(() => client.listTestResults(runId, { outcome, search: q, page, pageSize: PAGE_SIZE }), [runId, outcome, q, page, status]);
   const receipt = useAsync(() => (receiptId ? client.getSkipReceipt(receiptId) : Promise.resolve(null)), [receiptId]);
   const files = useAsync(() => client.listRunFiles(runId), [runId, status]);
+  // A run not proven without a proof block: "See the N tests" only when it has per-test not_proven rows.
+  const unproven = live.detail && !live.detail.run.proof && live.detail.run.tests.notProven > 0 && status !== "running";
+  const unprovenRows = useAsync(() => (unproven ? client.listTestResults(runId, { outcome: "not_proven", pageSize: 1 }).then((p) => p.total) : Promise.resolve(0)), [runId, unproven, status]);
+  // "See the N tests" and "How this was proven" lead to the tests table.
+  useEffect(() => {
+    if (location.hash === "#tests" && data.status === "ready") document.getElementById("tests")?.scrollIntoView();
+  }, [location.hash, location.search, data.status]);
   const project = data.status === "ready" && data.data ? data.data.project : null;
   useProjectTitle(project?.fullName, project ? { language: languageLabel(project.language), runner: project.testRunner, snippet: setupSnippet(project) } : undefined);
 
@@ -245,7 +344,7 @@ export function RunPage() {
     return () => clearTimeout(t);
   }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (data.status === "loading") return <Message>Loading run</Message>;
+  if (data.status === "loading") return <PageSkeleton kpis={6} cards={3} label="Loading run" />;
   if (data.status === "error") return <Message role="alert">{data.message}</Message>;
   if (!data.data || !live.detail || data.data.run.projectId !== projectId)
     return (
@@ -260,6 +359,7 @@ export function RunPage() {
   const running = run.status === "running";
   const shadow = run.mode === "shadow";
   const counts = tests.status === "ready" ? tests.data.counts : null;
+  const testsLink = `/projects/${projectId}/runs/${run.id}?outcome=not_proven#tests`;
 
   return (
     <>
@@ -270,7 +370,7 @@ export function RunPage() {
           </Link>
         }
         title={`Run #${run.number}`}
-        meta={<RunStatusPill status={run.status} />}
+        meta={<RunStatusPill status={run.status} count={run.tests.notProven} />}
         description={
           <>
             <span className="mono">{shortSha(run.commitSha)}</span> {run.commitMessage}
@@ -303,7 +403,9 @@ export function RunPage() {
           <div className="kpi">
             <strong className="kpi-value">{formatCount(run.tests.ran)}</strong>
             <span className="kpi-label">Ran</span>
-            <span className="kpi-sub muted small">{formatCount(run.tests.passed)} passed</span>
+            <span className="kpi-sub muted small">
+              {formatCount(run.tests.passed)} passed{run.tests.notProven ? ` · ${formatCount(run.tests.notProven)} not proven` : ""}
+            </span>
           </div>
           {shadow ? (
             <div className="kpi">
@@ -335,6 +437,27 @@ export function RunPage() {
           </div>
         </div>
       )}
+
+      {!running && !run.proof && run.tests.notProven > 0 && (
+        <div className="callout callout-warning" role="note" id="not-proven-note">
+          <p className="callout-row">
+            <ShieldQuestion size={16} aria-hidden="true" />
+            <span>
+              {notProvenSentence(run, null)}
+              {unprovenRows.status === "ready" && unprovenRows.data > 0 && (
+                <>
+                  {" "}
+                  <Link to={testsLink} className="row-link">
+                    See the {testCount(run.tests.notProven)}
+                  </Link>
+                </>
+              )}
+            </span>
+          </p>
+        </div>
+      )}
+
+      {!running && run.proof && <ProofCard run={run} proof={run.proof} testsLink={testsLink} />}
 
       <Card id="facts" title="Run" description="Where it came from and how it ran.">
         <dl className="facts facts-4">
@@ -399,13 +522,13 @@ export function RunPage() {
       </Card>
 
       <Card id="suite" title="Test suite" description="Each square is a test file.">
-        {running ? <p className="muted">The files of the suite show once the run has finished.</p> : files.status === "ready" ? files.data.length ? <SuiteSquares files={files.data} /> : <p className="muted">No tests recorded for this run.</p> : <Message>Loading the suite</Message>}
+        {running ? <p className="muted">The files of the suite show once the run has finished.</p> : files.status === "ready" ? files.data.length ? <SuiteSquares files={files.data} /> : <p className="muted">No tests recorded for this run.</p> : <ChartSkeleton height={120} />}
       </Card>
 
       <Card
         id="tests"
         title="Tests"
-        description="Every test of the run: it ran (passed or failed) or it was skipped with proof. Open a receipt to see what was checked."
+        description={`Every test of the run: it ran (passed or failed${run.tests.notProven ? ", or not proven identical to the serial run" : ""}) or it was skipped with proof. Open a receipt to see what was checked.`}
         actions={
           <div className="card-controls">
             <Segmented
@@ -418,13 +541,14 @@ export function RunPage() {
                 { value: "failed", label: "Failed", count: counts ? formatCount(counts.failed) : undefined },
                 { value: "passed", label: "Passed", count: counts ? formatCount(counts.passed) : undefined },
                 { value: "skipped_with_proof", label: "Skipped", count: counts ? formatCount(counts.skipped_with_proof) : undefined },
+                { value: "not_proven", label: "Not proven", count: counts ? formatCount(counts.not_proven) : undefined },
               ]}
             />
           </div>
         }
       >
         <SearchInput aria-label="Search tests" placeholder="Search by test id" value={search} onChange={(e) => setSearch(e.target.value)} />
-        {tests.status === "loading" && <Message>Loading tests</Message>}
+        {tests.status === "loading" && <ListSkeleton rows={8} />}
         {tests.status === "error" && <Message role="alert">{tests.message}</Message>}
         {tests.status === "ready" && (
           <>
@@ -439,7 +563,7 @@ export function RunPage() {
                     <div className="test-main">
                       <span className="mono break-anywhere test-id">{t.testId}</span>
                       <span className="test-meta">
-                        <OutcomePill outcome={t.outcome} flaky={t.failure?.kind === "flaky_defect"} />
+                        <OutcomePill outcome={t.outcome} flaky={t.failure?.kind === "flaky_defect"} cause={t.notProvenCause} />
                         <span className="muted small mono">{formatDuration(t.durationMs)}</span>
                         {t.receiptId && (
                           <button type="button" className="btn btn-xs" onClick={() => set({ receipt: t.receiptId })} aria-label={`Receipt for ${t.testId}`}>
@@ -448,6 +572,11 @@ export function RunPage() {
                         )}
                       </span>
                     </div>
+                    {t.outcome === "not_proven" && (
+                      <p className="small muted test-cause">
+                        Not proven identical to the serial run: {t.notProvenCause ?? `${NO_CAUSE.toLowerCase()}`}. Its serial result is the one reported.
+                      </p>
+                    )}
                     {t.failure && (
                       <div className="test-failure">
                         <p className="mono small break-anywhere">

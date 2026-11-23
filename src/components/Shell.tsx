@@ -1,13 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, BookOpen, Building2, ChartColumn, Check, ChevronDown, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, BookOpen, Building2, ChartColumn, Check, ChevronDown, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, ShieldCheck, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { AccountMenu, OrgAvatar, useCurrentOrg } from "./AccountMenu";
 import { useToast } from "./Toast";
 import { useFocusTrap } from "../lib/useFocusTrap";
 import { useOrg } from "../session/OrgProvider";
 import { useTheme } from "../lib/theme";
-import { client, type ProjectRow } from "../data";
+import { client, type ProjectRow, type SearchResult } from "../data";
 import { setupSnippet } from "../data/ci";
 import { CopyButton } from "./CopyButton";
 import { ROLE_NAMES } from "../data/orgs";
@@ -57,17 +57,18 @@ const PROJECTS_PAGES = [
  * The project's sections, as in the dashboard drawn in the landing (founder, 2026-11-17): the icons of the rail and the
  * first links of the second bar.
  */
-type SectionKey = "runs" | "defects" | "skip" | "nightly" | "ttg" | "settings";
+type SectionKey = "runs" | "parallel" | "defects" | "skip" | "nightly" | "ttg" | "settings";
 type Section = { key: SectionKey; label: string; icon: LucideIcon; to: (id: string) => string };
 const PROJECT_SECTIONS: Section[] = [
   { key: "runs", label: "Runs", icon: Play, to: (id) => `/projects/${id}` },
+  { key: "parallel", label: "Parallel with proof", icon: ShieldCheck, to: (id) => `/projects/${id}/parallel-with-proof` },
   { key: "defects", label: "Defects", icon: TriangleAlert, to: (id) => `/projects/${id}/defects` },
   { key: "skip", label: "Skip with proof", icon: Check, to: (id) => `/projects/${id}/skip-with-proof` },
   { key: "nightly", label: "Nightly exploration", icon: Moon, to: (id) => `/projects/${id}/nightly` },
   { key: "ttg", label: "Time to green", icon: ChartColumn, to: (id) => `/projects/${id}/time-to-green` },
   { key: "settings", label: "Settings", icon: SlidersHorizontal, to: (id) => `/projects/${id}/settings` },
 ];
-const SECTION_OF: Record<string, SectionKey> = { defects: "defects", "skip-with-proof": "skip", nightly: "nightly", "time-to-green": "ttg", settings: "settings", runs: "runs" };
+const SECTION_OF: Record<string, SectionKey> = { "parallel-with-proof": "parallel", defects: "defects", "skip-with-proof": "skip", nightly: "nightly", "time-to-green": "ttg", settings: "settings", runs: "runs" };
 const LAST_PROJECT = "fenvix-last-project";
 export function rememberProject(id: string) {
   try {
@@ -94,6 +95,11 @@ export function useProjectTitle(name: string | undefined, more?: Omit<ProjectInf
     set({ name: name ?? "", ...(JSON.parse(key) as Omit<ProjectInfo, "name">) });
     return () => set({ name: "" });
   }, [name, key, set]);
+}
+
+/** The full name of the project the open page is about ("" elsewhere), for the browser tab's title. */
+export function useOpenProjectName(): string {
+  return useContext(ProjectTitle).info.name;
 }
 
 /** The organization's projects, loaded once for the frame (switcher, the project the frame shows). */
@@ -375,10 +381,6 @@ function Drawer({ onClose }: { path: string; onClose: () => void }) {
         </nav>
         {projectId && (
           <nav aria-label="Project sections" className="cx-drawer-group">
-            <Link to="/projects" onClick={onClose} className="cx-sub-link cx-drawer-back">
-              <ArrowLeft size={16} strokeWidth={2} aria-hidden="true" />
-              All projects
-            </Link>
             <p className="cx-drawer-label">
               Project <span className="cx-drawer-label-name">{info.name}</span>
             </p>
@@ -608,7 +610,10 @@ const JUMP_PAGES = [
   { label: "API keys", to: "/api-keys" },
 ];
 
-/** "Search or jump to": pages and projects by name. ⌘K or Ctrl+K puts the cursor in it. */
+/**
+ * "Search or jump to": pages and projects by name, and from 2 characters on (debounced) runs by number or commit and
+ * open defects by test name (GET /search, F-004). Each run and defect names its project. ⌘K or Ctrl+K puts the cursor in it.
+ */
 function JumpSearch() {
   const navigate = useNavigate();
   const [q, setQ] = useState("");
@@ -618,6 +623,20 @@ function JumpSearch() {
   const input = useRef<HTMLInputElement>(null);
   const listId = useId();
   const term = q.trim().toLowerCase();
+  const [found, setFound] = useState<{ q: string; items: SearchResult[] } | null>(null);
+  useEffect(() => {
+    if (term.length < 2) return;
+    let live = true;
+    const t = setTimeout(() => {
+      client.search(term).then((items) => live && setFound({ q: term, items }), () => live && setFound({ q: term, items: [] }));
+    }, 200);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [term]);
+  const hits = term.length >= 2 && found?.q === term ? found.items : [];
+  const searching = term.length >= 2 && found?.q !== term;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -646,6 +665,8 @@ function JumpSearch() {
     ? [
         ...JUMP_PAGES.filter((p) => p.label.toLowerCase().includes(term)).map((p) => ({ key: p.to, label: p.label, kind: "Page", to: p.to })),
         ...(projects ?? []).filter((p) => p.fullName.toLowerCase().includes(term)).slice(0, 6).map((p) => ({ key: p.id, label: p.fullName, kind: "Project", to: `/projects/${p.id}` })),
+        ...hits.filter((h) => h.kind === "run").map((h) => ({ key: `run-${h.id}`, label: `${h.label} · ${h.sublabel}`, kind: "Run", to: `/projects/${h.projectId}/runs/${h.id}` })),
+        ...hits.filter((h) => h.kind === "defect").map((h) => ({ key: `defect-${h.id}`, label: `${h.label} · ${h.sublabel}`, kind: "Defect", to: `/defects/${h.id}` })),
       ]
     : [];
   const show = open && term.length > 0;
@@ -687,15 +708,15 @@ function JumpSearch() {
         ⌘K
       </kbd>
       {show && (
-        <ul id={listId} role="listbox" className="cx-pop cx-search-list" aria-label="Pages and projects">
+        <ul id={listId} role="listbox" className="cx-pop cx-search-list" aria-label="Pages, projects, runs and defects">
           {items.length === 0 && (
             <li className="cx-search-none" role="presentation">
-              Nothing matches
+              {searching ? "Searching runs and defects…" : "Nothing matches"}
             </li>
           )}
           {items.map((it, i) => (
             <li key={it.key} id={`${listId}-${i}`} role="option" aria-selected={i === active} className="cx-search-item" onMouseDown={(e) => (e.preventDefault(), go(it.to))} onMouseEnter={() => setActive(i)}>
-              <span className={it.kind === "Project" ? "mono ellipsis" : "ellipsis"}>{it.label}</span>
+              <span className={it.kind === "Project" || it.kind === "Defect" ? "mono ellipsis" : "ellipsis"}>{it.label}</span>
               <span className="cx-search-kind">{it.kind}</span>
             </li>
           ))}

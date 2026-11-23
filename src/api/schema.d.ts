@@ -1077,6 +1077,8 @@ export interface components {
             /** Format: date-time */
             lastRunAt: string | null;
             lastRunStatus: components["schemas"]["RunStatus"] | null;
+            /** @description The last run's tests not proven (its pill always shows the count). */
+            lastRunNotProven: number;
         };
         RunTests: {
             total: number;

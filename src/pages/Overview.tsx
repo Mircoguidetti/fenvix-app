@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { client } from "../data";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
+import { CardSkeleton, KpiSkeleton, ListSkeleton } from "../components/Skeleton";
 import { AreaSeriesChart, HBars, Sparkline, TimeBarsChart } from "../components/charts";
 import { MinuteSum, SAVED_NOTE, SkipShare, shortTest } from "../components/ci";
 import { ActivityList } from "./ProjectSections";
@@ -13,9 +14,9 @@ import { formatCount, formatMinutes, formatMoney, formatPercent, formatPrice, fo
 const monthName = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
 export const seconds = (s: number) => (s < 120 ? `${Math.round(s)} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, "0")} s`);
 
-function Kpi({ label, value, sub, spark }: { label: string; value: string; sub: string; spark?: number[] }) {
+function Kpi({ label, value, sub, spark, wide, id }: { label: string; value: string; sub: string; spark?: number[]; wide?: boolean; id?: string }) {
   return (
-    <div className="kpi">
+    <div className={wide ? "kpi kpi-wide" : "kpi"} id={id}>
       <strong className="kpi-value">{value}</strong>
       <span className="kpi-label">{label}</span>
       <span className="kpi-sub muted small">{sub}</span>
@@ -36,6 +37,7 @@ export function OverviewPage() {
     <>
       <PageHeader
         back={<Kicker>Overview</Kicker>}
+        docTitle="Overview"
         title={settings.status === "ready" ? settings.data.workspaceName : "Overview"}
         description="Your test runs on fenvix this month: how many, how much test time was skipped with proof, and how fast pull requests turn green."
         actions={
@@ -45,7 +47,13 @@ export function OverviewPage() {
         }
       />
 
-      {data.status === "loading" && <Message>Loading overview</Message>}
+      {data.status === "loading" && (
+        <p className="sr-only" role="status">
+          Loading overview
+        </p>
+      )}
+      {data.status === "loading" && <KpiSkeleton count={6} />}
+      {data.status === "loading" && <CardSkeleton body={240} />}
       {data.status === "error" && <Message role="alert">{data.message}</Message>}
       {data.status === "ready" && data.data.trial && (
         <Card
@@ -78,8 +86,15 @@ export function OverviewPage() {
         const price = o.cost.plan?.priceUsdMonth ?? null;
         return (
           <>
-            <div className="kpis">
+            <div className="kpis kpis-7">
               <Kpi label="Runs" value={formatCount(o.runs.thisMonth)} sub={`${month} so far · ${formatCount(o.runs.lastMonthSameDays)} before`} spark={o.runs.perDay.map((p) => p.value)} />
+              <Kpi
+                id="kpi-proof"
+                wide
+                label="Proven identical"
+                value={o.proof.runsWithProof === 0 ? "–" : `${formatCount(o.proof.provenIdentical)} of ${formatCount(o.proof.runsWithProof)} runs`}
+                sub={o.proof.runsWithProof === 0 && o.proof.notProven === 0 ? "no parallel runs yet" : `${formatCount(o.proof.notProven)} not proven this month`}
+              />
               <Kpi label="Minutes saved" value={formatMinutes(o.minutesSaved.thisMonth)} sub="skipped tests only" spark={o.minutesSaved.perDay.map((p) => p.value)} />
               <Kpi label="Skipped with proof" value={o.skipShare.median === null ? "–" : formatPercent(o.skipShare.median)} sub="median, test time per run" spark={o.skipShare.perDay.map((p) => p.value)} />
               <Kpi label="Time to green" value={ttgWith === null ? "–" : seconds(ttgWith)} sub={ttgBefore === null ? "median, push to green" : `median · was ${seconds(ttgBefore)}`} />
@@ -196,7 +211,7 @@ export function OverviewPage() {
               </Card>
             </div>
             <Card id="activity" title="Live activity" description="Every project, newest first.">
-              {activity.status === "ready" ? <ActivityList items={activity.data} now={now} /> : <Message>Loading</Message>}
+              {activity.status === "ready" ? <ActivityList items={activity.data} now={now} /> : <ListSkeleton rows={5} />}
             </Card>
           </>
         );

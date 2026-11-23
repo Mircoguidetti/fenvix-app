@@ -734,7 +734,8 @@ database directly.
   cancelled, no summary, failures, N > 0, non-zero `exit`, passed), the per-test outcome `not_proven` with
   `notProvenCause`, the activity kind `run_not_proven`, the tests list's `counts.not_proven` and filter, the runs list's
   `status=not_proven` filter, the Overview's `proof` block (`runsWithProof`, `provenIdentical`, `notProven`) and
-  `exitCode` (the summary's `exit`, so the run page can say whether the run exited 1) and
+  `exitCode` (the summary's `exit`, so the run page can say whether the run exited 1), the project row's
+  `lastRunNotProven` (the pill of a not-proven run always shows its count) and
   `GET /search?q=` (runs by number or commit prefix, open defects by test name; at most 20, newest first). N is
   `proof.not_proven`, else the larger of the top-level `not_proven` and (when `verify_status` is `diverged`)
   `verify_counts.not_proven + diverged + missing`, else 0; `status.not_proven` is not used. **The runner does not send

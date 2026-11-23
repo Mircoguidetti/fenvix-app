@@ -235,10 +235,10 @@ test("every coloured state also says it in words or with an icon", () => {
 test("the states in the inventory are wired to the right classes in the components", () => {
   const badge = src("components/StateBadge.tsx");
   assert.match(badge, /tone === "danger" \? "state state-danger"/);
-  assert.match(badge, /status === "passed" \? "ok" : status === "failed" \? "danger" : status === "running" \? "warn" : "neutral"/);
+  assert.match(badge, /status === "passed" \? "ok" : status === "failed" \? "danger" : status === "running" \|\| status === "not_proven" \? "warn" : "neutral"/);
   assert.match(badge, /tone=\{status === "active" \? "ok" : status === "suspended" \? "warn" : "neutral"\}/);
   assert.match(badge, /state === "merged" \|\| state === "already_fenvix" \? "ok" : state === "pr_open" \? "warn" : state === "failed" \? "danger" : "neutral"/);
-  assert.match(src("pages/Project.tsx"), /<RunStatusPill status=\{r\.status\} \/>/);
+  assert.match(src("pages/Project.tsx"), /<RunStatusPill status=\{r\.status\} count=\{r\.tests\.notProven\} \/>/);
   assert.match(src("pages/Project.tsx"), /className="fail-count"/);
   assert.match(src("components/ci.tsx"), /outcome === "failed"\) return <StatusPill tone="danger">/);
   assert.match(src("components/ci.tsx"), /<StatusPill tone=\{ok \? "ok" : "warn"\} icon=\{ok \? STATE_ICONS\.seal : undefined\}>/);

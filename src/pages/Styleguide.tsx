@@ -130,6 +130,7 @@ export function StyleguidePage() {
           <RunStatusPill status="failed" />
           <RunStatusPill status="running" />
           <RunStatusPill status="cancelled" />
+          <RunStatusPill status="not_proven" count={2} />
           <StatusPill tone="ok">Active</StatusPill>
           <StatusPill tone="warn">Open</StatusPill>
           <StatusPill tone="neutral">Revoked</StatusPill>

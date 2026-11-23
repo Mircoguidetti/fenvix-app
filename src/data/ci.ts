@@ -137,6 +137,7 @@ export function projectRow(project: Project, runs: Run[], defects: Defect[], now
     minutesSavedThisMonth: minutes.skipped,
     lastRunAt: last?.startedAt ?? null,
     lastRunStatus: last?.status ?? null,
+    lastRunNotProven: last?.tests.notProven ?? 0,
   };
 }
 
@@ -454,6 +455,22 @@ export function timeToGreenPerCommit(runs: Run[]): { at: string; seconds: number
     .sort((a, b) => a.at.localeCompare(b.at));
 }
 
+/**
+ * Time to green per day: the median of the commits that went green that day (timeToGreenPerCommit), oldest first, the
+ * last `days` days at most. One point per day, so the chart stays readable with hundreds of commits.
+ */
+export function timeToGreenPerDay(runs: Run[], days = 30): { at: string; value: number; commits: number }[] {
+  const byDay = new Map<string, number[]>();
+  for (const x of timeToGreenPerCommit(runs)) {
+    const k = dayStart(new Date(x.at)).toISOString();
+    (byDay.get(k) ?? byDay.set(k, []).get(k)!).push(x.seconds);
+  }
+  return [...byDay.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-days)
+    .map(([at, v]) => ({ at, value: median(v)!, commits: v.length }));
+}
+
 /** The value below which `share` of the values fall (0.9 = p90). */
 export function percentile(values: number[], share: number): number | null {
   if (!values.length) return null;
@@ -524,4 +541,58 @@ export function searchFrom(projects: Project[], runs: Run[], defects: Defect[], 
     hits.push({ at: d.lastSeenAt, r: { kind: "defect", projectId: d.projectId, id: d.id, label: d.testId.split(/::| > /).pop() ?? d.testId, sublabel: name.get(d.projectId)! } });
   }
   return hits.sort((a, b) => b.at.localeCompare(a.at)).slice(0, SEARCH_MAX).map((h) => h.r);
+}
+
+/** Said wherever the runner reported tests not proven without a cause. */
+export const NO_CAUSE_LABEL = "The runner did not report why";
+
+/** A run's tests not proven by cause (largest first); what the runner did not explain is NO_CAUSE_LABEL. */
+export function notProvenCausesOf(r: Run): { cause: string; tests: number }[] {
+  const n = r.tests.notProven || r.proof?.notProven || 0;
+  if (n <= 0) return [];
+  const named = r.proof ? r.proof.notProvenCauses.filter((c) => c.tests > 0) : [];
+  const told = named.reduce((a, c) => a + c.tests, 0);
+  const out = told < n ? [...named, { cause: NO_CAUSE_LABEL, tests: n - told }] : named;
+  return [...out].sort((a, b) => b.tests - a.tests);
+}
+
+export interface ParallelProof {
+  /** Runs of the window with parallel lanes (`proof`). */
+  withProof: Run[];
+  /** Runs of the window with a test not proven (with or without lanes), newest first. */
+  notProven: Run[];
+  /** Per day with parallel runs: the median share of the tests that ran that were proven identical. */
+  proven: { at: string; value: number }[];
+  /** Tests not proven by cause over the window, largest first, with the runs they came from. */
+  causes: { cause: string; tests: number; runs: number }[];
+  /** Per day with parallel runs: the median parallel time and the median serial estimate (null: none reported). */
+  speed: { at: string; parallelMs: number; serialMs: number | null }[];
+}
+
+/** The project's "Parallel with proof" page over the last `days` days of runs (finished runs only). */
+export function parallelProofFrom(runs: Run[], now: Date, days = 30): ParallelProof {
+  const since = new Date(now.getTime() - days * DAY).toISOString();
+  const window = runs.filter((r) => finished(r) && r.startedAt >= since);
+  const withProof = window.filter((r) => r.proof !== null);
+  const notProven = window.filter((r) => r.status === "not_proven" || r.tests.notProven > 0).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const byDay = new Map<string, Run[]>();
+  for (const r of [...withProof].sort((a, b) => a.startedAt.localeCompare(b.startedAt))) {
+    const k = dayStart(new Date(r.startedAt)).toISOString();
+    (byDay.get(k) ?? byDay.set(k, []).get(k)!).push(r);
+  }
+  const daysOf = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const proven = daysOf.map(([at, rs]) => ({ at, value: median(rs.map((r) => { const t = r.proof!.proven + r.proof!.notProven; return t > 0 ? r.proof!.proven / t : 1; }))! }));
+  const speed = daysOf.map(([at, rs]) => {
+    const serial = rs.map((r) => r.proof!.serialMsEstimate).filter((v): v is number => v !== null);
+    return { at, parallelMs: median(rs.map((r) => r.proof!.parallelMs))!, serialMs: median(serial) };
+  });
+  const causes = new Map<string, { cause: string; tests: number; runs: number }>();
+  for (const r of notProven)
+    for (const c of notProvenCausesOf(r)) {
+      const cur = causes.get(c.cause) ?? { cause: c.cause, tests: 0, runs: 0 };
+      cur.tests += c.tests;
+      cur.runs += 1;
+      causes.set(c.cause, cur);
+    }
+  return { withProof, notProven, proven, causes: [...causes.values()].sort((a, b) => b.tests - a.tests), speed };
 }
