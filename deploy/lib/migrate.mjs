@@ -86,6 +86,13 @@ export const PROBES = {
              and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'gh_repositories' and column_name = 'cache_warm_sha')`,
     last: `${rls("gh_warmups")} and ${pol("gh_warmups", "gh_warmups_api_read")}`,
   },
+  // 0018 re-creates the runner CHECK constraints with node:test and mocha: ci_projects first, gh_repositories last.
+  "0018": {
+    first: `exists (select 1 from pg_constraint where conname = 'ci_projects_test_runner_check'
+                     and conrelid = to_regclass('public.ci_projects') and pg_get_constraintdef(oid) like '%''mocha''%')`,
+    last: `exists (select 1 from pg_constraint where conname = 'gh_repositories_detected_test_runner_check'
+                    and conrelid = to_regclass('public.gh_repositories') and pg_get_constraintdef(oid) like '%''mocha''%')`,
+  },
 };
 /** The first migration with a probe: a database without it is either empty or not one of ours. */
 const FIRST_PROBED = "0011";
