@@ -106,7 +106,40 @@ parts twice.
 
 ### Option C: one small always-on VM
 
-FILLED BELOW AFTER MACHINES.md
+Shape (ESTIMATED): one Hetzner Cloud CPX22 (2 shared vCPU, 4 GB, Nuremberg) running the API, the webhook receiver
+and the worker as one Node service behind a TLS reverse proxy, with the schedules as timers. Price €19.99/month cap
+(NBG1; €0.0272/h) (https://www.hetzner.com/cloud/regular-performance, read 2026-11-23); × $1.10 per € (ASSUMED rate,
+see `MACHINES.md`) = **$21.99**. The page labels prices "incl. IPv4" while the docs list a Primary IPv4 at €0.50/month:
+whether that is extra is UNKNOWN (+$0.55 if it is). Traffic: 20 TB included. The same shape on AWS in eu-west-1, next
+to the database, would cost more: the cheapest x86 size priced in this review, c7i.large, is $0.09576 × 730 =
+$69.90 + IPv4 $3.65 = $73.55 (AWS t3/t4g small sizes were not read today: UNKNOWN).
+
+- **Cold start:** none (always on); a restart or deploy drops requests for seconds unless two instances run behind
+  a load balancer (price of Hetzner's load balancer not read: UNKNOWN).
+- **Maximum duration:** none.
+- **Operational burden:** highest: OS patching, TLS certificates, process supervision, deploys, monitoring and a
+  single point of failure; the webhook queue must be durable (keep SQS, which needs AWS credentials on the VM, or a
+  table-based queue in Postgres: code change). Latency to Supabase in Ireland from Nuremberg: UNKNOWN (not measured).
+- **Per request:** $0 on the VM (inside its capacity: 1M requests a month is 0.4 requests per second on average,
+  ESTIMATED 1,000,000 ÷ 2,592,000 s); webhooks + 3 × $0.40/1M if SQS is kept.
+
+| Volume | Arithmetic | Cost / month |
+|---|---|---|
+| 10k API requests | $21.99 + 0 | **$21.99** |
+| 100k API requests | $21.99 + 0 | **$21.99** |
+| 1M API requests | $21.99 + 0 | **$21.99** |
+| 1k webhooks | $21.99 + 1,000 × $0.0000012 = $0.0012 | **$21.99** |
+| 10k webhooks | $21.99 + $0.012 | **$22.00** |
+| 100k webhooks | $21.99 + $0.12 | **$22.11** |
+
+The fixed $21.99 is shared between the API and webhook columns, as for option B.
+
+### API: reading
+
+At every volume in the brief (up to 1M API requests and 100k webhooks a month), Lambda costs under $3 a month and
+needs no machine; Fargate costs ≈ $51 and the VM ≈ $22 regardless of volume. Lambda stays cheapest by a wide margin
+until roughly $21.99 ÷ $0.00000214 ≈ 10M API requests a month (ESTIMATED break-even with the VM). The API is not
+where the margin is.
 
 ## Part 2: database
 
