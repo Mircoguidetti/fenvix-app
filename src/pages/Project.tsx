@@ -28,7 +28,7 @@ const PAGE_SIZE = 25;
  * linking to it, then its numbers. The page's title is "Runs" (F-001); the latest run is not the title.
  */
 function LatestRun({ project, runs, openDefects }: { project: ProjectRow; runs: Run[] | null; openDefects: Defect[] | null }) {
-  if (!runs) return <KpiSkeleton count={4} />;
+  if (!runs) return <KpiSkeleton count={4} label="Loading the latest run" />;
   const latest = runs.find(isFinished);
   const running = runs.find((r) => r.status === "running");
   const runningNote = running && (
@@ -148,7 +148,7 @@ function RunsTab({ project }: { project: ProjectRow }) {
           </div>
         }
       >
-        {runs.status === "loading" && <ListSkeleton rows={6} />}
+        {runs.status === "loading" && <ListSkeleton rows={6} label="Loading runs" />}
         {runs.status === "error" && <Message role="alert">{runs.message}</Message>}
         {runs.status === "ready" && runs.data.items.length === 0 && <p className="muted">No runs match. The first run arrives once the test job uses runs-on: fenvix.</p>}
         {runs.status === "ready" && runs.data.items.length > 0 && (
@@ -379,7 +379,7 @@ export function ProjectPage({ section = "runs" }: { section?: "runs" | "settings
 
   // Old links (?tab=setup, ?tab=settings) open the project's Settings.
   if (params.get("tab")) return <Navigate to={`/projects/${id}/settings`} replace />;
-  if (project.status === "loading") return <PageSkeleton kpis={4} cards={2} />;
+  if (project.status === "loading") return <PageSkeleton kpis={4} cards={2} label="Loading project" />;
   if (project.status === "error") return <Message role="alert">{project.message}</Message>;
   if (!p)
     return (

@@ -403,9 +403,7 @@ export function RunPage() {
           <div className="kpi">
             <strong className="kpi-value">{formatCount(run.tests.ran)}</strong>
             <span className="kpi-label">Ran</span>
-            <span className="kpi-sub muted small">
-              {formatCount(run.tests.passed)} passed{run.tests.notProven ? ` · ${formatCount(run.tests.notProven)} not proven` : ""}
-            </span>
+            <span className="kpi-sub muted small">{formatCount(run.tests.passed)} passed</span>
           </div>
           {shadow ? (
             <div className="kpi">
@@ -522,7 +520,7 @@ export function RunPage() {
       </Card>
 
       <Card id="suite" title="Test suite" description="Each square is a test file.">
-        {running ? <p className="muted">The files of the suite show once the run has finished.</p> : files.status === "ready" ? files.data.length ? <SuiteSquares files={files.data} /> : <p className="muted">No tests recorded for this run.</p> : <ChartSkeleton height={120} />}
+        {running ? <p className="muted">The files of the suite show once the run has finished.</p> : files.status === "ready" ? files.data.length ? <SuiteSquares files={files.data} /> : <p className="muted">No tests recorded for this run.</p> : <ChartSkeleton height={120} label="Loading the suite" />}
       </Card>
 
       <Card
@@ -548,7 +546,7 @@ export function RunPage() {
         }
       >
         <SearchInput aria-label="Search tests" placeholder="Search by test id" value={search} onChange={(e) => setSearch(e.target.value)} />
-        {tests.status === "loading" && <ListSkeleton rows={8} />}
+        {tests.status === "loading" && <ListSkeleton rows={8} label="Loading tests" />}
         {tests.status === "error" && <Message role="alert">{tests.message}</Message>}
         {tests.status === "ready" && (
           <>

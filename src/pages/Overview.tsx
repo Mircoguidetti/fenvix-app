@@ -47,12 +47,7 @@ export function OverviewPage() {
         }
       />
 
-      {data.status === "loading" && (
-        <p className="sr-only" role="status">
-          Loading overview
-        </p>
-      )}
-      {data.status === "loading" && <KpiSkeleton count={6} />}
+      {data.status === "loading" && <KpiSkeleton count={6} label="Loading overview" />}
       {data.status === "loading" && <CardSkeleton body={240} />}
       {data.status === "error" && <Message role="alert">{data.message}</Message>}
       {data.status === "ready" && data.data.trial && (
