@@ -1,0 +1,98 @@
+{
+ "language": "node",
+ "test_runner": "jest",
+ "engine": "detjs",
+ "engine_version": "0.1.0",
+ "project": "/home/fenvix/work/jest",
+ "commit": "",
+ "cache_dir": "/home/fenvix/work/cache/acme_api-c7198fbc-node22",
+ "cache_was_warm": false,
+ "exit": 0,
+ "wall_seconds": 1.323,
+ "tests": 5,
+ "reused_with_proof": 0,
+ "ran": 5,
+ "test_seconds_saved": 0,
+ "test_seconds_run": 0.35,
+ "share_of_test_time_saved": 0.0,
+ "failed": [],
+ "not_proven": 0,
+ "status": {
+  "failed": 0,
+  "not_proven": 0,
+  "passed": 4,
+  "skipped": 1
+ },
+ "flaky": [],
+ "reruns": [],
+ "outcome_counts": {
+  "passed": 4,
+  "skipped": 1
+ },
+ "not_cached": {},
+ "not_reused_reasons": {
+  "new": 3
+ },
+ "reason_texts": {
+  "new": "new"
+ },
+ "cache_check_seconds": 0,
+ "cache_record_seconds": 0,
+ "epoch_ns": 1795392000000000000,
+ "receipts": "/home/fenvix/work/out/jest-cold/receipts.jsonl",
+ "outcomes_file": "/home/fenvix/work/out/jest-cold/outcomes.json",
+ "trace_file": "/home/fenvix/work/out/jest-cold/trace.jsonl",
+ "cache_summary_file": "/home/fenvix/work/out/jest-cold/cache-summary.json",
+ "outcomes": {
+  "entropy.test.js::reads OS entropy": "skipped",
+  "fail.test.js::fails on demand": "passed",
+  "pass.test.js::adds": "passed",
+  "pass.test.js::concatenates": "passed",
+  "pass.test.js::sorts": "passed"
+ },
+ "reused_outcomes": {},
+ "reused_files": [],
+ "runner_args": [],
+ "detjs_args": [
+  "--det",
+  "--det-cache=/home/fenvix/work/cache/acme_api-c7198fbc-node22",
+  "--det-cache-receipts=/home/fenvix/work/out/jest-cold/receipts.jsonl",
+  "--det-cache-summary=/home/fenvix/work/out/jest-cold/cache-summary.json",
+  "--det-outcomes=/home/fenvix/work/out/jest-cold/outcomes.json",
+  "--det-trace=/home/fenvix/work/out/jest-cold/trace.jsonl"
+ ],
+ "cache_arg": "--det-cache=/home/fenvix/work/cache/acme_api-c7198fbc-node22",
+ "runtime": {
+  "digest": "f8da32f7f807fe407da6b4cbdf3edebd",
+  "config": "9ff18fd2517f0a0a43c57204cbb7d550",
+  "engine": "detjs",
+  "dist_list": [
+   "detjs@0.1.0"
+  ],
+  "node": "v22.23.5",
+  "runner_version": "30.5.2",
+  "parts": {
+   "node": "0785e1f9aab7514934eb7dfa0ccce8dc",
+   "executable": "5d3b0020ee98c39c07e452c86c4431f5",
+   "native": "259995f20b59e5fe9fc7f6130a30c488",
+   "libc": "21ba848483eee9a51d0d2919ada5deae",
+   "tz": "ae1c52feb2c8e94e40ad2636d675929c",
+   "locale": "329a9c8cc592fac2b530dba2fb58d95c",
+   "cpu": "5bbd3c6307a3887e3d2add430b313d99",
+   "lockfiles": "c671a6a23f988b44953c6577e15ab8ac",
+   "packages": "c19f1f5ff7a8f27d4f23e465f3b33276"
+  },
+  "identity_seconds": 0.049
+ },
+ "runtime_changed_since_previous_job": [],
+ "machine": {
+  "hostname": "vm",
+  "runner_name": null,
+  "machine_id": "a0a011aeb8aa",
+  "boot_id": "41ceb097e42d",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+  "cpus": 4
+ },
+ "shared_cache": null,
+ "reused_from_shared_cache": 0
+}

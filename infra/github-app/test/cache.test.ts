@@ -18,7 +18,7 @@ describe("the shared cache service (vendored, pinned)", () => {
     const sha = createHash("sha256").update(readFileSync(FILE)).digest("hex");
     assert.equal(sha, "2b93cd9aac59ba160bc28ae0e9c4b725b0abd29ec6784e5ed910f479eeea33a8");
     assert.match(readFileSync(new URL("../lib/cache/PROVENANCE.md", import.meta.url), "utf8"), new RegExp(sha));
-    assert.match(readFileSync(new URL("../cdk.json", import.meta.url), "utf8"), /"engineCliCommit": "a20b93d7f840b23f71c73c03efdaee3d6a233252"/);
+    assert.match(readFileSync(new URL("../cdk.json", import.meta.url), "utf8"), /"engineCliCommit": "f67be4a31f1a9cf4d4e048ab8b5ec2d58b8e0055"/);
   });
 
   it("serves with per-job signed tokens only: own organization, read-only for pull requests, expiry, signature (R-012 F3)", async () => {

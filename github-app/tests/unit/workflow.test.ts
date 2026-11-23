@@ -58,7 +58,7 @@ describe("finding the test job", () => {
     assert.equal(c.kind, "no_test_job");
   });
 
-  it("knows vitest, jest, go test and npm test", () => {
+  it("knows vitest, jest, node --test, mocha, go test and npm test", () => {
     const cases: [string, string, string | null][] = [
       ["npx vitest run", "node", "vitest"],
       ["yarn jest --ci", "node", "jest"],
@@ -66,6 +66,13 @@ describe("finding the test job", () => {
       ["npm test", "node", null],
       ["pnpm run test", "node", null],
       ["uv run pytest", "python", "pytest"],
+      ["npx jest", "node", "jest"],
+      ["npx vitest", "node", "vitest"],
+      ["node --test", "node", "node:test"],
+      ["node --experimental-strip-types --test test/", "node", "node:test"],
+      ["node --test-reporter=spec --test", "node", "node:test"],
+      ["npx mocha", "node", "mocha"],
+      ["mocha 'test/**/*.spec.js'", "node", "mocha"],
     ];
     for (const [cmd, lang, runner] of cases) {
       const text = `jobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ${cmd}\n`;

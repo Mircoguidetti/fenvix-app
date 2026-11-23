@@ -943,7 +943,7 @@ export interface components {
         /** @enum {string} */
         Language: "python" | "node" | "go";
         /** @enum {string} */
-        TestRunner: "pytest" | "vitest" | "jest" | "go test";
+        TestRunner: "pytest" | "vitest" | "jest" | "go test" | "node:test" | "mocha";
         /** @enum {string} */
         RunTrigger: "push" | "pull_request" | "merge_group" | "schedule" | "workflow_dispatch";
         /** @enum {string} */

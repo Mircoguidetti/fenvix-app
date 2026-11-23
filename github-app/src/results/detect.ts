@@ -8,21 +8,23 @@
  *   3. else no project yet.
  */
 export type Language = "python" | "node" | "go";
-export type TestRunner = "pytest" | "vitest" | "jest" | "go test";
+export type TestRunner = "pytest" | "vitest" | "jest" | "go test" | "node:test" | "mocha";
 export interface Stack { language: Language; testRunner: TestRunner | null }
 
 const LANGUAGES: readonly string[] = ["python", "node", "go"];
-const RUNNERS: readonly string[] = ["pytest", "vitest", "jest", "go test"];
-const LANGUAGE_OF: Record<TestRunner, Language> = { pytest: "python", vitest: "node", jest: "node", "go test": "go" };
+const RUNNERS: readonly string[] = ["pytest", "vitest", "jest", "go test", "node:test", "mocha"];
+const LANGUAGE_OF: Record<TestRunner, Language> = { pytest: "python", vitest: "node", jest: "node", "go test": "go", "node:test": "node", mocha: "node" };
 
 const lang = (v: unknown): Language | null => (typeof v === "string" && LANGUAGES.includes(v) ? (v as Language) : null);
 const runner = (v: unknown): TestRunner | null => (typeof v === "string" && RUNNERS.includes(v) ? (v as TestRunner) : null);
 
-/** "vitest", "vitest 2.1.4", "jest@29.7.0", "detjs vitest run": the Node test runner named in a free-form field. */
+/** "vitest", "vitest 2.1.4", "jest@29.7.0", "detjs vitest run", "detjs node-test", "mocha": the Node test runner named in a free-form field. */
 function nodeRunnerIn(v: unknown): TestRunner | null {
   if (typeof v !== "string") return null;
   if (/\bvitest\b/i.test(v)) return "vitest";
   if (/\bjest\b/i.test(v)) return "jest";
+  if (/\bmocha\b/i.test(v)) return "mocha";
+  if (/\bnode[:-]test\b|\bnode\b[^\n;&|]*\s--test(?![-\w])/i.test(v)) return "node:test";
   return null;
 }
 

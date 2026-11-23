@@ -69,3 +69,35 @@ describe("language and test runner, detected (never assumed)", () => {
     assert.equal(projectStack(none, null), null);
   });
 });
+
+describe("Node summaries written by fenvix-run node (fenvix-engine-cli claude/node-runner)", () => {
+  const cases: [string, string][] = [
+    ["node-vitest-warm", "vitest"],
+    ["node-jest-cold-0-reused", "jest"],
+    ["node-node-test-failed", "node:test"],
+    ["node-mocha-verify-failed", "mocha"],
+  ];
+  for (const [name, runner] of cases) {
+    it(`${name}: node and ${runner}`, () => {
+      const raw = fixture(name);
+      assert.deepEqual(stackFromSummary(raw), { language: "node", testRunner: runner });
+      assert.deepEqual(parseSummary(raw).stack, { language: "node", testRunner: runner });
+      const stored = trimSummary(raw);
+      assert.equal(stored.language, "node");
+      assert.equal(stored.test_runner, runner);
+      assert.equal(stored.engine_version, "0.1.0");
+      for (const k of ["outcomes", "reused_outcomes", "runner_args"]) assert.equal(k in stored, false, k);
+    });
+  }
+
+  it("the runner named in a free-form field: node:test and mocha too", () => {
+    assert.deepEqual(stackFromSummary({ engine: "detjs", command: "detjs node-test --det" }), { language: "node", testRunner: "node:test" });
+    assert.deepEqual(stackFromSummary({ engine: "detjs", command: "node --test --det" }), { language: "node", testRunner: "node:test" });
+    assert.deepEqual(stackFromSummary({ engine: "detjs", runner: "mocha 11.8.0" }), { language: "node", testRunner: "mocha" });
+  });
+
+  it("a project of node:test or mocha keeps its runner", () => {
+    assert.deepEqual(projectStack({ language: null, testRunner: null }, { language: "node", testRunner: "mocha" }), { language: "node", testRunner: "mocha" });
+    assert.deepEqual(projectStack({ language: "node", testRunner: "node:test" }, null), { language: "node", testRunner: "node:test" });
+  });
+});

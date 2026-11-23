@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { CHECK_NAME, COMMENT_MARKER, checkRunOutput, conclusionOf, minutes, prComment, type RenderContext } from "../../src/results/render.ts";
+import { CHECK_NAME, COMMENT_MARKER, checkRunOutput, conclusionOf, minutes, prComment, title, type RenderContext } from "../../src/results/render.ts";
 import { parseSummary, SummaryError, trimSummary } from "../../src/results/summary.ts";
 
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`../fixtures/runner/${name}.summary.json`, import.meta.url), "utf8")) as Record<string, unknown>;
@@ -106,5 +106,50 @@ describe("check run and comment", () => {
     assert.equal(minutes(13.9), "0.2 min (13.9 s)");
     assert.equal(minutes(744), "12.4 min");
     assert.equal(minutes(0.2), "under 0.1 min (0.2 s)");
+  });
+});
+
+describe("E4: Node summaries render (fenvix-run node, one real summary per runner)", () => {
+  const okCtx = { ...ctx, jobConclusion: "success" };
+
+  it("vitest, warm run: 5 of 5 skipped with proof, receipts link, success", () => {
+    const s = parseSummary(fixture("node-vitest-warm"));
+    assert.equal(s.reusedWithProof, 5);
+    assert.equal(conclusionOf(s, "success"), "success");
+    const c = prComment(s, okCtx);
+    assert.match(c, /5 of 5 tests skipped with proof/);
+    assert.match(c, /\| Skipped with proof \| \*\*5\*\* \(\[receipts\]\(https:\/\/app\.fenvix\.test/);
+    assert.match(c, /no failures/);
+  });
+
+  it("jest, cold run: 0 reused, every test run", () => {
+    const s = parseSummary(fixture("node-jest-cold-0-reused"));
+    assert.equal(s.reusedWithProof, 0);
+    assert.equal(s.ran, 5);
+    const c = prComment(s, okCtx);
+    assert.match(c, /0 of 5 tests skipped with proof/);
+    assert.match(c, /\| Tests run \| 5 \|/);
+    assert.equal(checkRunOutput(s, okCtx).title, title(s, "success"));
+  });
+
+  it("node:test, failed run: failure, the failing test named", () => {
+    const s = parseSummary(fixture("node-node-test-failed"));
+    assert.deepEqual(s.failed, ["fail.test.js::fails on demand"]);
+    assert.equal(s.exit, 1);
+    assert.equal(conclusionOf(s, "failure"), "failure");
+    const c = prComment(s, ctx);
+    assert.match(c, /❌/);
+    assert.match(c, /- `fail\.test\.js::fails on demand`/);
+    assert.match(c, /3 of 4 tests skipped with proof/);
+  });
+
+  it("mocha, verify failure: the summary carries the verify verdict (verify_status diverged, verify_exit 1)", () => {
+    const raw = fixture("node-mocha-verify-failed");
+    assert.equal(raw.verify_status, "diverged");
+    assert.equal(raw.verify_exit, 1);
+    const s = parseSummary(raw);
+    // renders without error; what it shows for the verify verdict is reported in fenvix-engine-cli REPORT.md (E4)
+    assert.match(prComment(s, okCtx), /0 of 5 tests skipped with proof/);
+    assert.ok(checkRunOutput(s, okCtx).summary.length > 0);
   });
 });
