@@ -398,6 +398,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/search": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description Runs and open defects of the organization, newest first, at most 20. Runs match by number (`4299`, `#4299`) or by
+         *     a commit prefix of 7 or more hex characters; open defects by test name (case-insensitive substring).
+         */
+        get: operations["search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{runId}": {
         parameters: {
             query?: never;
@@ -946,8 +969,11 @@ export interface components {
         TestRunner: "pytest" | "vitest" | "jest" | "go test" | "node:test" | "mocha";
         /** @enum {string} */
         RunTrigger: "push" | "pull_request" | "merge_group" | "schedule" | "workflow_dispatch";
-        /** @enum {string} */
-        RunStatus: "running" | "passed" | "failed" | "cancelled";
+        /**
+         * @description not_proven: no failure, but at least one test was not proven identical to the serial run (docs/data-contract.md, "Parallel with proof"). Finished, never green.
+         * @enum {string}
+         */
+        RunStatus: "running" | "passed" | "failed" | "cancelled" | "not_proven";
         /**
          * @description shadow: the trial; every test ran and the engine recorded what it would have skipped.
          * @enum {string}
@@ -956,7 +982,7 @@ export interface components {
         /** @enum {string} */
         SetupState: "app_installed" | "pr_open" | "active";
         /** @enum {string} */
-        TestOutcome: "passed" | "failed" | "skipped_with_proof";
+        TestOutcome: "passed" | "failed" | "skipped_with_proof" | "not_proven";
         /** @enum {string} */
         MissKind: "new" | "failed-before" | "config" | "runtime" | "clock" | "env" | "data" | "code";
         Month: string;
@@ -1055,10 +1081,28 @@ export interface components {
         RunTests: {
             total: number;
             ran: number;
+            /** @description Tests that ran and passed; a test not proven is never counted here. */
             passed: number;
             failed: number;
             skippedWithProof: number;
             flakyDefects: number;
+            /** @description Tests not proven identical to the serial run (docs/data-contract.md, "Parallel with proof"). */
+            notProven: number;
+        };
+        /** @description The run's test command ran in parallel lanes and each test was checked against the serial run (summary.json `proof`). */
+        RunProof: {
+            workers: number;
+            proven: number;
+            notProven: number;
+            /** @description Tests re-run in one lane to prove them. */
+            rerunOneLane: number;
+            parallelMs: number;
+            serialMsEstimate: number | null;
+            orderDigest: string | null;
+            notProvenCauses: {
+                cause: string;
+                tests: number;
+            }[];
         };
         /** @description The runner's latest progress record while the run is running (docs/data-contract.md, "Run progress"). */
         RunProgress: {
@@ -1132,6 +1176,8 @@ export interface components {
             };
             region: components["schemas"]["Region"] | null;
             progress: components["schemas"]["RunProgress"] | null;
+            /** @description null for a serial run (or a runner that does not send it yet) */
+            proof: components["schemas"]["RunProof"] | null;
         };
         RunPage: {
             items: components["schemas"]["Run"][];
@@ -1188,12 +1234,22 @@ export interface components {
             /** Format: date-time */
             at: string;
             /** @enum {string} */
-            kind: "run_green" | "run_failed" | "defect_reproduced" | "exploration" | "setup_pr";
+            kind: "run_green" | "run_failed" | "run_not_proven" | "defect_reproduced" | "exploration" | "setup_pr";
             title: string;
             detail: string;
             projectId: string;
             /** @description A dashboard path */
             to: string;
+        };
+        SearchResult: {
+            /** @enum {string} */
+            kind: "run" | "defect";
+            projectId: string;
+            id: string;
+            /** @description run: "Run #4299"; defect: the test name */
+            label: string;
+            /** @description run: "<project short name> · <branch>"; defect: the project short name */
+            sublabel: string;
         };
         TestFailure: {
             /** @enum {string} */
@@ -1212,6 +1268,8 @@ export interface components {
             durationMs: number;
             failure: components["schemas"]["TestFailure"] | null;
             receiptId: string | null;
+            /** @description not_proven: why the test could not be proven, when the runner said */
+            notProvenCause?: string | null;
         };
         TestPage: {
             items: components["schemas"]["TestResult"][];
@@ -1223,6 +1281,7 @@ export interface components {
                 passed: number;
                 failed: number;
                 skipped_with_proof: number;
+                not_proven: number;
             };
         };
         SkipReceipt: {
@@ -1433,6 +1492,12 @@ export interface components {
                 median: number | null;
                 perDay: components["schemas"]["DayPoint"][];
             };
+            /** @description This month: runs with parallel lanes (`proof`), those of them with every test proven, and every run not proven (with or without lanes). */
+            proof: {
+                runsWithProof: number;
+                provenIdentical: number;
+                notProven: number;
+            };
             minutes: components["schemas"]["MinuteBreakdown"];
             cost: {
                 githubEquivalentUsd: number;
@@ -1601,6 +1666,8 @@ export interface components {
             cacheKey?: string | null;
             /** @description Shadow mode: the engine would have skipped it */
             wouldSkip?: boolean;
+            /** @description not_proven: why the test could not be proven identical to the serial run */
+            notProvenCause?: string | null;
         };
         /** @description One reused test's receipt (receipts.jsonl line plus the lists from proof-cache.json). */
         RunnerReceipt: {
@@ -2280,7 +2347,7 @@ export interface operations {
         parameters: {
             query?: {
                 scope?: "all" | "pr" | "default";
-                status?: "all" | "passed" | "failed";
+                status?: "all" | "passed" | "failed" | "not_proven";
                 since?: string;
                 page?: components["parameters"]["Page"];
                 pageSize?: components["parameters"]["PageSize"];
@@ -2449,6 +2516,34 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    search: {
+        parameters: {
+            query: {
+                q: string;
+            };
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["SearchResult"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getRun: {
         parameters: {
             query?: never;
@@ -2488,7 +2583,7 @@ export interface operations {
     listTestResults: {
         parameters: {
             query?: {
-                outcome?: "all" | "passed" | "failed" | "skipped_with_proof";
+                outcome?: "all" | "passed" | "failed" | "skipped_with_proof" | "not_proven";
                 search?: string;
                 page?: components["parameters"]["Page"];
                 pageSize?: components["parameters"]["PageSize"];

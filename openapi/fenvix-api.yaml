@@ -219,7 +219,7 @@ paths:
       description: Newest first. With `since`, every run since then (no paging; at most 20,000).
       parameters:
         - { name: scope, in: query, schema: { type: string, enum: [all, pr, default], default: all } }
-        - { name: status, in: query, schema: { type: string, enum: [all, passed, failed], default: all } }
+        - { name: status, in: query, schema: { type: string, enum: [all, passed, failed, not_proven], default: all } }
         - { name: since, in: query, schema: { type: string, format: date-time } }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
@@ -278,6 +278,20 @@ paths:
           description: Newest first
           content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/ActivityItem" } } } } } }
         default: { $ref: "#/components/responses/Error" }
+  /search:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }]
+    get:
+      tags: [dashboard]
+      operationId: search
+      description: |
+        Runs and open defects of the organization, newest first, at most 20. Runs match by number (`4299`, `#4299`) or by
+        a commit prefix of 7 or more hex characters; open defects by test name (case-insensitive substring).
+      parameters: [{ name: q, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 200 } }]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/SearchResult" } } } } } }
+        default: { $ref: "#/components/responses/Error" }
   /runs/{runId}:
     parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/RunId" }]
     get:
@@ -300,7 +314,7 @@ paths:
       tags: [dashboard]
       operationId: listTestResults
       parameters:
-        - { name: outcome, in: query, schema: { type: string, enum: [all, passed, failed, skipped_with_proof], default: all } }
+        - { name: outcome, in: query, schema: { type: string, enum: [all, passed, failed, skipped_with_proof, not_proven], default: all } }
         - { name: search, in: query, schema: { type: string, maxLength: 200 } }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
@@ -677,10 +691,13 @@ components:
     Language: { type: string, enum: [python, node, go] }
     TestRunner: { type: string, enum: [pytest, vitest, jest, go test, "node:test", mocha] }
     RunTrigger: { type: string, enum: [push, pull_request, merge_group, schedule, workflow_dispatch] }
-    RunStatus: { type: string, enum: [running, passed, failed, cancelled] }
+    RunStatus:
+      type: string
+      enum: [running, passed, failed, cancelled, not_proven]
+      description: "not_proven: no failure, but at least one test was not proven identical to the serial run (docs/data-contract.md, \"Parallel with proof\"). Finished, never green."
     RunMode: { type: string, enum: [enforce, shadow], description: "shadow: the trial; every test ran and the engine recorded what it would have skipped." }
     SetupState: { type: string, enum: [app_installed, pr_open, active] }
-    TestOutcome: { type: string, enum: [passed, failed, skipped_with_proof] }
+    TestOutcome: { type: string, enum: [passed, failed, skipped_with_proof, not_proven] }
     MissKind: { type: string, enum: [new, failed-before, config, runtime, clock, env, data, code] }
     Month: { type: string, pattern: "^[0-9]{4}-(0[1-9]|1[0-2])$" }
     SetupPullRequest:
@@ -774,14 +791,30 @@ components:
             lastRunStatus: { oneOf: [{ $ref: "#/components/schemas/RunStatus" }, { type: "null" }] }
     RunTests:
       type: object
-      required: [total, ran, passed, failed, skippedWithProof, flakyDefects]
+      required: [total, ran, passed, failed, skippedWithProof, flakyDefects, notProven]
       properties:
         total: { type: integer }
         ran: { type: integer }
-        passed: { type: integer }
+        passed: { type: integer, description: "Tests that ran and passed; a test not proven is never counted here." }
         failed: { type: integer }
         skippedWithProof: { type: integer }
         flakyDefects: { type: integer }
+        notProven: { type: integer, description: "Tests not proven identical to the serial run (docs/data-contract.md, \"Parallel with proof\")." }
+    RunProof:
+      type: object
+      description: The run's test command ran in parallel lanes and each test was checked against the serial run (summary.json `proof`).
+      required: [workers, proven, notProven, rerunOneLane, parallelMs, serialMsEstimate, orderDigest, notProvenCauses]
+      properties:
+        workers: { type: integer }
+        proven: { type: integer }
+        notProven: { type: integer }
+        rerunOneLane: { type: integer, description: "Tests re-run in one lane to prove them." }
+        parallelMs: { type: integer }
+        serialMsEstimate: { type: [integer, "null"] }
+        orderDigest: { type: [string, "null"] }
+        notProvenCauses:
+          type: array
+          items: { type: object, required: [cause, tests], properties: { cause: { type: string }, tests: { type: integer } } }
     RunProgress:
       type: object
       description: The runner's latest progress record while the run is running (docs/data-contract.md, "Run progress").
@@ -804,7 +837,7 @@ components:
       type: object
       required: [id, projectId, number, engineRunId, commitSha, commitMessage, branch, pullRequest, trigger, status, mode, pushedAt, startedAt, finishedAt,
         durationMs, tests, testTimeMs, skipShare, minutesSaved, otherStepMinutes, githubEquivalentMinutes, engineVersion, seed, skipMisses, missDetails,
-        wouldSkipTests, wouldSaveMs, audit, region, progress]
+        wouldSkipTests, wouldSaveMs, audit, region, progress, proof]
       properties:
         id: { type: string, format: uuid }
         projectId: { type: string, format: uuid }
@@ -847,6 +880,7 @@ components:
           properties: { rerun: { type: integer }, wrongSkips: { type: integer } }
         region: { oneOf: [{ $ref: "#/components/schemas/Region" }, { type: "null" }] }
         progress: { oneOf: [{ $ref: "#/components/schemas/RunProgress" }, { type: "null" }] }
+        proof: { oneOf: [{ $ref: "#/components/schemas/RunProof" }, { type: "null" }], description: "null for a serial run (or a runner that does not send it yet)" }
     RunPage:
       type: object
       required: [items, total, page, pageSize]
@@ -899,11 +933,20 @@ components:
       properties:
         id: { type: string }
         at: { type: string, format: date-time }
-        kind: { type: string, enum: [run_green, run_failed, defect_reproduced, exploration, setup_pr] }
+        kind: { type: string, enum: [run_green, run_failed, run_not_proven, defect_reproduced, exploration, setup_pr] }
         title: { type: string }
         detail: { type: string }
         projectId: { type: string }
         to: { type: string, description: "A dashboard path" }
+    SearchResult:
+      type: object
+      required: [kind, projectId, id, label, sublabel]
+      properties:
+        kind: { type: string, enum: [run, defect] }
+        projectId: { type: string }
+        id: { type: string }
+        label: { type: string, description: "run: \"Run #4299\"; defect: the test name" }
+        sublabel: { type: string, description: "run: \"<project short name> · <branch>\"; defect: the project short name" }
     TestFailure:
       type: object
       required: [kind, phase, exceptionType, message, location, defectId]
@@ -925,6 +968,7 @@ components:
         durationMs: { type: integer }
         failure: { oneOf: [{ $ref: "#/components/schemas/TestFailure" }, { type: "null" }] }
         receiptId: { type: [string, "null"] }
+        notProvenCause: { type: [string, "null"], description: "not_proven: why the test could not be proven, when the runner said" }
     TestPage:
       type: object
       required: [items, total, page, pageSize, counts]
@@ -936,8 +980,8 @@ components:
         counts:
           type: object
           description: Tests of the run per outcome, whatever the filter.
-          required: [passed, failed, skipped_with_proof]
-          properties: { passed: { type: integer }, failed: { type: integer }, skipped_with_proof: { type: integer } }
+          required: [passed, failed, skipped_with_proof, not_proven]
+          properties: { passed: { type: integer }, failed: { type: integer }, skipped_with_proof: { type: integer }, not_proven: { type: integer } }
     SkipReceipt:
       type: object
       required: [id, runId, testId, cacheKey, reusedRunId, reusedEngineRunId, reusedRunNumber, reusedOutcome, fingerprint, reusedDurationMs, code, modules, filesRead, envRead, runtime, config, changedFilesProven]
@@ -1104,7 +1148,7 @@ components:
           properties: { threshold: { type: number, enum: [0.35] }, met: { type: boolean } }
     Overview:
       type: object
-      required: [month, trial, runs, minutesSaved, timeToGreen, skipShare, minutes, cost, units, projects, openDefects, recentDefects]
+      required: [month, trial, runs, minutesSaved, timeToGreen, skipShare, proof, minutes, cost, units, projects, openDefects, recentDefects]
       properties:
         month: { $ref: "#/components/schemas/Month" }
         trial: { oneOf: [{ $ref: "#/components/schemas/Trial" }, { type: "null" }] }
@@ -1124,6 +1168,11 @@ components:
           type: object
           required: [median, perDay]
           properties: { median: { type: [number, "null"] }, perDay: { type: array, items: { $ref: "#/components/schemas/DayPoint" } } }
+        proof:
+          type: object
+          description: "This month: runs with parallel lanes (`proof`), those of them with every test proven, and every run not proven (with or without lanes)."
+          required: [runsWithProof, provenIdentical, notProven]
+          properties: { runsWithProof: { type: integer }, provenIdentical: { type: integer }, notProven: { type: integer } }
         minutes: { $ref: "#/components/schemas/MinuteBreakdown" }
         cost:
           type: object
@@ -1301,6 +1350,7 @@ components:
             - { type: "null" }
         cacheKey: { type: [string, "null"], pattern: "^[0-9a-f]{32}$", description: "skipped_with_proof: the receipt's key" }
         wouldSkip: { type: boolean, description: "Shadow mode: the engine would have skipped it" }
+        notProvenCause: { type: [string, "null"], maxLength: 500, description: "not_proven: why the test could not be proven identical to the serial run" }
     RunnerReceipt:
       type: object
       description: One reused test's receipt (receipts.jsonl line plus the lists from proof-cache.json).
