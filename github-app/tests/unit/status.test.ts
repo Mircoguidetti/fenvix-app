@@ -82,16 +82,45 @@ describe("N, the not-proven count of a summary", () => {
     assert.equal(s({ ...base, verify_status: null, verify_exit: 0 }).notProven, 0);
     assert.equal(s({ ...base, verify_status: "diverged", verify_counts: { ...zero, wrong_reuse: 3 } }).notProven, 3);
     assert.equal(s({ ...base, verify_status: "something new", verify_counts: zero }).notProven, 1);
-    assert.equal(s({ ...base, verify_status: "identical", verify_exit: 0, verify_counts: { ...zero, wrong_reuse: 3 } }).notProven, 0);
+    // Contradictory verify fails closed: "identical" with counts, or with a non-zero exit, is not proven.
+    assert.equal(s({ ...base, verify_status: "identical", verify_exit: 0, verify_counts: { ...zero, wrong_reuse: 3 } }).notProven, 3);
+    assert.equal(runStatus("success", s({ ...base, verify_status: "identical", verify_exit: 0, verify_counts: { ...zero, wrong_reuse: 3 } })), "not_proven");
+    assert.equal(s({ ...base, verify_status: "identical", verify_exit: 1, verify_counts: zero }).notProven, 1);
+    assert.equal(s({ ...base, verify_status: "identical", verify_exit: 0, verify_counts: zero }).notProven, 0);
+    // Not counted twice: a wrong reuse is also a divergence.
+    assert.equal(s({ ...base, verify_status: "diverged", verify_counts: { ...zero, diverged: 2, wrong_reuse: 2, missing: 1, not_proven: 1 } }).notProven, 4);
+    // Inputs that differ: not proven, said as "inputs differ" (no count of tests).
+    const inputs = s({ ...base, verify_status: "diverged", verify_exit: 1, verify_counts: { ...zero, input_differs: 3 } });
+    assert.deepEqual([inputs.notProven, inputs.notProvenReason], [1, "inputs differ"]);
     for (const v of ["not_proven", null, "something new"]) assert.equal(runStatus("success", s({ ...base, verify_status: v, verify_exit: 2 })), "not_proven", String(v));
   });
   it("without proof: the larger of the top-level not_proven and the diverged verify counts; status.not_proven is not used", () => {
     const base = { tests: 10, reused_with_proof: 0, ran: 10, exit: 0 };
     assert.equal(s({ ...base, not_proven: 2 }).notProven, 2);
     assert.equal(s({ ...base, not_proven: 2, verify_status: "diverged", verify_counts: { not_proven: 1, diverged: 1, missing: 1 } }).notProven, 3);
-    assert.equal(s({ ...base, not_proven: 0, verify_status: "identical", verify_counts: { not_proven: 4, diverged: 0, missing: 0 } }).notProven, 0);
+    assert.equal(s({ ...base, not_proven: 0, verify_status: "identical", verify_counts: { not_proven: 4, diverged: 0, missing: 0 } }).notProven, 4);
     assert.equal(s({ ...base, status: { not_proven: 7 } }).notProven, 0);
     assert.equal(s(base).notProven, 0);
+  });
+  it("a missing or invalid exit is unknown: not proven, never green, with its reason", () => {
+    for (const exit of [undefined, null, "0", 1.5]) {
+      const sum = s({ tests: 10, reused_with_proof: 0, ran: 10, exit });
+      assert.deepEqual([sum.exit, sum.notProven, sum.notProvenReason], [null, 1, "exit code missing"], String(exit));
+      assert.equal(runStatus("success", sum), "not_proven");
+      assert.equal(conclusionOf(sum, "success"), "failure");
+    }
+  });
+  it("tests the framework skipped itself are not counted against the proof (ranExecuted)", () => {
+    // node-jest-cold-0-reused's shape: 5 ran, 1 of them skipped by jest; the proof covers the 4 that executed.
+    const raw = { ...fixture("node-jest-cold-0-reused") };
+    const oc = raw.outcome_counts as Record<string, number>;
+    assert.equal(raw.ran, 5);
+    assert.equal(oc.skipped, 1);
+    const sum = parseSummary({ ...raw, proof: { workers: 2, proven: 4, not_proven: 0, parallel_seconds: 1 } });
+    assert.equal(sum.ranExecuted, 4);
+    assert.equal(sum.notProven, 0);
+    assert.equal(runStatus("success", sum), "passed");
+    assert.equal(proofRecord(sum.proof!, sum.ranExecuted).ranExecuted, 4);
   });
   it("the real Node summaries without a divergence stay N = 0 (vitest, jest, node:test)", () => {
     for (const f of ["node-vitest-warm", "node-jest-cold-0-reused", "node-node-test-failed"]) assert.equal(parseSummary(fixture(f)).notProven, 0, f);
@@ -105,8 +134,8 @@ describe("the summary's proof", () => {
       workers: 4, proven: 360, notProven: 14, rerunOneLane: 14, parallelSeconds: 39.2, serialSecondsEstimate: 151, orderDigest: "7c1e0000000000000000000000009a04",
       notProvenCauses: [{ cause: "file read outside the project", tests: 14 }],
     });
-    assert.deepEqual(proofRecord(sum.proof!), {
-      workers: 4, proven: 360, notProven: 14, rerunOneLane: 14, parallelMs: 39200, serialMsEstimate: 151000, orderDigest: "7c1e0000000000000000000000009a04",
+    assert.deepEqual(proofRecord(sum.proof!, sum.ranExecuted), {
+      workers: 4, proven: 360, notProven: 14, ranExecuted: 374, rerunOneLane: 14, parallelMs: 39200, serialMsEstimate: 151000, orderDigest: "7c1e0000000000000000000000009a04",
       notProvenCauses: [{ cause: "file read outside the project", tests: 14 }],
     });
     assert.equal(conclusionOf(sum, "success"), "failure");
@@ -122,7 +151,7 @@ describe("the summary's proof", () => {
     const p = s(parallel(0, { proof: { workers: 2, proven: 374, not_proven: 0, parallel_seconds: 20, serial_seconds_estimate: null, order_digest: null } })).proof!;
     assert.equal(p.serialSecondsEstimate, null);
     assert.equal(p.orderDigest, null);
-    assert.equal(proofRecord(p).serialMsEstimate, null);
+    assert.equal(proofRecord(p, 374).serialMsEstimate, null);
   });
   it("a malformed proof never discards the summary: proof null, the rest kept, N from the other sources, never green for it", () => {
     const good = { workers: 4, proven: 370, not_proven: 4, rerun_one_lane: 4, parallel_seconds: 10, serial_seconds_estimate: null, order_digest: "ab", not_proven_causes: [{ cause: "c", tests: 4 }] };
@@ -135,10 +164,37 @@ describe("the summary's proof", () => {
       const sum = s(parallel(0, { proof, not_proven: 4 }));
       assert.equal(sum.proof, null, what);
       assert.equal(sum.tests, 374, `${what}: the summary is kept`);
-      assert.equal(sum.notProven, 4, `${what}: N from the top-level not_proven`);
+      // At least the top-level 4; an unreadable proof also counts ran − its readable proven (374 − 0 for a list).
+      assert.equal(sum.notProven, what === "a list" ? 374 : 4, what);
       assert.equal(runStatus("success", sum), "not_proven", what);
     }
     assert.notEqual(s(parallel(0, { proof: good })).proof, null);
+  });
+  it("a malformed proof with no other signal (no top-level not_proven; verify absent or identical) is still not proven", () => {
+    const good = { workers: 4, proven: 374, not_proven: 0, rerun_one_lane: 0, parallel_seconds: 10, serial_seconds_estimate: null, order_digest: "ab", not_proven_causes: [] };
+    const bad: [string, unknown][] = [
+      ["{}", {}], ["true", true], ["order_digest empty", { ...good, order_digest: "" }], ["parallel_seconds null", { ...good, parallel_seconds: null }],
+      ["rerun_one_lane null", { ...good, rerun_one_lane: null }], ["a cause over 500 characters", { ...good, not_proven_causes: [{ cause: "x".repeat(501), tests: 0 }] }],
+    ];
+    for (const verify of [{}, { verify_status: "identical", verify_exit: 0, verify_counts: { not_proven: 0, diverged: 0, missing: 0, wrong_reuse: 0 } }]) {
+      for (const [what, proof] of bad) {
+        const sum = s({ ...parallel(0, { proof }), ...verify });
+        assert.equal(sum.proof, null, what);
+        assert.ok(sum.notProven >= 1, `${what}: N ${sum.notProven}`);
+        assert.equal(sum.notProvenReason, "the proof of the parallel run could not be read", what);
+        assert.equal(runStatus("success", sum), "not_proven", what);
+        assert.equal(conclusionOf(sum, "success"), "failure", what);
+      }
+    }
+  });
+  it("a summary that came but cannot be read: not proven, the check run fails (no summary at all keeps the job's conclusion)", () => {
+    assert.equal(runStatus("success", null, { summaryUnreadable: true }), "not_proven");
+    assert.equal(runStatus("cancelled", null, { summaryUnreadable: true }), "cancelled");
+    assert.equal(conclusionOf(null, "success", true), "failure");
+    assert.match(title(null, "failure", true), /could not be read/);
+    assert.match(checkRunOutput(null, { ...ctx, summaryUnreadable: true }).summary, /not proven/);
+    assert.equal(runStatus("success", null), "passed");
+    assert.equal(conclusionOf(null, "success"), "neutral");
   });
 });
 

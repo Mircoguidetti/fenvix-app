@@ -2,7 +2,7 @@
 // proven is finished, never green, never "failed"; the Overview's proof block; the search; time to green per day.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { activityFrom, finished, medianTimeToGreen, NO_CAUSE_LABEL, notProvenCausesOf, notProvenSentence, overviewFrom, parallelProofFrom, projectRow, searchFrom, timeToGreenPerDay } from "../../src/data/ci.ts";
+import { activityFrom, finished, isNotProven, medianTimeToGreen, NO_CAUSE_LABEL, notProvenCausesOf, notProvenSentence, overviewFrom, parallelProofFrom, projectRow, searchFrom, timeToGreenPerDay } from "../../src/data/ci.ts";
 import { compatOverview, compatRun, compatTests, withCompat } from "../../src/data/compat.ts";
 import { ApiError } from "../../src/data/api-errors.ts";
 import type { DataClient } from "../../src/data/client.ts";
@@ -116,7 +116,8 @@ test("rows: proof and exit code only once finished; a test's cause only when it 
   const r = mapRun(row);
   assert.equal(r.tests.notProven, 3);
   assert.equal(r.exitCode, 1);
-  assert.deepEqual(r.proof, { workers: 4, proven: 10, notProven: 3, rerunOneLane: 3, parallelMs: 900, serialMsEstimate: null, orderDigest: "ab", notProvenCauses: [{ cause: "c", tests: 3 }] });
+  // A row stored before ranExecuted existed: null (the card then uses the run's ran).
+  assert.deepEqual(r.proof, { workers: 4, proven: 10, notProven: 3, ranExecuted: null, rerunOneLane: 3, parallelMs: 900, serialMsEstimate: null, orderDigest: "ab", notProvenCauses: [{ cause: "c", tests: 3 }] });
   const running = mapRun({ ...row, status: "running" });
   assert.equal(running.proof, null);
   assert.equal(running.exitCode, null);
@@ -154,4 +155,45 @@ test("an API one release older: the missing fields read as nothing to show, neve
   assert.deepEqual(await c.search("4299"), []);
   const broken = withCompat({ search: () => Promise.reject(new ApiError("internal", "boom", 500)) } as unknown as DataClient);
   await assert.rejects(broken.search("4299"));
+});
+
+test("Proven over time: (ran − N) / ran per run, N never less than the proof's; 0 when nothing is proven; runs that ran nothing left out", () => {
+  const day = "2026-11-11T10:00:00Z";
+  const a = run(day, { proof: proof(0, [], { proven: 100, ranExecuted: 100 }) }, { ran: 100, notProven: 5 });
+  assert.deepEqual(parallelProofFrom([a], NOW).proven.map((p) => p.value), [0.95]);
+  const none = run(day, { proof: proof(0, [], { proven: 0, notProven: 10, ranExecuted: 10 }) }, { ran: 10, notProven: 10 });
+  assert.deepEqual(parallelProofFrom([none], NOW).proven.map((p) => p.value), [0]);
+  const empty = run(day, { proof: proof(0, [], { proven: 0, notProven: 0, ranExecuted: 0 }) }, { ran: 0 });
+  assert.deepEqual(parallelProofFrom([empty], NOW).proven, []);
+});
+
+test("one predicate for a not-proven run: its status, or tests not proven (the Overview and Parallel with proof agree)", () => {
+  const flagged = run("2026-11-12T11:00:00Z", { status: "failed", exitCode: 1 }, { failed: 1, notProven: 3 });
+  assert.equal(isNotProven(flagged), true);
+  assert.equal(isNotProven(notProvenNoProof), true);
+  assert.equal(isNotProven(serial), false);
+  const runs = [...all, flagged];
+  assert.equal(overviewFrom([project], runs, [], null, RATE, NOW).proof.notProven, 3);
+  assert.equal(parallelProofFrom(runs, NOW).notProven.length, 3);
+});
+
+test("the sentence for a run's own reason, and for inputs that differ (no count of tests)", () => {
+  const r = (n: number, notProvenReason: string | null, exitCode: number | null = 1) => ({ exitCode, notProvenReason, tests: { ...notProvenNoProof.tests, notProven: n } });
+  assert.equal(notProvenSentence(r(1, "the runner's summary could not be read", null), null),
+    "1 test was not proven identical: the runner's summary could not be read. Their serial result is reported; the check on GitHub is marked failed.");
+  assert.equal(notProvenSentence(r(1, "exit code missing", null), null), "1 test was not proven identical: exit code missing. Their serial result is reported; the check on GitHub is marked failed.");
+  const inputs = notProvenSentence(r(1, "inputs differ"), null);
+  assert.equal(inputs, "The parallel and serial runs could not be compared: their inputs differ. The run is not proven; the check on GitHub is marked failed.");
+  assert.doesNotMatch(inputs, /1 test/);
+  // A run's reason names the part of N no proof cause explains.
+  assert.deepEqual(notProvenCausesOf({ ...notProvenNoProof, notProvenReason: "exit code missing" }), [{ cause: "exit code missing", tests: 2 }]);
+});
+
+test("an older API refuses the not_proven filters (400): an empty page, never an error; other errors still throw", async () => {
+  const refuse = () => Promise.reject(new ApiError("validation_failed", "status must be one of all, passed, failed", 400, "status"));
+  const c = withCompat({ listRuns: refuse, listTestResults: refuse } as unknown as DataClient);
+  assert.deepEqual(await c.listRuns("p1", { status: "not_proven" }), { items: [], total: 0, page: 1, pageSize: 25 });
+  const t = await c.listTestResults("r1", { outcome: "not_proven" });
+  assert.deepEqual([t.items, t.total, t.counts.not_proven], [[], 0, 0]);
+  await assert.rejects(c.listRuns("p1", { status: "failed" }), "a 400 on another filter is still an error");
 });

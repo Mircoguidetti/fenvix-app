@@ -286,6 +286,8 @@ export const listTestResults: Handler = async (ctx) => {
   if (term) { params.push(term); where.push(`strpos(lower(test_id), $${params.length}) > 0`); }
   const cond = where.join(" and ");
   const total = (await ctx.t.one<{ n: number }>(`select count(*)::int as n from public.ci_test_results where ${cond}`, params))!.n;
+  const byOutcome = new Map((await ctx.t.q<{ outcome: string; n: number }>(
+    "select outcome, count(*)::int as n from public.ci_test_results where workspace_id = $1 and run_id = $2 group by outcome", [ws, r.id])).map((x) => [x.outcome, x.n]));
   // Failures first, then the tests not proven, then the tests that ran, then the skipped ones.
   const rows = await ctx.t.q(`select * from public.ci_test_results where ${cond}
     order by case outcome when 'failed' then 0 when 'not_proven' then 1 when 'passed' then 2 else 3 end, test_id limit $${params.length + 1} offset $${params.length + 2}`, [...params, q.pageSize, (q.page - 1) * q.pageSize]);
@@ -293,6 +295,8 @@ export const listTestResults: Handler = async (ctx) => {
     items: rows.map(mapTestResult), total, page: q.page, pageSize: q.pageSize,
     // The run's own counts, whatever the filter (the run row holds them even when per-test results are not stored).
     counts: { passed: Number(r.tests_passed), failed: Number(r.tests_failed), skipped_with_proof: Number(r.tests_skipped), not_proven: Number(r.tests_not_proven ?? 0) },
+    // The per-test rows per outcome: what the filters list (fewer than the run's counts when not every test was sent).
+    rowCounts: Object.fromEntries(["passed", "failed", "skipped_with_proof", "not_proven"].map((k) => [k, byOutcome.get(k) ?? 0])),
   };
 };
 

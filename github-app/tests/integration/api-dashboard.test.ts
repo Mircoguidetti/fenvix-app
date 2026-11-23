@@ -8,7 +8,7 @@ import pg from "pg";
 import { verifyState } from "../../src/auth.ts";
 import type { Api } from "../../src/api/server.ts";
 import { dashboardOperations } from "../../src/api/spec.ts";
-import { addTo, admin as adminClient, at, call, covered, DASHBOARD, githubId, LOCAL, NOW, type Person, RecordingQueue, sha, signUp, SKIP, startApi, STATE_KEY } from "../api/helpers.ts";
+import { addTo, admin as adminClient, at, call, covered, DASHBOARD, githubId, key32, LOCAL, NOW, type Person, RecordingQueue, sha, signUp, SKIP, startApi, STATE_KEY } from "../api/helpers.ts";
 import { type Seeded, seedOrg } from "../api/seed.ts";
 
 describe("dashboard API: every operation, real tokens, real database", { skip: SKIP }, () => {
@@ -224,6 +224,28 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     assert.ok(d.body.items.length <= 20);
     const none = await call(api, "search", { ...base, query: { q: "no such test or run" } });
     assert.deepEqual(none.body.items, []);
+    const one = await call(api, "search", { ...base, query: { q: "4" } });
+    assert.deepEqual([one.status, one.body.items], [200, []], "one character finds nothing");
+  });
+
+  it("search caps at 20: more than 20 matching open defects give exactly 20, newest first", async () => {
+    // Organization B, removed after, so the other tests' counts stay as seeded.
+    const ids: string[] = [];
+    for (let i = 0; i < 25; i++) {
+      ids.push((await admin.query(
+        `insert into public.ci_defects (project_id, workspace_id, test_id, status, state, cause, cause_tests, minimal_order, prefix_length, seed, fingerprint,
+           exception, family_key, first_seen_at, last_seen_at, occurrences, engine_version, language)
+         values ($1, $2, $3, 'reproduced', 'open', 'fails_alone', '{}', array[$3], 1, 1, $4,
+           '{"type": "AssertionError", "phase": "call", "message": "x", "location": "tests/test_many.py:1"}'::jsonb, '<none>', $5, $5, 1, '0.9.1', 'python') returning id`,
+        [B.projects.shop, ownerB.workspaceId, `tests/test_many.py::test_bulk_${String(i).padStart(2, "0")}`, key32(), at(30 - i)])).rows[0].id as string);
+    }
+    try {
+      const r = await call(api, "search", { token: ownerB.token, ws: ownerB.workspaceId, query: { q: "test_bulk" } });
+      assert.equal(r.body.items.length, 20);
+      assert.deepEqual(r.body.items.map((x: { id: string }) => x.id), [...ids].reverse().slice(0, 20), "newest first");
+    } finally {
+      await admin.query("delete from public.ci_defects where id = any($1::uuid[])", [ids]);
+    }
   });
 
   it("the live run view: ETag, If-None-Match → 304; a progress update → 200 with a new ETag", async () => {

@@ -285,8 +285,9 @@ paths:
       operationId: search
       description: |
         Runs and open defects of the organization, newest first, at most 20. Runs match by number (`4299`, `#4299`) or by
-        a commit prefix of 7 or more hex characters; open defects by test name (case-insensitive substring).
-      parameters: [{ name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 200 } }]
+        a commit prefix of 7 or more hex characters; open defects by test name (case-insensitive substring). A term of
+        one character finds nothing.
+      parameters: [{ name: q, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 200 } }]
       responses:
         "200":
           description: OK
@@ -809,6 +810,7 @@ components:
         workers: { type: integer }
         proven: { type: integer }
         notProven: { type: integer }
+        ranExecuted: { type: [integer, "null"], description: "The tests the framework ran (ran minus the tests it skipped itself): what proven + notProven should equal. Absent for runs stored before it." }
         rerunOneLane: { type: integer, description: "Tests re-run in one lane to prove them." }
         parallelMs: { type: integer }
         serialMsEstimate: { type: [integer, "null"] }
@@ -838,7 +840,7 @@ components:
       type: object
       required: [id, projectId, number, engineRunId, commitSha, commitMessage, branch, pullRequest, trigger, status, mode, pushedAt, startedAt, finishedAt,
         durationMs, tests, testTimeMs, skipShare, minutesSaved, otherStepMinutes, githubEquivalentMinutes, engineVersion, seed, skipMisses, missDetails,
-        wouldSkipTests, wouldSaveMs, audit, region, progress, proof, exitCode]
+        wouldSkipTests, wouldSaveMs, audit, region, progress, proof, exitCode, notProvenReason]
       properties:
         id: { type: string, format: uuid }
         projectId: { type: string, format: uuid }
@@ -882,7 +884,8 @@ components:
         region: { oneOf: [{ $ref: "#/components/schemas/Region" }, { type: "null" }] }
         progress: { oneOf: [{ $ref: "#/components/schemas/RunProgress" }, { type: "null" }] }
         proof: { oneOf: [{ $ref: "#/components/schemas/RunProof" }, { type: "null" }], description: "null for a serial run (or a runner that does not send it yet)" }
-        exitCode: { type: [integer, "null"], description: "The test command's exit code (summary.json `exit`); null while running or without a summary" }
+        exitCode: { type: [integer, "null"], description: "The test command's exit code (summary.json `exit`); null while running, without a summary, or when the summary had none" }
+        notProvenReason: { type: [string, "null"], description: "Why the run is not proven when no proof cause says it (an unreadable summary, a missing exit code, a failed verify, inputs differ)" }
     RunPage:
       type: object
       required: [items, total, page, pageSize]
@@ -982,6 +985,11 @@ components:
         counts:
           type: object
           description: Tests of the run per outcome, whatever the filter.
+          required: [passed, failed, skipped_with_proof, not_proven]
+          properties: { passed: { type: integer }, failed: { type: integer }, skipped_with_proof: { type: integer }, not_proven: { type: integer } }
+        rowCounts:
+          type: object
+          description: The run's per-test rows per outcome (what the filters list), whatever the filter. Can be fewer than `counts` when not every test was sent.
           required: [passed, failed, skipped_with_proof, not_proven]
           properties: { passed: { type: integer }, failed: { type: integer }, skipped_with_proof: { type: integer }, not_proven: { type: integer } }
     SkipReceipt:

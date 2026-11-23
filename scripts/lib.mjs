@@ -257,10 +257,12 @@ export async function proofRuns(page) {
     const m = window.__fenvixMock;
     const recent = (await m.listRuns("prj_homehub", { pageSize: 40 })).items;
     const notProven = (await m.listRuns("prj_homehub", { status: "not_proven", pageSize: 100 })).items;
-    const pick = (r) => (r ? { projectId: r.projectId, runId: r.id, number: r.number, notProven: r.tests.notProven } : null);
+    const pick = (r) => (r ? { projectId: r.projectId, runId: r.id, number: r.number, notProven: r.tests.notProven, ran: r.tests.ran, proof: r.proof } : null);
     return {
       proven: pick(recent.find((r) => r.status === "passed" && r.proof && r.proof.notProven === 0)),
       notProven: pick([...notProven].filter((r) => r.proof).sort((a, b) => b.tests.notProven - a.tests.notProven)[0]),
+      // A run with a proof and tests not proven but no per-test rows (the environment variable one).
+      proofNoRows: pick([...notProven].filter((r) => r.proof).sort((a, b) => a.tests.notProven - b.tests.notProven)[0]),
       noProof: pick(notProven.find((r) => !r.proof)),
       serial: pick(recent.find((r) => r.status === "passed" && !r.proof)),
       notProvenAll: notProven.map((r) => ({ id: r.id, number: r.number, notProven: r.tests.notProven, causes: r.proof ? r.proof.notProvenCauses : null })),

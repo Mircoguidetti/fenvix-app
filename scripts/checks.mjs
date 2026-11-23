@@ -94,6 +94,11 @@ const TESTS = {
     assert((await page.locator(".page-title-row .state").innerText()) === `Not proven · ${r.notProven.notProven}`, `the pill reads ${await page.locator(".page-title-row .state").innerText()}`);
     assert((await page.locator(".page-title-row .state").getAttribute("data-tone")) === "warn", "not proven is not amber");
     assert((await page.locator("#proof dd").first().innerText()) === `Not proven for ${r.notProven.notProven} tests`, "the card's result does not say how many were not proven");
+    // Proven "n of the tests the framework ran" (ranExecuted), and the card's Not proven is the run's N.
+    const provenDd = await page.locator("#proof div", { has: page.locator("dt", { hasText: /^Proven$/ }) }).locator("dd").innerText();
+    assert(provenDd === `${r.notProven.proof.proven.toLocaleString("en-US")} of ${(r.notProven.proof.ranExecuted ?? r.notProven.ran).toLocaleString("en-US")}`, `Proven reads ${provenDd}`);
+    const npDd = await page.locator("#proof div", { has: page.locator("dt", { hasText: /^Not proven$/ }) }).locator("dd").innerText();
+    assert(npDd === String(r.notProven.notProven), `the card's Not proven reads ${npDd}, the run's N is ${r.notProven.notProven}`);
     const note = page.locator("#proof #not-proven-note.callout-warning");
     const text = await note.innerText();
     assert(new RegExp(`^${r.notProven.notProven} tests read a file outside the project, so the parallel result could not be proven equal to the serial one\\. Their serial result is reported; the run exits 1\\.`).test(text), `the note reads: ${text}`);
@@ -109,6 +114,13 @@ const TESTS = {
     assert((await pill.locator("xpath=..").getAttribute("title")) === "file read outside the project", "the test's cause is not its pill's tooltip");
     await page.locator(".test-row").first().getByText(/Not proven identical to the serial run: file read outside the project\./).waitFor();
     assert(/Not proven\s*14/.test(await page.locator("#tests").getByRole("button", { name: /^Not proven/ }).innerText()), "the Not proven filter does not show its count");
+    // A proof run with tests not proven but no per-test rows: the note, no "See the N tests"; the filter counts rows
+    // and the line says how many have per-test detail.
+    await runPage(r.proofNoRows);
+    await page.locator("#proof #not-proven-note").waitFor();
+    assert(!(await page.locator("#proof #not-proven-note a").count()), "the card links to tests that have no per-test rows");
+    assert(/Not proven\s*0/.test(await page.locator("#tests").getByRole("button", { name: /^Not proven/ }).innerText()), "the Not proven filter does not count the per-test rows");
+    assert((await page.locator("#tests-detail").innerText()).startsWith(`${r.proofNoRows.notProven} not proven, 0 with per-test detail`), `the detail line reads ${await page.locator("#tests-detail").innerText()}`);
     // Not proven without a proof block: no card, the note under the numbers, "The runner did not report why", the pill.
     await runPage(r.noProof);
     assert(!(await page.locator("#proof").count()), "a run without a proof block shows the proof card");
@@ -251,14 +263,32 @@ const TESTS = {
     await page.getByRole("heading", { name: "Runs", exact: true, level: 1 }).waitFor();
     await settled(page);
     assert(!(await page.locator(".message-error").count()), "an error shows on the Runs page");
-    const box = page.locator(".cx-search input");
-    if (await box.isVisible()) {
-      await box.fill("4299");
-      await page.locator(".cx-search-none, .cx-search-item").first().waitFor();
-      await page.waitForTimeout(600);
-      assert(!(await page.locator(".cx-search .message-error, .toast-error").count()), "a missing /search shows an error");
-    }
+    // A missing /search: no results, never an error (on every screen size: through the client the box uses).
+    const found = await page.evaluate(async () => {
+      try {
+        return { items: await window.__fenvixMock.search("4299") };
+      } catch (e) {
+        return { error: String(e) };
+      }
+    });
+    assert(Array.isArray(found.items) && found.items.length === 0, `search against the older API: ${JSON.stringify(found)}`);
+    // The not_proven filters, refused by the older API (400): an empty list, not an error.
+    await go(page, "projects/prj_homehub?status=not_proven");
+    await page.locator("#runs").getByText("No runs match.", { exact: false }).waitFor();
+    assert(!(await page.locator(".message-error").count()), "the runs filter shows an error against the older API");
+    const run = await page.evaluate(async () => (await window.__fenvixMock.listRuns("prj_homehub", { status: "passed", pageSize: 1 })).items[0]);
+    await go(page, `projects/prj_homehub/runs/${run.id}?outcome=not_proven`);
+    await page.locator("#tests").getByText("No test matches.").waitFor();
+    assert(!(await page.locator(".message-error").count()), "the tests filter shows an error against the older API");
     await page.evaluate(() => sessionStorage.removeItem("fenvix-mock-api"));
+  },
+
+  async "a status or outcome this console does not know reads Unknown, grey"(page) {
+    await signIn(page, "styleguide");
+    const pills = page.locator("[data-unknown-state] .state");
+    await pills.first().waitFor();
+    const all = await pills.evaluateAll((xs) => xs.map((x) => [x.textContent, x.dataset.tone]));
+    assert(all.length === 2 && all.every(([t, tone]) => t === "Unknown" && tone === "neutral"), `unknown pills read ${JSON.stringify(all)}`);
   },
 
   async "overview: no parallel run yet reads '–' and 'no parallel runs yet'"(page) {

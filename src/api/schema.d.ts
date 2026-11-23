@@ -410,7 +410,8 @@ export interface paths {
         };
         /**
          * @description Runs and open defects of the organization, newest first, at most 20. Runs match by number (`4299`, `#4299`) or by
-         *     a commit prefix of 7 or more hex characters; open defects by test name (case-insensitive substring).
+         *     a commit prefix of 7 or more hex characters; open defects by test name (case-insensitive substring). A term of
+         *     one character finds nothing.
          */
         get: operations["search"];
         put?: never;
@@ -1096,6 +1097,8 @@ export interface components {
             workers: number;
             proven: number;
             notProven: number;
+            /** @description The tests the framework ran (ran minus the tests it skipped itself): what proven + notProven should equal. Absent for runs stored before it. */
+            ranExecuted?: number | null;
             /** @description Tests re-run in one lane to prove them. */
             rerunOneLane: number;
             parallelMs: number;
@@ -1180,8 +1183,10 @@ export interface components {
             progress: components["schemas"]["RunProgress"] | null;
             /** @description null for a serial run (or a runner that does not send it yet) */
             proof: components["schemas"]["RunProof"] | null;
-            /** @description The test command's exit code (summary.json `exit`); null while running or without a summary */
+            /** @description The test command's exit code (summary.json `exit`); null while running, without a summary, or when the summary had none */
             exitCode: number | null;
+            /** @description Why the run is not proven when no proof cause says it (an unreadable summary, a missing exit code, a failed verify, inputs differ) */
+            notProvenReason: string | null;
         };
         RunPage: {
             items: components["schemas"]["Run"][];
@@ -1282,6 +1287,13 @@ export interface components {
             pageSize: number;
             /** @description Tests of the run per outcome, whatever the filter. */
             counts: {
+                passed: number;
+                failed: number;
+                skipped_with_proof: number;
+                not_proven: number;
+            };
+            /** @description The run's per-test rows per outcome (what the filters list), whatever the filter. Can be fewer than `counts` when not every test was sent. */
+            rowCounts?: {
                 passed: number;
                 failed: number;
                 skipped_with_proof: number;

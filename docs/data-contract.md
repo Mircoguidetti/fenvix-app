@@ -529,19 +529,36 @@ run):
 `serial_seconds_estimate` and `order_digest` may be null; `proven + not_proven` = the tests that ran.
 
 **N, the not-proven count of a run** (`RunSummary.notProven`, `notProvenOf` in `github-app/src/results/summary.ts`; one
-value used by the status, the check run's conclusion and title, and `tests.notProven`). It fails closed: the largest of
+value used by the status, the check run's conclusion and title, and `tests.notProven`). One rule: **when we are not
+sure, the run is never green**; and a run is never red for something the runner did not report. N is the largest of:
 
-1. `proof.not_proven`, when `proof` is present and valid;
-2. the summary's top-level `not_proven`;
-3. the verify verdict: when `verify_status` is present and is not `"identical"` (`"diverged"`, `"not_proven"`, or any
-   value this version does not know), or when it is null or absent with a non-zero `verify_exit` (verify crashed):
-   `max(1, verify_counts.not_proven + diverged + missing + wrong_reuse)`; else 0;
-4. with a proof whose `proven + not_proven` is not `ran`: `ran - proven` (a proof never hides tests).
+1. `proof.not_proven`; and, when `proof.proven + proof.not_proven` is not **`ranExecuted`**, `ranExecuted - proof.proven`
+   (a proof never hides tests). `ranExecuted` = `ran - outcome_counts.skipped`: the tests the framework skipped itself
+   did not run, so the engine's proof does not count them.
+2. A `proof` that is present (not absent, not null) but cannot be read (not an object, a field of the wrong type, an
+   empty `order_digest`, a cause over 500 characters, more than 50 causes): stored as null, the rest of the summary is
+   kept, and N is at least `max(1, proof.not_proven, ranExecuted - proof.proven)` from what can be read.
+3. The summary's top-level `not_proven`.
+4. The verify counts, always: `verify_counts.not_proven + max(diverged, wrong_reuse) + missing` (a wrong reuse is also a
+   divergence, so it is not counted twice); at least 1 when verify failed: a `verify_status` present and not
+   `"identical"` (`"diverged"`, `"not_proven"`, or a value this version does not know), or a non-zero (or non-numeric)
+   `verify_exit` whatever `verify_status` says. `"identical"` with all-zero counts and `verify_exit` 0 adds nothing.
+   When verify failed only because the inputs differ (`input_differs` > 0, no other count), N is 1 and the reason is
+   "inputs differ": the console says the runs could not be compared, not "1 test".
+5. A missing or invalid `exit` (not a whole number): at least 1, reason "exit code missing" (unknown is never green).
 
-`status.not_proven` is not used. A malformed `proof` (any field of the wrong type, an empty `order_digest`, a cause over
-500 characters, more than 50 causes) is stored as null; the rest of the summary is kept and N comes from the other
-sources, so an unreadable proof never makes a run green. Example: the Node fixture `node-mocha-verify-failed` (`exit` 0, `verify_status:
-diverged`, one diverged test) has N = 1 and status `not_proven`.
+When no proof cause explains N, the run keeps why (`ci_runs.not_proven_reason`, the Run's `notProvenReason`): the
+summary could not be read, exit code missing, the proof could not be read, the proof does not cover every test that ran,
+inputs differ, the check against the serial run failed. `status.not_proven` is not used. Example: the Node fixture
+`node-mocha-verify-failed` (`exit` 0, `verify_status: diverged`, one diverged test) has N = 1 and status `not_proven`.
+
+**A summary that came but cannot be read** (it was accepted, then today's parser refuses it) never falls back to the
+job's conclusion: the run is `not_proven` with N = 1 and the reason "the runner's summary could not be read", and its check
+run concludes `failure`. No summary at all keeps the rule above (passed if the job succeeded, else failed).
+
+**Per-test rows count too**: after results chunks are applied, `tests_not_proven` becomes at least the run's number of
+per-test `not_proven` rows (`passed` lowered by as many) and a `passed` run becomes `not_proven`; when that happens after
+the run was published, its check run and comment are published again (same check run, one usage event).
 
 A run with N > 0 is never green: its status is `not_proven` (unless it failed), its check run on GitHub concludes
 `failure` (even with `exit` 0) and its title says "N not proven" instead of "no failures". Per-test results may carry
@@ -733,10 +750,13 @@ database directly.
 
 ## Changes
 
-- 2026-11-23 (console proof review): N fails closed (any verify status but `identical`, a crashed verify, `wrong_reuse`,
-  a proof that does not cover the tests that ran); a malformed proof is stored as null instead of refusing the summary;
-  `GET /search` needs at least 2 characters. The console reads every response through `src/data/compat.ts`, so it
-  works against the API one release older (no proof, no not-proven counts, no Overview proof block, no `/search`).
+- 2026-11-23 (console proof review, two rounds): N fails closed (the rule above: a malformed proof, contradictory or
+  failed verify, a missing exit code, a proof that does not cover `ranExecuted`); an unreadable stored summary is
+  `not_proven`, never the job's conclusion; per-test `not_proven` rows raise the run and re-publish its check run; new
+  fields `Run.notProvenReason` (`ci_runs.not_proven_reason`), `RunProof.ranExecuted` and the tests list's `rowCounts`
+  (the per-test rows the filters count; `counts` stays the run's own); `GET /search` finds nothing for one character.
+  The console reads every response through `src/data/compat.ts`, so it works against the API one release older (no
+  proof fields, no not-proven counts, no Overview proof block, no `/search`, the `not_proven` filters refused with 400).
 - 2026-11-23 (console proof, migration 0019): **parallel with proof and NOT PROVEN**. `summary.json` gains an optional
   `proof` object; the Run gains `proof` and `tests.notProven`, the status `not_proven` (rule above, first match wins:
   cancelled, no summary, failures, N > 0, non-zero `exit`, passed), the per-test outcome `not_proven` with

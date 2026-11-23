@@ -267,6 +267,8 @@ interface Detail {
   failures: { testId: string; defectId: string | null }[];
   /** Tests not proven identical to the serial run, with the runner's cause when it gave one. */
   notProven?: { testId: string; cause: string | null }[];
+  /** Tests the runner sent no per-test result for. */
+  unsent?: string[];
 }
 
 /** The running run: what it will be once finished, how many times the live view asked, and how far it is. */
@@ -482,6 +484,7 @@ function makeRun(x: RunInput): { run: Run; detail: Detail } {
     progress: null,
     proof: null,
     exitCode: failures.length ? 1 : 0,
+    notProvenReason: null,
   };
   return { run, detail: { ran, failures } };
 }
@@ -599,7 +602,7 @@ function addParallelProof(specs: Spec[], runs: Run[], detail: Map<string, Detail
     const parallelMs = Math.max(1000, r.durationMs - spec.setupMs);
     const h = hash(`proof:${r.id}`);
     return {
-      workers: 4, proven: r.tests.ran - notProven, notProven, rerunOneLane: notProven + (h % 6 === 0 ? 1 + (h % 3) : 0), parallelMs,
+      workers: 4, proven: r.tests.ran - notProven, notProven, ranExecuted: r.tests.ran, rerunOneLane: notProven + (h % 6 === 0 ? 1 + (h % 3) : 0), parallelMs,
       serialMsEstimate: h % 9 === 0 ? null : Math.round(parallelMs * 3.6), orderDigest: hex(`order:${r.id}`), notProvenCauses: causes,
     };
   };
@@ -615,6 +618,8 @@ function addParallelProof(specs: Spec[], runs: Run[], detail: Map<string, Detail
     { notProven: 2, causes: [], proof: false, exit: 1 },
   ];
   plans.forEach((p, k) => {
+    // The second (an environment variable) sends its proof but no per-test rows: the card has no "See the N tests".
+    const rows = k !== 1;
     const r = candidates[k * 2] ?? candidates[k];
     if (!r || r.status !== "passed") return;
     const d = detail.get(r.id)!;
@@ -622,7 +627,8 @@ function addParallelProof(specs: Spec[], runs: Run[], detail: Map<string, Detail
     const tests = [...d.ran].sort((a, b) => a - b).flatMap((i) => modules[i].tests).filter((t) => !d.failures.some((f) => f.testId === t));
     const picked = tests.slice(0, p.notProven);
     const causes = p.causes.flatMap((c) => Array.from({ length: c.tests }, () => c.cause));
-    d.notProven = picked.map((testId, i) => ({ testId, cause: causes[i] ?? null }));
+    d.notProven = rows ? picked.map((testId, i) => ({ testId, cause: causes[i] ?? null })) : [];
+    if (!rows) d.unsent = picked;
     r.status = "not_proven";
     r.exitCode = p.exit;
     r.tests.notProven = picked.length;
@@ -917,7 +923,7 @@ function runningView(l: Live): Run {
     tests: { total: f.tests.total, ran: done, passed: done, failed: 0, skippedWithProof: f.tests.skippedWithProof, flakyDefects: 0, notProven: 0 },
     testTimeMs: { ran: 0, skipped: 0 }, skipShare: 0, minutesSaved: 0, otherStepMinutes: 0, githubEquivalentMinutes: 0, audit: { rerun: 0, wrongSkips: 0 }, progress,
     // The proof and the exit code exist only once the run finished.
-    proof: null, exitCode: null,
+    proof: null, exitCode: null, notProvenReason: null,
   };
 }
 
@@ -954,11 +960,13 @@ function testsOf(run: Run): TestResult[] {
   if (!spec || !d || run.status === "running") return [];
   const failures = new Map(d.failures.map((f) => [f.testId, f]));
   const notProven = new Map((d.notProven ?? []).map((x) => [x.testId, x.cause]));
+  const unsent = new Set(d.unsent ?? []);
   const defects = store().defects;
   const out: TestResult[] = [];
   suite(spec).forEach((m, i) => {
     const ran = d.ran.has(i);
     m.tests.forEach((testId, j) => {
+      if (unsent.has(testId)) return;
       const f = failures.get(testId);
       const defect = f?.defectId ? defects.find((x) => x.id === f.defectId) : null;
       const r = rng(hash(`${run.id}:${testId}`));
@@ -1120,6 +1128,7 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     return wait(copy(p));
   },
   listRuns(projectId, q = {}) {
+    if (olderApi() && q.status === "not_proven") return Promise.reject(mockError("validation_failed", 400, "status must be one of all, passed, failed.", "status"));
     const rows = filterRuns(projectId, q);
     if (q.since) return wait<Page<Run>>(copy({ items: rows.map(oldRun), total: rows.length, page: 1, pageSize: rows.length }));
     const { page = 1, pageSize = 25 } = q;
@@ -1178,7 +1187,10 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     const rank: Record<TestOutcome, number> = { failed: 0, not_proven: 1, passed: 2, skipped_with_proof: 3 };
     const rows = all.filter((t) => (!q.outcome || q.outcome === "all" || t.outcome === q.outcome) && (!term || t.testId.toLowerCase().includes(term))).sort((a, b) => rank[a.outcome] - rank[b.outcome]);
     const { page = 1, pageSize = 50 } = q;
-    const out: TestPage = { items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize, counts };
+    if (olderApi() && q.outcome === "not_proven") return Promise.reject(mockError("validation_failed", 400, "outcome must be one of all, passed, failed, skipped_with_proof.", "outcome"));
+    // The run's own counts (as the API's come from the run row), and the per-test rows the filters list.
+    const own = run ? { passed: run.tests.passed, failed: run.tests.failed, skipped_with_proof: run.tests.skippedWithProof, not_proven: run.tests.notProven } : counts;
+    const out: TestPage = { items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize, counts: all.length ? own : counts, rowCounts: counts };
     return wait<TestPage>(oldShape(out, (x) => {
       const { not_proven: _n, ...c } = x.counts as Loose;
       return { ...x, counts: c };

@@ -97,6 +97,9 @@ export function minuteBreakdown(parts: [number, number, number], decimals = 0): 
 /** One run's minutes, to one decimal. */
 export const runMinutes = (r: Run): MinuteBreakdown => minuteBreakdown([r.testTimeMs.ran / 60000, r.testTimeMs.skipped / 60000, r.otherStepMinutes], 1);
 
+/** A run not proven: its status says so, or it holds tests not proven (one predicate for every screen). */
+export const isNotProven = (r: Pick<Run, "status" | "tests">) => r.status === "not_proven" || (r.tests.notProven ?? 0) > 0;
+
 /** Finished: passed, failed or not proven (finished, never green). Only `passed` is green (time to green). */
 export const finished = (r: Run) => r.status === "passed" || r.status === "failed" || r.status === "not_proven";
 const round = (n: number, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
@@ -198,7 +201,7 @@ export function proofOverview(thisMonth: Run[]): Overview["proof"] {
   return {
     runsWithProof: withProof.length,
     provenIdentical: withProof.filter((r) => !r.tests.notProven && !r.proof!.notProven).length,
-    notProven: thisMonth.filter((r) => r.status === "not_proven").length,
+    notProven: thisMonth.filter((r) => finished(r) && isNotProven(r)).length,
   };
 }
 
@@ -546,6 +549,8 @@ export function searchFrom(projects: Project[], runs: Run[], defects: Defect[], 
 
 /** Said wherever the runner reported tests not proven without a cause. */
 export const NO_CAUSE_LABEL = "The runner did not report why";
+/** The App's reason when the verify could not compare the runs (github-app/src/results/summary.ts NOT_PROVEN_REASONS). */
+export const NOT_PROVEN_INPUTS_DIFFER = "inputs differ";
 
 /** The engine's causes as the verb phrase of a sentence about tests ("14 tests read a file outside the project"). */
 const CAUSE_PHRASES: Record<string, string> = {
@@ -559,11 +564,15 @@ const countOf = (n: number) => `${new Intl.NumberFormat("en-US").format(n)} ${n 
  * The run page's sentence about its tests not proven (Run.tsx): from the largest cause the runner reported, or that it
  * did not report one; then what the run did with them. "the run exits N" only when the summary's exit was not 0.
  */
-export function notProvenSentence(run: Pick<Run, "exitCode" | "tests">, proof: Pick<RunProof, "notProvenCauses"> | null): string {
+export function notProvenSentence(run: Pick<Run, "exitCode" | "tests"> & { notProvenReason?: string | null }, proof: Pick<RunProof, "notProvenCauses"> | null): string {
   const exit = run.exitCode != null && run.exitCode !== 0 ? `the run exits ${run.exitCode}` : "the check on GitHub is marked failed";
   const after = `Their serial result is reported; ${exit}.`;
   const n = run.tests.notProven ?? 0;
   const top = proof != null ? [...(proof.notProvenCauses ?? [])].filter((c) => c.tests > 0).sort((a, b) => b.tests - a.tests)[0] : undefined;
+  const reason = run.notProvenReason ?? null;
+  // Inputs that differ: the runs could not be compared at all, so no count of tests is said.
+  if (!top && reason === NOT_PROVEN_INPUTS_DIFFER) return `The parallel and serial runs could not be compared: their inputs differ. The run is not proven; the check on GitHub is marked failed.`;
+  if (!top && reason) return `${countOf(n)} ${n === 1 ? "was" : "were"} not proven identical: ${reason}. ${after}`;
   if (!top) return `${countOf(n)} ${n === 1 ? "was" : "were"} not proven identical. ${NO_CAUSE_LABEL}. ${after}`;
   const what = CAUSE_PHRASES[top.cause] ?? `${top.tests === 1 ? "was" : "were"} not proven (${top.cause})`;
   return `${countOf(top.tests)} ${what}, so the parallel result could not be proven equal to the serial one. ${after}`;
@@ -575,7 +584,7 @@ export function notProvenCausesOf(r: Run): { cause: string; tests: number }[] {
   if (n <= 0) return [];
   const named = r.proof != null ? (r.proof.notProvenCauses ?? []).filter((c) => c.tests > 0) : [];
   const told = named.reduce((a, c) => a + c.tests, 0);
-  const out = told < n ? [...named, { cause: NO_CAUSE_LABEL, tests: n - told }] : named;
+  const out = told < n ? [...named, { cause: r.notProvenReason ?? NO_CAUSE_LABEL, tests: n - told }] : named;
   return [...out].sort((a, b) => b.tests - a.tests);
 }
 
@@ -597,14 +606,24 @@ export function parallelProofFrom(runs: Run[], now: Date, days = 30): ParallelPr
   const since = new Date(now.getTime() - days * DAY).toISOString();
   const window = runs.filter((r) => finished(r) && r.startedAt >= since);
   const withProof = window.filter((r) => r.proof != null);
-  const notProven = window.filter((r) => r.status === "not_proven" || (r.tests.notProven ?? 0) > 0).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const notProven = window.filter(isNotProven).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   const byDay = new Map<string, Run[]>();
   for (const r of [...withProof].sort((a, b) => a.startedAt.localeCompare(b.startedAt))) {
     const k = dayStart(new Date(r.startedAt)).toISOString();
     (byDay.get(k) ?? byDay.set(k, []).get(k)!).push(r);
   }
   const daysOf = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  const proven = daysOf.map(([at, rs]) => ({ at, value: median(rs.map((r) => { const t = r.proof!.proven + r.proof!.notProven; return t > 0 ? r.proof!.proven / t : 1; }))! }));
+  // Per run: (ran − N) / ran, with N the run's (never less than its proof's) and ran the tests the framework ran; a run
+  // that ran nothing is left out; nothing proven is 0.
+  const shareProven = (r: Run) => {
+    const ran = r.proof!.ranExecuted ?? r.tests.ran;
+    const n = Math.max(r.tests.notProven ?? 0, r.proof!.notProven ?? 0);
+    return ran > 0 ? Math.max(0, ran - n) / ran : null;
+  };
+  const proven = daysOf
+    .map(([at, rs]) => ({ at, values: rs.map(shareProven).filter((v): v is number => v !== null) }))
+    .filter((d) => d.values.length > 0)
+    .map((d) => ({ at: d.at, value: median(d.values)! }));
   const speed = daysOf.map(([at, rs]) => {
     const serial = rs.map((r) => r.proof!.serialMsEstimate).filter((v): v is number => v !== null);
     return { at, parallelMs: median(rs.map((r) => r.proof!.parallelMs))!, serialMs: median(serial) };

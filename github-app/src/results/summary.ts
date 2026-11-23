@@ -20,10 +20,24 @@ export interface SummaryProof {
   notProvenCauses: { cause: string; tests: number }[];
 }
 
+/**
+ * Why a run is not proven when no proof cause says it (`ci_runs.not_proven_reason`, the Run's `notProvenReason`). The
+ * console words a sentence from it (src/data/ci.ts notProvenSentence).
+ */
+export const NOT_PROVEN_REASONS = {
+  summaryUnreadable: "the runner's summary could not be read",
+  exitMissing: "exit code missing",
+  proofUnreadable: "the proof of the parallel run could not be read",
+  proofShort: "the proof does not cover every test that ran",
+  inputsDiffer: "inputs differ",
+  verifyFailed: "the check against the serial run failed",
+} as const;
+
 export interface RunSummary {
   commit: string;
   cacheWasWarm: boolean;
-  exit: number;
+  /** The test command's exit code; null when the summary has none (or not a whole number): unknown, never green. */
+  exit: number | null;
   wallSeconds: number;
   tests: number;
   ran: number;
@@ -54,6 +68,13 @@ export interface RunSummary {
    * `status.not_proven` is not used. The status, the check run and `tests.notProven` all use this one value.
    */
   notProven: number;
+  /** Why N > 0 when no proof cause says it (NOT_PROVEN_REASONS), else null. */
+  notProvenReason: string | null;
+  /**
+   * The tests the framework actually ran: `ran` minus the tests it skipped itself (`outcome_counts.skipped`), which the
+   * engine does not prove. `proven + not_proven` of a proof should equal this.
+   */
+  ranExecuted: number;
 }
 
 export class SummaryError extends Error {}
@@ -151,24 +172,45 @@ export function parseProof(v: unknown): SummaryProof | null {
 }
 
 /**
- * N of a summary (see RunSummary.notProven). Fails closed: every source that says a test was not proven counts, and the
- * largest wins. Sources: `proof.not_proven`; the top-level `not_proven`; the verify verdict (any `verify_status` other
- * than "identical", or none with a non-zero `verify_exit`: at least 1, else `verify_counts.not_proven + diverged +
- * missing + wrong_reuse`); and, with a proof whose `proven + not_proven` is not the tests that ran, `ran - proven`.
+ * N of a summary (see RunSummary.notProven), and why when no proof cause says it. Fails closed: when we are not sure,
+ * the run is not proven. The largest of:
+ * - `proof.not_proven`, and with a proof whose `proven + not_proven` is not `ranExecuted`, `ranExecuted - proven`;
+ * - a `proof` that is present but unreadable: at least 1, its `not_proven`, `ranExecuted - proven` where readable;
+ * - the top-level `not_proven`;
+ * - the verify counts, always: `not_proven + max(diverged, wrong_reuse) + missing` (a wrong reuse is also a divergence,
+ *   so not counted twice); and at least 1 when verify failed: a `verify_status` present and not "identical" (whatever
+ *   it says), or a non-zero `verify_exit` whatever `verify_status` says;
+ * - a missing or invalid `exit`: at least 1 (unknown is never green).
+ * `status.not_proven` is not used.
  */
-export function notProvenOf(o: Record<string, unknown>, proof: SummaryProof | null, ran: number): number {
+export function notProvenOf(o: Record<string, unknown>, proof: SummaryProof | null, ranExecuted: number): { n: number; reason: string | null } {
   const count = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : 0);
-  const vc = (o.verify_counts && typeof o.verify_counts === "object" ? o.verify_counts : {}) as Record<string, unknown>;
-  const verifyN = count(vc.not_proven) + count(vc.diverged) + count(vc.missing) + count(vc.wrong_reuse);
-  const status = o.verify_status;
-  const exit = o.verify_exit;
-  const failedVerify = status === undefined || status === null ? typeof exit === "number" && exit !== 0 : status !== "identical";
-  let n = Math.max(count(o.not_proven), failedVerify ? Math.max(1, verifyN) : 0);
+  const R = NOT_PROVEN_REASONS;
+  let n = 0;
+  let reason: string | null = null;
+  const raise = (m: number, why: string | null) => {
+    if (m > n) n = m;
+    if (m > 0 && why && !reason) reason = why;
+  };
   if (proof) {
-    n = Math.max(n, proof.notProven);
-    if (proof.proven + proof.notProven !== ran) n = Math.max(n, ran - proof.proven);
+    raise(proof.notProven, null);
+    if (proof.proven + proof.notProven !== ranExecuted) raise(ranExecuted - proof.proven, R.proofShort);
+  } else if (o.proof !== undefined && o.proof !== null) {
+    const p = (typeof o.proof === "object" && !Array.isArray(o.proof) ? o.proof : {}) as Record<string, unknown>;
+    raise(Math.max(1, count(p.not_proven), ranExecuted - count(p.proven)), R.proofUnreadable);
   }
-  return n;
+  const vc = (o.verify_counts && typeof o.verify_counts === "object" ? o.verify_counts : {}) as Record<string, unknown>;
+  const verifyN = count(vc.not_proven) + Math.max(count(vc.diverged), count(vc.wrong_reuse)) + count(vc.missing);
+  const status = o.verify_status;
+  const failedVerify = (status !== undefined && status !== null && status !== "identical") || (typeof o.verify_exit === "number" && o.verify_exit !== 0)
+    || (o.verify_exit !== undefined && o.verify_exit !== null && typeof o.verify_exit !== "number");
+  const inputsDiffer = count(vc.input_differs) > 0;
+  raise(failedVerify ? Math.max(1, verifyN) : verifyN, inputsDiffer && verifyN === 0 ? R.inputsDiffer : failedVerify || verifyN ? R.verifyFailed : null);
+  raise(count(o.not_proven), null);
+  if (!(typeof o.exit === "number" && Number.isInteger(o.exit))) raise(1, R.exitMissing);
+  // The proof's own causes say why; a reason is kept only when no proof explains the count.
+  if (proof && proof.notProvenCauses.reduce((a, c) => a + c.tests, 0) >= n) reason = null;
+  return { n, reason };
 }
 
 export function parseSummary(raw: unknown): RunSummary {
@@ -191,10 +233,13 @@ export function parseSummary(raw: unknown): RunSummary {
     return { nodeid, replay, minimise: str(ff.minimise, 4000) };
   });
   const commit = typeof o.commit === "string" ? o.commit : "";
-  const exit = typeof o.exit === "number" && Number.isInteger(o.exit) ? o.exit : 0;
+  const exit = typeof o.exit === "number" && Number.isInteger(o.exit) ? o.exit : null;
   const rc = o.runtime_changed_since_previous_job;
   const saved = num(o, "test_seconds_saved");
   const proof = parseProof(o.proof);
+  const outcomeCounts = counts(o, "outcome_counts");
+  const ranExecuted = Math.max(0, ran - (outcomeCounts.skipped ?? 0));
+  const np = notProvenOf(o, proof, ranExecuted);
   const spent = num(o, "test_seconds_run");
   return {
     commit,
@@ -209,7 +254,7 @@ export function parseSummary(raw: unknown): RunSummary {
     shareOfTestTimeSaved: saved + spent > 0 ? saved / (saved + spent) : 0,
     failed: failedRaw as string[],
     flaky,
-    outcomeCounts: counts(o, "outcome_counts"),
+    outcomeCounts,
     notReusedReasons: counts(o, "not_reused_reasons"),
     notCached: counts(o, "not_cached"),
     engineVersion: engineVersionOf(o),
@@ -217,14 +262,16 @@ export function parseSummary(raw: unknown): RunSummary {
     stack: stackFromSummary(o),
     mode: o.mode === "shadow" || o.mode === "enforce" ? o.mode : null,
     proof,
-    notProven: notProvenOf(o, proof, ran),
+    notProven: np.n,
+    notProvenReason: np.reason,
+    ranExecuted,
   };
 }
 
 /** The summary's proof as ci_runs.proof stores it: the contract's RunProof (camelCase, milliseconds). */
-export function proofRecord(p: SummaryProof) {
+export function proofRecord(p: SummaryProof, ranExecuted: number) {
   return {
-    workers: p.workers, proven: p.proven, notProven: p.notProven, rerunOneLane: p.rerunOneLane, parallelMs: Math.round(p.parallelSeconds * 1000),
+    workers: p.workers, proven: p.proven, notProven: p.notProven, ranExecuted, rerunOneLane: p.rerunOneLane, parallelMs: Math.round(p.parallelSeconds * 1000),
     serialMsEstimate: p.serialSecondsEstimate === null ? null : Math.round(p.serialSecondsEstimate * 1000), orderDigest: p.orderDigest,
     notProvenCauses: p.notProvenCauses,
   };

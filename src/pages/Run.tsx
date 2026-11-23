@@ -188,7 +188,7 @@ function ProofCard({ run, proof, testsLink, hasRows }: { run: Run; proof: RunPro
         <div>
           <dt>Proven</dt>
           <dd className="mono">
-            {formatCount(proof.proven)} of {formatCount(run.tests.ran)}
+            {formatCount(proof.proven)} of {formatCount(proof.ranExecuted ?? run.tests.ran)}
           </dd>
         </div>
         <div>
@@ -346,6 +346,11 @@ export function RunPage() {
   const running = run.status === "running";
   const shadow = run.mode === "shadow";
   const counts = tests.status === "ready" ? tests.data.counts : null;
+  // The filters count the per-test rows they list; the run's own numbers can be larger (not every test sent).
+  const rows = tests.status === "ready" ? (tests.data.rowCounts ?? tests.data.counts) : null;
+  const detail = (k: "passed" | "not_proven", word: string) =>
+    counts && rows && (counts[k] ?? 0) !== (rows[k] ?? 0) ? `${formatCount(counts[k] ?? 0)} ${word}, ${formatCount(rows[k] ?? 0)} with per-test detail` : null;
+  const partial = [detail("not_proven", "not proven"), detail("passed", "passed")].filter(Boolean);
   const testsLink = `/projects/${projectId}/runs/${run.id}?outcome=not_proven#tests`;
 
   return (
@@ -523,16 +528,21 @@ export function RunPage() {
               className="seg-sm"
               options={[
                 { value: "all", label: "All" },
-                { value: "failed", label: "Failed", count: counts ? formatCount(counts.failed) : undefined },
-                { value: "passed", label: "Passed", count: counts ? formatCount(counts.passed) : undefined },
-                { value: "skipped_with_proof", label: "Skipped", count: counts ? formatCount(counts.skipped_with_proof) : undefined },
-                { value: "not_proven", label: "Not proven", count: counts ? formatCount(counts.not_proven ?? 0) : undefined },
+                { value: "failed", label: "Failed", count: rows ? formatCount(rows.failed) : undefined },
+                { value: "passed", label: "Passed", count: rows ? formatCount(rows.passed) : undefined },
+                { value: "skipped_with_proof", label: "Skipped", count: rows ? formatCount(rows.skipped_with_proof) : undefined },
+                { value: "not_proven", label: "Not proven", count: rows ? formatCount(rows.not_proven ?? 0) : undefined },
               ]}
             />
           </div>
         }
       >
         <SearchInput aria-label="Search tests" placeholder="Search by test id" value={search} onChange={(e) => setSearch(e.target.value)} />
+        {!running && partial.length > 0 && (
+          <p className="muted small" id="tests-detail">
+            {partial.join(" · ")}.
+          </p>
+        )}
         {tests.status === "loading" && <ListSkeleton rows={8} label="Loading tests" />}
         {tests.status === "error" && <Message role="alert">{tests.message}</Message>}
         {tests.status === "ready" && (

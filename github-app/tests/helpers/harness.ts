@@ -53,7 +53,7 @@ export async function resetDb(): Promise<pg.Client> {
     execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0017_warm_cache.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
   }
   // A database prepared before migrations 0018 (node:test and mocha) and 0019 (parallel with proof): both are safe to repeat.
-  if (!(await admin.query("select 1 from information_schema.columns where table_name = 'ci_runs' and column_name = 'exit_code'")).rowCount) {
+  if (!(await admin.query("select 1 from information_schema.columns where table_name = 'ci_runs' and column_name = 'not_proven_reason'")).rowCount) {
     for (const m of ["0018_node_test_mocha_runners", "0019_run_proof"]) {
       execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL(`../../../supabase/migrations/${m}.sql`, import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
     }

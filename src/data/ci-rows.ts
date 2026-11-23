@@ -84,13 +84,14 @@ export function mapRun(r: Row): Run {
     // The proof exists only once the run finished.
     proof: str(r.status) !== "running" && r.proof && typeof r.proof === "object" ? mapProof(obj(r.proof)) : null,
     exitCode: str(r.status) === "running" ? null : numOrNull(r.exit_code),
+    notProvenReason: str(r.status) !== "running" && typeof r.not_proven_reason === "string" && r.not_proven_reason ? r.not_proven_reason : null,
   };
 }
 
 /** ci_runs.proof (the summary's `proof` as the App stores it, docs/data-contract.md "Parallel with proof"). */
 export function mapProof(p: Row): RunProof {
   return {
-    workers: num(p.workers), proven: num(p.proven), notProven: num(p.notProven), rerunOneLane: num(p.rerunOneLane), parallelMs: num(p.parallelMs),
+    workers: num(p.workers), proven: num(p.proven), notProven: num(p.notProven), ranExecuted: numOrNull(p.ranExecuted), rerunOneLane: num(p.rerunOneLane), parallelMs: num(p.parallelMs),
     serialMsEstimate: numOrNull(p.serialMsEstimate), orderDigest: typeof p.orderDigest === "string" && p.orderDigest ? p.orderDigest : null,
     notProvenCauses: arr<Row>(p.notProvenCauses).map((c) => ({ cause: str(c.cause), tests: num(c.tests) })).filter((c) => c.cause),
   };
