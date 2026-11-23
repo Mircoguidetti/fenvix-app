@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # fenvix runner machine: install everything a runner needs, start nothing (root; safe to run again). Used by EC2 Image
 # Builder to bake the runner image (lib/runner-fleet.ts). The build machine cannot read any of our SSM parameters.
-#   1. tools (git, curl, strace, build tools, python3, iptables, the GitHub runner's libraries; no AWS CLI);
+#   1. tools (git, curl, strace, build tools, python3, iptables, the GitHub runner's libraries; no AWS CLI) and Node 22
+#      (one pinned release from nodejs.org, sha256-checked; detjs and the customers' Node jobs need it);
 #   2. users: `fenvix` runs the GitHub runner and the customers' jobs; `fenvix-post` holds the machine's summary
 #      credential and sends run summaries, so job code can never read it;
 #   3. instance metadata (the user data holds the machine's credentials) blocked for both users;
@@ -16,6 +17,10 @@ log() { printf '[fenvix-setup %s] %s\n' "$(date -u +%FT%TZ)" "$*"; }
 # shellcheck source=/dev/null
 . /etc/fenvix/runner.env
 : "${FENVIX_ENGINE_CLI_COMMIT:?}" "${AWS_DEFAULT_REGION:?}"
+# Node for the jobs and for detjs (fenvix-engine-cli runner/bootstrap.sh checks node >= 22). Pinned: version and the
+# sha256 of node-v$NODE_VERSION-linux-x64.tar.gz from https://nodejs.org/dist/v22.23.5/SHASUMS256.txt.
+NODE_VERSION=22.23.5
+NODE_SHA256=c54118104acc524633b5abe106bbf44a53126ec8b4e5fa105cb92b5d7de8a1a1
 RUNNER_HOME=/home/fenvix
 ENGINE_DIR=$RUNNER_HOME/engine-cli
 FENVIX_HOME=$RUNNER_HOME/fenvix
@@ -28,6 +33,33 @@ apt-get update -qq
 # by step 4 it is a file the `fenvix` user owns, and code from step 4's downloads could have rewritten it (R-012 F5).
 apt-get install -y -qq git curl tar strace build-essential python3 iptables ca-certificates \
   libicu74 libkrb5-3 liblttng-ust1t64 libssl3t64 zlib1g >/dev/null
+
+log "1/5 Node $NODE_VERSION (pinned; detjs and Node jobs need Node 22 or newer)"
+# The official linux-x64 tarball from nodejs.org, checked against the sha256 pinned here AND against the release's
+# own SHASUMS256.txt (both must name the same hash, so a changed pin or a changed release is refused). Update the
+# version and the hash together, from https://nodejs.org/dist/v<version>/SHASUMS256.txt.
+install_node() {
+  local name="node-v$NODE_VERSION-linux-x64" dir="/usr/local/lib/nodejs" tmp
+  if [ -x "$dir/$name/bin/node" ] && [ "$("$dir/$name/bin/node" --version)" = "v$NODE_VERSION" ]; then
+    log "node v$NODE_VERSION already in $dir/$name"
+  else
+    tmp="$(mktemp -d)"
+    curl -fsSL -o "$tmp/$name.tar.gz" "https://nodejs.org/dist/v$NODE_VERSION/$name.tar.gz"
+    curl -fsSL -o "$tmp/SHASUMS256.txt" "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt"
+    grep -qx "$NODE_SHA256  $name.tar.gz" "$tmp/SHASUMS256.txt" \
+      || { log "ERROR: SHASUMS256.txt of v$NODE_VERSION does not list sha256 $NODE_SHA256 for $name.tar.gz"; exit 1; }
+    (cd "$tmp" && echo "$NODE_SHA256  $name.tar.gz" | sha256sum -c -) \
+      || { log "ERROR: $name.tar.gz does not match sha256 $NODE_SHA256"; exit 1; }
+    mkdir -p "$dir"
+    rm -rf "${dir:?}/$name"
+    tar -xzf "$tmp/$name.tar.gz" -C "$dir"
+    rm -rf "$tmp"
+  fi
+  local b
+  for b in node npm npx corepack; do ln -sfn "$dir/$name/bin/$b" "/usr/local/bin/$b"; done
+  log "node $(/usr/local/bin/node --version) -> /usr/local/bin/node"
+}
+install_node
 
 log "2/5 users"
 id fenvix >/dev/null 2>&1 || useradd --create-home --home-dir "$RUNNER_HOME" --shell /bin/bash fenvix

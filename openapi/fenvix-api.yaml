@@ -675,7 +675,7 @@ components:
 
     # ---------------------------------------------------------------- projects and runs
     Language: { type: string, enum: [python, node, go] }
-    TestRunner: { type: string, enum: [pytest, vitest, jest, go test] }
+    TestRunner: { type: string, enum: [pytest, vitest, jest, go test, "node:test", mocha] }
     RunTrigger: { type: string, enum: [push, pull_request, merge_group, schedule, workflow_dispatch] }
     RunStatus: { type: string, enum: [running, passed, failed, cancelled] }
     RunMode: { type: string, enum: [enforce, shadow], description: "shadow: the trial; every test ran and the engine recorded what it would have skipped." }

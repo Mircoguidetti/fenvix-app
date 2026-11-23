@@ -1,0 +1,111 @@
+{
+ "language": "node",
+ "test_runner": "mocha",
+ "engine": "detjs",
+ "engine_version": "0.1.0",
+ "project": "/home/fenvix/work/mocha",
+ "commit": "",
+ "cache_dir": "/home/fenvix/work/cache/acme_cli-eae044a4-node22",
+ "cache_was_warm": false,
+ "exit": 0,
+ "wall_seconds": 0.471,
+ "tests": 5,
+ "reused_with_proof": 0,
+ "ran": 5,
+ "test_seconds_saved": 0,
+ "test_seconds_run": 0.06,
+ "share_of_test_time_saved": 0.0,
+ "failed": [],
+ "not_proven": 0,
+ "status": {
+  "failed": 0,
+  "not_proven": 0,
+  "passed": 5,
+  "skipped": 0
+ },
+ "flaky": [],
+ "reruns": [],
+ "outcome_counts": {
+  "passed": 5
+ },
+ "not_cached": {
+  "os-entropy": 6
+ },
+ "not_reused_reasons": {
+  "new": 1
+ },
+ "reason_texts": {
+  "os-entropy": "os entropy (not controlled; use --det-urandom)",
+  "new": "new"
+ },
+ "cache_check_seconds": 0,
+ "cache_record_seconds": 0.002,
+ "epoch_ns": 1795392000000000000,
+ "receipts": "/home/fenvix/work/out/mocha-entropy/receipts.jsonl",
+ "outcomes_file": "/home/fenvix/work/out/mocha-entropy/outcomes.json",
+ "trace_file": "/home/fenvix/work/out/mocha-entropy/trace.jsonl",
+ "cache_summary_file": "/home/fenvix/work/out/mocha-entropy/cache-summary.json",
+ "outcomes": {
+  "entropy.test.js::entropy::reads OS entropy": "passed",
+  "fail.test.js::fail::fails on demand": "passed",
+  "pass.test.js::pass::adds": "passed",
+  "pass.test.js::pass::concatenates": "passed",
+  "pass.test.js::pass::sorts": "passed"
+ },
+ "reused_outcomes": {},
+ "reused_files": [],
+ "runner_args": [],
+ "detjs_args": [
+  "--det",
+  "--det-cache=/home/fenvix/work/cache/acme_cli-eae044a4-node22",
+  "--det-cache-receipts=/home/fenvix/work/out/mocha-entropy/receipts.jsonl",
+  "--det-cache-summary=/home/fenvix/work/out/mocha-entropy/cache-summary.json",
+  "--det-outcomes=/home/fenvix/work/out/mocha-entropy/outcomes.json",
+  "--det-trace=/home/fenvix/work/out/mocha-entropy/trace.jsonl"
+ ],
+ "cache_arg": "--det-cache=/home/fenvix/work/cache/acme_cli-eae044a4-node22",
+ "runtime": {
+  "digest": "ae8deeba949a3d89481923ccd7f4f08e",
+  "config": "d68e41321df97561b1414a3d77349dc7",
+  "engine": "detjs",
+  "dist_list": [
+   "detjs@0.1.0"
+  ],
+  "node": "v22.23.5",
+  "runner_version": "11.8.0",
+  "parts": {
+   "node": "0785e1f9aab7514934eb7dfa0ccce8dc",
+   "executable": "5d3b0020ee98c39c07e452c86c4431f5",
+   "native": "cac22a38029c805d40104a6920adc1a1",
+   "libc": "21ba848483eee9a51d0d2919ada5deae",
+   "tz": "ae1c52feb2c8e94e40ad2636d675929c",
+   "locale": "329a9c8cc592fac2b530dba2fb58d95c",
+   "cpu": "5bbd3c6307a3887e3d2add430b313d99",
+   "lockfiles": "df4de7e54bb972363c0ac3bf68c122f0",
+   "packages": "1ba5e7271ab53e139bef82c600312284"
+  },
+  "identity_seconds": 0.107
+ },
+ "runtime_changed_since_previous_job": [],
+ "machine": {
+  "hostname": "vm",
+  "runner_name": null,
+  "machine_id": "a0a011aeb8aa",
+  "boot_id": "41ceb097e42d",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+  "cpus": 4
+ },
+ "shared_cache": null,
+ "reused_from_shared_cache": 0,
+ "verify_status": "diverged",
+ "verify_exit": 1,
+ "verify_counts": {
+  "tests": 5,
+  "identical": 4,
+  "not_proven": 0,
+  "diverged": 1,
+  "missing": 0,
+  "input_differs": 0,
+  "wrong_reuse": 0
+ }
+}

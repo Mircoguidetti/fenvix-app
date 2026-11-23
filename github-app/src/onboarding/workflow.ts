@@ -9,7 +9,7 @@ import { isMap, isPair, isScalar, isSeq, parseDocument, type Node, type Pair, ty
  */
 
 export type Language = "python" | "node" | "go";
-export type TestRunner = "pytest" | "vitest" | "jest" | "go test";
+export type TestRunner = "pytest" | "vitest" | "jest" | "go test" | "node:test" | "mocha";
 
 export interface WorkflowFile { path: string; text: string }
 
@@ -40,6 +40,9 @@ const COMMANDS: Command[] = [
   { re: /\b(python3?\s+-m\s+)?pytest\b/, score: 6, language: "python", runner: "pytest", label: "runs pytest" },
   { re: /\bvitest\b/, score: 6, language: "node", runner: "vitest", label: "runs vitest" },
   { re: /\bjest\b/, score: 6, language: "node", runner: "jest", label: "runs jest" },
+  { re: /\bmocha\b/, score: 6, language: "node", runner: "mocha", label: "runs mocha" },
+  // `node --test` with any flags before it (`node --experimental-strip-types --test`), not `--test-reporter` alone
+  { re: /\bnode\b[^\n;&|]*\s--test(?![-\w])/, score: 6, language: "node", runner: "node:test", label: "runs node --test" },
   { re: /\bgo\s+test\b/, score: 6, language: "go", runner: "go test", label: "runs go test" },
   { re: /\b(tox|nox)\b/, score: 4, language: "python", runner: "pytest", label: "runs tox/nox" },
   { re: /\b(uv\s+run|poetry\s+run|hatch\s+run|pdm\s+run)\s+(python\s+-m\s+)?(pytest|test)\b/, score: 6, language: "python", runner: "pytest", label: "runs pytest" },

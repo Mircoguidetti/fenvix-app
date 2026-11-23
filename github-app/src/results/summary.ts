@@ -39,7 +39,8 @@ export interface RunSummary {
 
 export class SummaryError extends Error {}
 
-const DROP = ["outcomes", "reused_outcomes", "pytest_args"] as const;
+// `runner_args` is the Node runner's name for `pytest_args` (fenvix-run node)
+const DROP = ["outcomes", "reused_outcomes", "pytest_args", "runner_args"] as const;
 
 function num(o: Record<string, unknown>, k: string, opts: { required?: boolean; int?: boolean } = {}): number {
   const v = o[k];
