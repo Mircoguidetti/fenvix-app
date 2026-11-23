@@ -181,4 +181,4 @@ Notes:
   outside this review.
 - **Reading:** at today's size Supabase Pro ($25) is in the same range as RDS micro with a proxy ($38) or Neon
   ($20), includes Auth and costs no migration. The database is not where the margin is (compare `COST.md`: machines
-  are 80-95% of cost from 100k minutes up).
+  are ≈ 80% or more of cost from 100k minutes up).
