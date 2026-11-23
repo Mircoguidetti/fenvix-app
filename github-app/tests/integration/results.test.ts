@@ -155,6 +155,146 @@ describe("run results on GitHub, runs and usage events", () => {
     assert.deepEqual(run, { trigger: "push", pull_request: null, tests_flaky_defects: 1, tests_failed: 1 });
   });
 
+  it("a test not proven identical to the serial run: status not_proven, N stored, never a green check (console proof)", async () => {
+    // node-mocha-verify-failed: exit 0, verify_status diverged, one diverged test, no proof block.
+    const sha = "a".repeat(40);
+    h.gh.addRun("acme/shop", 9101, { event: "push", headSha: sha, headBranch: "main", message: "verify diverged" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6101, runId: 9101, sha, branch: "main" }));
+    await h.summary({ runId: 9101, summary: summary("node-mocha-verify-failed") });
+    await h.send("workflow_job", workflowJob("completed", { id: 6101, runId: 9101, sha, branch: "main", conclusion: "success" }));
+    const job = (await admin.query("select check_run_id from gh_jobs where job_id = 6101")).rows[0];
+    const cr = h.gh.repos.get("acme/shop")!.checkRuns.get(job.check_run_id)!;
+    assert.equal(cr.conclusion, "failure");
+    assert.match((cr.output as { title: string }).title, /1 not proven$/);
+    const run = (await admin.query("select status, tests_not_proven, tests_passed, tests_ran, proof, exit_code from ci_runs where commit_sha = $1", [sha])).rows[0];
+    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 1, tests_passed: 4, tests_ran: 5, proof: null, exit_code: 0 });
+
+    // A parallel run with a proof block: stored as the contract's RunProof.
+    const sha2 = "b".repeat(40);
+    h.gh.addRun("acme/shop", 9102, { event: "push", headSha: sha2, headBranch: "main", message: "parallel" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6102, runId: 9102, sha: sha2, branch: "main" }));
+    await h.summary({ runId: 9102, summary: { ...summary("job3-warm-pass"), proof: { workers: 4, proven: 4, not_proven: 6, rerun_one_lane: 6, parallel_seconds: 2.5, serial_seconds_estimate: null, order_digest: "ab12", not_proven_causes: [{ cause: "file read outside the project", tests: 6 }] } } });
+    await h.send("workflow_job", workflowJob("completed", { id: 6102, runId: 9102, sha: sha2, branch: "main", conclusion: "success" }));
+    const run2 = (await admin.query("select status, tests_not_proven, proof from ci_runs where commit_sha = $1", [sha2])).rows[0];
+    assert.equal(run2.status, "not_proven");
+    assert.equal(run2.tests_not_proven, 6);
+    // job3-warm-pass ran 10 tests: the proof covers them (4 proven + 6 not proven).
+    assert.deepEqual(run2.proof, { workers: 4, proven: 4, notProven: 6, ranExecuted: 10, rerunOneLane: 6, parallelMs: 2500, serialMsEstimate: null, orderDigest: "ab12", notProvenCauses: [{ cause: "file read outside the project", tests: 6 }] });
+  });
+
+  it("a results chunk with not_proven tests, with and without a cause, is stored through apply.ts (console proof review)", async () => {
+    const sha = "c".repeat(40);
+    h.gh.addRun("acme/shop", 9103, { event: "push", headSha: sha, headBranch: "main", message: "chunk with not proven" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6103, runId: 9103, sha, branch: "main" }));
+    const cred = runnerCredential("fenvix-m1", REPOS.shop.id);
+    const res = await h.app.fastify.inject({
+      method: "POST", url: "/v1/runner/results", headers: { authorization: `Bearer ${cred}`, "content-type": "application/json" },
+      payload: {
+        repositoryId: REPOS.shop.id, runId: 9103, runAttempt: 1, runnerName: "fenvix-m1", chunk: 0, chunks: 1,
+        tests: [
+          { testId: "tests/test_io.py::test_home", outcome: "not_proven", durationMs: 7, notProvenCause: "file read outside the project" },
+          { testId: "tests/test_io.py::test_env", outcome: "not_proven", durationMs: 3 },
+          { testId: "tests/test_io.py::test_ok", outcome: "passed", durationMs: 2 },
+        ],
+      },
+    });
+    assert.equal(res.statusCode, 202, res.body);
+    await h.app.service.idle();
+    await h.summary({ runId: 9103, summary: { tests: 3, reused_with_proof: 0, ran: 3, exit: 1, failed: [], flaky: [], not_proven: 2, outcome_counts: { passed: 3 } } });
+    await h.send("workflow_job", workflowJob("completed", { id: 6103, runId: 9103, sha, branch: "main", conclusion: "failure" }));
+    const run = (await admin.query("select id, status, tests_not_proven, tests_passed from ci_runs where commit_sha = $1", [sha])).rows[0];
+    assert.deepEqual([run.status, run.tests_not_proven, run.tests_passed], ["not_proven", 2, 1]);
+    const rows = (await admin.query("select test_id, outcome, not_proven_cause, failure_kind from ci_test_results where run_id = $1 order by test_id", [run.id])).rows;
+    assert.deepEqual(rows, [
+      { test_id: "tests/test_io.py::test_env", outcome: "not_proven", not_proven_cause: null, failure_kind: null },
+      { test_id: "tests/test_io.py::test_home", outcome: "not_proven", not_proven_cause: "file read outside the project", failure_kind: null },
+      { test_id: "tests/test_io.py::test_ok", outcome: "passed", not_proven_cause: null, failure_kind: null },
+    ]);
+  });
+
+  // ---------------------------------------------------------------- console proof review 2: never green when unsure
+
+  const chunk = async (runId: number, tests: { testId: string; outcome: string; durationMs: number; notProvenCause?: string | null }[]) => {
+    const cred = runnerCredential("fenvix-m1", REPOS.shop.id);
+    const res = await h.app.fastify.inject({
+      method: "POST", url: "/v1/runner/results", headers: { authorization: `Bearer ${cred}`, "content-type": "application/json" },
+      payload: { repositoryId: REPOS.shop.id, runId, runAttempt: 1, runnerName: "fenvix-m1", chunk: 0, chunks: 1, tests },
+    });
+    assert.equal(res.statusCode, 202, res.body);
+    await h.app.service.idle();
+  };
+  const checkOf = async (jobId: number) => {
+    const job = (await admin.query("select check_run_id from gh_jobs where job_id = $1", [jobId])).rows[0];
+    return h.gh.repos.get("acme/shop")!.checkRuns.get(job.check_run_id)!;
+  };
+  const allPassed = { tests: 3, reused_with_proof: 0, ran: 3, exit: 0, failed: [], flaky: [], outcome_counts: { passed: 3 } };
+  const rowsSent = [
+    { testId: "tests/test_late.py::test_home", outcome: "not_proven", durationMs: 7, notProvenCause: "file read outside the project" },
+    { testId: "tests/test_late.py::test_env", outcome: "not_proven", durationMs: 3 },
+    { testId: "tests/test_late.py::test_ok", outcome: "passed", durationMs: 2 },
+  ];
+
+  it("a summary that came but cannot be read: not proven (N 1, its reason), never passed, the check run fails", async () => {
+    const sha = "d".repeat(40);
+    h.gh.addRun("acme/shop", 9104, { event: "push", headSha: sha, headBranch: "main", message: "unreadable summary" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6104, runId: 9104, sha, branch: "main" }));
+    // reused_with_proof + ran != tests: parseSummary refuses it. The intake refuses it too (422), so it is stored here as
+    // a summary accepted earlier that today's parser cannot read (a runner or App version change).
+    assert.equal((await h.summary({ runId: 9104, summary: { tests: 10, reused_with_proof: 3, ran: 3, exit: 0 } })).statusCode, 422);
+    await admin.query("insert into gh_run_summaries (repository_id, run_id, run_attempt, runner_name, summary) values ($1, 9104, 1, 'fenvix-m1', $2)",
+      [REPOS.shop.id, JSON.stringify({ tests: 10, reused_with_proof: 3, ran: 3, exit: 0 })]);
+    await h.send("workflow_job", workflowJob("completed", { id: 6104, runId: 9104, sha, branch: "main", conclusion: "success" }));
+    const run = (await admin.query("select status, tests_not_proven, not_proven_reason from ci_runs where commit_sha = $1", [sha])).rows[0];
+    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 1, not_proven_reason: "the runner's summary could not be read" });
+    const cr = await checkOf(6104);
+    assert.equal(cr.conclusion, "failure");
+    assert.match((cr.output as { title: string }).title, /could not be read/);
+  });
+
+  it("per-test not_proven rows sent before the summary make the run not proven (the summary said all passed)", async () => {
+    const sha = "e".repeat(40);
+    h.gh.addRun("acme/shop", 9105, { event: "push", headSha: sha, headBranch: "main", message: "rows first" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6105, runId: 9105, sha, branch: "main" }));
+    await chunk(9105, rowsSent);
+    await h.summary({ runId: 9105, summary: allPassed });
+    await h.send("workflow_job", workflowJob("completed", { id: 6105, runId: 9105, sha, branch: "main", conclusion: "success" }));
+    const run = (await admin.query("select status, tests_not_proven, tests_passed from ci_runs where commit_sha = $1", [sha])).rows[0];
+    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 2, tests_passed: 1 });
+    const cr = await checkOf(6105);
+    assert.equal(cr.conclusion, "failure");
+    assert.match((cr.output as { title: string }).title, /2 not proven/);
+  });
+
+  it("per-test not_proven rows arriving after publication flip a passed run and publish its check run again as failure", async () => {
+    const sha = "9".repeat(40);
+    h.gh.addRun("acme/shop", 9106, { event: "push", headSha: sha, headBranch: "main", message: "rows late" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6106, runId: 9106, sha, branch: "main" }));
+    await h.summary({ runId: 9106, summary: allPassed });
+    await h.send("workflow_job", workflowJob("completed", { id: 6106, runId: 9106, sha, branch: "main", conclusion: "success" }));
+    assert.equal((await admin.query("select status from ci_runs where commit_sha = $1", [sha])).rows[0].status, "passed");
+    const before = await checkOf(6106);
+    assert.equal(before.conclusion, "success");
+    const checks = h.gh.repos.get("acme/shop")!.checkRuns.size;
+    const events = (await admin.query("select count(*)::int as n from ci_usage_events where github_job_id = 6106")).rows[0].n;
+    await chunk(9106, rowsSent);
+    const run = (await admin.query("select status, tests_not_proven, tests_passed from ci_runs where commit_sha = $1", [sha])).rows[0];
+    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 2, tests_passed: 1 });
+    const after = await checkOf(6106);
+    assert.equal(after.conclusion, "failure", "the check run was not published again");
+    assert.equal(h.gh.repos.get("acme/shop")!.checkRuns.size, checks, "the check run was updated in place, not duplicated");
+    assert.equal((await admin.query("select count(*)::int as n from ci_usage_events where github_job_id = 6106")).rows[0].n, events, "billed once");
+  });
+
+  it("one N: nothing ran and verify crashed (null status, verify_exit 2): not proven with tests_not_proven 1", async () => {
+    const sha = "8".repeat(40);
+    h.gh.addRun("acme/shop", 9107, { event: "push", headSha: sha, headBranch: "main", message: "verify crashed" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6107, runId: 9107, sha, branch: "main" }));
+    await h.summary({ runId: 9107, summary: { tests: 0, reused_with_proof: 0, ran: 0, exit: 0, verify_status: null, verify_exit: 2 } });
+    await h.send("workflow_job", workflowJob("completed", { id: 6107, runId: 9107, sha, branch: "main", conclusion: "success" }));
+    const run = (await admin.query("select status, tests_not_proven, tests_passed, not_proven_reason from ci_runs where commit_sha = $1", [sha])).rows[0];
+    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 1, tests_passed: 0, not_proven_reason: "the check against the serial run failed" });
+  });
+
   it("no summary at all: the sweep publishes it after the wait; billed as a run that used a machine", async () => {
     const sha = "2".repeat(40);
     h.gh.addRun("acme/shop", 9005, { event: "push", headSha: sha, headBranch: "main", message: "setup broke" });

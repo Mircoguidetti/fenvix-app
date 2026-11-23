@@ -104,7 +104,7 @@ export function ProjectsPage() {
                   <td data-label="Last run">
                     {p.lastRunAt && p.lastRunStatus ? (
                       <span className="inline-pair">
-                        <RunStatusPill status={p.lastRunStatus} />
+                        <RunStatusPill status={p.lastRunStatus} count={p.lastRunNotProven} />
                         <span className="muted small">{formatRelative(p.lastRunAt, now)}</span>
                       </span>
                     ) : (

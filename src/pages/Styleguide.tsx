@@ -8,6 +8,8 @@ import { Select } from "../components/Select";
 import { SearchInput } from "../components/SearchInput";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { RunStatusPill, StatusPill } from "../components/StateBadge";
+import { OutcomePill } from "../components/ci";
+import type { RunStatus, TestOutcome } from "../data";
 import { LogoMark } from "../components/Logo";
 import { useToast } from "../components/Toast";
 
@@ -130,6 +132,12 @@ export function StyleguidePage() {
           <RunStatusPill status="failed" />
           <RunStatusPill status="running" />
           <RunStatusPill status="cancelled" />
+          <RunStatusPill status="not_proven" count={2} />
+          {/* A status and an outcome this console does not know (a newer API): grey "Unknown" (checked). */}
+          <span data-unknown-state="">
+            <RunStatusPill status={"queued" as RunStatus} />
+            <OutcomePill outcome={"retried" as TestOutcome} />
+          </span>
           <StatusPill tone="ok">Active</StatusPill>
           <StatusPill tone="warn">Open</StatusPill>
           <StatusPill tone="neutral">Revoked</StatusPill>

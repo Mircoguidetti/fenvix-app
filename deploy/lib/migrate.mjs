@@ -93,6 +93,12 @@ export const PROBES = {
     last: `exists (select 1 from pg_constraint where conname = 'gh_repositories_detected_test_runner_check'
                     and conrelid = to_regclass('public.gh_repositories') and pg_get_constraintdef(oid) like '%''mocha''%')`,
   },
+  // 0019 (parallel with proof) adds ci_runs.proof first and re-creates ci_test_results' outcome CHECK with not_proven last.
+  "0019": {
+    first: `exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'ci_runs' and column_name = 'proof')`,
+    last: `exists (select 1 from pg_constraint where conname = 'ci_test_results_outcome_check'
+                    and conrelid = to_regclass('public.ci_test_results') and pg_get_constraintdef(oid) like '%''not_proven''%')`,
+  },
 };
 /** The first migration with a probe: a database without it is either empty or not one of ours. */
 const FIRST_PROBED = "0011";

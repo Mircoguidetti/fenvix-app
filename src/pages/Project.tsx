@@ -3,9 +3,9 @@ import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
 import { client, type Defect, type ProjectRow, type ProjectSettings, type Run, type RunQuery } from "../data";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
+import { ChartSkeleton, KpiSkeleton, ListSkeleton, PageSkeleton } from "../components/Skeleton";
 import { BeforeWithChart, Sparkline } from "../components/charts";
 import { CodeBlock, MinuteSum, SAVED_NOTE, runMinutesNote, triggerLabel } from "../components/ci";
-import { CopyButton } from "../components/CopyButton";
 import { ActivityList, seconds as secs } from "./ProjectSections";
 import { RunStatusPill } from "../components/StateBadge";
 import { Pagination } from "../components/Pagination";
@@ -16,17 +16,20 @@ import { useToast } from "../components/Toast";
 import { useAsync } from "../lib/useAsync";
 import { useOrg } from "../session/OrgProvider";
 import { formatCount, formatDate, formatDuration, formatMinutes, formatPercent, formatRelative, shortSha } from "../lib/format";
-import { median, pullCommand, replayCommand, runMinutes, setupSnippet, timeToGreenPerCommit } from "../data/ci";
+import { finished as isFinished, median, runMinutes, setupSnippet, timeToGreenPerCommit, timeToGreenPerDay } from "../data/ci";
 import { SetupStatePill, languageLabel } from "./Projects";
 import { SetupDiff } from "./Connect";
 import { seconds } from "./Overview";
 
 const PAGE_SIZE = 25;
 
-/** The top of the Runs page, as in the landing: the latest run, its numbers, the replay command of the newest defect. */
+/**
+ * The top of the Runs page: a small line naming the latest finished run (passed, failed or not proven) with its pill,
+ * linking to it, then its numbers. The page's title is "Runs" (F-001); the latest run is not the title.
+ */
 function LatestRun({ project, runs, openDefects }: { project: ProjectRow; runs: Run[] | null; openDefects: Defect[] | null }) {
-  if (!runs) return <Message>Loading the latest run</Message>;
-  const latest = runs.find((r) => r.status === "passed" || r.status === "failed");
+  if (!runs) return <KpiSkeleton count={4} label="Loading the latest run" />;
+  const latest = runs.find(isFinished);
   const running = runs.find((r) => r.status === "running");
   const runningNote = running && (
     <p className="callout running-note" role="status">
@@ -40,31 +43,19 @@ function LatestRun({ project, runs, openDefects }: { project: ProjectRow; runs: 
     </p>
   );
   if (!latest) return runningNote || <p className="muted">No runs yet. The first one arrives once the test job uses runs-on: fenvix.</p>;
-  const finished = runs.filter((r) => r.status === "passed" || r.status === "failed").slice(0, 40).reverse();
+  const finished = runs.filter(isFinished).slice(0, 40).reverse();
   const ttg = timeToGreenPerCommit(runs);
   const ttgMed = median(ttg.map((x) => x.seconds));
-  const newest = openDefects?.[0];
   return (
-    <section className="latest" aria-labelledby="latest-h">
+    <section className="latest" aria-label="Latest run">
       {runningNote}
-      <div className="latest-head">
-        <div>
-          <p className="page-kicker">{project.fullName} / Runs</p>
-          <div className="page-title-row">
-            <h2 id="latest-h" className="latest-title">
-              <Link to={`/projects/${project.id}/runs/${latest.id}`} className="row-link">
-                Run #{latest.number}
-              </Link>
-            </h2>
-            <RunStatusPill status={latest.status} />
-          </div>
-        </div>
-        {newest && (
-          <span className="latest-copy">
-            <CopyButton value={`${pullCommand(newest)}\n${replayCommand(newest)}`} what="replay command" text="Copy replay command" />
-          </span>
-        )}
-      </div>
+      <p className="inline-pair" id="latest-run">
+        <span className="muted">Latest run · </span>
+        <Link to={`/projects/${project.id}/runs/${latest.id}`} className="row-link mono">
+          #{latest.number}
+        </Link>
+        <RunStatusPill status={latest.status} count={latest.tests.notProven} />
+      </p>
       <div className="kpis kpis-4">
         <div className="kpi">
           <span className="kpi-label">Tests run</span>
@@ -98,7 +89,7 @@ function LatestRun({ project, runs, openDefects }: { project: ProjectRow; runs: 
 function RunsTab({ project }: { project: ProjectRow }) {
   const [params, setParams] = useSearchParams();
   const scope = (["pr", "default"].includes(params.get("scope") ?? "") ? params.get("scope") : "all") as NonNullable<RunQuery["scope"]>;
-  const status = (["passed", "failed"].includes(params.get("status") ?? "") ? params.get("status") : "all") as NonNullable<RunQuery["status"]>;
+  const status = (["passed", "failed", "not_proven"].includes(params.get("status") ?? "") ? params.get("status") : "all") as NonNullable<RunQuery["status"]>;
   const page = Math.max(1, Number(params.get("page")) || 1);
   const runs = useAsync(() => client.listRuns(project.id, { scope, status, page, pageSize: PAGE_SIZE }), [project.id, scope, status, page]);
   const since = new Date(client.now().getTime() - 30 * 86_400_000).toISOString();
@@ -122,15 +113,17 @@ function RunsTab({ project }: { project: ProjectRow }) {
     <>
       <LatestRun project={project} runs={recent.status === "ready" ? recent.data : null} openDefects={defects.status === "ready" ? defects.data : null} />
       <div className="grid-2">
-        <Card id="ttg-per-run" title="Time to green, per run" description="Push to first green run, per commit, last 30 days.">
-          {recent.status === "ready" && timeToGreenPerCommit(recent.data).length > 1 ? (
-            <BeforeWithChart points={timeToGreenPerCommit(recent.data).map((x) => ({ at: x.at, value: x.seconds }))} before={project.baseline?.medianTimeToGreenS ?? null} format={(n) => secs(n)} />
+        <Card id="ttg-per-run" title="Time to green, per day" description="Median per day of the time from push to green.">
+          {recent.status === "ready" && timeToGreenPerDay(recent.data).length > 1 ? (
+            <BeforeWithChart points={timeToGreenPerDay(recent.data)} before={project.baseline?.medianTimeToGreenS ?? null} format={(n) => secs(n)} per="per day" />
+          ) : recent.status === "ready" ? (
+            <Message>Not enough green commits yet.</Message>
           ) : (
-            <Message>{recent.status === "ready" ? "Not enough green commits yet." : "Loading the chart"}</Message>
+            <ChartSkeleton />
           )}
         </Card>
         <Card id="activity" title="Live activity" description={project.fullName}>
-          {activity.status === "ready" ? <ActivityList items={activity.data} now={client.now()} /> : <Message>Loading</Message>}
+          {activity.status === "ready" ? <ActivityList items={activity.data} now={client.now()} /> : <ListSkeleton rows={5} />}
         </Card>
       </div>
 
@@ -151,11 +144,11 @@ function RunsTab({ project }: { project: ProjectRow }) {
         actions={
           <div className="card-controls">
             <Segmented label="Branch" value={scope} onChange={(v) => set("scope", v === "all" ? null : v)} options={[{ value: "all", label: "All" }, { value: "pr", label: "Pull requests" }, { value: "default", label: project.defaultBranch }]} className="seg-sm" />
-            <Segmented label="Status" value={status} onChange={(v) => set("status", v === "all" ? null : v)} options={[{ value: "all", label: "Any" }, { value: "passed", label: "Passed" }, { value: "failed", label: "Failed" }]} className="seg-sm" />
+            <Segmented label="Status" value={status} onChange={(v) => set("status", v === "all" ? null : v)} options={[{ value: "all", label: "Any" }, { value: "passed", label: "Passed" }, { value: "failed", label: "Failed" }, { value: "not_proven", label: "Not proven" }]} className="seg-sm" />
           </div>
         }
       >
-        {runs.status === "loading" && <Message>Loading runs</Message>}
+        {runs.status === "loading" && <ListSkeleton rows={6} label="Loading runs" />}
         {runs.status === "error" && <Message role="alert">{runs.message}</Message>}
         {runs.status === "ready" && runs.data.items.length === 0 && <p className="muted">No runs match. The first run arrives once the test job uses runs-on: fenvix.</p>}
         {runs.status === "ready" && runs.data.items.length > 0 && (
@@ -194,7 +187,7 @@ function RunsTab({ project }: { project: ProjectRow }) {
                             <Link to={`/projects/${project.id}/runs/${r.id}`} className="row-link mono">
                               #{r.number}
                             </Link>
-                            <RunStatusPill status={r.status} />
+                            <RunStatusPill status={r.status} count={r.tests.notProven} />
                           </span>
                           <span className="muted small">{formatRelative(r.startedAt, now)}</span>
                         </span>
@@ -386,7 +379,7 @@ export function ProjectPage({ section = "runs" }: { section?: "runs" | "settings
 
   // Old links (?tab=setup, ?tab=settings) open the project's Settings.
   if (params.get("tab")) return <Navigate to={`/projects/${id}/settings`} replace />;
-  if (project.status === "loading") return <Message>Loading project</Message>;
+  if (project.status === "loading") return <PageSkeleton kpis={4} cards={2} label="Loading project" />;
   if (project.status === "error") return <Message role="alert">{project.message}</Message>;
   if (!p)
     return (
@@ -412,7 +405,7 @@ export function ProjectPage({ section = "runs" }: { section?: "runs" | "settings
     );
   return (
     <>
-      <h1 className="sr-only">{p.fullName}: runs</h1>
+      <PageHeader back={<Kicker>{p.fullName}</Kicker>} title="Runs" />
       <RunsTab project={p} />
     </>
   );

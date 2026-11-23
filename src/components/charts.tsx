@@ -360,7 +360,18 @@ export function TimeBarsChart({
 }
 
 /** Two lines: the running total this month and the month before for reference. */
-export function CostLineChart({ points, format, axisFormat }: { points: { at: string; cost: number; reference: number | null }[]; format: (n: number) => string; axisFormat: (n: number) => string }) {
+export function CostLineChart({
+  points,
+  format,
+  axisFormat,
+  names = { main: "This month", reference: "Month before", summary: (v) => `${v} so far this month.`, label: (v) => `Cost so far this month: ${v}, against the month before.` },
+}: {
+  points: { at: string; cost: number; reference: number | null }[];
+  format: (n: number) => string;
+  axisFormat: (n: number) => string;
+  /** The two lines' names and the sentences about the last value (the Usage page's by default). */
+  names?: { main: string; reference: string; summary: (last: string) => string; label: (last: string) => string };
+}) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const height = 220;
   const max = niceMax(Math.max(...points.map((p) => Math.max(p.cost, p.reference ?? 0)), 1));
@@ -379,8 +390,8 @@ export function CostLineChart({ points, format, axisFormat }: { points: { at: st
   const a = hover.active === null ? null : points[hover.active];
   const costRows: Tip["rows"] = a
     ? [
-        ...(a.cost > 0 ? [{ label: "This month", value: format(a.cost), swatch: "var(--chart)" }] : []),
-        ...(a.reference !== null ? [{ label: "Month before", value: format(a.reference), swatch: "var(--ink-2)", dash: true }] : []),
+        ...(a.cost > 0 ? [{ label: names.main, value: format(a.cost), swatch: "var(--chart)" }] : []),
+        ...(a.reference !== null ? [{ label: names.reference, value: format(a.reference), swatch: "var(--ink-2)", dash: true }] : []),
       ]
     : [];
 
@@ -390,13 +401,13 @@ export function CostLineChart({ points, format, axisFormat }: { points: { at: st
         width={width}
         height={height}
         tip={a && costRows.length > 0 && <ChartTip x={hover.at(hover.active!)} width={width} tip={{ title: dayLabel(a.at), rows: costRows }} />}
-        label={`Cost so far this month: ${format(last?.cost ?? 0)}, against the month before.`}
+        label={names.label(format(last?.cost ?? 0))}
         summary={
           <>
-            {format(last?.cost ?? 0)} so far this month.{" "}
+            {names.summary(format(last?.cost ?? 0))}{" "}
             <span className="legend">
-              <span className="key key-line" aria-hidden="true" /> This month
-              <span className="key key-line-dash" aria-hidden="true" /> Month before
+              <span className="key key-line" aria-hidden="true" /> {names.main}
+              <span className="key key-line-dash" aria-hidden="true" /> {names.reference}
             </span>
           </>
         }
@@ -620,7 +631,7 @@ export function MonthBars({ months, format }: { months: { label: string; value: 
  * Two lines over time: "Before fenvix" (the project's baseline, dashed) and "With fenvix" (each point), as in the
  * landing's "Time to green, per run". `format` writes a value (seconds, for example).
  */
-export function BeforeWithChart({ points, before, format }: { points: { at: string; value: number }[]; before: number | null; format: (n: number) => string }) {
+export function BeforeWithChart({ points, before, format, per = "per commit" }: { points: { at: string; value: number }[]; before: number | null; format: (n: number) => string; per?: string }) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const [silverDefs, silver] = useSilverFill();
   const height = 240;
@@ -635,12 +646,12 @@ export function BeforeWithChart({ points, before, format }: { points: { at: stri
   const sorted = [...points.map((p) => p.value)].sort((p, q) => p - q);
   const med = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
   return (
-    <div ref={ref}>
+    <div ref={ref} data-points={points.length}>
       <Frame
         width={width}
         height={height}
         tip={a && <ChartTip x={hover.at(hover.active!)} width={width} tip={{ title: pointLabel(a.at, "30d"), rows: [{ label: "With fenvix", value: format(a.value), swatch: "var(--chart)" }, ...(before !== null ? [{ label: "Before fenvix", value: format(before), swatch: "var(--ink-2)", dash: true }] : [])] }} />}
-        label={`Time to green per commit: median ${format(med)} with fenvix${before !== null ? `, ${format(before)} before` : ""}.`}
+        label={`Time to green ${per}: median ${format(med)} with fenvix${before !== null ? `, ${format(before)} before` : ""}.`}
         summary={
           <>
             Median {format(med)} with fenvix{before !== null ? `, ${format(before)} before` : ""}.{" "}

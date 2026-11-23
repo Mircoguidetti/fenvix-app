@@ -3,7 +3,7 @@
 // contrast included) on each one. The sign-in page and the screens before the dashboard are light only, as designed.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: npm run screenshots
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
-import { BANNED, BASE, VIEWPORTS, axeViolations, flakyRun, go, isMobile, launch, layoutProblems, makeReporter, newPage, renderProblems, runningRun, settled, shadowRun, useOrgOf, visibleText } from "./lib.mjs";
+import { BANNED, BASE, VIEWPORTS, axeViolations, flakyRun, go, isMobile, launch, layoutProblems, makeReporter, newPage, proofRuns, renderProblems, runningRun, settled, shadowRun, useOrgOf, visibleText } from "./lib.mjs";
 
 const { fail, state } = makeReporter();
 const OUT = "docs/screenshots";
@@ -17,6 +17,9 @@ const SCREENS = [
   ["projects", "projects"],
   ["project-runs", "projects/prj_homehub"],
   ["project-runs-failed", "projects/prj_storefront?status=failed"],
+  ["project-runs-not-proven", "projects/prj_homehub?status=not_proven"],
+  ["parallel-with-proof", "projects/prj_homehub/parallel-with-proof"],
+  ["parallel-with-proof-empty", "projects/prj_docs/parallel-with-proof"],
   ["project-settings", "projects/prj_homehub/settings"],
   ["skip-with-proof", "projects/prj_homehub/skip-with-proof"],
   ["nightly", "projects/prj_homehub/nightly"],
@@ -134,6 +137,25 @@ for (const scheme of SCHEMES) {
       await shot("skip-receipt", true);
       await page.keyboard.press("Escape");
       await page.getByRole("dialog").waitFor({ state: "hidden" });
+    }
+
+    // Parallel with proof on the run page: every test proven; not proven with a cause (and its tests); not proven
+    // without a proof block; a serial run has no card (the "run" screen above).
+    const proof = await proofRuns(page);
+    await screen("run-proven", `projects/${proof.proven.projectId}/runs/${proof.proven.runId}`);
+    await screen("run-not-proven", `projects/${proof.notProven.projectId}/runs/${proof.notProven.runId}`);
+    await screen("run-not-proven-tests", `projects/${proof.notProven.projectId}/runs/${proof.notProven.runId}?outcome=not_proven`);
+    await screen("run-not-proven-no-proof", `projects/${proof.noProof.projectId}/runs/${proof.noProof.runId}`);
+
+    // The search of the top bar (desktop): a run number gives the run, with its project.
+    if (want("search") && !isMobile(viewport)) {
+      await go(page, "overview");
+      await settled(page);
+      await page.getByRole("combobox", { name: "Search or jump to" }).fill(String(proof.proven.number));
+      await page.getByRole("option", { name: new RegExp(`^Run #${proof.proven.number}`) }).waitFor();
+      await check(`search ${tag}`);
+      await shot("search", true);
+      await page.keyboard.press("Escape");
     }
 
     // The run that is still running: the live view.

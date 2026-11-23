@@ -80,10 +80,10 @@ the same row when the job completes (from the `workflow_job` event, the runner's
 | `branch` | string | |
 | `pullRequest` | number \| null | |
 | `trigger` | `"push"` \| `"pull_request"` \| `"merge_group"` \| `"schedule"` \| `"workflow_dispatch"` | GitHub event |
-| `status` | `"running"` \| `"passed"` \| `"failed"` \| `"cancelled"` | |
+| `status` | `"running"` \| `"passed"` \| `"failed"` \| `"cancelled"` \| `"not_proven"` | `not_proven`: no failure, but at least one test was not proven identical to the serial run (see "Parallel with proof"). Finished, never green |
 | `pushedAt`, `startedAt`, `finishedAt` | time | `pushedAt` is when the commit reached GitHub: time to green = `finishedAt − pushedAt` of the first passing run of a commit |
 | `durationMs` | number | wall time of the test job |
-| `tests` | `{ total, ran, passed, failed, skippedWithProof, flakyDefects }` | `failed` counts every failure; `flakyDefects` is the part of it that is a reproducible flaky defect |
+| `tests` | `{ total, ran, passed, failed, skippedWithProof, flakyDefects, notProven }` | `failed` counts every failure; `flakyDefects` is the part of it that is a reproducible flaky defect; `notProven` is N (see "Parallel with proof"), never counted in `passed`, so `passed + failed + notProven` ≤ `ran` |
 | `testTimeMs` | `{ ran, skipped }` | `skipped` is the recorded duration of the reused results (`reused_recorded_seconds` of the cache summary) |
 | `skipShare` | number | `testTimeMs.skipped / (ran + skipped)`: the share of test time skipped with proof (the skip study's "time" rule) |
 | `otherStepMinutes` | number | `other_step_minutes` in Postgres. The job's other steps that fenvix still runs: checkout, dependency install, build (the job's wall time on fenvix outside the test command, measured by the runner) |
@@ -96,6 +96,8 @@ the same row when the job completes (from the `workflow_job` event, the runner's
 | `audit` | `{ rerun, wrongSkips }` | audit reruns: skipped tests the engine ran anyway (5%), and how many of them failed (a wrong skip; expected 0) |
 | `region` | `"us"` \| `"eu"` \| null | where the machine ran (the organization's region when the App placed it; null when the App did not place it, e.g. an always-on runner) |
 | `progress` | Run progress \| null | while `status` is `running`: the runner's latest progress record |
+| `exitCode` | number \| null | the test command's exit code (summary.json `exit`, `ci_runs.exit_code`); null while running, without a summary, and for runs stored before migration 0019 |
+| `proof` | `{ workers, proven, notProven, rerunOneLane, parallelMs, serialMsEstimate, orderDigest, notProvenCauses: { cause, tests }[] }` \| null | the summary's `proof` (`ci_runs.proof`, jsonb): the test command ran in parallel lanes and each test was checked against the serial run. null for a serial run, and for every run until the runner sends it |
 
 **Minutes add up on screen.** Wherever the dashboard shows minutes it shows the three parts and their total:
 "875 run + 1,959 skipped with proof + 1,296 setup and build = 4,130 min". The parts are rounded with the
@@ -136,10 +138,11 @@ One row per test of a run. Large suites have tens of thousands; the dashboard re
 | --- | --- | --- |
 | `runId`, `testId` | string | |
 | `file` | string | the part of the test id before `::` (or ` > `) |
-| `outcome` | `"passed"` \| `"failed"` \| `"skipped_with_proof"` | a test the framework itself skipped (`@skip`) is not sent |
+| `outcome` | `"passed"` \| `"failed"` \| `"skipped_with_proof"` \| `"not_proven"` | a test the framework itself skipped (`@skip`) is not sent; `not_proven`: its parallel result could not be proven equal to the serial one (its serial result is what the run reports) |
 | `durationMs` | number | for a skipped test: the duration recorded in the reused run |
 | `failure` | `{ kind: "real" \| "flaky_defect", phase, exceptionType, message, location, defectId }` \| null | from the bundle's `exception` = `[type, phase, message, location]`; `flaky_defect` when the engine reproduced it (a defect exists) |
 | `receiptId` | string \| null | set when `outcome` is `skipped_with_proof` |
+| `notProvenCause` | string \| null | `not_proven`: why, when the runner said (`ci_test_results.not_proven_cause`); optional |
 
 ## Skip receipt
 
@@ -468,7 +471,7 @@ A dropped chunk is still answered `202` (it is checked after the queue) and logg
 | `seed` | `--det-seed`, null for collection order | the run's `seed` |
 | `mode` | the mode the engine ran in (`FENVIX_MODE`) | ignored: the run's `mode` is the App's (`FENVIX_MODE` it gave the machine) |
 | `missDetails` | the top 5 reasons tests were not reused (summed `why` of `receipts.jsonl`) | the run's `missDetails` |
-| `tests[]` | one per test of the run (`passed`, `failed`, `skipped_with_proof`; a test the framework skipped is not sent); `durationMs` (for a skipped test: the recorded one; stored at most the job's own duration, GitHub's timings); `failure` for a failed test: `kind` `flaky_defect` when the engine reproduced it as a defect (with the bundle's `defectFingerprint`), else `real`; `cacheKey` of a skipped test | Per-test outcome (`ci_test_results`); `failure.defectId` is found by the defect's test and fingerprint, `receiptId` by the receipt's test |
+| `tests[]` | one per test of the run (`passed`, `failed`, `skipped_with_proof`, `not_proven`; a test the framework skipped is not sent); `notProvenCause` (optional, at most 500 characters) for a `not_proven` test: why it could not be proven identical to the serial run (stored for that outcome only); `durationMs` (for a skipped test: the recorded one; stored at most the job's own duration, GitHub's timings); `failure` for a failed test: `kind` `flaky_defect` when the engine reproduced it as a defect (with the bundle's `defectFingerprint`), else `real`; `cacheKey` of a skipped test | Per-test outcome (`ci_test_results`); `failure.defectId` is found by the defect's test and fingerprint, `receiptId` by the receipt's test |
 | `tests[].wouldSkip` | **shadow mode**: true when the engine would have skipped the test with proof (it ran anyway) | the run's `wouldSkipTests` (count) and `wouldSaveMs` (their `durationMs`, each at most the job's duration; the sum at most the run's own test time, `testTimeMs.ran + testTimeMs.skipped`, so a share computed from it is within 0 to 1) |
 | `receipts[]` | one per test skipped with proof: the `receipts.jsonl` line joined with the test's `proof-cache.json` entry (the lists: `code` = `Entry.units`, `modules` = content/skeleton/hooks, `filesRead` = `Entry.data`, `envRead` = `Entry.env`, `runtime`, `config`) | Skip receipt (`ci_skip_receipts`); `reusedRunId` = the project's run whose `engineRunId` is `reusedEngineRunId`. A skipped test and its receipt go in the same chunk (a skipped test whose receipt has not arrived waits for it) |
 | `defects[]` | each defect bundle the engine wrote this run (`bundle.json` + `order.txt`) with the engine's replay command (`command`, `replayCommand`) | Defect (`ci_defects`), by project, test and fingerprint: new, or seen again (`occurrences` + 1 once per run, `lastSeenAt`, `lastRunId`, reopened if it was fixed). `cause` from `kind`: `order` → polluter, `brittle` → state_setter, `fails-alone` → fails_alone; `causeTests` = `polluters` / `setters` / none; `familyKey` = them joined by `" + "`, or `"<none>"` |
@@ -498,10 +501,12 @@ From the summary (and the job) to the Run summary:
 | `commitSha`, `branch`, `startedAt`, `finishedAt`, `durationMs` | the `workflow_job` event (`head_sha`, `head_branch`, `started_at`, `completed_at`) |
 | `commitMessage`, `trigger`, `pullRequest` | the workflow run (`GET /repos/{o}/{r}/actions/runs/{id}`: `head_commit.message` first line, `event`, `pull_requests`), or the App's `pull_request` events. `pull_request_target` → `pull_request`; any other event outside the five → `workflow_dispatch` |
 | `pushedAt` | the `push` event of that commit (`repository.pushed_at`), else the workflow run's `created_at` |
-| `status` | `running` from the job's start; then `cancelled` if the job was; else `failed` when the summary has failures, flaky tests or a non-zero `exit`; else `passed` |
+| `status` | `running` from the job's start; then, first match wins: `cancelled` if the job was; with no summary, `passed` if the job succeeded, else `failed`; `failed` when the summary has failures or flaky tests; `not_proven` when N > 0 (see "Parallel with proof"); `failed` for a non-zero `exit`; else `passed` (`runStatus` in `github-app/src/results/status.ts`) |
 | `tests.total`, `tests.ran`, `tests.skippedWithProof` | `tests`, `ran`, `reused_with_proof` |
 | `tests.failed`, `tests.flakyDefects` | `len(failed) + len(flaky)`, `len(flaky)` (the runner's `failed` holds only real failures; `flaky` = failed in the suite, passed alone) |
-| `tests.passed` | `outcome_counts.passed − reused_with_proof` (tests that ran and passed) |
+| `tests.passed` | `outcome_counts.passed − reused_with_proof` (tests that ran and passed), minus N (at least 0): a test not proven is never counted as passed |
+| `tests.notProven` | N (see "Parallel with proof") |
+| `proof` | `proof`, camelCase, seconds as milliseconds (`parallel_seconds` → `parallelMs`, `serial_seconds_estimate` → `serialMsEstimate`); null when absent |
 | `testTimeMs.ran`, `testTimeMs.skipped` | `test_seconds_run` × 1000, at most the job's duration (`durationMs`); `test_seconds_saved` × 1000 |
 | `otherStepMinutes` | (job duration − `wall_seconds` of the test command, at most the job's duration) / 60 |
 | `engineVersion` | the `detpy==X` (or `detjs@X`) entry of `runtime.dist_list` |
@@ -509,6 +514,55 @@ From the summary (and the job) to the Run summary:
 | `mode` | the App's: the `FENVIX_MODE` it started the machine with (`gh_jobs.mode`), else the organization's when the job started (`shadow` during the trial). Never the results' or the summary's (review R-016 F4) |
 | `region` | where the App placed the machine |
 | `engineRunId`, `seed`, `missDetails`, `wouldSkipTests`, `wouldSaveMs`, `audit` | the results chunks |
+
+### Parallel with proof
+
+When the test command ran with parallel lanes, `summary.json` carries an optional `proof` object (absent for a serial
+run):
+
+```json
+"proof": {"workers": 4, "proven": 360, "not_proven": 14, "rerun_one_lane": 14,
+          "parallel_seconds": 39.2, "serial_seconds_estimate": 151.0, "order_digest": "7c1e...9a04",
+          "not_proven_causes": [{"cause": "file read outside the project", "tests": 14}]}
+```
+
+`serial_seconds_estimate` and `order_digest` may be null; `proven + not_proven` = the tests that ran.
+
+**N, the not-proven count of a run** (`RunSummary.notProven`, `notProvenOf` in `github-app/src/results/summary.ts`; one
+value used by the status, the check run's conclusion and title, and `tests.notProven`). One rule: **when we are not
+sure, the run is never green**; and a run is never red for something the runner did not report. N is the largest of:
+
+1. `proof.not_proven`; and, when `proof.proven + proof.not_proven` is not **`ranExecuted`**, `ranExecuted - proof.proven`
+   (a proof never hides tests). `ranExecuted` = `ran - outcome_counts.skipped`: the tests the framework skipped itself
+   did not run, so the engine's proof does not count them.
+2. A `proof` that is present (not absent, not null) but cannot be read (not an object, a field of the wrong type, an
+   empty `order_digest`, a cause over 500 characters, more than 50 causes): stored as null, the rest of the summary is
+   kept, and N is at least `max(1, proof.not_proven, ranExecuted - proof.proven)` from what can be read.
+3. The summary's top-level `not_proven`.
+4. The verify counts, always: `verify_counts.not_proven + max(diverged, wrong_reuse) + missing` (a wrong reuse is also a
+   divergence, so it is not counted twice); at least 1 when verify failed: a `verify_status` present and not
+   `"identical"` (`"diverged"`, `"not_proven"`, or a value this version does not know), or a non-zero (or non-numeric)
+   `verify_exit` whatever `verify_status` says. `"identical"` with all-zero counts and `verify_exit` 0 adds nothing.
+   When verify failed only because the inputs differ (`input_differs` > 0, no other count), N is 1 and the reason is
+   "inputs differ": the console says the runs could not be compared, not "1 test".
+5. A missing or invalid `exit` (not a whole number): at least 1, reason "exit code missing" (unknown is never green).
+
+When no proof cause explains N, the run keeps why (`ci_runs.not_proven_reason`, the Run's `notProvenReason`): the
+summary could not be read, exit code missing, the proof could not be read, the proof does not cover every test that ran,
+inputs differ, the check against the serial run failed. `status.not_proven` is not used. Example: the Node fixture
+`node-mocha-verify-failed` (`exit` 0, `verify_status: diverged`, one diverged test) has N = 1 and status `not_proven`.
+
+**A summary that came but cannot be read** (it was accepted, then today's parser refuses it) never falls back to the
+job's conclusion: the run is `not_proven` with N = 1 and the reason "the runner's summary could not be read", and its check
+run concludes `failure`. No summary at all keeps the rule above (passed if the job succeeded, else failed).
+
+**Per-test rows count too**: after results chunks are applied, `tests_not_proven` becomes at least the run's number of
+per-test `not_proven` rows (`passed` lowered by as many) and a `passed` run becomes `not_proven`; when that happens after
+the run was published, its check run and comment are published again (same check run, one usage event).
+
+A run with N > 0 is never green: its status is `not_proven` (unless it failed), its check run on GitHub concludes
+`failure` (even with `exit` 0) and its title says "N not proven" instead of "no failures". Per-test results may carry
+`outcome: "not_proven"` with an optional `notProvenCause` (`POST /v1/runner/results`).
 
 ### 4. Nightly exploration: `POST /v1/runner/explorations`
 
@@ -695,6 +749,26 @@ The dashboard reads them only through the fenvix API (`openapi/fenvix-api.yaml`,
 database directly.
 
 ## Changes
+
+- 2026-11-23 (console proof review, two rounds): N fails closed (the rule above: a malformed proof, contradictory or
+  failed verify, a missing exit code, a proof that does not cover `ranExecuted`); an unreadable stored summary is
+  `not_proven`, never the job's conclusion; per-test `not_proven` rows raise the run and re-publish its check run; new
+  fields `Run.notProvenReason` (`ci_runs.not_proven_reason`), `RunProof.ranExecuted` and the tests list's `rowCounts`
+  (the per-test rows the filters count; `counts` stays the run's own); `GET /search` finds nothing for one character.
+  The console reads every response through `src/data/compat.ts`, so it works against the API one release older (no
+  proof fields, no not-proven counts, no Overview proof block, no `/search`, the `not_proven` filters refused with 400).
+- 2026-11-23 (console proof, migration 0019): **parallel with proof and NOT PROVEN**. `summary.json` gains an optional
+  `proof` object; the Run gains `proof` and `tests.notProven`, the status `not_proven` (rule above, first match wins:
+  cancelled, no summary, failures, N > 0, non-zero `exit`, passed), the per-test outcome `not_proven` with
+  `notProvenCause`, the activity kind `run_not_proven`, the tests list's `counts.not_proven` and filter, the runs list's
+  `status=not_proven` filter, the Overview's `proof` block (`runsWithProof`, `provenIdentical`, `notProven`) and
+  `exitCode` (the summary's `exit`, so the run page can say whether the run exited 1), the project row's
+  `lastRunNotProven` (the pill of a not-proven run always shows its count) and
+  `GET /search?q=` (runs by number or commit prefix, open defects by test name; at most 20, newest first). N is
+  `proof.not_proven`, else the larger of the top-level `not_proven` and (when `verify_status` is `diverged`)
+  `verify_counts.not_proven + diverged + missing`, else 0; `status.not_proven` is not used. **The runner does not send
+  `proof` yet** (a separate engine task): until it does, real runs show no proof card, but Node runs with a non-zero
+  `not_proven` (or a diverged verify) already get the `not_proven` status and pill.
 
 - 2026-11-19 (review R-016b): **whether a job is billable comes from GitHub's data only**: a job that started on our
   machine is billed its held minutes whatever its summary and conclusion (`cancelled_before_tests` now means "never

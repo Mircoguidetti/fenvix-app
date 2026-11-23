@@ -10,8 +10,8 @@ import { notFound } from "./errors.ts";
 import { LATEST_WARMUP } from "./github.ts";
 import {
   activityFrom, auditFrom, billingFrom, dayStart, familiesOf, mapAuditRerun, mapDefect, mapExploration, mapPlan, mapProject, mapRate, mapReceipt,
-  mapRun, mapTestResult, mapUsageEvent, median, monthBounds, monthOf, overviewFrom, type Plan, type Project, projectRow, type Run, setupChange,
-  type Trial, trialFrom, usageCsv, usageCsvName, usageFrom,
+  mapRun, mapTestResult, mapUsageEvent, median, monthBounds, monthOf, overviewFrom, type Plan, type Project, projectRow, type Run, SEARCH_MAX, SEARCH_MIN, searchFrom,
+  searchTerms, setupChange, type Trial, trialFrom, usageCsv, usageCsvName, usageFrom,
 } from "./shared.js";
 
 const DAY = 86_400_000;
@@ -39,9 +39,10 @@ async function project(t: Tx, ws: string, id: string): Promise<Project> {
 
 const runs = async (t: Tx, sql: string, params: unknown[]): Promise<Run[]> => (await t.q(`select * from public.ci_runs where ${sql}`, params)).map(mapRun);
 
-async function defects(t: Tx, ws: string, where: string, params: unknown[], all: Project[]) {
+async function defects(t: Tx, ws: string, where: string, params: unknown[], all: Project[], limit?: number) {
   const byId = new Map(all.map((p) => [p.id, p]));
-  const rows = await t.q(`select * from public.ci_defects where workspace_id = $1 ${where} order by last_seen_at desc, id`, [ws, ...params]);
+  const cap = limit === undefined ? "" : ` limit ${Math.max(1, Math.floor(limit))}`;
+  const rows = await t.q(`select * from public.ci_defects where workspace_id = $1 ${where} order by last_seen_at desc, id${cap}`, [ws, ...params]);
   return rows.map((r) => mapDefect(r, byId.get(String(r.project_id))));
 }
 
@@ -153,12 +154,12 @@ export const SINCE_MAX = 20_000;
 export const listRuns: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const p = await project(ctx.t, ws, ctx.params.projectId);
-  const q = ctx.query as { scope: "all" | "pr" | "default"; status: "all" | "passed" | "failed"; since?: string; page: number; pageSize: number };
+  const q = ctx.query as { scope: "all" | "pr" | "default"; status: "all" | "passed" | "failed" | "not_proven"; since?: string; page: number; pageSize: number };
   const where = ["workspace_id = $1", "project_id = $2"];
   const params: unknown[] = [ws, p.id];
   if (q.scope === "pr") where.push("pull_request is not null");
   if (q.scope === "default") { params.push(p.defaultBranch); where.push(`branch = $${params.length}`); }
-  if (q.status === "passed" || q.status === "failed") { params.push(q.status); where.push(`status = $${params.length}`); }
+  if (q.status === "passed" || q.status === "failed" || q.status === "not_proven") { params.push(q.status); where.push(`status = $${params.length}`); }
   if (q.since) { params.push(new Date(q.since)); where.push(`started_at >= $${params.length}`); }
   const cond = where.join(" and ");
   const total = (await ctx.t.one<{ n: number }>(`select count(*)::int as n from public.ci_runs where ${cond}`, params))!.n;
@@ -177,7 +178,7 @@ export const getSkipShareSeries: Handler = async (ctx) => {
   const days = ctx.query.days as number;
   const from = dayStart(new Date(ctx.now.getTime() - (days - 1) * DAY));
   const rows = await ctx.t.q<{ started_at: Date; skip_share: number }>(
-    "select started_at, skip_share from public.ci_runs where workspace_id = $1 and project_id = $2 and started_at >= $3 and status in ('passed', 'failed')", [ws, p.id, from]);
+    "select started_at, skip_share from public.ci_runs where workspace_id = $1 and project_id = $2 and started_at >= $3 and status in ('passed', 'failed', 'not_proven')", [ws, p.id, from]);
   const byDay = new Map<string, number[]>();
   for (const r of rows) {
     const k = dayStart(r.started_at).toISOString();
@@ -231,7 +232,8 @@ export const listActivity: Handler = async (ctx) => {
   const only = projectId ? [await project(ctx.t, ws, projectId)] : await projects(ctx.t, ws);
   const by = projectId ? " and project_id = $2" : "";
   const params = projectId ? [ws, projectId] : [ws];
-  const rs = await runs(ctx.t, `workspace_id = $1${by} and status in ('passed', 'failed') order by finished_at desc nulls last limit 60`, params);
+  // Finished runs: passed, failed and not proven (finished, never green).
+  const rs = await runs(ctx.t, `workspace_id = $1${by} and status in ('passed', 'failed', 'not_proven') order by finished_at desc nulls last limit 60`, params);
   const ds = (await ctx.t.q(`select * from public.ci_defects where workspace_id = $1${by} order by first_seen_at desc limit 50`, params))
     .map((r) => mapDefect(r, only.find((p) => p.id === String(r.project_id))));
   const es = (await ctx.t.q(`select * from public.ci_explorations where workspace_id = $1${by} order by finished_at desc limit 50`, params)).map(mapExploration);
@@ -276,7 +278,7 @@ export const getRun: Handler = async (ctx) => {
 export const listTestResults: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const r = await runRow(ctx.t, ws, ctx.params.runId);
-  const q = ctx.query as { outcome: "all" | "passed" | "failed" | "skipped_with_proof"; search?: string; page: number; pageSize: number };
+  const q = ctx.query as { outcome: "all" | "passed" | "failed" | "skipped_with_proof" | "not_proven"; search?: string; page: number; pageSize: number };
   const where = ["workspace_id = $1", "run_id = $2"];
   const params: unknown[] = [ws, r.id];
   if (q.outcome !== "all") { params.push(q.outcome); where.push(`outcome = $${params.length}`); }
@@ -284,13 +286,17 @@ export const listTestResults: Handler = async (ctx) => {
   if (term) { params.push(term); where.push(`strpos(lower(test_id), $${params.length}) > 0`); }
   const cond = where.join(" and ");
   const total = (await ctx.t.one<{ n: number }>(`select count(*)::int as n from public.ci_test_results where ${cond}`, params))!.n;
-  // Failures first, then the tests that ran, then the skipped ones.
+  const byOutcome = new Map((await ctx.t.q<{ outcome: string; n: number }>(
+    "select outcome, count(*)::int as n from public.ci_test_results where workspace_id = $1 and run_id = $2 group by outcome", [ws, r.id])).map((x) => [x.outcome, x.n]));
+  // Failures first, then the tests not proven, then the tests that ran, then the skipped ones.
   const rows = await ctx.t.q(`select * from public.ci_test_results where ${cond}
-    order by case outcome when 'failed' then 0 when 'passed' then 1 else 2 end, test_id limit $${params.length + 1} offset $${params.length + 2}`, [...params, q.pageSize, (q.page - 1) * q.pageSize]);
+    order by case outcome when 'failed' then 0 when 'not_proven' then 1 when 'passed' then 2 else 3 end, test_id limit $${params.length + 1} offset $${params.length + 2}`, [...params, q.pageSize, (q.page - 1) * q.pageSize]);
   return {
     items: rows.map(mapTestResult), total, page: q.page, pageSize: q.pageSize,
     // The run's own counts, whatever the filter (the run row holds them even when per-test results are not stored).
-    counts: { passed: Number(r.tests_passed), failed: Number(r.tests_failed), skipped_with_proof: Number(r.tests_skipped) },
+    counts: { passed: Number(r.tests_passed), failed: Number(r.tests_failed), skipped_with_proof: Number(r.tests_skipped), not_proven: Number(r.tests_not_proven ?? 0) },
+    // The per-test rows per outcome: what the filters list (fewer than the run's counts when not every test was sent).
+    rowCounts: Object.fromEntries(["passed", "failed", "skipped_with_proof", "not_proven"].map((k) => [k, byOutcome.get(k) ?? 0])),
   };
 };
 
@@ -312,6 +318,26 @@ export const getSkipReceipt: Handler = async (ctx) => {
     left join public.ci_runs rr on rr.id = s.reused_run_id where s.workspace_id = $1 and s.id = $2`, [ws, ctx.params.receiptId]);
   if (!r) throw notFound("That receipt does not exist in this organization.");
   return mapReceipt(r, r.reused_run_number === null || r.reused_run_number === undefined ? null : Number(r.reused_run_number));
+};
+
+// ---------------------------------------------------------------- the search of the command menu
+
+/** Runs by number or commit prefix, open defects by test name: newest first, at most SEARCH_MAX (searchFrom). */
+export const search: Handler = async (ctx) => {
+  const { id: ws } = orgOf(ctx);
+  const q = String(ctx.query.q ?? "");
+  const t = searchTerms(q);
+  // A run number ("6", "#6") is always a search; any other term needs SEARCH_MIN characters; no q finds nothing.
+  if (t.number === null && t.text.length < SEARCH_MIN) return { items: [] };
+  const all = await projects(ctx.t, ws);
+  const conds: string[] = [];
+  const params: unknown[] = [ws];
+  if (t.number !== null) { params.push(t.number); conds.push(`number = $${params.length}`); }
+  // The prefix is 7 to 40 hex characters (searchTerms), so it holds no LIKE wildcard.
+  if (t.commitPrefix) { params.push(t.commitPrefix); conds.push(`commit_sha like $${params.length} || '%'`); }
+  const rs = conds.length ? await runs(ctx.t, `workspace_id = $1 and (${conds.join(" or ")}) order by started_at desc limit ${SEARCH_MAX}`, params) : [];
+  const ds = await defects(ctx.t, ws, "and state = 'open' and strpos(lower(test_id), $2) > 0", [t.text], all, SEARCH_MAX);
+  return { items: searchFrom(all, rs, ds, q) };
 };
 
 // ---------------------------------------------------------------- defects

@@ -31,7 +31,7 @@ export const HANDLERS: Record<string, Handler> = {
   getSetupChange: data.getSetupChange, listActivity: data.listActivity, getRun: data.getRun, listTestResults: data.listTestResults,
   listRunFiles: data.listRunFiles, getSkipReceipt: data.getSkipReceipt, listDefects: data.listDefects, listDefectFamilies: data.listDefectFamilies,
   getDefect: data.getDefect, listUsageMonths: data.listUsageMonths, getUsage: data.getUsage, exportUsage: data.exportUsage,
-  listPlans: data.listPlans, getBilling: data.getBilling,
+  listPlans: data.listPlans, getBilling: data.getBilling, search: data.search,
   getGitHubConnection: github.getGitHubConnection, createInstallLink: github.createInstallLink, completeGitHubInstall: github.completeGitHubInstall,
   listGitHubRepositories: github.listGitHubRepositories, openSetupPullRequest: github.openSetupPullRequest,
 };

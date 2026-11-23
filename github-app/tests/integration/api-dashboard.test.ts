@@ -8,7 +8,7 @@ import pg from "pg";
 import { verifyState } from "../../src/auth.ts";
 import type { Api } from "../../src/api/server.ts";
 import { dashboardOperations } from "../../src/api/spec.ts";
-import { addTo, admin as adminClient, at, call, covered, DASHBOARD, githubId, LOCAL, NOW, type Person, RecordingQueue, signUp, SKIP, startApi, STATE_KEY } from "../api/helpers.ts";
+import { addTo, admin as adminClient, at, call, covered, DASHBOARD, githubId, key32, LOCAL, NOW, type Person, RecordingQueue, sha, signUp, SKIP, startApi, STATE_KEY } from "../api/helpers.ts";
 import { type Seeded, seedOrg } from "../api/seed.ts";
 
 describe("dashboard API: every operation, real tokens, real database", { skip: SKIP }, () => {
@@ -190,7 +190,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     const base = { token: memberA.token, ws: ownerA.workspaceId, params: { runId: A.runs.latest } };
     let t = await call(api, "listTestResults", base);
     assert.equal(t.body.total, 3);
-    assert.deepEqual(t.body.counts, { passed: 40, failed: 0, skipped_with_proof: 160 });
+    assert.deepEqual(t.body.counts, { passed: 40, failed: 0, skipped_with_proof: 160, not_proven: 0 });
     assert.equal(t.body.items[0].outcome, "failed", "failures first");
     assert.equal(t.body.items[0].failure.defectId, A.defects.open);
     t = await call(api, "listTestResults", { ...base, query: { outcome: "skipped_with_proof" } });
@@ -207,6 +207,48 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     assert.equal(rc.body.reusedRunId, A.runs.reused);
     assert.equal(rc.body.reusedRunNumber, reusedNumber);
     assert.equal(rc.body.runtime.distributions, 42);
+  });
+
+  it("search: a run by number (with or without #) and by commit prefix, an open defect by test name; another organization's never", async () => {
+    const base = { token: memberA.token, ws: ownerA.workspaceId };
+    const run = (await admin.query("select number, commit_sha, branch from ci_runs where id = $1", [A.runs.latest])).rows[0];
+    for (const q of [String(run.number), `#${run.number}`, run.commit_sha.slice(0, 9)]) {
+      const r = await call(api, "search", { ...base, query: { q } });
+      assert.ok(r.body.items.some((x: { kind: string; id: string; label: string }) => x.kind === "run" && x.id === A.runs.latest && x.label === `Run #${run.number}`), q);
+      assert.ok(r.body.items.every((x: { projectId: string }) => [A.projects.shop, A.projects.web].includes(x.projectId)), q);
+    }
+    const defect = (await admin.query("select test_id from ci_defects where id = $1", [A.defects.open])).rows[0];
+    const name = String(defect.test_id).split("::").pop()!;
+    const d = await call(api, "search", { ...base, query: { q: name.toUpperCase() } });
+    assert.ok(d.body.items.some((x: { kind: string; id: string }) => x.kind === "defect" && x.id === A.defects.open));
+    assert.ok(d.body.items.length <= 20);
+    const none = await call(api, "search", { ...base, query: { q: "no such test or run" } });
+    assert.deepEqual(none.body.items, []);
+    // One character that is not a run number finds nothing; no term finds nothing.
+    const one = await call(api, "search", { ...base, query: { q: "x" } });
+    assert.deepEqual([one.status, one.body.items], [200, []], "one character finds nothing");
+    const empty = await call(api, "search", base);
+    assert.deepEqual([empty.status, empty.body.items], [200, []], "no term finds nothing");
+  });
+
+  it("search caps at 20: more than 20 matching open defects give exactly 20, newest first", async () => {
+    // Organization B, removed after, so the other tests' counts stay as seeded.
+    const ids: string[] = [];
+    for (let i = 0; i < 25; i++) {
+      ids.push((await admin.query(
+        `insert into public.ci_defects (project_id, workspace_id, test_id, status, state, cause, cause_tests, minimal_order, prefix_length, seed, fingerprint,
+           exception, family_key, first_seen_at, last_seen_at, occurrences, engine_version, language)
+         values ($1, $2, $3, 'reproduced', 'open', 'fails_alone', '{}', array[$3], 1, 1, $4,
+           '{"type": "AssertionError", "phase": "call", "message": "x", "location": "tests/test_many.py:1"}'::jsonb, '<none>', $5, $5, 1, '0.9.1', 'python') returning id`,
+        [B.projects.shop, ownerB.workspaceId, `tests/test_many.py::test_bulk_${String(i).padStart(2, "0")}`, key32(), at(30 - i)])).rows[0].id as string);
+    }
+    try {
+      const r = await call(api, "search", { token: ownerB.token, ws: ownerB.workspaceId, query: { q: "test_bulk" } });
+      assert.equal(r.body.items.length, 20);
+      assert.deepEqual(r.body.items.map((x: { id: string }) => x.id), [...ids].reverse().slice(0, 20), "newest first");
+    } finally {
+      await admin.query("delete from public.ci_defects where id = any($1::uuid[])", [ids]);
+    }
   });
 
   it("the live run view: ETag, If-None-Match → 304; a progress update → 200 with a new ETag", async () => {
@@ -590,10 +632,49 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     assert.equal((await call(api, "completeGitHubInstall", { token: ownerA.token, body: { completion: C("code-of-ada") } })).status, 404);
   });
 
+  it("a not-proven run (console proof): the runs filter, the activity as run_not_proven, the skip-share series, the tests filter and its count", async () => {
+    // Inserted into organization B and removed after, so the counts the other tests assert on stay as seeded.
+    const base = { token: ownerB.token, ws: ownerB.workspaceId, params: { projectId: B.projects.shop } };
+    const before = await call(api, "getSkipShareSeries", { ...base, query: { days: 7 } });
+    const runsBefore = before.body.items.reduce((a: number, p: { runs: number }) => a + p.runs, 0);
+    const started = at(0.5);
+    const id = (await admin.query(
+      `insert into public.ci_runs (project_id, workspace_id, number, commit_sha, branch, trigger, status, pushed_at, started_at, finished_at, duration_ms,
+         tests_total, tests_ran, tests_passed, tests_failed, tests_skipped, tests_not_proven, test_time_ran_ms, test_time_skipped_ms, exit_code, proof)
+       values ($1, $2, (select coalesce(max(number), 0) + 1 from public.ci_runs where project_id = $1), $3, 'main', 'push', 'not_proven', $4, $4, $5, 60000,
+         10, 10, 8, 0, 0, 2, 50000, 0, 1,
+         '{"workers": 4, "proven": 8, "notProven": 2, "rerunOneLane": 2, "parallelMs": 40000, "serialMsEstimate": null, "orderDigest": "ab", "notProvenCauses": [{"cause": "file read outside the project", "tests": 2}]}'::jsonb)
+       returning id`, [B.projects.shop, ownerB.workspaceId, sha(), started, new Date(started.getTime() + 60_000)])).rows[0].id as string;
+    await admin.query(`insert into public.ci_test_results (run_id, workspace_id, test_id, outcome, duration_ms, not_proven_cause)
+      values ($1, $2, 'tests/test_io.py::test_home', 'not_proven', 7, 'file read outside the project'), ($1, $2, 'tests/test_io.py::test_env', 'not_proven', 3, null),
+             ($1, $2, 'tests/test_io.py::test_ok', 'passed', 2, null)`, [id, ownerB.workspaceId]);
+    try {
+      const runs = await call(api, "listRuns", { ...base, query: { status: "not_proven" } });
+      assert.deepEqual(runs.body.items.map((r: { id: string }) => r.id), [id]);
+      assert.equal(runs.body.items[0].tests.notProven, 2);
+      assert.equal(runs.body.items[0].exitCode, 1);
+      assert.equal(runs.body.items[0].proof.notProvenCauses[0].cause, "file read outside the project");
+      const act = await call(api, "listActivity", { token: ownerB.token, ws: ownerB.workspaceId, query: { projectId: B.projects.shop, limit: 50 } });
+      const item = act.body.items.find((a: { id: string }) => a.id === `run-${id}`);
+      assert.equal(item?.kind, "run_not_proven");
+      assert.match(item.title, / not proven$/);
+      const after = await call(api, "getSkipShareSeries", { ...base, query: { days: 7 } });
+      assert.equal(after.body.items.reduce((a: number, p: { runs: number }) => a + p.runs, 0), runsBefore + 1, "the not-proven run counts as finished");
+      const tests = await call(api, "listTestResults", { token: ownerB.token, ws: ownerB.workspaceId, params: { runId: id }, query: { outcome: "not_proven" } });
+      assert.deepEqual(tests.body.items.map((t: { testId: string; notProvenCause: string | null }) => [t.testId, t.notProvenCause]),
+        [["tests/test_io.py::test_env", null], ["tests/test_io.py::test_home", "file read outside the project"]]);
+      assert.equal(tests.body.counts.not_proven, 2);
+      const all = await call(api, "listTestResults", { token: ownerB.token, ws: ownerB.workspaceId, params: { runId: id } });
+      assert.deepEqual(all.body.items.map((t: { outcome: string }) => t.outcome), ["not_proven", "not_proven", "passed"], "failures first, then not proven, then passed");
+    } finally {
+      await admin.query("delete from public.ci_runs where id = $1", [id]);
+    }
+  });
+
   it("every dashboard operation of the contract was called and answered as the contract says", () => {
     const all = dashboardOperations().map((o) => o.operationId).sort();
     assert.deepEqual(all.filter((x) => !covered.has(x)), []);
-    assert.equal(all.length, 42);
+    assert.equal(all.length, 43);
     void NOW;
   });
 });

@@ -8,7 +8,7 @@ import { ProjectsPage } from "./pages/Projects";
 import { ConnectPage } from "./pages/Connect";
 import { ProjectPage } from "./pages/Project";
 import { RunPage } from "./pages/Run";
-import { NightlyPage, SkipWithProofPage, TimeToGreenPage } from "./pages/ProjectSections";
+import { NightlyPage, ParallelWithProofPage, SkipWithProofPage, TimeToGreenPage } from "./pages/ProjectSections";
 import { client } from "./data";
 import { rememberedProject } from "./components/Shell";
 import { useEffect, useState } from "react";
@@ -97,6 +97,7 @@ function Dashboard() {
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/connect" element={<ConnectPage />} />
         <Route path="/projects/:id" element={<ProjectPage />} />
+        <Route path="/projects/:id/parallel-with-proof" element={<ParallelWithProofPage />} />
         <Route path="/projects/:id/defects" element={<ProjectDefectsPage />} />
         <Route path="/projects/:id/skip-with-proof" element={<SkipWithProofPage />} />
         <Route path="/projects/:id/nightly" element={<NightlyPage />} />

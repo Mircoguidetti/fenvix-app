@@ -190,6 +190,7 @@ export function DefectPage() {
           </Link>
         }
         title={<span className="mono break-anywhere">{shortTest(d.testId)}</span>}
+        docTitle={`Defect ${shortTest(d.testId)}`}
         meta={
           <>
             <ReplayStatus d={d} />

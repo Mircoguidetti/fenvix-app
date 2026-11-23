@@ -1,9 +1,24 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { CircleAlert, TriangleAlert } from "lucide-react";
 import { useCurrentOrg } from "./AccountMenu";
+import { useOpenProjectName } from "./Shell";
 
-/** `meta` sits next to the title (a state badge, a region); `actions` sit at the far end. */
-export function PageHeader({ title, description, actions, back, meta }: { title: ReactNode; description?: ReactNode; actions?: ReactNode; back?: ReactNode; meta?: ReactNode }) {
+/** The browser tab's title: "<page> · <project> · fenvix" inside a project, "<page> · fenvix" elsewhere (F-003). */
+export function documentTitle(page: string, projectFullName: string): string {
+  const project = projectFullName.split("/").pop() ?? "";
+  return [page, project, "fenvix"].filter(Boolean).join(" · ");
+}
+
+/**
+ * `meta` sits next to the title (a state badge, a region); `actions` sit at the far end. The page header also names the
+ * browser tab (the one place that does): from `docTitle`, else the title when it is text.
+ */
+export function PageHeader({ title, description, actions, back, meta, docTitle }: { title: ReactNode; description?: ReactNode; actions?: ReactNode; back?: ReactNode; meta?: ReactNode; docTitle?: string }) {
+  const project = useOpenProjectName();
+  const page = docTitle ?? (typeof title === "string" ? title : "");
+  useEffect(() => {
+    if (page) document.title = documentTitle(page, project);
+  }, [page, project]);
   return (
     <header className="page-header">
       <div className="page-header-main">

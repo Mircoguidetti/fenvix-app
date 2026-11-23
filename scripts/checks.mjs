@@ -2,7 +2,7 @@
 // (fresh data, signed out) and signs in through the real sign-in page unless it is testing sign-in.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173: npm run checks
 import { readFile } from "node:fs/promises";
-import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText, choose, flakyRun, runningRun, shadowRun, useOrgOf } from "./lib.mjs";
+import { BANNED, BASE, VIEWPORTS, go, isMobile, launch, makeReporter, newPage, settled, signIn, visibleText, choose, flakyRun, proofRuns, runningRun, shadowRun, useOrgOf } from "./lib.mjs";
 
 const { fail, pass, state } = makeReporter();
 const browser = await launch();
@@ -62,12 +62,318 @@ async function eventually(read, message) {
 
 
 const ROUTES = [
-  "overview", "projects", "projects/prj_homehub", "projects/prj_homehub/settings", "projects/prj_homehub/skip-with-proof", "projects/prj_homehub/nightly", "projects/prj_homehub/time-to-green",
+  "overview", "projects", "projects/prj_homehub", "projects/prj_homehub/parallel-with-proof", "projects/prj_docs/parallel-with-proof", "projects/prj_homehub/settings", "projects/prj_homehub/skip-with-proof", "projects/prj_homehub/nightly", "projects/prj_homehub/time-to-green",
   "projects/prj_homehub/defects", "projects/connect", "projects/connect?github=connected&installation=1&account=acme", "projects/connect?github=requested", "projects/connect?github=error&reason=expired",
   "defects", "defects/dfx_9a10", "usage", "billing", "api-keys", "settings", "settings/members",
 ];
 
 const TESTS = {
+  // ---------------------------------------------------------------- console proof (parallel with proof, NOT PROVEN, audit F-001 to F-008)
+
+  async "parallel with proof: the card on a parallel run, the note on a not-proven one, none on a serial run"(page) {
+    await signIn(page, "projects/prj_homehub");
+    const r = await proofRuns(page);
+    assert(r.proven && r.notProven && r.noProof && r.serial, `the mock lacks a proof run: ${JSON.stringify(r)}`);
+    const runPage = async (x) => {
+      await go(page, `projects/${x.projectId}/runs/${x.runId}`);
+      await page.getByRole("heading", { name: `Run #${x.number}`, level: 1 }).waitFor();
+      await settled(page);
+    };
+    // Every test proven: the card, "Identical to the serial run", no warning.
+    await runPage(r.proven);
+    const card = page.locator("#proof");
+    await card.getByRole("heading", { name: "Parallel with proof" }).waitFor();
+    await card.getByText("Ran in parallel, then checked test by test against the serial run.").waitFor();
+    for (const dt of ["Result", "Workers", "Proven", "Re-run in one lane", "Not proven", "Parallel time", "Order digest"]) await card.locator("dt", { hasText: new RegExp(`^${dt}$`) }).waitFor();
+    assert((await card.locator("dd").first().innerText()) === "Identical to the serial run", "the proven run's result is not 'Identical to the serial run'");
+    assert(!(await page.locator("#not-proven-note").count()), "a proven run shows the not-proven note");
+    await card.getByRole("link", { name: "How this was proven" }).waitFor();
+    assert((await page.locator(".page-title-row .state").innerText()) === "Passed", "a proven run is not Passed");
+    // Not proven, with its cause: the pill with its count, the card's result, the note with the sentence and the link.
+    await runPage(r.notProven);
+    assert((await page.locator(".page-title-row .state").innerText()) === `Not proven · ${r.notProven.notProven}`, `the pill reads ${await page.locator(".page-title-row .state").innerText()}`);
+    assert((await page.locator(".page-title-row .state").getAttribute("data-tone")) === "warn", "not proven is not amber");
+    assert((await page.locator("#proof dd").first().innerText()) === `Not proven for ${r.notProven.notProven} tests`, "the card's result does not say how many were not proven");
+    // Proven "n of the tests the framework ran" (ranExecuted), and the card's Not proven is the run's N.
+    const provenDd = await page.locator("#proof div", { has: page.locator("dt", { hasText: /^Proven$/ }) }).locator("dd").innerText();
+    assert(provenDd === `${r.notProven.proof.proven.toLocaleString("en-US")} of ${(r.notProven.proof.ranExecuted ?? r.notProven.ran).toLocaleString("en-US")}`, `Proven reads ${provenDd}`);
+    const npDd = await page.locator("#proof div", { has: page.locator("dt", { hasText: /^Not proven$/ }) }).locator("dd").innerText();
+    assert(npDd === String(r.notProven.notProven), `the card's Not proven reads ${npDd}, the run's N is ${r.notProven.notProven}`);
+    const note = page.locator("#proof #not-proven-note.callout-warning");
+    const text = await note.innerText();
+    assert(new RegExp(`^${r.notProven.notProven} tests read a file outside the project, so the parallel result could not be proven equal to the serial one\\. Their serial result is reported; the run exits 1\\.`).test(text), `the note reads: ${text}`);
+    await note.getByRole("link", { name: `See the ${r.notProven.notProven} tests` }).click();
+    await eventually(async () => new URL(page.url()).searchParams.get("outcome") === "not_proven", "See the tests does not filter on not proven");
+    await eventually(async () => {
+      const outcomes = await page.locator(".test-row").evaluateAll((rows) => rows.map((x) => x.dataset.outcome));
+      return outcomes.length === r.notProven.notProven && outcomes.every((o) => o === "not_proven");
+    }, "the not proven filter does not list exactly the run's not-proven tests");
+    const pill = page.locator(".test-row").first().locator(".state");
+    assert((await pill.innerText()) === "Not proven", "a not-proven test's pill does not say Not proven");
+    assert((await pill.getAttribute("data-tone")) === "warn", "a not-proven test's pill is not amber");
+    assert((await pill.locator("xpath=..").getAttribute("title")) === "file read outside the project", "the test's cause is not its pill's tooltip");
+    await page.locator(".test-row").first().getByText(/Not proven identical to the serial run: file read outside the project\./).waitFor();
+    assert(/Not proven\s*14/.test(await page.locator("#tests").getByRole("button", { name: /^Not proven/ }).innerText()), "the Not proven filter does not show its count");
+    // A proof run with tests not proven but no per-test rows: the note, no "See the N tests"; the filter counts rows
+    // and the line says how many have per-test detail.
+    await runPage(r.proofNoRows);
+    await page.locator("#proof #not-proven-note").waitFor();
+    assert(!(await page.locator("#proof #not-proven-note a").count()), "the card links to tests that have no per-test rows");
+    assert(/Not proven\s*0/.test(await page.locator("#tests").getByRole("button", { name: /^Not proven/ }).innerText()), "the Not proven filter does not count the per-test rows");
+    assert((await page.locator("#tests-detail").innerText()).startsWith(`${r.proofNoRows.notProven} not proven, 0 with per-test detail`), `the detail line reads ${await page.locator("#tests-detail").innerText()}`);
+    // Not proven without a proof block: no card, the note under the numbers, "The runner did not report why", the pill.
+    await runPage(r.noProof);
+    assert(!(await page.locator("#proof").count()), "a run without a proof block shows the proof card");
+    const bare = page.locator("#not-proven-note.callout-warning");
+    await bare.getByRole("link", { name: `See the ${r.noProof.notProven} tests` }).waitFor();
+    const bareText = await bare.innerText();
+    assert(bareText.startsWith(`${r.noProof.notProven} tests were not proven identical. The runner did not report why. Their serial result is reported; the run exits 1.`), `the note reads: ${bareText}`);
+    assert((await page.locator(".page-title-row .state").innerText()) === `Not proven · ${r.noProof.notProven}`, "the pill of the run without a proof block");
+    // A serial run: no card, no note.
+    await runPage(r.serial);
+    assert(!(await page.locator("#proof").count()) && !(await page.locator("#not-proven-note").count()), "a serial run shows the proof card or the note");
+    // A running run: no card (the proof exists once it has finished).
+    const running = await runningRun(page);
+    await go(page, `projects/${running.projectId}/runs/${running.runId}`);
+    await page.locator("#live").waitFor();
+    assert(!(await page.locator("#proof").count()), "a running run shows the proof card");
+  },
+
+  async "not proven filters: the runs list returns exactly the not-proven runs, each with its count"(page) {
+    await signIn(page, "projects/prj_homehub");
+    const r = await proofRuns(page);
+    assert(r.notProvenAll.length === 3, `the mock has ${r.notProvenAll.length} not-proven runs of homehub`);
+    await page.locator("#runs").getByRole("button", { name: "Not proven", exact: true }).click();
+    await eventually(async () => new URL(page.url()).searchParams.get("status") === "not_proven", "the status filter is not in the address");
+    await eventually(async () => {
+      const rows = await page.locator("#runs tbody tr").evaluateAll((trs) => trs.map((tr) => [tr.querySelector("td a")?.textContent, tr.querySelector(".state")?.textContent]));
+      const want = r.notProvenAll.map((x) => [`#${x.number}`, `Not proven · ${x.notProven}`]);
+      return JSON.stringify(rows) === JSON.stringify(want);
+    }, "the not proven filter does not list exactly the mock's not-proven runs");
+  },
+
+  async "project page parallel with proof: four sections, and the empty state"(page) {
+    await signIn(page, "projects/prj_homehub/parallel-with-proof");
+    await page.getByRole("heading", { name: "Parallel with proof", level: 1 }).waitFor();
+    await settled(page);
+    const r = await proofRuns(page);
+    await page.locator("#proven-trend .chart svg").waitFor();
+    await page.locator("#speed .chart svg").waitFor();
+    const causes = await page.locator("#causes tbody tr td:first-child").allTextContents();
+    assert(causes.includes("file read outside the project") && causes.includes("environment variable read outside any test") && causes.includes("The runner did not report why"), `the causes read ${causes.join(" | ")}`);
+    const rows = await page.locator("#not-proven-runs tbody tr td:first-child a").allTextContents();
+    assert(JSON.stringify(rows) === JSON.stringify(r.notProvenAll.map((x) => `#${x.number}`)), `the runs not proven read ${rows.join(", ")}`);
+    await page.locator("#not-proven-runs tbody tr", { hasText: `#${r.noProof.number}` }).getByText("The runner did not report why").waitFor();
+    // The rail and the second bar have the section, after Runs.
+    const links = await page.locator(".cx-sub .cx-sub-link").allTextContents();
+    if (links.length) assert(links.indexOf("Parallel with proof") === links.indexOf("Runs") + 1, `the section is not after Runs: ${links.join(", ")}`);
+    // A project with no parallel run: the empty state and the test job to copy.
+    await go(page, "projects/prj_docs/parallel-with-proof");
+    await page.locator("#parallel-empty").getByText("No run has used parallel lanes yet. Runs with parallel lanes show here, with the proof for each.").waitFor();
+    await page.locator("#parallel-empty").getByRole("button", { name: "Copy the test job" }).waitFor();
+  },
+
+  async "overview: Proven identical, n of m runs, after Runs"(page) {
+    await signIn(page, "overview");
+    const o = await page.evaluate(async () => (await window.__fenvixMock.getOverview()).proof);
+    assert(o.runsWithProof > 0 && o.notProven === 3, `the mock's proof block: ${JSON.stringify(o)}`);
+    const kpi = page.locator("#kpi-proof");
+    assert((await kpi.locator(".kpi-label").innerText()) === "Proven identical", "the KPI's label");
+    assert((await kpi.locator(".kpi-value").innerText()) === `${o.provenIdentical.toLocaleString("en-US")} of ${o.runsWithProof.toLocaleString("en-US")} runs`, `the KPI reads ${await kpi.locator(".kpi-value").innerText()}`);
+    assert((await kpi.locator(".kpi-sub").innerText()) === "3 not proven this month", `the KPI's sub-line reads ${await kpi.locator(".kpi-sub").innerText()}`);
+    const labels = await page.locator(".kpi-label").allTextContents();
+    assert(labels[0] === "Runs" && labels[1] === "Proven identical", `the KPI is not after Runs: ${labels.join(", ")}`);
+  },
+
+  async "not proven runs are finished, never green: counted per day, in the activity as not proven, not in time to green"(page) {
+    await signIn(page, "projects/prj_homehub");
+    const f = await page.evaluate(async () => {
+      const m = window.__fenvixMock;
+      const o = await m.getOverview();
+      const projects = await m.listProjects();
+      const since = o.runs.perDay[0].at;
+      const all = (await Promise.all(projects.map((p) => m.listRuns(p.id, { since })))).flatMap((x) => x.items);
+      const perDay = {};
+      for (const r of all) {
+        const k = new Date(Date.UTC(...r.startedAt.slice(0, 10).split("-").map((v, i) => (i === 1 ? +v - 1 : +v)))).toISOString();
+        perDay[k] = (perDay[k] ?? 0) + 1;
+      }
+      const np = all.filter((r) => r.status === "not_proven");
+      const npDays = np.map((r) => o.runs.perDay.find((p) => p.at.slice(0, 10) === r.startedAt.slice(0, 10)));
+      // Time to green: first passing run of each commit; a commit whose only finished run is not proven never turns green.
+      const passedCommits = new Set(all.filter((r) => r.status === "passed").map((r) => r.commitSha));
+      return {
+        perDayMatches: o.runs.perDay.every((p) => (perDay[p.at] ?? 0) === p.value),
+        npCounted: npDays.every((d) => d && d.value === perDay[d.at]),
+        np: np.length,
+        npOnlyCommits: np.filter((r) => !passedCommits.has(r.commitSha)).length,
+        ttgCommits: o.timeToGreen.commits,
+        activity: (await m.listActivity("prj_homehub", 50)).filter((a) => np.some((r) => a.id === `run-${r.id}`)).map((a) => [a.kind, a.title]),
+      };
+    });
+    assert(f.np === 3, `${f.np} not proven runs this window`);
+    assert(f.npOnlyCommits > 0, "no not-proven run has a commit of its own, so the time to green check below could not fail");
+    assert(f.perDayMatches && f.npCounted, "the Overview's runs per day leave out not-proven runs");
+    assert(f.activity.length === 3 && f.activity.every(([k, t]) => k === "run_not_proven" && / not proven$/.test(t)), `the activity shows not-proven runs as ${JSON.stringify(f.activity)}`);
+    // The feed on the page: the not-proven icon, and the word, never "failed" or "green".
+    await page.locator("#activity .activity-icon[data-kind='run_not_proven']").first().waitFor();
+    const titles = await page.locator("#activity li", { has: page.locator("[data-kind='run_not_proven']") }).locator("a").allTextContents();
+    assert(titles.length > 0 && titles.every((t) => / not proven$/.test(t)), `the feed reads ${titles.join(", ")}`);
+    // Time to green counts passed runs only: recomputed here without the not-proven runs' own commits.
+    const ttg = await page.evaluate(async () => {
+      const m = window.__fenvixMock;
+      const o = await m.getOverview();
+      const month = o.month;
+      const projects = await m.listProjects();
+      const all = (await Promise.all(projects.map((p) => m.listRuns(p.id, { since: `${month}-01T00:00:00.000Z` })))).flatMap((x) => x.items);
+      const first = new Map();
+      for (const r of all) {
+        if (r.status !== "passed" || !r.finishedAt) continue;
+        const k = `${r.projectId}:${r.commitSha}`;
+        if (!first.has(k) || r.finishedAt < first.get(k).finishedAt) first.set(k, r);
+      }
+      return { passedOnly: [...first.values()].filter((r) => r.startedAt >= `${month}-01`).length, shown: o.timeToGreen.commits };
+    });
+    assert(ttg.passedOnly === ttg.shown, `time to green counts ${ttg.shown} commits, passed runs give ${ttg.passedOnly}`);
+  },
+
+  async "an API one release older (no proof fields, no /search): the Overview and Parallel with proof still render"(page) {
+    // The mock answers as the API did before console proof (src/data/mock.ts olderApi); the console reads it through
+    // src/data/compat.ts, as it would on the day the console is published before the API.
+    await page.goto(BASE + "overview");
+    await page.evaluate(() => sessionStorage.setItem("fenvix-mock-api", "before-proof"));
+    await signIn(page, "overview");
+    const raw = await page.evaluate(async () => {
+      const r = await window.__fenvixMock.getOverview();
+      return { proof: r.proof };
+    });
+    assert(raw.proof && raw.proof.runsWithProof === 0, "the console did not fill in the missing proof block");
+    await page.getByRole("heading", { name: "Northwind Cloud", level: 1 }).waitFor();
+    const kpi = page.locator("#kpi-proof");
+    assert((await kpi.locator(".kpi-value").innerText()) === "–", `with no proof block the KPI reads ${await kpi.locator(".kpi-value").innerText()}`);
+    assert((await kpi.locator(".kpi-sub").innerText()) === "no parallel runs yet", `with no proof block the sub-line reads ${await kpi.locator(".kpi-sub").innerText()}`);
+    await go(page, "projects/prj_homehub/parallel-with-proof");
+    await page.getByRole("heading", { name: "Parallel with proof", level: 1 }).waitFor();
+    await settled(page);
+    // The older API's runs have no proof: no "Proven over time" (it needs proof), the page renders, no error.
+    await page.locator("#parallel-empty, #not-proven-runs").first().waitFor();
+    assert(!(await page.locator("#proven-trend .chart").count()), "runs without proof drew a proven-over-time chart");
+    assert(!(await page.locator(".message-error").count()), "an error shows on Parallel with proof");
+    await go(page, "projects/prj_homehub");
+    await page.getByRole("heading", { name: "Runs", exact: true, level: 1 }).waitFor();
+    await settled(page);
+    assert(!(await page.locator(".message-error").count()), "an error shows on the Runs page");
+    // A missing /search: no results, never an error (on every screen size: through the client the box uses).
+    const found = await page.evaluate(async () => {
+      try {
+        return { items: await window.__fenvixMock.search("4299") };
+      } catch (e) {
+        return { error: String(e) };
+      }
+    });
+    assert(Array.isArray(found.items) && found.items.length === 0, `search against the older API: ${JSON.stringify(found)}`);
+    // The not_proven filters, refused by the older API (400): an empty list, not an error.
+    await go(page, "projects/prj_homehub?status=not_proven");
+    await page.locator("#runs").getByText("No runs match.", { exact: false }).waitFor();
+    assert(!(await page.locator(".message-error").count()), "the runs filter shows an error against the older API");
+    const run = await page.evaluate(async () => (await window.__fenvixMock.listRuns("prj_homehub", { status: "passed", pageSize: 1 })).items[0]);
+    await go(page, `projects/prj_homehub/runs/${run.id}?outcome=not_proven`);
+    await page.locator("#tests").getByText("No test matches.").waitFor();
+    assert(!(await page.locator(".message-error").count()), "the tests filter shows an error against the older API");
+    await page.evaluate(() => sessionStorage.removeItem("fenvix-mock-api"));
+  },
+
+  async "a status or outcome this console does not know reads Unknown, grey"(page) {
+    await signIn(page, "styleguide");
+    const pills = page.locator("[data-unknown-state] .state");
+    await pills.first().waitFor();
+    const all = await pills.evaluateAll((xs) => xs.map((x) => [x.textContent, x.dataset.tone]));
+    assert(all.length === 2 && all.every(([t, tone]) => t === "Unknown" && tone === "neutral"), `unknown pills read ${JSON.stringify(all)}`);
+  },
+
+  async "overview: no parallel run yet reads '–' and 'no parallel runs yet'"(page) {
+    // Harbor Analytics (its trial) has no parallel run and no not-proven run.
+    await signIn(page, "overview");
+    await useOrgOf(page, "org_harbor", "overview");
+    const o = await page.evaluate(async () => (await window.__fenvixMock.getOverview()).proof);
+    assert(o.runsWithProof === 0 && o.notProven === 0, `Harbor's proof block: ${JSON.stringify(o)}`);
+    const kpi = page.locator("#kpi-proof");
+    assert((await kpi.locator(".kpi-value").innerText()) === "–", "the zero state's value");
+    assert((await kpi.locator(".kpi-sub").innerText()) === "no parallel runs yet", "the zero state's sub-line");
+  },
+
+  async "F-001 F-003 F-008: the Runs title, the tab titles, time to green per day"(page) {
+    await signIn(page, "overview");
+    await page.getByRole("heading", { name: "Northwind Cloud", level: 1 }).waitFor();
+    await eventually(async () => (await page.title()) === "Overview · fenvix", `the overview's tab title is ${await page.title()}`);
+    await go(page, "projects/prj_homehub");
+    await page.getByRole("heading", { name: "Runs", exact: true, level: 1 }).waitFor();
+    assert((await page.locator("main h1").count()) === 1, "the Runs page has more than one h1");
+    assert(!(await page.getByRole("button", { name: "Copy replay command" }).count()), "the Runs page still copies a replay command");
+    const latest = await page.locator("#latest-run").innerText();
+    assert(/^Latest run · #\d+/.test(latest.replace(/\s+/g, " ")), `the latest run line reads ${latest}`);
+    await page.locator("#latest-run a").first().waitFor();
+    await page.locator(".running-note").getByRole("link", { name: "Watch it live" }).waitFor();
+    await eventually(async () => (await page.title()) === "Runs · homehub · fenvix", `the runs page's tab title is ${await page.title()}`);
+    await page.locator("#ttg-per-run").getByRole("heading", { name: "Time to green, per day" }).waitFor();
+    await page.locator("#ttg-per-run").getByText("Median per day of the time from push to green.").waitFor();
+    const points = Number(await page.locator("#ttg-per-run [data-points]").getAttribute("data-points"));
+    assert(points > 1 && points <= 30, `the time to green chart draws ${points} points`);
+    const r = await proofRuns(page);
+    await go(page, `projects/${r.proven.projectId}/runs/${r.proven.runId}`);
+    await page.getByRole("heading", { name: `Run #${r.proven.number}`, level: 1 }).waitFor();
+    await eventually(async () => (await page.title()) === `Run #${r.proven.number} · homehub · fenvix`, `the run's tab title is ${await page.title()}`);
+  },
+
+  async "F-004: search finds a run by number and a defect by test name"(page, vp) {
+    await signIn(page, "overview");
+    if (isMobile(vp) && !(await page.locator(".cx-search input").isVisible())) return; // the search box is a desktop control
+    const r = await proofRuns(page);
+    const box = page.getByRole("combobox", { name: "Search or jump to" });
+    await box.fill(String(r.proven.number));
+    const run = page.getByRole("option", { name: new RegExp(`^Run #${r.proven.number} · homehub`) });
+    await run.waitFor();
+    assert((await run.locator(".cx-search-kind").innerText()) === "Run", "the run's row is not labelled Run");
+    await run.click();
+    await page.getByRole("heading", { name: `Run #${r.proven.number}`, level: 1 }).waitFor();
+    await box.fill("test_discovery_update_attr");
+    const defect = page.getByRole("option", { name: /test_discovery_update_attr · homehub/ });
+    await defect.waitFor();
+    assert((await defect.locator(".cx-search-kind").innerText()) === "Defect", "the defect's row is not labelled Defect");
+    await defect.click();
+    await page.waitForURL(/\/defects\/dfx_7c21$/);
+  },
+
+  async "F-005 F-006: one All projects in the drawer; card headings 17 px"(page, vp) {
+    await signIn(page, "projects/prj_homehub");
+    const size = await page.locator(".card h2").first().evaluate((h) => [getComputedStyle(h).fontSize, getComputedStyle(h).fontWeight]);
+    assert(size[0] === "17px" && size[1] === "600", `a card heading is ${size.join(" / ")}`);
+    if (!isMobile(vp)) return;
+    await page.getByRole("button", { name: "Open navigation" }).click();
+    await page.locator(".cx-drawer .cx-drawer-top").waitFor();
+    const n = await page.locator(".cx-drawer").getByRole("link", { name: "All projects" }).count();
+    assert(n === 1, `the drawer lists All projects ${n} times`);
+  },
+
+  async "F-007: the run page shows skeletons before its data"(page) {
+    await signIn(page, "overview");
+    const r = await proofRuns(page);
+    const seen = await page.evaluate(async (path) => {
+      let skeleton = false;
+      const obs = new MutationObserver(() => {
+        if (document.querySelector("main [data-skeleton]")) skeleton = true;
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+      history.pushState({}, "", path);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      await new Promise((ok) => setTimeout(ok, 1500));
+      obs.disconnect();
+      return { skeleton, text: document.querySelector("main h1")?.textContent };
+    }, `/projects/${r.proven.projectId}/runs/${r.proven.runId}`);
+    assert(seen.skeleton, "no skeleton showed while the run loaded");
+    assert(seen.text === `Run #${r.proven.number}`, `the run did not load after its skeleton: ${seen.text}`);
+  },
+
   async "phone top bar keeps its height on long pages, with room around the menu button"(page, vp) {
     if (!isMobile(vp)) return;
     for (const route of ["overview", "projects", "api-keys", "defects"]) {
@@ -96,11 +402,12 @@ const TESTS = {
     assert(/GitHub/.test(order[0]) && /Google/.test(order[1]) && /sign-in link/.test(order[2]), `sign-in buttons out of order: ${order}`);
 
     await page.getByRole("button", { name: "Continue with GitHub" }).click();
-    await page.getByRole("heading", { name: "northwind/homehub" }).waitFor(); // lands on the route that was asked for
+    await page.getByRole("heading", { name: "Runs", exact: true, level: 1 }).waitFor(); // lands on the route that was asked for (F-001: titled Runs)
+    await page.locator(".page-kicker", { hasText: "northwind/homehub" }).waitFor();
     await openUserMenu(page, vp);
     await page.locator(".account-panel .account-who").getByText("Elena Marsh").waitFor();
     await page.reload(); // the session survives a reload
-    await page.getByRole("heading", { name: "northwind/homehub" }).waitFor();
+    await page.getByRole("heading", { name: "Runs", exact: true, level: 1 }).waitFor();
     await openUserMenu(page, vp);
     await page.getByRole("button", { name: "Sign out" }).click();
     await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
@@ -159,17 +466,18 @@ const TESTS = {
   async "overview"(page) {
     // The home page opens the runs of the project opened last (or the first one).
     await signIn(page, "");
-    await page.getByRole("heading", { name: "northwind/homehub: runs" }).waitFor();
+    await page.getByRole("heading", { name: "Runs", exact: true, level: 1 }).waitFor();
     assert(new URL(page.url()).pathname === "/projects/prj_homehub" && !page.url().includes("#"), `the home page is at ${page.url()}`);
     await go(page, "overview");
     await page.getByRole("heading", { name: "Northwind Cloud" }).waitFor();
     await page.reload();
     await page.getByRole("heading", { name: "Northwind Cloud" }).waitFor();
     const kpis = await page.locator(".kpi").allInnerTexts();
-    assert(kpis.length === 6, `expected 6 numbers, got ${kpis.length}`);
+    assert(kpis.length === 7, `expected 7 numbers, got ${kpis.length}`);
     const labels = await page.locator(".kpi-label").allTextContents();
-    assert(labels.join("|") === "Runs|Minutes saved|Skipped with proof|Time to green|On GitHub-hosted|Open defects", `numbers read ${labels.join("|")}`);
-    const values = await page.locator(".kpi-value").allTextContents();
+    assert(labels.join("|") === "Runs|Proven identical|Minutes saved|Skipped with proof|Time to green|On GitHub-hosted|Open defects", `numbers read ${labels.join("|")}`);
+    // "Proven identical" (console proof) is checked in its own check; the six others keep their places in `values`.
+    const values = (await page.locator(".kpi-value").allTextContents()).filter((_, i) => i !== 1);
     assert(num(values[0]) > 300, `runs this month read ${values[0]}`);
     assert(/^\d+%$/.test(values[2]) && num(values[2]) >= 90, `the median share skipped reads ${values[2]} (home-assistant-like runs dominate: about 97%)`);
     assert(/^\$[\d,.]+$/.test(values[4]), `the GitHub cost reads ${values[4]}`);
@@ -200,7 +508,7 @@ const TESTS = {
     // The newest run of homehub is still running: amber, with its word.
     await page.locator("main tbody tr", { hasText: "northwind/homehub" }).getByText("Running", { exact: true }).waitFor();
     await page.locator("main").getByRole("link", { name: "northwind/homehub" }).click();
-    await page.getByRole("heading", { name: "northwind/homehub: runs" }).waitFor();
+    await page.getByRole("heading", { name: "Runs", exact: true, level: 1 }).waitFor();
     await page.locator(".running-note").getByRole("link", { name: "Watch it live" }).waitFor();
     await addsUp(page, "#project-minutes");
     assert((await page.locator("#runs tbody tr").count()) === 25, "the runs list is not 25 rows a page");

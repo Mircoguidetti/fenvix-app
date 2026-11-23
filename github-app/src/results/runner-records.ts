@@ -20,8 +20,8 @@ export interface RunnerFailure {
   kind: "real" | "flaky_defect"; phase?: string; exceptionType?: string; message?: string; location?: string; defectFingerprint?: string;
 }
 export interface RunnerTestOutcome {
-  testId: string; outcome: "passed" | "failed" | "skipped_with_proof"; durationMs: number; failure?: RunnerFailure | null;
-  cacheKey?: string | null; wouldSkip?: boolean;
+  testId: string; outcome: "passed" | "failed" | "skipped_with_proof" | "not_proven"; durationMs: number; failure?: RunnerFailure | null;
+  cacheKey?: string | null; wouldSkip?: boolean; notProvenCause?: string | null;
 }
 export interface RunnerReceipt {
   testId: string; cacheKey: string; reusedEngineRunId: string; fingerprint: string; reusedDurationMs: number;
@@ -162,11 +162,12 @@ function testOutcome(v: unknown, path: string): RunnerTestOutcome {
   const o = obj(v, path);
   return def({
     testId: text(need(o, "testId", path), at(path, "testId"), 2000),
-    outcome: oneOf(need(o, "outcome", path), at(path, "outcome"), ["passed", "failed", "skipped_with_proof"] as const),
+    outcome: oneOf(need(o, "outcome", path), at(path, "outcome"), ["passed", "failed", "skipped_with_proof", "not_proven"] as const),
     durationMs: int(need(o, "durationMs", path), at(path, "durationMs"), 0),
     failure: opt(o, "failure", path, orNull(failure)),
     cacheKey: opt(o, "cacheKey", path, orNull((x, p) => text(x, p, undefined, HEX32))),
     wouldSkip: opt(o, "wouldSkip", path, bool),
+    notProvenCause: opt(o, "notProvenCause", path, orNull((x, p) => text(x, p, 500))),
   });
 }
 

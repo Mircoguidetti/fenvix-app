@@ -3,8 +3,8 @@
  * load rows, these turn them into what the screens show. No I/O here, so tests/unit/ci.test.ts covers all of it.
  */
 import type {
-  ActivityItem, AuditRerun, AuditSummary, Exploration, MissKind,
-  BillingOverview, DayPoint, Defect, DefectFamily, GitHubRate, MinuteBreakdown, Overview, Plan, Project, ProjectRow, Run, SetupChange, Trial, UsageProjectRow, UsageReport,
+  ActivityItem, AuditRerun, AuditSummary, Exploration, MissKind, SearchResult,
+  BillingOverview, DayPoint, Defect, DefectFamily, GitHubRate, MinuteBreakdown, Overview, Plan, Project, ProjectRow, Run, RunProof, SetupChange, Trial, UsageProjectRow, UsageReport,
 } from "./types";
 
 /**
@@ -97,7 +97,11 @@ export function minuteBreakdown(parts: [number, number, number], decimals = 0): 
 /** One run's minutes, to one decimal. */
 export const runMinutes = (r: Run): MinuteBreakdown => minuteBreakdown([r.testTimeMs.ran / 60000, r.testTimeMs.skipped / 60000, r.otherStepMinutes], 1);
 
-const finished = (r: Run) => r.status === "passed" || r.status === "failed";
+/** A run not proven: its status says so, or it holds tests not proven (one predicate for every screen). */
+export const isNotProven = (r: Pick<Run, "status" | "tests">) => r.status === "not_proven" || (r.tests.notProven ?? 0) > 0;
+
+/** Finished: passed, failed or not proven (finished, never green). Only `passed` is green (time to green). */
+export const finished = (r: Run) => r.status === "passed" || r.status === "failed" || r.status === "not_proven";
 const round = (n: number, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 
 /**
@@ -136,6 +140,7 @@ export function projectRow(project: Project, runs: Run[], defects: Defect[], now
     minutesSavedThisMonth: minutes.skipped,
     lastRunAt: last?.startedAt ?? null,
     lastRunStatus: last?.status ?? null,
+    lastRunNotProven: last?.tests.notProven ?? 0,
   };
 }
 
@@ -177,12 +182,26 @@ export function overviewFrom(projects: Project[], runs: Run[], defects: Defect[]
       median: median(thisMonth.filter(finished).map((r) => r.skipShare)),
       perDay: perDay(window, days, (rs) => median(rs.filter(finished).map((r) => r.skipShare)) ?? 0),
     },
+    proof: proofOverview(thisMonth),
     minutes: { ran: usage.totals.testMinutesRan, skipped: usage.totals.minutesSaved, other: usage.totals.otherStepMinutes, total: usage.totals.githubEquivalentMinutes },
     cost: { githubEquivalentUsd: usage.totals.githubEquivalentUsd, githubEquivalentMinutes: usage.totals.githubEquivalentMinutes, plan, rate },
     units: { used: usage.unitsUsed, included: usage.unitsIncluded },
     projects: rows,
     openDefects: open.length,
     recentDefects: [...open].sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt)).slice(0, 5),
+  };
+}
+
+/**
+ * This month's parallel proof: runs with parallel lanes (`proof`), those of them with every test proven, and every run
+ * not proven (with or without lanes).
+ */
+export function proofOverview(thisMonth: Run[]): Overview["proof"] {
+  const withProof = thisMonth.filter((r) => r.proof != null && finished(r));
+  return {
+    runsWithProof: withProof.length,
+    provenIdentical: withProof.filter((r) => !r.tests.notProven && !r.proof!.notProven).length,
+    notProven: thisMonth.filter((r) => finished(r) && isNotProven(r)).length,
   };
 }
 
@@ -439,6 +458,22 @@ export function timeToGreenPerCommit(runs: Run[]): { at: string; seconds: number
     .sort((a, b) => a.at.localeCompare(b.at));
 }
 
+/**
+ * Time to green per day: the median of the commits that went green that day (timeToGreenPerCommit), oldest first, the
+ * last `days` days at most. One point per day, so the chart stays readable with hundreds of commits.
+ */
+export function timeToGreenPerDay(runs: Run[], days = 30): { at: string; value: number; commits: number }[] {
+  const byDay = new Map<string, number[]>();
+  for (const x of timeToGreenPerCommit(runs)) {
+    const k = dayStart(new Date(x.at)).toISOString();
+    (byDay.get(k) ?? byDay.set(k, []).get(k)!).push(x.seconds);
+  }
+  return [...byDay.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-days)
+    .map(([at, v]) => ({ at, value: median(v)!, commits: v.length }));
+}
+
 /** The value below which `share` of the values fall (0.9 = p90). */
 export function percentile(values: number[], share: number): number | null {
   if (!values.length) return null;
@@ -453,9 +488,15 @@ export function activityFrom(projects: Project[], runs: Run[], defects: Defect[]
   const name = new Map(projects.map((p) => [p.id, p.fullName]));
   const items: ActivityItem[] = [];
   for (const r of runs.slice(0, 60)) {
-    if (r.status !== "passed" && r.status !== "failed" || !r.finishedAt) continue;
+    if (!finished(r) || !r.finishedAt) continue;
+    const to = `/projects/${r.projectId}/runs/${r.id}`;
+    if (r.status === "not_proven") {
+      // Finished, never green, never "failed": its own kind.
+      items.push({ id: `run-${r.id}`, at: r.finishedAt, kind: "run_not_proven", projectId: r.projectId, to, title: `Run #${r.number} not proven`, detail: `${r.tests.notProven} not proven · ${sha7(r.commitSha)}` });
+      continue;
+    }
     items.push({
-      id: `run-${r.id}`, at: r.finishedAt, kind: r.status === "passed" ? "run_green" : "run_failed", projectId: r.projectId, to: `/projects/${r.projectId}/runs/${r.id}`,
+      id: `run-${r.id}`, at: r.finishedAt, kind: r.status === "passed" ? "run_green" : "run_failed", projectId: r.projectId, to,
       title: r.status === "passed" ? `Run #${r.number} green` : `Run #${r.number} failed`,
       detail: r.status === "passed" ? `${Math.round(r.skipShare * 100)}% skipped with proof · ${sha7(r.commitSha)}` : r.tests.flakyDefects ? `${r.tests.flakyDefects} flaky, reproducible · ${sha7(r.commitSha)}` : `${r.tests.failed} failed · ${sha7(r.commitSha)}`,
     });
@@ -467,4 +508,134 @@ export function activityFrom(projects: Project[], runs: Run[], defects: Defect[]
   for (const p of projects)
     if (p.setupPullRequest) items.push({ id: `pr-${p.id}`, at: p.connectedAt, kind: "setup_pr", projectId: p.id, to: `/projects/${p.id}/settings`, title: `Setup pull request #${p.setupPullRequest.number} ${p.setupPullRequest.state === "merged" ? "merged" : "opened"}`, detail: name.get(p.id) ?? "" });
   return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
+}
+
+/** "homehub" of "acme/homehub". */
+export const shortName = (fullName: string) => fullName.split("/").pop() || fullName;
+
+/** At most this many search results (GET /search), and the shortest search term. */
+export const SEARCH_MAX = 20;
+export const SEARCH_MIN = 2;
+
+/** What a search term asks for: a run number ("4299", "#4299"), a commit prefix (7+ hex), and test-name text. */
+export function searchTerms(q: string): { number: number | null; commitPrefix: string | null; text: string } {
+  const t = q.trim();
+  const m = /^#?(\d{1,9})$/.exec(t);
+  const hex = /^[0-9a-f]{7,40}$/i.test(t) ? t.toLowerCase() : null;
+  return { number: m ? Number(m[1]) : null, commitPrefix: hex, text: t.toLowerCase() };
+}
+
+/**
+ * The ⌘K search over runs and open defects (GET /search): runs by number or commit prefix, open defects by test name
+ * (case-insensitive substring); newest first, at most SEARCH_MAX. Each result names its project, so runs with the
+ * same number in several projects all show.
+ */
+export function searchFrom(projects: Project[], runs: Run[], defects: Defect[], q: string): SearchResult[] {
+  const t = searchTerms(q);
+  // A run number ("6", "#6") is always a search; any other term needs SEARCH_MIN characters.
+  if (t.number === null && t.text.length < SEARCH_MIN) return [];
+  const name = new Map(projects.map((p) => [p.id, shortName(p.fullName)]));
+  const hits: { at: string; r: SearchResult }[] = [];
+  for (const r of runs) {
+    if (!name.has(r.projectId)) continue;
+    if (r.number !== t.number && !(t.commitPrefix && r.commitSha.startsWith(t.commitPrefix))) continue;
+    hits.push({ at: r.startedAt, r: { kind: "run", projectId: r.projectId, id: r.id, label: `Run #${r.number}`, sublabel: `${name.get(r.projectId)} · ${r.branch}` } });
+  }
+  for (const d of defects) {
+    if (d.state !== "open" || !name.has(d.projectId) || !d.testId.toLowerCase().includes(t.text)) continue;
+    hits.push({ at: d.lastSeenAt, r: { kind: "defect", projectId: d.projectId, id: d.id, label: d.testId.split(/::| > /).pop() ?? d.testId, sublabel: name.get(d.projectId)! } });
+  }
+  return hits.sort((a, b) => b.at.localeCompare(a.at)).slice(0, SEARCH_MAX).map((h) => h.r);
+}
+
+/** Said wherever the runner reported tests not proven without a cause. */
+export const NO_CAUSE_LABEL = "The runner did not report why";
+/** The App's reason when the verify could not compare the runs (github-app/src/results/summary.ts NOT_PROVEN_REASONS). */
+export const NOT_PROVEN_INPUTS_DIFFER = "inputs differ";
+
+/** The engine's causes as the verb phrase of a sentence about tests ("14 tests read a file outside the project"). */
+const CAUSE_PHRASES: Record<string, string> = {
+  "file read outside the project": "read a file outside the project",
+  "environment variable read outside any test": "read an environment variable outside any test",
+};
+
+const countOf = (n: number) => `${new Intl.NumberFormat("en-US").format(n)} ${n === 1 ? "test" : "tests"}`;
+
+/**
+ * The run page's sentence about its tests not proven (Run.tsx): from the largest cause the runner reported, or that it
+ * did not report one; then what the run did with them. "the run exits N" only when the summary's exit was not 0.
+ */
+export function notProvenSentence(run: Pick<Run, "exitCode" | "tests"> & { notProvenReason?: string | null }, proof: Pick<RunProof, "notProvenCauses"> | null): string {
+  const exit = run.exitCode != null && run.exitCode !== 0 ? `the run exits ${run.exitCode}` : "the check on GitHub is marked failed";
+  const after = `Their serial result is reported; ${exit}.`;
+  const n = run.tests.notProven ?? 0;
+  const top = proof != null ? [...(proof.notProvenCauses ?? [])].filter((c) => c.tests > 0).sort((a, b) => b.tests - a.tests)[0] : undefined;
+  const reason = run.notProvenReason ?? null;
+  // Inputs that differ: the runs could not be compared at all, so no count of tests is said.
+  if (!top && reason === NOT_PROVEN_INPUTS_DIFFER) return `The parallel and serial runs could not be compared: their inputs differ. The run is not proven; the check on GitHub is marked failed.`;
+  if (!top && reason) return `${countOf(n)} ${n === 1 ? "was" : "were"} not proven identical: ${reason}. ${after}`;
+  if (!top) return `${countOf(n)} ${n === 1 ? "was" : "were"} not proven identical. ${NO_CAUSE_LABEL}. ${after}`;
+  const what = CAUSE_PHRASES[top.cause] ?? `${top.tests === 1 ? "was" : "were"} not proven (${top.cause})`;
+  return `${countOf(top.tests)} ${what}, so the parallel result could not be proven equal to the serial one. ${after}`;
+}
+
+/** A run's tests not proven by cause (largest first); what the runner did not explain is NO_CAUSE_LABEL. */
+export function notProvenCausesOf(r: Run): { cause: string; tests: number }[] {
+  const n = r.tests.notProven || r.proof?.notProven || 0;
+  if (n <= 0) return [];
+  const named = r.proof != null ? (r.proof.notProvenCauses ?? []).filter((c) => c.tests > 0) : [];
+  const told = named.reduce((a, c) => a + c.tests, 0);
+  const out = told < n ? [...named, { cause: r.notProvenReason ?? NO_CAUSE_LABEL, tests: n - told }] : named;
+  return [...out].sort((a, b) => b.tests - a.tests);
+}
+
+export interface ParallelProof {
+  /** Runs of the window with parallel lanes (`proof`). */
+  withProof: Run[];
+  /** Runs of the window with a test not proven (with or without lanes), newest first. */
+  notProven: Run[];
+  /** Per day with parallel runs: the median share of the tests that ran that were proven identical. */
+  proven: { at: string; value: number }[];
+  /** Tests not proven by cause over the window, largest first, with the runs they came from. */
+  causes: { cause: string; tests: number; runs: number }[];
+  /** Per day with parallel runs: the median parallel time and the median serial estimate (null: none reported). */
+  speed: { at: string; parallelMs: number; serialMs: number | null }[];
+}
+
+/** The project's "Parallel with proof" page over the last `days` days of runs (finished runs only). */
+export function parallelProofFrom(runs: Run[], now: Date, days = 30): ParallelProof {
+  const since = new Date(now.getTime() - days * DAY).toISOString();
+  const window = runs.filter((r) => finished(r) && r.startedAt >= since);
+  const withProof = window.filter((r) => r.proof != null);
+  const notProven = window.filter(isNotProven).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const byDay = new Map<string, Run[]>();
+  for (const r of [...withProof].sort((a, b) => a.startedAt.localeCompare(b.startedAt))) {
+    const k = dayStart(new Date(r.startedAt)).toISOString();
+    (byDay.get(k) ?? byDay.set(k, []).get(k)!).push(r);
+  }
+  const daysOf = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  // Per run: (ran − N) / ran, with N the run's (never less than its proof's) and ran the tests the framework ran; a run
+  // that ran nothing is left out; nothing proven is 0.
+  const shareProven = (r: Run) => {
+    const ran = r.proof!.ranExecuted ?? r.tests.ran;
+    const n = Math.max(r.tests.notProven ?? 0, r.proof!.notProven ?? 0);
+    return ran > 0 ? Math.max(0, ran - n) / ran : null;
+  };
+  const proven = daysOf
+    .map(([at, rs]) => ({ at, values: rs.map(shareProven).filter((v): v is number => v !== null) }))
+    .filter((d) => d.values.length > 0)
+    .map((d) => ({ at: d.at, value: median(d.values)! }));
+  const speed = daysOf.map(([at, rs]) => {
+    const serial = rs.map((r) => r.proof!.serialMsEstimate).filter((v): v is number => v !== null);
+    return { at, parallelMs: median(rs.map((r) => r.proof!.parallelMs))!, serialMs: median(serial) };
+  });
+  const causes = new Map<string, { cause: string; tests: number; runs: number }>();
+  for (const r of notProven)
+    for (const c of notProvenCausesOf(r)) {
+      const cur = causes.get(c.cause) ?? { cause: c.cause, tests: 0, runs: 0 };
+      cur.tests += c.tests;
+      cur.runs += 1;
+      causes.set(c.cause, cur);
+    }
+  return { withProof, notProven, proven, causes: [...causes.values()].sort((a, b) => b.tests - a.tests), speed };
 }

@@ -131,6 +131,8 @@ export function createApiDataClient(cfg: ApiConfig): DataClient {
     listExplorations: async (projectId) => (await call(api.GET("/projects/{projectId}/explorations", { params: { header: ws(), path: { projectId } } }))).items,
     listActivity: async (projectId, limit) => (await call(api.GET("/activity", { params: { header: ws(), query: { projectId, limit } } }))).items,
 
+    search: async (q) => (await call(api.GET("/search", { params: { header: ws(), query: { q } } }))).items,
+
     listDefects: async (q = {}) => (await call(api.GET("/defects", { params: { header: ws(), query: { projectId: q.projectId || undefined, state: q.state } } }))).items,
     listDefectFamilies: async (q = {}) =>
       (await call(api.GET("/defect-families", { params: { header: ws(), query: { projectId: q.projectId || undefined, state: q.state } } }))).items as DefectFamily[],

@@ -6,11 +6,11 @@ type Row = Record<string, unknown>;
 interface DashRun {
   id: string; number: number; commitSha: string; branch: string; trigger: string; status: string; pullRequest: number | null; durationMs: number;
   startedAt: string; finishedAt: string | null; skipShare: number; minutesSaved: number; otherStepMinutes: number; githubEquivalentMinutes: number;
-  tests: { total: number; ran: number; passed: number; failed: number; skippedWithProof: number; flakyDefects: number };
-  testTimeMs: { ran: number; skipped: number }; skipMisses: Record<string, number>;
+  tests: { total: number; ran: number; passed: number; failed: number; skippedWithProof: number; flakyDefects: number; notProven: number };
+  testTimeMs: { ran: number; skipped: number }; skipMisses: Record<string, number>; proof: unknown; exitCode: number | null;
 }
 interface DashProject { id: string; fullName: string; language: string; testRunner: string; setupState: string; installationId: number }
-// The customer dashboard's own row mappers (src/data/ci-rows.ts, unchanged from main): what it shows is what it reads.
+// The customer dashboard's own row mappers (src/data/ci-rows.ts): what it shows is what it reads.
 // Loaded at run time (that file is type-checked by the dashboard's own tsconfig, not this one).
 const { mapProject, mapRun } = (await import(new URL("../../../src/data/ci-rows.ts", import.meta.url).href)) as {
   mapRun: (r: Row) => DashRun; mapProject: (r: Row) => DashProject;
@@ -79,7 +79,10 @@ describe("the rows the App writes, read by the dashboard (src/data/ci-rows.ts)",
     assert.equal(new Date(run.startedAt).toISOString(), "2026-11-18T10:00:00.000Z");
     assert.equal(new Date(run.finishedAt!).toISOString(), "2026-11-18T10:03:00.000Z");
     // Counts as the run page shows them: passed + failed + skipped with proof = total; ran + skipped = total.
-    assert.deepEqual(run.tests, { total: 56, ran: 11, passed: 10, failed: 1, skippedWithProof: 45, flakyDefects: 0 });
+    assert.deepEqual(run.tests, { total: 56, ran: 11, passed: 10, failed: 1, skippedWithProof: 45, flakyDefects: 0, notProven: 0 });
+    // A serial run (no proof block in its summary): no proof.
+    assert.equal(run.proof, null);
+    assert.equal(run.exitCode, 1);
     assert.equal(run.tests.passed + run.tests.failed + run.tests.skippedWithProof, run.tests.total);
     assert.ok(run.testTimeMs.ran > 0 && run.testTimeMs.skipped > 0);
     assert.ok(run.skipShare > 0 && run.skipShare < 1);

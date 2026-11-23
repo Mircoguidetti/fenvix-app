@@ -2,7 +2,8 @@ import type { Client, Db } from "./db.ts";
 import { GitHubError, type GitHubApp, type GitHubHttp, repoPath } from "./github/client.ts";
 import { onboardRepository, type OnboardingResult } from "./onboarding/onboard.ts";
 import { CHECK_NAME, COMMENT_MARKER, checkRunOutput, conclusionOf, prComment, type RenderContext } from "./results/render.ts";
-import { parseSummary, type RunSummary } from "./results/summary.ts";
+import { NOT_PROVEN_REASONS, parseSummary, proofRecord, type RunSummary } from "./results/summary.ts";
+import { runStatus } from "./results/status.ts";
 import { createHash, randomBytes, type KeyObject } from "node:crypto";
 import { applyChunks, applyExploration, type JobKey } from "./results/apply.ts";
 import { projectStack, type Stack } from "./results/detect.ts";
@@ -77,7 +78,11 @@ interface WorkflowRunP {
 /** What the organization's settings say for a job: where its machine runs, and the trial's mode. */
 interface OrgContext { region: Region; mode: RunMode }
 /** The values of a run row the job gives; no completion time: the run is still running. */
-interface RunValues { startedAt: Date; completedAt: Date | null; durationMs: number; otherStepMinutes: number; mode: RunMode; region: Region | null }
+interface RunValues {
+  startedAt: Date; completedAt: Date | null; durationMs: number; otherStepMinutes: number; mode: RunMode; region: Region | null;
+  /** A summary came but could not be read (parseSummary threw): the run is not proven, never green. */
+  summaryUnreadable?: boolean;
+}
 interface RepoRow {
   repository_id: number; installation_id: number; workspace_id: string | null; full_name: string; default_branch: string | null;
   project_id: string | null; onboarding_state: string; setup_pr_number: number | null; setup_pr_url: string | null;
@@ -711,24 +716,28 @@ export class GitHubService {
        where j.repository_id = $1 and j.run_id = $2 and j.run_attempt = $3 and j.runner_name = $4
          and j.published_at is not null and j.ci_run_id is not null and i.workspace_id is not null`,
       [...key]);
-    for (const j of jobs) await this.applyResults(j.workspace_id, j.ci_run_id, o);
+    for (const j of jobs) {
+      // Late chunks with not_proven tests turned a finished run not proven: its check run and comment say so again,
+      // through the same publication (the usage event is not counted twice: one per job).
+      if (await this.applyResults(j.workspace_id, j.ci_run_id, o)) await this.republish(j.job_id);
+    }
     return "stored";
   }
 
   /** Applies the job's chunks not applied yet to its run (src/results/apply.ts). Marks each applied, or why not. */
-  private async applyResults(ws: string, ciRunId: string, key: JobKey): Promise<void> {
+  private async applyResults(ws: string, ciRunId: string, key: JobKey): Promise<boolean> {
     const rows = await this.db.q<{ id: number; chunk: number; payload: unknown }>(
       `select id, chunk, payload from gh_run_results
        where repository_id = $1 and run_id = $2 and run_attempt = $3 and runner_name = $4 and applied_at is null order by chunk, id`,
       [key.repositoryId, key.runId, key.runAttempt, key.runnerName]);
-    if (!rows.length) return;
+    if (!rows.length) return false;
     const chunks: { id: number; chunk: number; payload: RunnerResults }[] = [];
     for (const r of rows) {
       try { chunks.push({ id: r.id, chunk: r.chunk, payload: parseResults(r.payload) }); } catch (e) {
         await this.db.q("update gh_run_results set apply_error = $2 where id = $1", [r.id, (e instanceof Error ? e.message : String(e)).slice(0, 1000)]);
       }
     }
-    if (!chunks.length) return;
+    if (!chunks.length) return false;
     try {
       const out = await this.db.tx(ws, async (c) => {
         // One application at a time per run (chunks arriving together).
@@ -739,9 +748,10 @@ export class GitHubService {
         const res = await applyChunks(c, { id: run.id, projectId: run.project_id, language: run.language, seenAt: run.seen_at, maxTestMs: run.duration_ms === null ? null : Number(run.duration_ms) }, key, chunks);
         if (res.applied.length) await c.query("update gh_run_results set applied_at = now(), apply_error = null where id = any($1::bigint[])", [res.applied]);
         for (const p of res.pending) await c.query("update gh_run_results set apply_error = $2 where id = $1", [p.id, p.error]);
-        return res;
+        return { ...res, flipped: await this.reconcileNotProven(c, run.id) };
       });
-      if (out) this.log.info({ run: ciRunId, applied: out.applied.length, pending: out.pending.length }, "runner results applied");
+      if (out) this.log.info({ run: ciRunId, applied: out.applied.length, pending: out.pending.length, notProvenRaised: out.flipped }, "runner results applied");
+      return out?.flipped ?? false;
     } catch (e) {
       const msg = (e instanceof Error ? e.message : String(e)).slice(0, 1000);
       await this.db.q("update gh_run_results set apply_error = $2 where id = any($1::bigint[])", [chunks.map((c) => c.id), msg]);
@@ -842,8 +852,17 @@ export class GitHubService {
     let summary: RunSummary | null = null;
     let summaryError: string | null = null;
     if (sumRow) {
-      try { summary = parseSummary(sumRow.summary); } catch (e) { summaryError = e instanceof Error ? e.message : String(e); }
+      try { summary = parseSummary(sumRow.summary); } catch (e) {
+        summaryError = e instanceof Error ? e.message : String(e);
+        // A summary that came but cannot be read is never green: the run is not proven (runStatus, conclusionOf).
+        this.log.error({ job: job.job_id, err: summaryError }, "the runner's summary could not be read: the run is not proven");
+      }
     }
+    const summaryUnreadable = !!sumRow && !summary;
+    // Per-test not_proven rows already stored for this job's run (a re-publication after late chunks) count too.
+    const withRows = (n: number) => {
+      if (summary && n > summary.notProven) summary = { ...summary, notProven: n, notProvenReason: summary.notProvenReason };
+    };
     const gh = this.gh.installation(job.installation_id);
     const base = repoPath(repo.full_name);
 
@@ -902,7 +921,8 @@ export class GitHubService {
           // Never summary.json's or the results' (review R-016 F4).
           const mode = lock?.mode ?? (await this.orgContext(c)).mode;
           if (!lock?.mode) await c.query("update gh_jobs set mode = $2 where job_id = $1 and mode is null", [job.job_id, mode]);
-          const values: RunValues = { startedAt, completedAt, durationMs, otherStepMinutes, mode, region: lock?.region ?? null };
+          const values: RunValues = { startedAt, completedAt, durationMs, otherStepMinutes, mode, region: lock?.region ?? null, summaryUnreadable };
+          if (started) withRows(await this.notProvenRows(c, started.id));
           if (started && billable) {
             await this.finishRun(c, started.id, job, summary, run, pr?.number ?? null, values);
             ciRunId = started.id;
@@ -937,17 +957,20 @@ export class GitHubService {
     if (ws && ciRunId && job.runner_name) {
       await this.applyResults(ws, ciRunId, { repositoryId: job.repository_id, runId: job.run_id, runAttempt: job.run_attempt, runnerName: job.runner_name })
         .catch((e: unknown) => this.log.error({ job: job.job_id, err: e instanceof Error ? e.message : String(e) }, "the runner's results could not be applied"));
+      // Chunks applied just now may hold not_proven tests the summary did not count: the check run says so too.
+      const runId: string = ciRunId;
+      withRows(await this.db.tx(ws, (c) => this.notProvenRows(c, runId)));
     }
 
     const dashboardRunUrl = projectId && ciRunId ? `${this.s.dashboardUrl}/projects/${projectId}/runs/${ciRunId}` : null;
     const jobUrl = `${this.s.webUrl}/${repo.full_name}/actions/runs/${job.run_id}/job/${job.job_id}`;
     const ctx: RenderContext = {
       repository: repo.full_name, headSha: job.head_sha, workflowName: job.workflow_name || "workflow", jobName: job.job_name, jobUrl,
-      receiptsUrl: sumRow?.receipts_url ?? dashboardRunUrl, dashboardRunUrl, jobConclusion: job.conclusion,
+      receiptsUrl: sumRow?.receipts_url ?? dashboardRunUrl, dashboardRunUrl, jobConclusion: job.conclusion, summaryUnreadable,
     };
     const output = checkRunOutput(summary, ctx);
     if (summaryError) output.summary = `The runner's summary could not be read (${summaryError}).\n\n` + output.summary;
-    const conclusion = conclusionOf(summary, job.conclusion);
+    const conclusion = conclusionOf(summary, job.conclusion, summaryUnreadable);
     const checkBody = {
       name: CHECK_NAME, status: "completed", conclusion, completed_at: completedAt.toISOString(), external_id: String(job.job_id),
       details_url: dashboardRunUrl ?? jobUrl, output,
@@ -971,16 +994,50 @@ export class GitHubService {
     this.log.info({ repository: repo.full_name, job: job.job_id, conclusion, billable, pr: pr?.number ?? null }, "run published");
   }
 
+  /** The run's per-test results with outcome not_proven. */
+  private async notProvenRows(c: Client, runId: string): Promise<number> {
+    return (await c.query<{ n: number }>("select count(*)::int as n from ci_test_results where run_id = $1 and outcome = 'not_proven'", [runId])).rows[0]!.n;
+  }
+
+  /**
+   * Per-test not_proven rows raise the run: tests_not_proven = greatest(stored, rows), passed lowered by as many, and a
+   * passed run becomes not_proven. True when the run changed (its check run must be published again).
+   */
+  private async reconcileNotProven(c: Client, runId: string): Promise<boolean> {
+    const r = await c.query(
+      `with x as (select count(*)::int as n from ci_test_results where run_id = $1 and outcome = 'not_proven')
+       update ci_runs r set tests_passed = greatest(0, r.tests_passed - (x.n - r.tests_not_proven)), tests_not_proven = x.n,
+         status = case when r.status = 'passed' then 'not_proven' else r.status end
+       from x where r.id = $1 and r.status <> 'running' and x.n > r.tests_not_proven returning r.id`, [runId]);
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  /** Publishes a published job again (its check run, comment and run row), through publish itself. */
+  private async republish(jobId: number): Promise<void> {
+    const [job] = await this.db.q<JobRow>("select * from gh_jobs where job_id = $1", [jobId]);
+    if (!job || !job.published_at || !job.runner_name) return;
+    const [sumRow] = await this.db.q<{ summary: Record<string, unknown>; receipts_url: string | null }>(
+      "select summary, receipts_url from gh_run_summaries where repository_id = $1 and run_id = $2 and run_attempt = $3 and runner_name = $4",
+      [job.repository_id, job.run_id, job.run_attempt, job.runner_name]);
+    await this.publish(job, sumRow ?? null).catch((e: unknown) => this.log.error({ job: jobId, err: e instanceof Error ? e.message : String(e) }, "republish after late results failed"));
+  }
+
   /** The trigger, the status and the counts of a run from the job, its workflow run and the runner's summary. */
-  private runFields(job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, durationMs: number | null = null) {
+  private runFields(job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, durationMs: number | null = null, summaryUnreadable = false) {
     const event = run?.event ?? (pr ? "pull_request" : "push");
     const trigger = TRIGGERS.has(event) ? event : event === "pull_request_target" ? "pull_request" : "workflow_dispatch";
     const fails = s ? s.failed.length + s.flaky.length : 0;
-    const status = job.conclusion === "cancelled" ? "cancelled" : s ? (fails || s.exit !== 0 ? "failed" : "passed") : job.conclusion === "success" ? "passed" : "failed";
-    const passedRan = s ? Math.max(0, Math.min(s.ran - fails, (s.outcomeCounts.passed ?? s.ran) - s.reusedWithProof)) : 0;
+    const status = runStatus(job.conclusion, s, { summaryUnreadable });
+    // N (RunSummary.notProven), the one value runStatus uses: never counted as passed (status not_proven ⇒ N ≥ 1). An
+    // unreadable summary is N = 1 with its reason.
+    const unreadable = !s && summaryUnreadable && status === "not_proven";
+    const notProven = s ? s.notProven : unreadable ? 1 : 0;
+    const notProvenReason = s ? s.notProvenReason : unreadable ? NOT_PROVEN_REASONS.summaryUnreadable : null;
+    const passedRan = s ? Math.max(0, Math.min(s.ran - fails, (s.outcomeCounts.passed ?? s.ran) - s.reusedWithProof) - notProven) : 0;
     return {
       trigger, status, commitMessage: (run?.head_commit?.message ?? "").split("\n")[0]!.slice(0, 500),
       tests: [s?.tests ?? 0, s?.ran ?? 0, passedRan, fails, s?.reusedWithProof ?? 0, s?.flaky.length ?? 0] as const,
+      notProven, notProvenReason, proof: s?.proof ? JSON.stringify(proofRecord(s.proof, s.ranExecuted)) : null, exitCode: s ? s.exit : null,
       // Test time run: at most the job's own duration (GitHub's timings), whatever the summary says.
       timeRanMs: Math.round(Math.min((s?.testSecondsRun ?? 0) * 1000, durationMs ?? Infinity)), timeSkippedMs: Math.round((s?.testSecondsSaved ?? 0) * 1000),
     };
@@ -990,32 +1047,33 @@ export class GitHubService {
   private async insertRun(c: Client, projectId: string, job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, v: RunValues): Promise<string> {
     const [push] = (await c.query<{ pushed_at: Date }>("select pushed_at from gh_pushes where repository_id = $1 and sha = $2", [job.repository_id, job.head_sha])).rows;
     const pushedAt = push?.pushed_at ?? (run?.created_at ? new Date(run.created_at) : job.created_at ?? v.startedAt);
-    const f = this.runFields(job, s, run, pr, v.completedAt ? v.durationMs : null);
+    const f = this.runFields(job, s, run, pr, v.completedAt ? v.durationMs : null, v.summaryUnreadable);
     const status = v.completedAt ? f.status : "running";
     const r = await c.query<{ id: string }>(
       `insert into ci_runs (workspace_id, project_id, number, commit_sha, commit_message, branch, pull_request, trigger, status, pushed_at, started_at,
          finished_at, duration_ms, tests_total, tests_ran, tests_passed, tests_failed, tests_skipped, tests_flaky_defects, test_time_ran_ms,
-         test_time_skipped_ms, other_step_minutes, engine_version, skip_misses, mode, region)
+         test_time_skipped_ms, other_step_minutes, engine_version, skip_misses, mode, region, tests_not_proven, proof, exit_code, not_proven_reason)
        values (public.cp_workspace(), $1, (select coalesce(max(number), 0) + 1 from ci_runs where project_id = $1), $2, $3, $4, $5, $6, $7, $8, $9,
-         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, round($20::numeric, 2), $21, $22, $23, $24)
+         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, round($20::numeric, 2), $21, $22, $23, $24, $25, $26::jsonb, $27, $28)
        returning id`,
       [projectId, job.head_sha, f.commitMessage, job.head_branch ?? "", pr, f.trigger, status,
         pushedAt, v.startedAt, v.completedAt, v.durationMs, ...f.tests, f.timeRanMs, f.timeSkippedMs, v.otherStepMinutes, s?.engineVersion ?? "",
-        JSON.stringify(s?.notReusedReasons ?? {}), v.mode, v.region]);
+        JSON.stringify(s?.notReusedReasons ?? {}), v.mode, v.region, v.completedAt ? f.notProven : 0, v.completedAt ? f.proof : null, v.completedAt ? f.exitCode : null,
+        v.completedAt ? f.notProvenReason : null]);
     return r.rows[0]!.id;
   }
 
   /** The row started at in_progress gets the finished values (the same row: a job is one run). */
   private async finishRun(c: Client, id: string, job: JobRow, s: RunSummary | null, run: WorkflowRunP | null, pr: number | null, v: RunValues): Promise<void> {
-    const f = this.runFields(job, s, run, pr, v.durationMs);
+    const f = this.runFields(job, s, run, pr, v.durationMs, v.summaryUnreadable);
     await c.query(
       `update ci_runs set commit_message = case when $2 <> '' then $2 else commit_message end, pull_request = coalesce($3, pull_request), trigger = $4,
          status = $5, started_at = $6, finished_at = $7, duration_ms = $8, tests_total = $9, tests_ran = $10, tests_passed = $11, tests_failed = $12,
          tests_skipped = $13, tests_flaky_defects = $14, test_time_ran_ms = $15, test_time_skipped_ms = $16, other_step_minutes = round($17::numeric, 2),
-         engine_version = $18, skip_misses = $19, mode = $20
+         engine_version = $18, skip_misses = $19, mode = $20, tests_not_proven = $21, proof = $22::jsonb, exit_code = $23, not_proven_reason = $24
        where id = $1`,
       [id, f.commitMessage, pr, f.trigger, f.status, v.startedAt, v.completedAt, v.durationMs, ...f.tests, f.timeRanMs, f.timeSkippedMs, v.otherStepMinutes,
-        s?.engineVersion ?? "", JSON.stringify(s?.notReusedReasons ?? {}), v.mode]);
+        s?.engineVersion ?? "", JSON.stringify(s?.notReusedReasons ?? {}), v.mode, f.notProven, f.proof, f.exitCode, f.notProvenReason]);
   }
 
   /** One fenvix comment per pull request: updated in place; found again by its marker if our record of it is lost. */

@@ -1,5 +1,6 @@
 import { backend } from "../lib/env";
 import type { DataClient } from "./client";
+import { withCompat } from "./compat";
 
 /**
  * The single place that picks the data source:
@@ -7,7 +8,8 @@ import type { DataClient } from "./client";
  *   - VITE_DATA_BACKEND=mock: the sample data, for local development and the checks, loaded on demand (a real build
  *     never downloads it).
  */
-export const client: DataClient = backend === "mock" ? (await import("./mock")).mockClient : (await import("./api-browser")).apiClient;
+// Every client is read through withCompat (./compat.ts): the console works against an API one release older.
+export const client: DataClient = withCompat(backend === "mock" ? (await import("./mock")).mockClient : (await import("./api-browser")).apiClient);
 export type { DataClient, RunLive, RunQuery } from "./client";
 export * from "./types";
 

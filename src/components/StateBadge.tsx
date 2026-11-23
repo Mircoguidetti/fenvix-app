@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { BadgeCheck, Check, Clock, Minus, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { BadgeCheck, Check, Clock, Minus, ShieldQuestion, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import type { InstallationStatus, OnboardingState, RunStatus } from "../data";
 
 /**
@@ -11,8 +11,11 @@ export type Tone = "ok" | "warn" | "danger" | "neutral";
 
 const TONE_ICON: Record<Tone, LucideIcon> = { ok: Check, danger: X, warn: Clock, neutral: Minus };
 
-/** Icons a state may use instead of its tone's default: the seal of a test skipped with proof, the mark of an open defect. */
-export const STATE_ICONS = { seal: BadgeCheck, alert: TriangleAlert } as const;
+/**
+ * Icons a state may use instead of its tone's default: the seal of a test skipped with proof, the mark of an open
+ * defect, the shield with a question mark of a run or test not proven identical to the serial run.
+ */
+export const STATE_ICONS = { seal: BadgeCheck, alert: TriangleAlert, unproven: ShieldQuestion } as const;
 
 export function StatusPill({ tone, icon, children }: { tone: Tone; icon?: LucideIcon; children: ReactNode }) {
   const cls = tone === "ok" ? "state state-ok" : tone === "warn" ? "state state-warn" : tone === "danger" ? "state state-danger" : "state";
@@ -56,8 +59,21 @@ export function InvoiceStatus({ status }: { status: "paid" | "open" }) {
   return <StatusPill tone={status === "paid" ? "ok" : "warn"}>{status === "paid" ? "Paid" : "Open"}</StatusPill>;
 }
 
-/** A run: green passed, red failed, amber running, grey cancelled. The word always says it too. */
-export function RunStatusPill({ status }: { status: RunStatus }) {
-  const tone: Tone = status === "passed" ? "ok" : status === "failed" ? "danger" : status === "running" ? "warn" : "neutral";
+/**
+ * A run: green passed, red failed, amber running, amber not proven (a shield with a question mark, never green: at
+ * least one test was not proven identical to the serial run; `count` is how many, always shown), grey cancelled. The
+ * word always says it too.
+ */
+export function RunStatusPill({ status, count }: { status: RunStatus; count?: number }) {
+  const tone: Tone = status === "passed" ? "ok" : status === "failed" ? "danger" : status === "running" || status === "not_proven" ? "warn" : "neutral";
+  const known: string[] = ["passed", "failed", "running", "not_proven", "cancelled"];
+  // A status this console does not know yet (a newer API): grey and "Unknown", never one of the known words.
+  if (!known.includes(status)) return <StatusPill tone="neutral">Unknown</StatusPill>;
+  if (status === "not_proven")
+    return (
+      <StatusPill tone={tone} icon={STATE_ICONS.unproven}>
+        Not proven{count !== undefined ? ` · ${count.toLocaleString("en-US")}` : ""}
+      </StatusPill>
+    );
   return <StatusPill tone={tone}>{status === "passed" ? "Passed" : status === "failed" ? "Failed" : status === "running" ? "Running" : "Cancelled"}</StatusPill>;
 }

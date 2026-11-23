@@ -31,6 +31,8 @@ export type ProjectRow = S["ProjectRow"];
 export type MinuteBreakdown = S["MinuteBreakdown"];
 export type RunTests = S["RunTests"];
 export type RunProgress = S["RunProgress"];
+/** The run's test command ran in parallel lanes and each test was checked against the serial run. */
+export type RunProof = S["RunProof"];
 /** skipMisses is keyed by the reason a test was not reused. */
 export type Run = Omit<S["Run"], "skipMisses"> & { skipMisses: Partial<Record<MissKind, number>> };
 export type RunDetail = { run: Run; project: Project };
@@ -68,6 +70,8 @@ export type Warmup = S["Warmup"];
 /** What the setup pull request changes. */
 export type SetupChange = S["SetupChange"];
 export type SkipSharePoint = S["SkipSharePoint"];
+/** One result of the ⌘K search (GET /search): a run or an open defect. */
+export type SearchResult = S["SearchResult"];
 
 /** One page of a list. Pages are numbered from 1. */
 export interface Page<T> {

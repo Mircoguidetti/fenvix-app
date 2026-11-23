@@ -5,16 +5,18 @@
  */
 import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowRight, Check, Moon, TriangleAlert, X } from "lucide-react";
+import { ArrowRight, Check, Moon, ShieldQuestion, TriangleAlert, X } from "lucide-react";
 import { client, type ActivityItem, type AuditSummary, type ProjectRow } from "../data";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
-import { AreaSeriesChart, BeforeWithChart, HBars, TimeBarsChart } from "../components/charts";
+import { AreaSeriesChart, BeforeWithChart, CostLineChart, HBars, TimeBarsChart } from "../components/charts";
+import { CopyButton } from "../components/CopyButton";
+import { CardSkeleton, KpiSkeleton, PageSkeleton } from "../components/Skeleton";
 import { MinuteSum, SAVED_NOTE, shortTest } from "../components/ci";
-import { StatusPill } from "../components/StateBadge";
+import { RunStatusPill, StatusPill } from "../components/StateBadge";
 import { useProjectTitle } from "../components/Shell";
 import { useAsync } from "../lib/useAsync";
 import { formatCount, formatDate, formatDateTime, formatDuration, formatMinutes, formatPercent, formatRelative, shortSha } from "../lib/format";
-import { MISS_LABELS, median, missSummary, percentile, setupSnippet, timeToGreenPerCommit } from "../data/ci";
+import { finished as isFinished, MISS_LABELS, median, missSummary, NO_CAUSE_LABEL, notProvenCausesOf, parallelProofFrom, percentile, setupSnippet, timeToGreenPerCommit } from "../data/ci";
 import { languageLabel } from "./Projects";
 
 const DAY = 86_400_000;
@@ -35,7 +37,7 @@ export function ActivityList({ items, now }: { items: ActivityItem[]; now: Date 
   return (
     <ul className="activity">
       {items.map((a) => {
-        const Icon = a.kind === "run_green" ? Check : a.kind === "run_failed" ? X : a.kind === "defect_reproduced" ? TriangleAlert : a.kind === "exploration" ? Moon : ArrowRight;
+        const Icon = a.kind === "run_green" ? Check : a.kind === "run_failed" ? X : a.kind === "run_not_proven" ? ShieldQuestion : a.kind === "defect_reproduced" ? TriangleAlert : a.kind === "exploration" ? Moon : ArrowRight;
         return (
           <li key={a.id}>
             <span className="activity-icon" data-kind={a.kind} aria-hidden="true">
@@ -80,7 +82,7 @@ export function SkipWithProofPage() {
   if (project.status === "error") return <Message role="alert">{project.message}</Message>;
   const p = project.data;
   if (!p) return <Missing what="Project" />;
-  const finished = runs.status === "ready" ? runs.data.filter((r) => r.status === "passed" || r.status === "failed") : [];
+  const finished = runs.status === "ready" ? runs.data.filter(isFinished) : [];
   const skippedTests = finished.reduce((a, r) => a + r.tests.skippedWithProof, 0);
   const ranTests = finished.reduce((a, r) => a + r.tests.ran, 0);
   const lowest = [...finished].sort((a, b) => a.skipShare - b.skipShare).slice(0, 5);
@@ -522,6 +524,172 @@ export function TimeToGreenPage() {
                     <td data-label="Skipped with proof" className="num mono">
                       {formatPercent(x.run.skipShare)}
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- Parallel with proof
+
+/**
+ * The project's parallel runs over 30 days: how much of each run was proven identical to the serial run, why tests
+ * were not proven, the speed against the serial estimate, and the runs with tests not proven. Computed here from the
+ * project's runs (no endpoint of its own), like Skip with proof.
+ */
+export function ParallelWithProofPage() {
+  const { id, project } = useProjectPage();
+  const now = client.now();
+  const since = new Date(now.getTime() - 30 * DAY).toISOString();
+  const runs = useAsync(async () => (await client.listRuns(id, { since })).items, [id]);
+  const proof = useMemo(() => (runs.status === "ready" ? parallelProofFrom(runs.data, now) : null), [runs]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (project.status === "loading") return <PageSkeleton kpis={3} cards={2} label="Loading project" />;
+  if (project.status === "error") return <Message role="alert">{project.message}</Message>;
+  const p = project.data;
+  if (!p) return <Missing what="Project" />;
+  const header = (
+    <PageHeader
+      back={<Kicker>{p.fullName}</Kicker>}
+      title="Parallel with proof"
+      description="The test command runs in parallel lanes; then each test is checked against the serial run. A run is green only when every test is proven identical."
+    />
+  );
+  if (runs.status === "error") return (<>{header}<Message role="alert">{runs.message}</Message></>);
+  if (!proof)
+    return (
+      <>
+        {header}
+        <KpiSkeleton count={3} />
+        <CardSkeleton body={220} />
+      </>
+    );
+  if (proof.withProof.length === 0 && proof.notProven.length === 0)
+    return (
+      <>
+        {header}
+        <div className="empty" id="parallel-empty">
+          <h2>No parallel runs yet</h2>
+          <p className="muted">No run has used parallel lanes yet. Runs with parallel lanes show here, with the proof for each.</p>
+          <CopyButton value={setupSnippet(p)} what="setup snippet" text="Copy the test job" />
+        </div>
+      </>
+    );
+  const identical = proof.withProof.filter((r) => !r.tests.notProven && !r.proof!.notProven).length;
+  const speedups = proof.withProof.filter((r) => r.proof!.serialMsEstimate).map((r) => r.proof!.serialMsEstimate! / Math.max(1, r.proof!.parallelMs));
+  const speedup = median(speedups);
+  const time = (ms: number) => formatDuration(ms);
+  return (
+    <>
+      {header}
+      <div className="kpis kpis-3">
+        <div className="kpi">
+          <strong className="kpi-value">{proof.withProof.length ? `${formatCount(identical)} of ${formatCount(proof.withProof.length)}` : "–"}</strong>
+          <span className="kpi-label">Proven identical</span>
+          <span className="kpi-sub muted small">runs with parallel lanes, last 30 days</span>
+        </div>
+        <div className="kpi">
+          <strong className="kpi-value">{formatCount(proof.notProven.length)}</strong>
+          <span className="kpi-label">Runs not proven</span>
+          <span className="kpi-sub muted small">{formatCount(proof.causes.reduce((a, c) => a + c.tests, 0))} tests, last 30 days</span>
+        </div>
+        <div className="kpi">
+          <strong className="kpi-value">{speedup === null ? "–" : `${speedup.toFixed(1)}×`}</strong>
+          <span className="kpi-label">Faster than serial</span>
+          <span className="kpi-sub muted small">median, against the serial estimate</span>
+        </div>
+      </div>
+      <Card id="proven-trend" title="Proven over time" description="Median share of the tests that ran proven identical to the serial run, per day, last 30 days (runs with parallel lanes).">
+        {proof.proven.length > 1 ? <AreaSeriesChart points={proof.proven} range="30d" valueLabel={(n) => formatPercent(n)} /> : <p className="muted">Not enough days with parallel runs yet.</p>}
+      </Card>
+      <div className="grid-2 even">
+        <Card id="causes" title="Why tests were not proven" description="Tests not proven identical to the serial run, by the cause the runner reported, last 30 days.">
+          {proof.causes.length === 0 ? (
+            <p className="muted">Every test of every parallel run was proven identical.</p>
+          ) : (
+            <div className="table-card flush">
+              <table className="data responsive">
+                <caption className="sr-only">Why tests were not proven</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Cause</th>
+                    <th scope="col" className="num">
+                      Tests
+                    </th>
+                    <th scope="col" className="num">
+                      Runs
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {proof.causes.map((c) => (
+                    <tr key={c.cause}>
+                      <td data-label="Cause">{c.cause}</td>
+                      <td data-label="Tests" className="num mono">
+                        {formatCount(c.tests)}
+                      </td>
+                      <td data-label="Runs" className="num mono">
+                        {formatCount(c.runs)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+        <Card id="speed" title="Speed" description="Median per day: the parallel time of the test command, against the serial time the runner estimated.">
+          {proof.speed.length > 1 ? (
+            <CostLineChart
+              points={proof.speed.map((x) => ({ at: x.at, cost: x.parallelMs, reference: x.serialMs }))}
+              format={time}
+              axisFormat={time}
+              names={{ main: "Parallel", reference: "Serial (estimate)", summary: (v) => `Latest day: ${v} in parallel.`, label: (v) => `Parallel time per day, latest ${v}, against the serial estimate.` }}
+            />
+          ) : (
+            <p className="muted">Not enough days with parallel runs yet.</p>
+          )}
+        </Card>
+      </div>
+      <Card id="not-proven-runs" title="Runs with tests not proven" description="Each run's not proven tests and the largest cause. Open a run for the tests and their serial results.">
+        {proof.notProven.length === 0 ? (
+          <p className="muted">None in the last 30 days.</p>
+        ) : (
+          <div className="table-card flush">
+            <table className="data responsive">
+              <caption className="sr-only">Runs with tests not proven</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Run</th>
+                  <th scope="col">Branch</th>
+                  <th scope="col" className="num">
+                    Not proven
+                  </th>
+                  <th scope="col">Largest cause</th>
+                </tr>
+              </thead>
+              <tbody>
+                {proof.notProven.map((r) => (
+                  <tr key={r.id}>
+                    <td data-label="Run">
+                      <span className="inline-pair">
+                        <Link to={`/projects/${id}/runs/${r.id}`} className="row-link mono">
+                          #{r.number}
+                        </Link>
+                        <RunStatusPill status={r.status} count={r.tests.notProven} />
+                      </span>
+                    </td>
+                    <td data-label="Branch" className="mono break-anywhere">
+                      {r.pullRequest ? `#${r.pullRequest} · ${r.branch}` : r.branch}
+                    </td>
+                    <td data-label="Not proven" className="num mono">
+                      {formatCount(r.tests.notProven)}
+                    </td>
+                    <td data-label="Largest cause">{notProvenCausesOf(r)[0]?.cause ?? NO_CAUSE_LABEL}</td>
                   </tr>
                 ))}
               </tbody>

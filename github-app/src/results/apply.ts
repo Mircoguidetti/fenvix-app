@@ -41,6 +41,8 @@ export interface TestRow {
   test_id: string; outcome: RunnerTestOutcome["outcome"]; duration_ms: number; failure_kind: "real" | "flaky_defect" | null;
   failure_phase: string | null; exception_type: string | null; failure_message: string | null; failure_location: string | null;
   defect_fingerprint: string | null;
+  /** Only for a not_proven test: why, when the runner said (ci_test_results' check allows it on no other outcome). */
+  not_proven_cause?: string | null;
 }
 
 /** A per-test outcome as ci_test_results stores it: failure fields only for a failed test (a failed test always has a kind). */
@@ -51,6 +53,7 @@ export function testRow(t: RunnerTestOutcome): TestRow {
     failure_kind: f?.kind ?? null, failure_phase: f ? (f.phase ?? "call") : null, exception_type: f?.exceptionType ?? null,
     failure_message: f?.message ?? null, failure_location: f?.location ?? null,
     defect_fingerprint: f?.kind === "flaky_defect" ? (f.defectFingerprint ?? null) : null,
+    ...(t.outcome === "not_proven" ? { not_proven_cause: t.notProvenCause ?? null } : {}),
   };
 }
 
@@ -199,20 +202,21 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
   if (ready.length) {
     await c.query(
       `insert into ci_test_results (run_id, workspace_id, test_id, outcome, duration_ms, failure_kind, failure_phase, exception_type, failure_message,
-         failure_location, defect_id, receipt_id)
+         failure_location, defect_id, receipt_id, not_proven_cause)
        select $1, public.cp_workspace(), x.test_id, x.outcome, x.duration_ms, x.failure_kind, x.failure_phase, x.exception_type, x.failure_message,
          x.failure_location,
          case when x.failure_kind = 'flaky_defect' then (
            select d.id from ci_defects d where d.project_id = $2 and d.test_id = x.test_id
              and (d.fingerprint = x.defect_fingerprint or (x.defect_fingerprint is null and d.last_run_id = $1))
            order by d.last_seen_at desc limit 1) end,
-         case when x.outcome = 'skipped_with_proof' then (select r.id from ci_skip_receipts r where r.run_id = $1 and r.test_id = x.test_id) end
+         case when x.outcome = 'skipped_with_proof' then (select r.id from ci_skip_receipts r where r.run_id = $1 and r.test_id = x.test_id) end,
+         case when x.outcome = 'not_proven' then x.not_proven_cause end
        from jsonb_to_recordset($3::jsonb) as x(test_id text, outcome text, duration_ms bigint, failure_kind text, failure_phase text, exception_type text,
-         failure_message text, failure_location text, defect_fingerprint text)
+         failure_message text, failure_location text, defect_fingerprint text, not_proven_cause text)
        on conflict (run_id, test_id) do update set outcome = excluded.outcome, duration_ms = excluded.duration_ms, failure_kind = excluded.failure_kind,
          failure_phase = excluded.failure_phase, exception_type = excluded.exception_type, failure_message = excluded.failure_message,
          failure_location = excluded.failure_location, defect_id = coalesce(excluded.defect_id, ci_test_results.defect_id),
-         receipt_id = excluded.receipt_id`,
+         receipt_id = excluded.receipt_id, not_proven_cause = excluded.not_proven_cause`,
       [run.id, run.projectId, JSON.stringify(ready)]);
   }
   // A flaky failure whose bundle came in a later chunk: linked now.

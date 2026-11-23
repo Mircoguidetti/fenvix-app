@@ -74,7 +74,10 @@ white, so on the white content it reads as a sheen rather than a stripe.
 | Place | State | Colour | Word or icon | Class |
 | --- | --- | --- | --- | --- |
 | Run status (project runs, run page, projects list) | passed / failed / running | green, red, amber dot and border | "Passed", "Failed", "Running" ("Cancelled" stays grey) | `.state-ok`, `.state-danger`, `.state-warn` (`RunStatusPill`) |
+| Run status (project runs, run page, projects list, Parallel with proof) | not proven: a test was not proven identical to the serial run | amber border, never green | a shield with a question mark and "Not proven · N" (the count always shown) | `.state-warn` (`RunStatusPill`, `STATE_ICONS.unproven`) |
 | Test outcome (run page) | failed | red dot and border | "Failed" or "Failed: flaky defect" ("Skipped with proof" stays grey) | `.state-danger` (`OutcomePill`) |
+| Test outcome (run page) | not proven | amber border | a shield with a question mark and "Not proven"; the cause as its tooltip and in a line under the test ("The runner did not report why" when it did not) | `.state-warn` (`OutcomePill`) |
+| Tests not proven (run page: in the "Parallel with proof" card, or under the numbers when the runner sent no proof) | needs attention | amber icon on a grey fill (no border, no coloured edge) | a shield with a question mark and the sentence: how many tests, why, and what the run did ("the run exits 1" or "the check on GitHub is marked failed") | `.callout-warning` |
 | Failed count in the runs table | failed | red number | the number, and "(n flaky)" | `.fail-count` |
 | Project setup | on fenvix / waiting | green / amber | "On fenvix", "Pull request open", "Waiting for setup" | `.state-ok`, `.state-warn` (`SetupStatePill`) |
 | Defect replay | reproduced / unstable | green / amber | "Replays 10/10" / "Replays 10/10, fingerprints differ" | `.state-ok`, `.state-warn` (`ReplayStatus`) |

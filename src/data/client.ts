@@ -1,13 +1,13 @@
 import type {
   ActivityItem, AuditSummary, BillingOverview, Defect, DefectFamily, DefectQuery, Exploration, ExportResult, GitHubConnection, GitHubRepository, Overview, Page,
-  Plan, Project, ProjectRow, ProjectSettings, Run, RunDetail, RunFile, Settings, SetupChange, SkipReceipt, SkipSharePoint, TestPage, TestQuery, UsageReport,
+  Plan, Project, ProjectRow, ProjectSettings, Run, RunDetail, RunFile, SearchResult, Settings, SetupChange, SkipReceipt, SkipSharePoint, TestPage, TestQuery, UsageReport,
 } from "./types";
 
 /** GET /projects/{projectId}/runs. With `since` (ISO), every run since then, newest first, on one page. */
 export interface RunQuery {
   /** "pr" keeps pull request runs, "default" keeps the default branch. */
   scope?: "all" | "pr" | "default";
-  status?: "all" | "passed" | "failed";
+  status?: "all" | "passed" | "failed" | "not_proven";
   since?: string;
   page?: number;
   pageSize?: number;
@@ -54,6 +54,9 @@ export interface DataClient {
   listExplorations(projectId: string): Promise<Exploration[]>;
   /** What happened lately, newest first: for one project, or every project when projectId is left out. */
   listActivity(projectId?: string, limit?: number): Promise<ActivityItem[]>;
+
+  /** The ⌘K search: runs by number or commit prefix, open defects by test name; newest first, at most 20. */
+  search(q: string): Promise<SearchResult[]>;
 
   listDefects(query?: DefectQuery): Promise<Defect[]>;
   listDefectFamilies(query?: DefectQuery): Promise<DefectFamily[]>;
