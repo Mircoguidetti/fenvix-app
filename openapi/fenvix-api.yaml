@@ -695,7 +695,7 @@ components:
     RunStatus:
       type: string
       enum: [running, passed, failed, cancelled, not_proven]
-      description: "not_proven: no failure, but at least one test was not proven identical to the serial run (docs/data-contract.md, \"Parallel with proof\"). Finished, never green."
+      description: "not_proven: no failure, but at least one test was not proven: a conflict between parallel lanes in what it touched was not ruled out, or the run could not be read (docs/data-contract.md, \"Parallel with proof\"). Finished, never green."
     RunMode: { type: string, enum: [enforce, shadow], description: "shadow: the trial; every test ran and the engine recorded what it would have skipped." }
     SetupState: { type: string, enum: [app_installed, pr_open, active] }
     TestOutcome: { type: string, enum: [passed, failed, skipped_with_proof, not_proven] }
@@ -801,10 +801,10 @@ components:
         failed: { type: integer }
         skippedWithProof: { type: integer }
         flakyDefects: { type: integer }
-        notProven: { type: integer, description: "Tests not proven identical to the serial run (docs/data-contract.md, \"Parallel with proof\")." }
+        notProven: { type: integer, description: "Tests not proven (docs/data-contract.md, \"Parallel with proof\")." }
     RunProof:
       type: object
-      description: The run's test command ran in parallel lanes and each test was checked against the serial run (summary.json `proof`).
+      description: "The run's test command ran in parallel lanes (summary.json `proof`). Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane."
       required: [workers, proven, notProven, rerunOneLane, parallelMs, serialMsEstimate, orderDigest, notProvenCauses]
       properties:
         workers: { type: integer }
@@ -883,7 +883,7 @@ components:
           properties: { rerun: { type: integer }, wrongSkips: { type: integer } }
         region: { oneOf: [{ $ref: "#/components/schemas/Region" }, { type: "null" }] }
         progress: { oneOf: [{ $ref: "#/components/schemas/RunProgress" }, { type: "null" }] }
-        proof: { oneOf: [{ $ref: "#/components/schemas/RunProof" }, { type: "null" }], description: "null for a serial run (or a runner that does not send it yet)" }
+        proof: { oneOf: [{ $ref: "#/components/schemas/RunProof" }, { type: "null" }], description: "null for a run in one lane, without parallel lanes (or a runner that does not send it yet)" }
         exitCode: { type: [integer, "null"], description: "The test command's exit code (summary.json `exit`); null while running, without a summary, or when the summary had none" }
         notProvenReason: { type: [string, "null"], description: "Why the run is not proven when no proof cause says it (an unreadable summary, a missing exit code, a failed verify, inputs differ)" }
     RunPage:
@@ -1360,7 +1360,7 @@ components:
             - { type: "null" }
         cacheKey: { type: [string, "null"], pattern: "^[0-9a-f]{32}$", description: "skipped_with_proof: the receipt's key" }
         wouldSkip: { type: boolean, description: "Shadow mode: the engine would have skipped it" }
-        notProvenCause: { type: [string, "null"], maxLength: 500, description: "not_proven: why the test could not be proven identical to the serial run" }
+        notProvenCause: { type: [string, "null"], maxLength: 500, description: "not_proven: why the test could not be proven (a conflict between parallel lanes in what it touched not ruled out)" }
     RunnerReceipt:
       type: object
       description: One reused test's receipt (receipts.jsonl line plus the lists from proof-cache.json).

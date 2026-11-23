@@ -20,6 +20,11 @@ export type Work =
     kind: "summary"; repositoryId: number; runId: number; runAttempt: number; runnerName: string; receiptsUrl: string | null;
     summary: Record<string, unknown>;
   }
+  /**
+   * POST /v1/runner/summaries answered 422 (the summary could not be read): stored as a rejected summary, so that the
+   * run is published not proven rather than waiting for the sweep (docs/data-contract.md, "3. The run summary").
+   */
+  | { kind: "summary_rejected"; repositoryId: number; runId: number; runAttempt: number; runnerName: string; reason: string }
   /** POST /v1/runner/results: one chunk of a job's per-test results (checked against RunnerResults). */
   | { kind: "results"; repositoryId: number; runId: number; runAttempt: number; runnerName: string; results: RunnerResults; attemptBound?: boolean }
   /** POST /v1/runner/explorations: one night of exploration of the repository (checked against RunnerExploration). */
@@ -40,6 +45,7 @@ export function describeWork(w: Work): string {
   switch (w.kind) {
     case "webhook": return `webhook ${w.event} ${w.delivery}`;
     case "summary": return `summary ${w.repositoryId}/${w.runId}/${w.runAttempt}`;
+    case "summary_rejected": return `summary_rejected ${w.repositoryId}/${w.runId}/${w.runAttempt}`;
     case "results": return `results ${w.repositoryId}/${w.runId}/${w.runAttempt} chunk ${w.results.chunk}`;
     case "exploration": return `exploration ${w.repositoryId} ${w.exploration.startedAt}`;
     case "onboard": return `onboard ${w.repositoryId}`;
@@ -57,6 +63,11 @@ export async function runWork(service: GitHubService, w: Work): Promise<void> {
   if (w.kind === "summary") {
     const { repositoryId, runId, runAttempt, runnerName, receiptsUrl, summary } = w;
     await service.receiveSummary({ repositoryId, runId, runAttempt, runnerName, receiptsUrl, summary });
+    return;
+  }
+  if (w.kind === "summary_rejected") {
+    const { repositoryId, runId, runAttempt, runnerName, reason } = w;
+    await service.receiveSummary({ repositoryId, runId, runAttempt, runnerName, receiptsUrl: null, summary: null, rejectedReason: reason });
     return;
   }
   if (w.kind === "results") {
@@ -96,6 +107,13 @@ export function parseWork(v: unknown): Work {
     return {
       kind: "summary", repositoryId: o.repositoryId as number, runId: o.runId as number, runAttempt: o.runAttempt as number,
       runnerName: o.runnerName, receiptsUrl: o.receiptsUrl as string | null, summary: o.summary as Record<string, unknown>,
+    };
+  }
+  if (o?.kind === "summary_rejected" && posInt(o.repositoryId) && posInt(o.runId) && posInt(o.runAttempt) && typeof o.runnerName === "string"
+    && typeof o.reason === "string") {
+    return {
+      kind: "summary_rejected", repositoryId: o.repositoryId as number, runId: o.runId as number, runAttempt: o.runAttempt as number,
+      runnerName: o.runnerName, reason: o.reason.slice(0, 500),
     };
   }
   if (o?.kind === "results" && posInt(o.repositoryId) && posInt(o.runId) && posInt(o.runAttempt) && typeof o.runnerName === "string" && isObj(o.results)) {

@@ -191,10 +191,13 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     let t = await call(api, "listTestResults", base);
     assert.equal(t.body.total, 3);
     assert.deepEqual(t.body.counts, { passed: 40, failed: 0, skipped_with_proof: 160, not_proven: 0 });
+    // rowCounts (follow-up A1.6): the per-test rows stored, per outcome, whatever the filter; fewer than the run's counts here.
+    assert.deepEqual(t.body.rowCounts, { passed: 1, failed: 1, skipped_with_proof: 1, not_proven: 0 });
     assert.equal(t.body.items[0].outcome, "failed", "failures first");
     assert.equal(t.body.items[0].failure.defectId, A.defects.open);
     t = await call(api, "listTestResults", { ...base, query: { outcome: "skipped_with_proof" } });
     assert.equal(t.body.items[0].receiptId, A.receipt);
+    assert.deepEqual(t.body.rowCounts, { passed: 1, failed: 1, skipped_with_proof: 1, not_proven: 0 }, "rowCounts ignore the filter");
     t = await call(api, "listTestResults", { ...base, query: { search: "EMPTY" } });
     assert.deepEqual(t.body.items.map((x: { testId: string }) => x.testId), ["tests/test_cart.py::test_empty"]);
     const f = await call(api, "listRunFiles", base);

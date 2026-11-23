@@ -59,7 +59,7 @@ describe("N, the not-proven count of a summary", () => {
     assert.match(title(sum, "failure"), /1 not proven/);
     assert.doesNotMatch(title(sum, "failure"), /no failures/);
     assert.match(prComment(sum, ctx), /❌/);
-    assert.match(checkRunOutput(sum, ctx).summary, /Not proven identical to the serial run \| 1/);
+    assert.match(checkRunOutput(sum, ctx).summary, /\| Not proven \| 1 \|/);
   });
   it("with a proof: the largest of proof.not_proven, the top-level not_proven and the verify count (a proof never hides tests)", () => {
     assert.equal(s(parallel(3)).notProven, 3);
@@ -180,7 +180,9 @@ describe("the summary's proof", () => {
       for (const [what, proof] of bad) {
         const sum = s({ ...parallel(0, { proof }), ...verify });
         assert.equal(sum.proof, null, what);
-        assert.ok(sum.notProven >= 1, `${what}: N ${sum.notProven}`);
+        // Exact N (follow-up A1.6): a proof with no readable proven ({}, true) counts every test that ran (374); one
+        // with proven 374 readable counts the floor of 1.
+        assert.equal(sum.notProven, what === "{}" || what === "true" ? 374 : 1, `${what}: N ${sum.notProven}`);
         assert.equal(sum.notProvenReason, "the proof of the parallel run could not be read", what);
         assert.equal(runStatus("success", sum), "not_proven", what);
         assert.equal(conclusionOf(sum, "success"), "failure", what);

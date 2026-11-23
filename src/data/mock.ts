@@ -265,7 +265,7 @@ const fileOf = (testId: string) => testId.split(/::| > /)[0];
 interface Detail {
   ran: Set<number>;
   failures: { testId: string; defectId: string | null }[];
-  /** Tests not proven identical to the serial run, with the runner's cause when it gave one. */
+  /** Tests not proven (a conflict between parallel lanes not ruled out), with the runner's cause when it gave one. */
   notProven?: { testId: string; cause: string | null }[];
   /** Tests the runner sent no per-test result for. */
   unsent?: string[];
@@ -591,18 +591,21 @@ export const NOT_PROVEN_CAUSES = ["file read outside the project", "environment 
  * homehub runs its suite in parallel lanes: most of its last 30 days of finished runs carry a proof with every test
  * proven (a few re-run in one lane); some stay serial (proof null). Among its newest 10 finished runs, never the newest
  * one: two runs not proven with a cause each, and one whose summary reported 2 tests not proven without a proof block
- * (and without a cause).
+ * (and without a cause). The second (an environment variable) also has a test the framework skipped itself (its proof's
+ * ranExecuted is one below the tests that ran) and a run N above its proof's (3 against 2: one test not proven that no
+ * proof cause explains), so the card shows the run's N and "proven of ranExecuted".
  */
 function addParallelProof(specs: Spec[], runs: Run[], detail: Map<string, Detail>) {
   const spec = specs.find((s) => s.id === "prj_homehub");
   if (!spec) return;
   const mine = runs.filter((r) => r.projectId === spec.id && r.status !== "running").sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   const since = new Date(NOW.getTime() - 30 * DAY).toISOString();
-  const proofOf = (r: Run, notProven: number, causes: RunProof["notProvenCauses"]): RunProof => {
+  const proofOf = (r: Run, notProven: number, causes: RunProof["notProvenCauses"], skippedByFramework = 0): RunProof => {
     const parallelMs = Math.max(1000, r.durationMs - spec.setupMs);
     const h = hash(`proof:${r.id}`);
+    const ranExecuted = r.tests.ran - skippedByFramework;
     return {
-      workers: 4, proven: r.tests.ran - notProven, notProven, ranExecuted: r.tests.ran, rerunOneLane: notProven + (h % 6 === 0 ? 1 + (h % 3) : 0), parallelMs,
+      workers: 4, proven: ranExecuted - notProven, notProven, ranExecuted, rerunOneLane: notProven + (h % 6 === 0 ? 1 + (h % 3) : 0), parallelMs,
       serialMsEstimate: h % 9 === 0 ? null : Math.round(parallelMs * 3.6), orderDigest: hex(`order:${r.id}`), notProvenCauses: causes,
     };
   };
@@ -612,9 +615,9 @@ function addParallelProof(specs: Spec[], runs: Run[], detail: Map<string, Detail
   }
   // Not proven: passed runs among the newest 10, never the newest one.
   const candidates = mine.slice(1, 10).filter((r) => r.status === "passed" && r.tests.ran > 20);
-  const plans: { notProven: number; causes: RunProof["notProvenCauses"]; proof: boolean; exit: number }[] = [
+  const plans: { notProven: number; causes: RunProof["notProvenCauses"]; proof: boolean; exit: number; proofNotProven?: number; skippedByFramework?: number }[] = [
     { notProven: 14, causes: [{ cause: NOT_PROVEN_CAUSES[0], tests: 14 }], proof: true, exit: 1 },
-    { notProven: 3, causes: [{ cause: NOT_PROVEN_CAUSES[1], tests: 3 }], proof: true, exit: 0 },
+    { notProven: 3, causes: [{ cause: NOT_PROVEN_CAUSES[1], tests: 2 }], proof: true, exit: 0, proofNotProven: 2, skippedByFramework: 1 },
     { notProven: 2, causes: [], proof: false, exit: 1 },
   ];
   plans.forEach((p, k) => {
@@ -633,7 +636,7 @@ function addParallelProof(specs: Spec[], runs: Run[], detail: Map<string, Detail
     r.exitCode = p.exit;
     r.tests.notProven = picked.length;
     r.tests.passed = Math.max(0, r.tests.ran - r.tests.failed - picked.length);
-    r.proof = p.proof ? proofOf(r, picked.length, p.causes) : null;
+    r.proof = p.proof ? proofOf(r, p.proofNotProven ?? picked.length, p.causes, p.skippedByFramework ?? 0) : null;
   });
 }
 

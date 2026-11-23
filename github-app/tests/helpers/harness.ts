@@ -58,6 +58,10 @@ export async function resetDb(): Promise<pg.Client> {
       execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL(`../../../supabase/migrations/${m}.sql`, import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
     }
   }
+  // A database prepared before migration 0020 (summaries refused at intake): safe to repeat.
+  if (!(await admin.query("select 1 from information_schema.columns where table_name = 'gh_run_summaries' and column_name = 'rejected_at'")).rowCount) {
+    execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0020_summary_rejected.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
+  }
   await admin.query(`truncate gh_install_completions, ci_trial_accounts, gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_warmups, gh_repositories,
     gh_installations, ci_test_results, ci_skip_receipts, ci_audit_reruns, ci_defects, ci_explorations, ci_runs, ci_projects, ci_subscriptions cascade`);
   await admin.query("delete from auth.users where email like '%@gh.fenvix.invalid'");

@@ -971,7 +971,7 @@ export interface components {
         /** @enum {string} */
         RunTrigger: "push" | "pull_request" | "merge_group" | "schedule" | "workflow_dispatch";
         /**
-         * @description not_proven: no failure, but at least one test was not proven identical to the serial run (docs/data-contract.md, "Parallel with proof"). Finished, never green.
+         * @description not_proven: no failure, but at least one test was not proven: a conflict between parallel lanes in what it touched was not ruled out, or the run could not be read (docs/data-contract.md, "Parallel with proof"). Finished, never green.
          * @enum {string}
          */
         RunStatus: "running" | "passed" | "failed" | "cancelled" | "not_proven";
@@ -1089,10 +1089,10 @@ export interface components {
             failed: number;
             skippedWithProof: number;
             flakyDefects: number;
-            /** @description Tests not proven identical to the serial run (docs/data-contract.md, "Parallel with proof"). */
+            /** @description Tests not proven (docs/data-contract.md, "Parallel with proof"). */
             notProven: number;
         };
-        /** @description The run's test command ran in parallel lanes and each test was checked against the serial run (summary.json `proof`). */
+        /** @description The run's test command ran in parallel lanes (summary.json `proof`). Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane. */
         RunProof: {
             workers: number;
             proven: number;
@@ -1181,7 +1181,7 @@ export interface components {
             };
             region: components["schemas"]["Region"] | null;
             progress: components["schemas"]["RunProgress"] | null;
-            /** @description null for a serial run (or a runner that does not send it yet) */
+            /** @description null for a run in one lane, without parallel lanes (or a runner that does not send it yet) */
             proof: components["schemas"]["RunProof"] | null;
             /** @description The test command's exit code (summary.json `exit`); null while running, without a summary, or when the summary had none */
             exitCode: number | null;
@@ -1682,7 +1682,7 @@ export interface components {
             cacheKey?: string | null;
             /** @description Shadow mode: the engine would have skipped it */
             wouldSkip?: boolean;
-            /** @description not_proven: why the test could not be proven identical to the serial run */
+            /** @description not_proven: why the test could not be proven (a conflict between parallel lanes in what it touched not ruled out) */
             notProvenCause?: string | null;
         };
         /** @description One reused test's receipt (receipts.jsonl line plus the lists from proof-cache.json). */

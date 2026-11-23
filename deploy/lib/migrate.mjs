@@ -99,6 +99,12 @@ export const PROBES = {
     last: `exists (select 1 from pg_constraint where conname = 'ci_test_results_outcome_check'
                     and conrelid = to_regclass('public.ci_test_results') and pg_get_constraintdef(oid) like '%''not_proven''%')`,
   },
+  // 0020 (summaries refused at intake) adds gh_run_summaries.rejected_at first and makes `summary` nullable last.
+  "0020": {
+    first: `exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'gh_run_summaries' and column_name = 'rejected_at')`,
+    last: `exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'gh_run_summaries' and column_name = 'summary'
+                    and is_nullable = 'YES')`,
+  },
 };
 /** The first migration with a probe: a database without it is either empty or not one of ours. */
 const FIRST_PROBED = "0011";

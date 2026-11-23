@@ -133,12 +133,15 @@ describe("Lambda mode: webhook → 202 → SQS → worker", () => {
     const sha = "5".repeat(40);
     h.gh.addRun("acme/shop", 9101, { event: "push", headSha: sha, headBranch: "main", message: "via the queue" });
     assert.equal((await http(runnerEvent({ repositoryId: REPOS.shop.id, runId: 9101, runAttempt: 1, runnerName: "fenvix-m1", summary: summary("job3-warm-pass") }, "wrong-token-0123456789abcdef0123456789"))).statusCode, 401);
+    assert.equal(sqs.messages.length, 0, "an unauthorized request queues nothing");
     assert.equal((await http(runnerEvent({ repositoryId: REPOS.shop.id, runId: 9101, runAttempt: 1, runnerName: "fenvix-m1", summary: { nope: true } }))).statusCode, 422);
-    assert.equal(sqs.messages.length, 0, "refused requests queue nothing");
+    // A summary refused at intake (422) is still stored as rejected (follow-up A1.2); the valid summary sent next replaces it.
+    assert.equal(sqs.messages.length, 1, "a 422 queues one summary_rejected item");
+    assert.equal(JSON.parse(sqs.messages[0]!.body).work.kind, "summary_rejected");
     assert.equal((await http(runnerEvent({ repositoryId: REPOS.shop.id, runId: 9101, runAttempt: 1, runnerName: "fenvix-m1", summary: summary("job3-warm-pass") }))).statusCode, 202);
     await http(githubEvent("workflow_job", workflowJob("in_progress", { id: 701, runId: 9101, sha, branch: "main" })));
     await http(githubEvent("workflow_job", workflowJob("completed", { id: 701, runId: 9101, sha, branch: "main" })));
-    assert.equal(sqs.messages.length, 3);
+    assert.equal(sqs.messages.length, 4);
     await drain();
     const job = (await admin.query("select published_at, check_run_id from gh_jobs where job_id = 701")).rows[0];
     assert.ok(job.published_at);

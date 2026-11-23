@@ -567,16 +567,16 @@ const countOf = (n: number) => `${new Intl.NumberFormat("en-US").format(n)} ${n 
  */
 export function notProvenSentence(run: Pick<Run, "exitCode" | "tests"> & { notProvenReason?: string | null }, proof: Pick<RunProof, "notProvenCauses"> | null): string {
   const exit = run.exitCode != null && run.exitCode !== 0 ? `the run exits ${run.exitCode}` : "the check on GitHub is marked failed";
-  const after = `Their serial result is reported; ${exit}.`;
+  const after = `Their result from the one-lane re-run is reported; ${exit}.`;
   const n = run.tests.notProven ?? 0;
   const top = proof != null ? [...(proof.notProvenCauses ?? [])].filter((c) => c.tests > 0).sort((a, b) => b.tests - a.tests)[0] : undefined;
   const reason = run.notProvenReason ?? null;
   // Inputs that differ: the runs could not be compared at all, so no count of tests is said.
-  if (!top && reason === NOT_PROVEN_INPUTS_DIFFER) return `The parallel and serial runs could not be compared: their inputs differ. The run is not proven; the check on GitHub is marked failed.`;
-  if (!top && reason) return `${countOf(n)} ${n === 1 ? "was" : "were"} not proven identical: ${reason}. ${after}`;
-  if (!top) return `${countOf(n)} ${n === 1 ? "was" : "were"} not proven identical. ${NO_CAUSE_LABEL}. ${after}`;
+  if (!top && reason === NOT_PROVEN_INPUTS_DIFFER) return `The two runs could not be compared: their inputs differ. The run is not proven; the check on GitHub is marked failed.`;
+  if (!top && reason) return `${countOf(n)} ${n === 1 ? "was" : "were"} not proven: ${reason}. ${after}`;
+  if (!top) return `${countOf(n)} ${n === 1 ? "was" : "were"} not proven. ${NO_CAUSE_LABEL}. ${after}`;
   const what = CAUSE_PHRASES[top.cause] ?? `${top.tests === 1 ? "was" : "were"} not proven (${top.cause})`;
-  return `${countOf(top.tests)} ${what}, so the parallel result could not be proven equal to the serial one. ${after}`;
+  return `${countOf(top.tests)} ${what}, so a conflict between parallel lanes could not be ruled out. ${after}`;
 }
 
 /** A run's tests not proven by cause (largest first); what the runner did not explain is NO_CAUSE_LABEL. */
@@ -594,7 +594,7 @@ export interface ParallelProof {
   withProof: Run[];
   /** Runs of the window with a test not proven (with or without lanes), newest first. */
   notProven: Run[];
-  /** Per day with parallel runs: the median share of the tests that ran that were proven identical. */
+  /** Per day with parallel runs: the median share of the tests that ran that were proven (no conflict between lanes). */
   proven: { at: string; value: number }[];
   /** Tests not proven by cause over the window, largest first, with the runs they came from. */
   causes: { cause: string; tests: number; runs: number }[];

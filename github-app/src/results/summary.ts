@@ -28,10 +28,16 @@ export const NOT_PROVEN_REASONS = {
   summaryUnreadable: "the runner's summary could not be read",
   exitMissing: "exit code missing",
   proofUnreadable: "the proof of the parallel run could not be read",
-  proofShort: "the proof does not cover every test that ran",
+  proofShort: "the proof does not match the tests that ran",
   inputsDiffer: "inputs differ",
-  verifyFailed: "the check against the serial run failed",
+  verifyFailed: "the comparison of two runs failed",
+  countsUnreadable: "the runner's counts could not be read",
+  provableAbsent: "the run could not watch what tests touched",
+  notProvenOutside: "something not controlled ran outside the tests",
 } as const;
+
+/** The outcomes the engine does not prove (the framework skipped the test itself); the runner uses the same set. */
+const NOT_EXECUTED = new Set(["skipped", "todo"]);
 
 export interface RunSummary {
   commit: string;
@@ -61,18 +67,19 @@ export interface RunSummary {
   stack: Stack | null;
   /** The mode the runner ran in (`mode`): shadow during the trial. Null: not sent. */
   mode: "shadow" | "enforce" | null;
-  /** Null: a serial run (or a runner that does not send it yet). */
+  /** Null: a run in one lane, without parallel lanes (or a runner that does not send it yet). */
   proof: SummaryProof | null;
   /**
-   * N, the tests not proven identical to the serial run (notProvenOf: the largest of every source, failing closed).
+   * N, the tests not proven (no conflict between parallel lanes in what each test touched; notProvenOf: the largest of every source, failing closed).
    * `status.not_proven` is not used. The status, the check run and `tests.notProven` all use this one value.
    */
   notProven: number;
   /** Why N > 0 when no proof cause says it (NOT_PROVEN_REASONS), else null. */
   notProvenReason: string | null;
   /**
-   * The tests the framework actually ran: `ran` minus the tests it skipped itself (`outcome_counts.skipped`), which the
-   * engine does not prove. `proven + not_proven` of a proof should equal this.
+   * The tests the framework actually ran: `ran` minus the tests it skipped itself, which the engine does not prove:
+   * `skipped_ran` (written by trimSummary from the per-test maps, so reused tests are not subtracted) when it is a whole
+   * number of 0 or more, else `outcome_counts.skipped`. `proven + not_proven` of a proof should equal this.
    */
   ranExecuted: number;
 }
@@ -113,6 +120,8 @@ const str = (v: unknown, max: number): string | null => (typeof v === "string" &
  */
 export function trimSummary(raw: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...raw };
+  const skippedRan = skippedRanOf(raw);
+  if (skippedRan !== null) out.skipped_ran = skippedRan;
   for (const k of DROP) delete out[k];
   const stack = stackFromSummary(raw);
   if (stack) {
@@ -125,6 +134,20 @@ export function trimSummary(raw: Record<string, unknown>): Record<string, unknow
     out.engine_version = engineVersionOf(raw);
   }
   return out;
+}
+
+/**
+ * The tests of this run the framework skipped itself (`skipped` or `todo`), not counting reused ones: the count in
+ * `outcomes` minus the count in `reused_outcomes`. Null when `outcomes` is not a map (then parseSummary keeps the
+ * older rule, `outcome_counts.skipped`).
+ */
+export function skippedRanOf(raw: Record<string, unknown>): number | null {
+  const map = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? Object.values(v as Record<string, unknown>) : null);
+  const all = map(raw.outcomes);
+  if (!all) return null;
+  const reused = map(raw.reused_outcomes) ?? [];
+  const k = (xs: unknown[]) => xs.filter((x) => typeof x === "string" && NOT_EXECUTED.has(x)).length;
+  return Math.max(0, k(all) - k(reused));
 }
 
 function engineVersionOf(raw: Record<string, unknown>): string {
@@ -174,13 +197,20 @@ export function parseProof(v: unknown): SummaryProof | null {
 /**
  * N of a summary (see RunSummary.notProven), and why when no proof cause says it. Fails closed: when we are not sure,
  * the run is not proven. The largest of:
- * - `proof.not_proven`, and with a proof whose `proven + not_proven` is not `ranExecuted`, `ranExecuted - proven`;
+ * - `proof.not_proven`; with a proof whose `proven + not_proven` is below `ranExecuted`, `ranExecuted - proven`; above
+ *   it, at least 1 (the proof does not match the tests that ran);
  * - a `proof` that is present but unreadable: at least 1, its `not_proven`, `ranExecuted - proven` where readable;
  * - the top-level `not_proven`;
  * - the verify counts, always: `not_proven + max(diverged, wrong_reuse) + missing` (a wrong reuse is also a divergence,
  *   so not counted twice); and at least 1 when verify failed: a `verify_status` present and not "identical" (whatever
  *   it says), or a non-zero `verify_exit` whatever `verify_status` says;
- * - a missing or invalid `exit`: at least 1 (unknown is never green).
+ * - a missing or invalid `exit`: at least 1 (unknown is never green);
+ * - a malformed count (the top-level `not_proven`, a `verify_counts` value, `not_proven_outside`: present, not null and
+ *   not a whole number of 0 or more; `verify_counts` not an object; `provable_absent` neither a string nor null): at
+ *   least 1 (countsUnreadable). Absent or null counts are 0;
+ * - `provable_absent` a non-empty string (the engine could not watch what tests touched): at least 1;
+ * - `not_proven_outside` above 0 (uncontrolled reads outside the tests, such as `env:<name>`; not a count of tests): at
+ *   least 1. Both signals also apply to runs in one lane: a run the engine itself calls uncertain is never green.
  * `status.not_proven` is not used.
  */
 export function notProvenOf(o: Record<string, unknown>, proof: SummaryProof | null, ranExecuted: number): { n: number; reason: string | null } {
@@ -192,14 +222,21 @@ export function notProvenOf(o: Record<string, unknown>, proof: SummaryProof | nu
     if (m > n) n = m;
     if (m > 0 && why && !reason) reason = why;
   };
+  // A count that is present but not a whole number of 0 or more: the runner's counts cannot be trusted.
+  const malformed = (v: unknown) => v !== undefined && v !== null && !(typeof v === "number" && Number.isInteger(v) && v >= 0);
+  const over = !!proof && proof.proven + proof.notProven > ranExecuted;
   if (proof) {
     raise(proof.notProven, null);
-    if (proof.proven + proof.notProven !== ranExecuted) raise(ranExecuted - proof.proven, R.proofShort);
+    // Above ranExecuted, ranExecuted - proven is not a count (it may be 0 or less): the mismatch alone is at least 1.
+    if (over) raise(1, R.proofShort);
+    else if (proof.proven + proof.notProven < ranExecuted) raise(ranExecuted - proof.proven, R.proofShort);
   } else if (o.proof !== undefined && o.proof !== null) {
     const p = (typeof o.proof === "object" && !Array.isArray(o.proof) ? o.proof : {}) as Record<string, unknown>;
     raise(Math.max(1, count(p.not_proven), ranExecuted - count(p.proven)), R.proofUnreadable);
   }
-  const vc = (o.verify_counts && typeof o.verify_counts === "object" ? o.verify_counts : {}) as Record<string, unknown>;
+  const vcRaw = o.verify_counts;
+  const vcBad = vcRaw !== undefined && vcRaw !== null && (typeof vcRaw !== "object" || Array.isArray(vcRaw));
+  const vc = (vcRaw && typeof vcRaw === "object" && !Array.isArray(vcRaw) ? vcRaw : {}) as Record<string, unknown>;
   const verifyN = count(vc.not_proven) + Math.max(count(vc.diverged), count(vc.wrong_reuse)) + count(vc.missing);
   const status = o.verify_status;
   const failedVerify = (status !== undefined && status !== null && status !== "identical") || (typeof o.verify_exit === "number" && o.verify_exit !== 0)
@@ -208,8 +245,18 @@ export function notProvenOf(o: Record<string, unknown>, proof: SummaryProof | nu
   raise(failedVerify ? Math.max(1, verifyN) : verifyN, inputsDiffer && verifyN === 0 ? R.inputsDiffer : failedVerify || verifyN ? R.verifyFailed : null);
   raise(count(o.not_proven), null);
   if (!(typeof o.exit === "number" && Number.isInteger(o.exit))) raise(1, R.exitMissing);
-  // The proof's own causes say why; a reason is kept only when no proof explains the count.
-  if (proof && proof.notProvenCauses.reduce((a, c) => a + c.tests, 0) >= n) reason = null;
+  const VC_KEYS = ["tests", "identical", "not_proven", "diverged", "missing", "input_differs", "wrong_reuse"] as const;
+  const badProvable = o.provable_absent !== undefined && o.provable_absent !== null && typeof o.provable_absent !== "string";
+  const countsBad = malformed(o.not_proven) || vcBad || VC_KEYS.some((k) => malformed(vc[k])) || malformed(o.not_proven_outside) || badProvable;
+  if (countsBad) raise(1, R.countsUnreadable);
+  const absent = typeof o.provable_absent === "string" && o.provable_absent.length > 0;
+  if (absent) raise(1, R.provableAbsent);
+  const outside = count(o.not_proven_outside) > 0;
+  if (outside) raise(1, R.notProvenOutside);
+  // The proof's own causes say why; a reason is kept only when no proof explains the count. A run-level reason (the
+  // proof does not match the tests that ran, unreadable counts, the two engine signals) is always kept: no test cause
+  // explains it.
+  if (proof && !(over || countsBad || absent || outside) && proof.notProvenCauses.reduce((a, c) => a + c.tests, 0) >= n) reason = null;
   return { n, reason };
 }
 
@@ -238,7 +285,9 @@ export function parseSummary(raw: unknown): RunSummary {
   const saved = num(o, "test_seconds_saved");
   const proof = parseProof(o.proof);
   const outcomeCounts = counts(o, "outcome_counts");
-  const ranExecuted = Math.max(0, ran - (outcomeCounts.skipped ?? 0));
+  const skippedRan = o.skipped_ran;
+  const skipped = typeof skippedRan === "number" && Number.isInteger(skippedRan) && skippedRan >= 0 ? skippedRan : (outcomeCounts.skipped ?? 0);
+  const ranExecuted = Math.max(0, ran - skipped);
   const np = notProvenOf(o, proof, ranExecuted);
   const spent = num(o, "test_seconds_run");
   return {

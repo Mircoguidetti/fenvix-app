@@ -79,13 +79,13 @@ const TESTS = {
       await page.getByRole("heading", { name: `Run #${x.number}`, level: 1 }).waitFor();
       await settled(page);
     };
-    // Every test proven: the card, "Identical to the serial run", no warning.
+    // Every test proven: the card, "Proven: no conflict between lanes", no warning.
     await runPage(r.proven);
     const card = page.locator("#proof");
     await card.getByRole("heading", { name: "Parallel with proof" }).waitFor();
-    await card.getByText("Ran in parallel, then checked test by test against the serial run.").waitFor();
+    await card.getByText("Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane.").waitFor();
     for (const dt of ["Result", "Workers", "Proven", "Re-run in one lane", "Not proven", "Parallel time", "Order digest"]) await card.locator("dt", { hasText: new RegExp(`^${dt}$`) }).waitFor();
-    assert((await card.locator("dd").first().innerText()) === "Identical to the serial run", "the proven run's result is not 'Identical to the serial run'");
+    assert((await card.locator("dd").first().innerText()) === "Proven: no conflict between lanes", "the proven run's result is not 'Proven: no conflict between lanes'");
     assert(!(await page.locator("#not-proven-note").count()), "a proven run shows the not-proven note");
     await card.getByRole("link", { name: "How this was proven" }).waitFor();
     assert((await page.locator(".page-title-row .state").innerText()) === "Passed", "a proven run is not Passed");
@@ -101,7 +101,7 @@ const TESTS = {
     assert(npDd === String(r.notProven.notProven), `the card's Not proven reads ${npDd}, the run's N is ${r.notProven.notProven}`);
     const note = page.locator("#proof #not-proven-note.callout-warning");
     const text = await note.innerText();
-    assert(new RegExp(`^${r.notProven.notProven} tests read a file outside the project, so the parallel result could not be proven equal to the serial one\\. Their serial result is reported; the run exits 1\\.`).test(text), `the note reads: ${text}`);
+    assert(new RegExp(`^${r.notProven.notProven} tests read a file outside the project, so a conflict between parallel lanes could not be ruled out\\. Their result from the one-lane re-run is reported; the run exits 1\\.`).test(text), `the note reads: ${text}`);
     await note.getByRole("link", { name: `See the ${r.notProven.notProven} tests` }).click();
     await eventually(async () => new URL(page.url()).searchParams.get("outcome") === "not_proven", "See the tests does not filter on not proven");
     await eventually(async () => {
@@ -112,7 +112,7 @@ const TESTS = {
     assert((await pill.innerText()) === "Not proven", "a not-proven test's pill does not say Not proven");
     assert((await pill.getAttribute("data-tone")) === "warn", "a not-proven test's pill is not amber");
     assert((await pill.locator("xpath=..").getAttribute("title")) === "file read outside the project", "the test's cause is not its pill's tooltip");
-    await page.locator(".test-row").first().getByText(/Not proven identical to the serial run: file read outside the project\./).waitFor();
+    await page.locator(".test-row").first().getByText(/Not proven: file read outside the project\. Its result from the one-lane re-run is the one reported\./).waitFor();
     assert(/Not proven\s*14/.test(await page.locator("#tests").getByRole("button", { name: /^Not proven/ }).innerText()), "the Not proven filter does not show its count");
     // A proof run with tests not proven but no per-test rows: the note, no "See the N tests"; the filter counts rows
     // and the line says how many have per-test detail.
@@ -121,13 +121,21 @@ const TESTS = {
     assert(!(await page.locator("#proof #not-proven-note a").count()), "the card links to tests that have no per-test rows");
     assert(/Not proven\s*0/.test(await page.locator("#tests").getByRole("button", { name: /^Not proven/ }).innerText()), "the Not proven filter does not count the per-test rows");
     assert((await page.locator("#tests-detail").innerText()).startsWith(`${r.proofNoRows.notProven} not proven, 0 with per-test detail`), `the detail line reads ${await page.locator("#tests-detail").innerText()}`);
+    // Follow-up A1.6: this run's proof has ranExecuted below the tests that ran (a test the framework skipped) and its N
+    // above the proof's: the card says "proven of ranExecuted" and the run's N, never the proof's.
+    assert(r.proofNoRows.proof.ranExecuted < r.proofNoRows.ran && r.proofNoRows.notProven > r.proofNoRows.proof.notProven, `the mock lacks the run: ${JSON.stringify(r.proofNoRows)}`);
+    const provenNoRows = await page.locator("#proof div", { has: page.locator("dt", { hasText: /^Proven$/ }) }).locator("dd").innerText();
+    assert(provenNoRows === `${r.proofNoRows.proof.proven.toLocaleString("en-US")} of ${r.proofNoRows.proof.ranExecuted.toLocaleString("en-US")}`, `Proven reads ${provenNoRows}`);
+    const npNoRows = await page.locator("#proof div", { has: page.locator("dt", { hasText: /^Not proven$/ }) }).locator("dd").innerText();
+    assert(npNoRows === String(r.proofNoRows.notProven), `the card's Not proven reads ${npNoRows}, the run's N is ${r.proofNoRows.notProven}`);
+    assert((await page.locator("#proof dd").first().innerText()) === `Not proven for ${r.proofNoRows.notProven} tests`, "the card's result does not use the run's N");
     // Not proven without a proof block: no card, the note under the numbers, "The runner did not report why", the pill.
     await runPage(r.noProof);
     assert(!(await page.locator("#proof").count()), "a run without a proof block shows the proof card");
     const bare = page.locator("#not-proven-note.callout-warning");
     await bare.getByRole("link", { name: `See the ${r.noProof.notProven} tests` }).waitFor();
     const bareText = await bare.innerText();
-    assert(bareText.startsWith(`${r.noProof.notProven} tests were not proven identical. The runner did not report why. Their serial result is reported; the run exits 1.`), `the note reads: ${bareText}`);
+    assert(bareText.startsWith(`${r.noProof.notProven} tests were not proven. The runner did not report why. Their result from the one-lane re-run is reported; the run exits 1.`), `the note reads: ${bareText}`);
     assert((await page.locator(".page-title-row .state").innerText()) === `Not proven · ${r.noProof.notProven}`, "the pill of the run without a proof block");
     // A serial run: no card, no note.
     await runPage(r.serial);
@@ -173,16 +181,16 @@ const TESTS = {
     await page.locator("#parallel-empty").getByRole("button", { name: "Copy the test job" }).waitFor();
   },
 
-  async "overview: Proven identical, n of m runs, after Runs"(page) {
+  async "overview: Proven, n of m runs, after Runs"(page) {
     await signIn(page, "overview");
     const o = await page.evaluate(async () => (await window.__fenvixMock.getOverview()).proof);
     assert(o.runsWithProof > 0 && o.notProven === 3, `the mock's proof block: ${JSON.stringify(o)}`);
     const kpi = page.locator("#kpi-proof");
-    assert((await kpi.locator(".kpi-label").innerText()) === "Proven identical", "the KPI's label");
+    assert((await kpi.locator(".kpi-label").innerText()) === "Proven", "the KPI's label");
     assert((await kpi.locator(".kpi-value").innerText()) === `${o.provenIdentical.toLocaleString("en-US")} of ${o.runsWithProof.toLocaleString("en-US")} runs`, `the KPI reads ${await kpi.locator(".kpi-value").innerText()}`);
-    assert((await kpi.locator(".kpi-sub").innerText()) === "3 not proven this month", `the KPI's sub-line reads ${await kpi.locator(".kpi-sub").innerText()}`);
+    assert((await kpi.locator(".kpi-sub").innerText()) === "no conflict between parallel lanes · 3 not proven this month", `the KPI's sub-line reads ${await kpi.locator(".kpi-sub").innerText()}`);
     const labels = await page.locator(".kpi-label").allTextContents();
-    assert(labels[0] === "Runs" && labels[1] === "Proven identical", `the KPI is not after Runs: ${labels.join(", ")}`);
+    assert(labels[0] === "Runs" && labels[1] === "Proven", `the KPI is not after Runs: ${labels.join(", ")}`);
   },
 
   async "not proven runs are finished, never green: counted per day, in the activity as not proven, not in time to green"(page) {
@@ -251,7 +259,7 @@ const TESTS = {
     await page.getByRole("heading", { name: "Northwind Cloud", level: 1 }).waitFor();
     const kpi = page.locator("#kpi-proof");
     assert((await kpi.locator(".kpi-value").innerText()) === "–", `with no proof block the KPI reads ${await kpi.locator(".kpi-value").innerText()}`);
-    assert((await kpi.locator(".kpi-sub").innerText()) === "no parallel runs yet", `with no proof block the sub-line reads ${await kpi.locator(".kpi-sub").innerText()}`);
+    assert((await kpi.locator(".kpi-sub").innerText()) === "no conflict between parallel lanes · no parallel runs yet", `with no proof block the sub-line reads ${await kpi.locator(".kpi-sub").innerText()}`);
     await go(page, "projects/prj_homehub/parallel-with-proof");
     await page.getByRole("heading", { name: "Parallel with proof", level: 1 }).waitFor();
     await settled(page);
@@ -299,7 +307,7 @@ const TESTS = {
     assert(o.runsWithProof === 0 && o.notProven === 0, `Harbor's proof block: ${JSON.stringify(o)}`);
     const kpi = page.locator("#kpi-proof");
     assert((await kpi.locator(".kpi-value").innerText()) === "–", "the zero state's value");
-    assert((await kpi.locator(".kpi-sub").innerText()) === "no parallel runs yet", "the zero state's sub-line");
+    assert((await kpi.locator(".kpi-sub").innerText()) === "no conflict between parallel lanes · no parallel runs yet", "the zero state's sub-line");
   },
 
   async "F-001 F-003 F-008: the Runs title, the tab titles, time to green per day"(page) {
@@ -475,8 +483,8 @@ const TESTS = {
     const kpis = await page.locator(".kpi").allInnerTexts();
     assert(kpis.length === 7, `expected 7 numbers, got ${kpis.length}`);
     const labels = await page.locator(".kpi-label").allTextContents();
-    assert(labels.join("|") === "Runs|Proven identical|Minutes saved|Skipped with proof|Time to green|On GitHub-hosted|Open defects", `numbers read ${labels.join("|")}`);
-    // "Proven identical" (console proof) is checked in its own check; the six others keep their places in `values`.
+    assert(labels.join("|") === "Runs|Proven|Minutes saved|Skipped with proof|Time to green|On GitHub-hosted|Open defects", `numbers read ${labels.join("|")}`);
+    // "Proven" (console proof) is checked in its own check; the six others keep their places in `values`.
     const values = (await page.locator(".kpi-value").allTextContents()).filter((_, i) => i !== 1);
     assert(num(values[0]) > 300, `runs this month read ${values[0]}`);
     assert(/^\d+%$/.test(values[2]) && num(values[2]) >= 90, `the median share skipped reads ${values[2]} (home-assistant-like runs dominate: about 97%)`);

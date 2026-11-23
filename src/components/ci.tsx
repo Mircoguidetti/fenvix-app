@@ -71,7 +71,7 @@ export function OutcomePill({ outcome, flaky, cause }: { outcome: TestOutcome; f
   if (outcome === "passed") return <StatusPill tone="ok">Passed</StatusPill>;
   if (outcome === "failed") return <StatusPill tone="danger">{flaky ? "Failed: flaky defect" : "Failed"}</StatusPill>;
   if (outcome === "not_proven")
-    // Amber, never green: its parallel result could not be proven equal to the serial one. The cause is its tooltip.
+    // Amber, never green: a conflict between parallel lanes in what it touched could not be ruled out. The cause is its tooltip.
     return (
       <span title={cause ?? NO_CAUSE}>
         <StatusPill tone="warn" icon={STATE_ICONS.unproven}>

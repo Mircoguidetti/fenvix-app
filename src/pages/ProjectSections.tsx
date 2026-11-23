@@ -538,7 +538,7 @@ export function TimeToGreenPage() {
 // ---------------------------------------------------------------- Parallel with proof
 
 /**
- * The project's parallel runs over 30 days: how much of each run was proven identical to the serial run, why tests
+ * The project's parallel runs over 30 days: how much of each run was proven (no conflict between parallel lanes), why tests
  * were not proven, the speed against the serial estimate, and the runs with tests not proven. Computed here from the
  * project's runs (no endpoint of its own), like Skip with proof.
  */
@@ -556,7 +556,7 @@ export function ParallelWithProofPage() {
     <PageHeader
       back={<Kicker>{p.fullName}</Kicker>}
       title="Parallel with proof"
-      description="The test command runs in parallel lanes; then each test is checked against the serial run. A run is green only when every test is proven identical."
+      description="Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane. A run is green only when every test is proven."
     />
   );
   if (runs.status === "error") return (<>{header}<Message role="alert">{runs.message}</Message></>);
@@ -589,8 +589,8 @@ export function ParallelWithProofPage() {
       <div className="kpis kpis-3">
         <div className="kpi">
           <strong className="kpi-value">{proof.withProof.length ? `${formatCount(identical)} of ${formatCount(proof.withProof.length)}` : "–"}</strong>
-          <span className="kpi-label">Proven identical</span>
-          <span className="kpi-sub muted small">runs with parallel lanes, last 30 days</span>
+          <span className="kpi-label" title="no conflict between parallel lanes">Proven</span>
+          <span className="kpi-sub muted small">no conflict between parallel lanes · runs, last 30 days</span>
         </div>
         <div className="kpi">
           <strong className="kpi-value">{formatCount(proof.notProven.length)}</strong>
@@ -603,13 +603,13 @@ export function ParallelWithProofPage() {
           <span className="kpi-sub muted small">median, against the serial estimate</span>
         </div>
       </div>
-      <Card id="proven-trend" title="Proven over time" description="Median share of the tests that ran proven identical to the serial run, per day, last 30 days (runs with parallel lanes).">
+      <Card id="proven-trend" title="Proven over time" description="Median share of the tests that ran proven (no conflict between parallel lanes), per day, last 30 days (runs with parallel lanes).">
         {proof.proven.length > 1 ? <AreaSeriesChart points={proof.proven} range="30d" valueLabel={(n) => formatPercent(n)} /> : <p className="muted">Not enough days with parallel runs yet.</p>}
       </Card>
       <div className="grid-2 even">
-        <Card id="causes" title="Why tests were not proven" description="Tests not proven identical to the serial run, by the cause the runner reported, last 30 days.">
+        <Card id="causes" title="Why tests were not proven" description="Tests not proven (a conflict between parallel lanes not ruled out), by the cause the runner reported, last 30 days.">
           {proof.causes.length === 0 ? (
-            <p className="muted">Every test of every parallel run was proven identical.</p>
+            <p className="muted">Every test of every parallel run was proven: no conflict between parallel lanes.</p>
           ) : (
             <div className="table-card flush">
               <table className="data responsive">
@@ -655,7 +655,7 @@ export function ParallelWithProofPage() {
           )}
         </Card>
       </div>
-      <Card id="not-proven-runs" title="Runs with tests not proven" description="Each run's not proven tests and the largest cause. Open a run for the tests and their serial results.">
+      <Card id="not-proven-runs" title="Runs with tests not proven" description="Each run's not proven tests and the largest cause. Open a run for the tests and their results from the one-lane re-run.">
         {proof.notProven.length === 0 ? (
           <p className="muted">None in the last 30 days.</p>
         ) : (

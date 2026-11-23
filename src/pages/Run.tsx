@@ -168,18 +168,19 @@ function SuiteSquares({ files }: { files: RunFile[] }) {
 const testCount = (n: number) => `${formatCount(n)} ${n === 1 ? "test" : "tests"}`;
 
 /**
- * The run's test command ran in parallel lanes, then each test was checked against the serial run (the summary's
- * proof). Not shown while running (the proof exists once the run has finished) nor for a serial run.
+ * The run's test command ran in parallel lanes (the summary's proof): a test is proven when the engine's footprints show
+ * no conflict between lanes in what it touched, or when its file ran again alone in one lane after a conflict. Not
+ * shown while running (the proof exists once the run has finished) nor for a run in one lane.
  */
 function ProofCard({ run, proof, testsLink, hasRows }: { run: Run; proof: RunProof; testsLink: string; hasRows: boolean }) {
   // N is the run's (the largest of every source, github-app/src/results/summary.ts), never less than the proof's.
   const n = Math.max(run.tests.notProven ?? 0, proof.notProven ?? 0);
   return (
-    <Card id="proof" title="Parallel with proof" description="Ran in parallel, then checked test by test against the serial run.">
+    <Card id="proof" title="Parallel with proof" description="Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane.">
       <dl className="facts facts-4">
         <div>
           <dt>Result</dt>
-          <dd>{n === 0 ? "Identical to the serial run" : `Not proven for ${testCount(n)}`}</dd>
+          <dd>{n === 0 ? "Proven: no conflict between lanes" : `Not proven for ${testCount(n)}`}</dd>
         </div>
         <div>
           <dt>Workers</dt>
@@ -518,7 +519,7 @@ export function RunPage() {
       <Card
         id="tests"
         title="Tests"
-        description={`Every test of the run: it ran (passed or failed${run.tests.notProven ? ", or not proven identical to the serial run" : ""}) or it was skipped with proof. Open a receipt to see what was checked.`}
+        description={`Every test of the run: it ran (passed or failed${run.tests.notProven ? ", or not proven" : ""}) or it was skipped with proof. Open a receipt to see what was checked.`}
         actions={
           <div className="card-controls">
             <Segmented
@@ -569,7 +570,7 @@ export function RunPage() {
                     </div>
                     {t.outcome === "not_proven" && (
                       <p className="small muted test-cause">
-                        Not proven identical to the serial run: {t.notProvenCause ?? `${NO_CAUSE.toLowerCase()}`}. Its serial result is the one reported.
+                        Not proven: {t.notProvenCause ?? `${NO_CAUSE.toLowerCase()}`}. Its result from the one-lane re-run is the one reported.
                       </p>
                     )}
                     {t.failure && (

@@ -241,7 +241,10 @@ describe("run results on GitHub, runs and usage events", () => {
     // reused_with_proof + ran != tests: parseSummary refuses it. The intake refuses it too (422), so it is stored here as
     // a summary accepted earlier that today's parser cannot read (a runner or App version change).
     assert.equal((await h.summary({ runId: 9104, summary: { tests: 10, reused_with_proof: 3, ran: 3, exit: 0 } })).statusCode, 422);
-    await admin.query("insert into gh_run_summaries (repository_id, run_id, run_attempt, runner_name, summary) values ($1, 9104, 1, 'fenvix-m1', $2)",
+    // The 422 also stored a rejected row (summary null, follow-up A1.2): the old summary replaces it here.
+    await h.app.service.idle();
+    await admin.query(`insert into gh_run_summaries (repository_id, run_id, run_attempt, runner_name, summary) values ($1, 9104, 1, 'fenvix-m1', $2)
+      on conflict (repository_id, run_id, run_attempt, runner_name) do update set summary = excluded.summary, rejected_at = null, rejected_reason = null`,
       [REPOS.shop.id, JSON.stringify({ tests: 10, reused_with_proof: 3, ran: 3, exit: 0 })]);
     await h.send("workflow_job", workflowJob("completed", { id: 6104, runId: 9104, sha, branch: "main", conclusion: "success" }));
     const run = (await admin.query("select status, tests_not_proven, not_proven_reason from ci_runs where commit_sha = $1", [sha])).rows[0];
@@ -292,7 +295,92 @@ describe("run results on GitHub, runs and usage events", () => {
     await h.summary({ runId: 9107, summary: { tests: 0, reused_with_proof: 0, ran: 0, exit: 0, verify_status: null, verify_exit: 2 } });
     await h.send("workflow_job", workflowJob("completed", { id: 6107, runId: 9107, sha, branch: "main", conclusion: "success" }));
     const run = (await admin.query("select status, tests_not_proven, tests_passed, not_proven_reason from ci_runs where commit_sha = $1", [sha])).rows[0];
-    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 1, tests_passed: 0, not_proven_reason: "the check against the serial run failed" });
+    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 1, tests_passed: 0, not_proven_reason: "the comparison of two runs failed" });
+  });
+
+  // ---------------------------------------------------------------- console proof follow-ups (A1.1, A1.2, A1.4)
+
+  // protects=a job with no summary whose runner sent per-test not_proven rows is never green; fails_when=the run stays
+  // passed or the check run is neutral/success; no_claim=what the console shows for such a run.
+  it("A1.1 no summary, per-test not_proven rows: the run is not_proven and the check run fails (published by the sweep)", async () => {
+    const sha = "7".repeat(40);
+    h.gh.addRun("acme/shop", 9108, { event: "push", headSha: sha, headBranch: "main", message: "rows, no summary" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6108, runId: 9108, sha, branch: "main" }));
+    await chunk(9108, rowsSent);
+    await h.send("workflow_job", workflowJob("completed", { id: 6108, runId: 9108, sha, branch: "main", conclusion: "success" }));
+    await admin.query("update gh_jobs set completed_at = now() - interval '11 minutes' where job_id = 6108");
+    assert.equal(await h.app.service.sweep(), 1);
+    const run = (await admin.query("select status, tests_not_proven from ci_runs where commit_sha = $1", [sha])).rows[0];
+    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 2 });
+    const cr = await checkOf(6108);
+    assert.equal(cr.conclusion, "failure");
+    assert.match((cr.output as { title: string }).title, /2 not proven, no fenvix summary/);
+  });
+
+  // protects=a summary refused at intake publishes the run not proven at once (no wait for the sweep), with the
+  // refusal's reason; fails_when=the 422 stores nothing, the run waits or is green; no_claim=the runner retrying.
+  it("A1.2 a summary refused at intake (422): stored as rejected, the run is published not_proven at once, the check run fails", async () => {
+    const sha = "6".repeat(40);
+    h.gh.addRun("acme/shop", 9109, { event: "push", headSha: sha, headBranch: "main", message: "rejected summary" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6109, runId: 9109, sha, branch: "main" }));
+    const res = await h.summary({ runId: 9109, summary: { tests: 10, reused_with_proof: 3, ran: 3, exit: 0 } });
+    assert.equal(res.statusCode, 422);
+    await h.app.service.idle();
+    const row = (await admin.query("select summary, rejected_at is not null as rejected, rejected_reason from gh_run_summaries where run_id = 9109")).rows[0];
+    assert.deepEqual(row, { summary: null, rejected: true, rejected_reason: JSON.parse(res.body).error.message });
+    await h.send("workflow_job", workflowJob("completed", { id: 6109, runId: 9109, sha, branch: "main", conclusion: "success" }));
+    assert.ok((await admin.query("select published_at from gh_jobs where job_id = 6109")).rows[0].published_at, "published without the sweep");
+    const run = (await admin.query("select status, tests_not_proven, not_proven_reason from ci_runs where commit_sha = $1", [sha])).rows[0];
+    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 1, not_proven_reason: "the runner's summary could not be read" });
+    const cr = await checkOf(6109);
+    assert.equal(cr.conclusion, "failure");
+    assert.match((cr.output as { summary: string }).summary, /reused_with_proof \+ ran must equal tests/);
+  });
+
+  // protects=the upsert rules: a valid summary replaces a rejection and clears it; a rejection never overwrites a valid
+  // summary; fails_when=either order loses the valid summary or keeps a stale rejection; no_claim=publication timing.
+  it("A1.2 a later valid summary replaces a rejection; a later rejection never overwrites a valid summary", async () => {
+    const row = async (runId: number) => (await admin.query(
+      "select summary is not null as has_summary, rejected_at is not null as rejected, rejected_reason from gh_run_summaries where run_id = $1", [runId])).rows[0];
+    assert.equal((await h.summary({ runId: 9110, summary: { nope: true } })).statusCode, 422);
+    await h.app.service.idle();
+    assert.equal((await row(9110)).rejected, true);
+    assert.equal((await h.summary({ runId: 9110, summary: allPassed })).statusCode, 202);
+    await h.app.service.idle();
+    assert.deepEqual(await row(9110), { has_summary: true, rejected: false, rejected_reason: null });
+    assert.equal((await h.summary({ runId: 9110, summary: { nope: true } })).statusCode, 422);
+    await h.app.service.idle();
+    assert.deepEqual(await row(9110), { has_summary: true, rejected: false, rejected_reason: null });
+  });
+
+  // protects=finishRun's race rule: not_proven rows stored after publish counted them (live_n) still raise the run;
+  // fails_when=status passed with live rows, tests_not_proven below live_n, passed not lowered; no_claim=the lock
+  // order under real concurrency (one connection here).
+  it("A1.4 finishRun with per-test not_proven rows publish did not count: N = live_n, status not_proven, passed lowered", async () => {
+    const sha = "5".repeat(40);
+    h.gh.addRun("acme/shop", 9111, { event: "push", headSha: sha, headBranch: "main", message: "race" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6111, runId: 9111, sha, branch: "main" }));
+    const job = (await admin.query("select * from gh_jobs where job_id = 6111")).rows[0];
+    const runId = job.ci_run_id as string;
+    // Two not_proven rows written as if a results chunk was applied between publish's count and finishRun.
+    for (const t of ["a::x", "a::y"]) {
+      await admin.query("insert into ci_test_results (run_id, workspace_id, test_id, outcome) select id, workspace_id, $2, 'not_proven' from ci_runs where id = $1", [runId, t]);
+    }
+    const { parseSummary } = await import("../../src/results/summary.ts");
+    const svc = h.app.service as unknown as {
+      db: { tx: <T>(ws: string, fn: (c: unknown) => Promise<T>) => Promise<T> };
+      finishRun: (c: unknown, id: string, job: unknown, s: unknown, run: unknown, pr: null, v: unknown) => Promise<void>;
+    };
+    const now = new Date();
+    await svc.db.tx(org.workspaceId, (c) => svc.finishRun(c, runId, { ...job, conclusion: "success" }, parseSummary(allPassed), null, null,
+      { startedAt: now, completedAt: now, durationMs: 1000, otherStepMinutes: 0, mode: job.mode ?? "shadow", region: null, notProvenRows: 0 }));
+    const run = (await admin.query("select status, tests_not_proven, tests_passed from ci_runs where id = $1", [runId])).rows[0];
+    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 2, tests_passed: 1 });
+    // Finishing again with the same values never lowers it (not_proven stays, N stays 2).
+    await svc.db.tx(org.workspaceId, (c) => svc.finishRun(c, runId, { ...job, conclusion: "success" }, parseSummary(allPassed), null, null,
+      { startedAt: now, completedAt: now, durationMs: 1000, otherStepMinutes: 0, mode: job.mode ?? "shadow", region: null, notProvenRows: 0 }));
+    assert.deepEqual((await admin.query("select status, tests_not_proven, tests_passed from ci_runs where id = $1", [runId])).rows[0],
+      { status: "not_proven", tests_not_proven: 2, tests_passed: 1 });
   });
 
   it("no summary at all: the sweep publishes it after the wait; billed as a run that used a machine", async () => {

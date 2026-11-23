@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { TLSSocket } from "node:tls";
 import { after, before, describe, it } from "node:test";
 import pg from "pg";
-import { migrate, MIGRATIONS_DIR, readMigrations } from "../lib/migrate.mjs";
+import { migrate, MIGRATIONS_DIR, PROBES, readMigrations } from "../lib/migrate.mjs";
 import { ensureRoles } from "../lib/roles.mjs";
 import { adminClientConfig, checkAnonKey, parseAdminUrl, parseCaCert } from "../lib/supabase.mjs";
 import { captured, MemorySsm } from "./helpers.mjs";
@@ -179,7 +179,8 @@ describe("F5: half-applied migrations other than 0017 (scratch Postgres)", () =>
   after(async () => { await server.query(`drop database if exists ${name} with (force)`).catch(() => undefined); await server.end(); });
 
   for (const [version, cut] of [["0013", "drop policy if exists ci_usage_events_github_app"], ["0015", "drop policy if exists workspace_invites_api_revoke"], ["0014", "drop policy if exists workspaces_github_app"],
-    ["0018", "alter table public.gh_repositories drop constraint if exists"], ["0019", "alter table public.ci_test_results drop constraint if exists ci_test_results_outcome_check"]]) {
+    ["0018", "alter table public.gh_repositories drop constraint if exists"], ["0019", "alter table public.ci_test_results drop constraint if exists ci_test_results_outcome_check"],
+    ["0020", "alter table public.gh_run_summaries alter column summary drop not null"]]) {
     it(`${version} cut before its last statement: the deploy stops, nothing recorded`, async () => {
       await fresh();
       for (const m of files.filter((x) => x.version < version)) psqlFile(join(MIGRATIONS_DIR, m.name));
@@ -191,6 +192,21 @@ describe("F5: half-applied migrations other than 0017 (scratch Postgres)", () =>
       } finally { await c.end(); }
     });
   }
+  // protects=the deploy recognises 0020 applied by hand (its first and last effects); fails_when=a probe misses the
+  // column rejected_at or the nullable summary, or fires before 0020 ran; no_claim=what the App does with rejected rows.
+  it("0020's probes: both false on 0001 to 0019, both true once 0020 ran (and again: safe to repeat)", async () => {
+    await fresh();
+    for (const m of files.filter((x) => x.version < "0020")) psqlFile(join(MIGRATIONS_DIR, m.name));
+    const c = new pg.Client(url()); await c.connect();
+    const probe = async () => (await c.query(`select (${PROBES["0020"].first}) as first, (${PROBES["0020"].last}) as last`)).rows[0];
+    try {
+      assert.deepEqual(await probe(), { first: false, last: false });
+      psqlFile(join(MIGRATIONS_DIR, files.find((x) => x.version === "0020").name));
+      assert.deepEqual(await probe(), { first: true, last: true });
+      psqlFile(join(MIGRATIONS_DIR, files.find((x) => x.version === "0020").name));
+      assert.deepEqual(await probe(), { first: true, last: true });
+    } finally { await c.end(); }
+  });
   it("every file applied by hand (0011 and 0012's last effects removed on purpose by 0014): recorded as found, nothing run", async () => {
     await fresh();
     for (const m of files) psqlFile(join(MIGRATIONS_DIR, m.name));

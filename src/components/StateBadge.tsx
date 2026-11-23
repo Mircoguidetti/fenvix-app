@@ -13,7 +13,7 @@ const TONE_ICON: Record<Tone, LucideIcon> = { ok: Check, danger: X, warn: Clock,
 
 /**
  * Icons a state may use instead of its tone's default: the seal of a test skipped with proof, the mark of an open
- * defect, the shield with a question mark of a run or test not proven identical to the serial run.
+ * defect, the shield with a question mark of a run or test not proven (a conflict between parallel lanes not ruled out).
  */
 export const STATE_ICONS = { seal: BadgeCheck, alert: TriangleAlert, unproven: ShieldQuestion } as const;
 
@@ -61,7 +61,7 @@ export function InvoiceStatus({ status }: { status: "paid" | "open" }) {
 
 /**
  * A run: green passed, red failed, amber running, amber not proven (a shield with a question mark, never green: at
- * least one test was not proven identical to the serial run; `count` is how many, always shown), grey cancelled. The
+ * least one test was not proven; `count` is how many, always shown), grey cancelled. The
  * word always says it too.
  */
 export function RunStatusPill({ status, count }: { status: RunStatus; count?: number }) {

@@ -14,12 +14,12 @@ import { formatCount, formatMinutes, formatMoney, formatPercent, formatPrice, fo
 const monthName = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
 export const seconds = (s: number) => (s < 120 ? `${Math.round(s)} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, "0")} s`);
 
-function Kpi({ label, value, sub, spark, wide, id }: { label: string; value: string; sub: string; spark?: number[]; wide?: boolean; id?: string }) {
+function Kpi({ label, value, sub, spark, wide, id, help }: { label: string; value: string; sub: string; spark?: number[]; wide?: boolean; id?: string; help?: string }) {
   return (
     <div className={wide ? "kpi kpi-wide" : "kpi"} id={id}>
       <strong className="kpi-value">{value}</strong>
-      <span className="kpi-label">{label}</span>
-      <span className="kpi-sub muted small">{sub}</span>
+      <span className="kpi-label" title={help}>{label}</span>
+      <span className="kpi-sub muted small">{help ? `${help} · ${sub}` : sub}</span>
       <div className="kpi-spark">{spark && spark.length > 1 ? <Sparkline values={spark} /> : <span className="spark-none" aria-hidden="true" />}</div>
     </div>
   );
@@ -86,7 +86,8 @@ export function OverviewPage() {
               <Kpi
                 id="kpi-proof"
                 wide
-                label="Proven identical"
+                label="Proven"
+                help="no conflict between parallel lanes"
                 value={(o.proof?.runsWithProof ?? 0) === 0 ? "–" : `${formatCount(o.proof?.provenIdentical ?? 0)} of ${formatCount(o.proof?.runsWithProof ?? 0)} runs`}
                 sub={(o.proof?.runsWithProof ?? 0) === 0 && (o.proof?.notProven ?? 0) === 0 ? "no parallel runs yet" : `${formatCount(o.proof?.notProven ?? 0)} not proven this month`}
               />

@@ -133,15 +133,15 @@ test("rows: proof and exit code only once finished; a test's cause only when it 
 test("the sentence about tests not proven: both causes, an unknown one, none, one test, exit 0 and 1", () => {
   const r = (n: number, exitCode: number | null) => ({ exitCode, tests: { ...notProvenNoProof.tests, notProven: n } });
   assert.equal(notProvenSentence(r(14, 1), { notProvenCauses: [{ cause: "file read outside the project", tests: 14 }] }),
-    "14 tests read a file outside the project, so the parallel result could not be proven equal to the serial one. Their serial result is reported; the run exits 1.");
+    "14 tests read a file outside the project, so a conflict between parallel lanes could not be ruled out. Their result from the one-lane re-run is reported; the run exits 1.");
   assert.equal(notProvenSentence(r(3, 0), { notProvenCauses: [{ cause: "environment variable read outside any test", tests: 3 }] }),
-    "3 tests read an environment variable outside any test, so the parallel result could not be proven equal to the serial one. Their serial result is reported; the check on GitHub is marked failed.");
+    "3 tests read an environment variable outside any test, so a conflict between parallel lanes could not be ruled out. Their result from the one-lane re-run is reported; the check on GitHub is marked failed.");
   assert.equal(notProvenSentence(r(5, 0), { notProvenCauses: [{ cause: "a socket", tests: 1 }, { cause: "file read outside the project", tests: 4 }] }),
-    "4 tests read a file outside the project, so the parallel result could not be proven equal to the serial one. Their serial result is reported; the check on GitHub is marked failed.", "the largest cause");
+    "4 tests read a file outside the project, so a conflict between parallel lanes could not be ruled out. Their result from the one-lane re-run is reported; the check on GitHub is marked failed.", "the largest cause");
   assert.equal(notProvenSentence(r(1, 2), { notProvenCauses: [{ cause: "a socket", tests: 1 }] }),
-    "1 test was not proven (a socket), so the parallel result could not be proven equal to the serial one. Their serial result is reported; the run exits 2.");
-  assert.equal(notProvenSentence(r(2, 1), null), "2 tests were not proven identical. The runner did not report why. Their serial result is reported; the run exits 1.");
-  assert.equal(notProvenSentence(r(1, null), { notProvenCauses: [] }), "1 test was not proven identical. The runner did not report why. Their serial result is reported; the check on GitHub is marked failed.");
+    "1 test was not proven (a socket), so a conflict between parallel lanes could not be ruled out. Their result from the one-lane re-run is reported; the run exits 2.");
+  assert.equal(notProvenSentence(r(2, 1), null), "2 tests were not proven. The runner did not report why. Their result from the one-lane re-run is reported; the run exits 1.");
+  assert.equal(notProvenSentence(r(1, null), { notProvenCauses: [] }), "1 test was not proven. The runner did not report why. Their result from the one-lane re-run is reported; the check on GitHub is marked failed.");
 });
 
 test("an API one release older: the missing fields read as nothing to show, never green, never an error", async () => {
@@ -184,10 +184,10 @@ test("one predicate for a not-proven run: its status, or tests not proven (the O
 test("the sentence for a run's own reason, and for inputs that differ (no count of tests)", () => {
   const r = (n: number, notProvenReason: string | null, exitCode: number | null = 1) => ({ exitCode, notProvenReason, tests: { ...notProvenNoProof.tests, notProven: n } });
   assert.equal(notProvenSentence(r(1, "the runner's summary could not be read", null), null),
-    "1 test was not proven identical: the runner's summary could not be read. Their serial result is reported; the check on GitHub is marked failed.");
-  assert.equal(notProvenSentence(r(1, "exit code missing", null), null), "1 test was not proven identical: exit code missing. Their serial result is reported; the check on GitHub is marked failed.");
+    "1 test was not proven: the runner's summary could not be read. Their result from the one-lane re-run is reported; the check on GitHub is marked failed.");
+  assert.equal(notProvenSentence(r(1, "exit code missing", null), null), "1 test was not proven: exit code missing. Their result from the one-lane re-run is reported; the check on GitHub is marked failed.");
   const inputs = notProvenSentence(r(1, "inputs differ"), null);
-  assert.equal(inputs, "The parallel and serial runs could not be compared: their inputs differ. The run is not proven; the check on GitHub is marked failed.");
+  assert.equal(inputs, "The two runs could not be compared: their inputs differ. The run is not proven; the check on GitHub is marked failed.");
   assert.doesNotMatch(inputs, /1 test/);
   // A run's reason names the part of N no proof cause explains.
   assert.deepEqual(notProvenCausesOf({ ...notProvenNoProof, notProvenReason: "exit code missing" }), [{ cause: "exit code missing", tests: 2 }]);

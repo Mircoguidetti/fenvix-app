@@ -139,7 +139,13 @@ export async function buildApp(deps: Deps): Promise<App> {
       return fail(reply, 403, "forbidden", "This credential is for another runner, repository or run.");
     }
     try { parseSummary(b?.summary); } catch (e) {
-      return fail(reply, 422, "bad_summary", e instanceof SummaryError ? e.message : "The summary could not be read.");
+      const why = e instanceof SummaryError ? e.message : "The summary could not be read.";
+      // Still 422 to the runner; the rejection is also stored (work summary_rejected) so that the run is published not
+      // proven at once. A queue failure here changes nothing for the runner: the sweep publishes the job later.
+      const rejected: Work = { kind: "summary_rejected", repositoryId: scope.repositoryId, runId, runAttempt, runnerName: scope.runnerName, reason: why.slice(0, 500) };
+      await queue.enqueue(rejected).catch((qe: unknown) =>
+        req.log.error({ err: qe instanceof Error ? qe.message : String(qe), work: describeWork(rejected) }, "could not queue the rejected summary"));
+      return fail(reply, 422, "bad_summary", why);
     }
     const summary = trimSummary(b!.summary as Record<string, unknown>);
     return handOff(req, reply, { kind: "summary", repositoryId: scope.repositoryId, runId, runAttempt, runnerName: scope.runnerName, receiptsUrl, summary });

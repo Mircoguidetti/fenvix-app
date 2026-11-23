@@ -1733,7 +1733,7 @@ table.data.dbs thead th { font-size: 12px; }
 .kpis.kpis-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (min-width: 1100px) { .kpis.kpis-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
-/* The Overview's seven numbers: "Proven identical" ("n of m runs") takes two columns; 4 columns on wide screens. */
+/* The Overview's seven numbers: "Proven" ("n of m runs") takes two columns; 4 columns on wide screens. */
 .kpis.kpis-7 { grid-auto-flow: dense; }
 .kpis-7 .kpi-wide { grid-column: span 2; }
 @media (min-width: 1180px) { .kpis.kpis-7 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
