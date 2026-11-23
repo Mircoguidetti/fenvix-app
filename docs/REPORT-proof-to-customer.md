@@ -1,5 +1,9 @@
 NOT DONE
 
+One criterion is not met: **criterion 4**. The full engine Node suite exits 1 on 4 groups that fail identically on
+the base `claude/release-1` `f67be4a3` (section 3, criterion 4). B1 adds no failure, and criteria 1-3 and 5-8 are
+met. The coordinator decides whether these base failures block the merge.
+
 # Report: proof to the customer (console follow-ups, honest proof words, the Node runner sends `summary.proof`, one end-to-end test)
 
 Branches: fenvix-app `claude/proof-followups` (from main `906d52b`), fenvix-engine-cli `claude/runner-proof` (from
@@ -99,7 +103,26 @@ of a non-footer last line, a fragment, a footer over 64 KiB and invalid UTF-8, 5
 
 ### 4. Engine Node suite
 
-Interim: the full engine Node suite (`node --test --test-concurrency=1 test/*.test.js`) is still running at the time of this commit; this section is completed when it ends. Targeted B1 tests: `node --test test/parallel-rerun-account.test.js` 10/10 pass; `parallel-p041.test.js` "vitest named project" 1/1 pass.
+`cd node && npm ci --no-audit --no-fund && node scripts/build.js`, then `node --test --test-concurrency=1 test/*.test.js`
+(what `npm test` runs) on `162aa55`: **exit 1; 976 tests, 968 pass, 4 fail, 3 cancelled, 1 skipped** (61 min). The B1
+tests pass: `parallel-rerun-account.test.js` 10/10 (the changed and new ones), and in `parallel-p041.test.js` the
+named-project test with the `hazard_rerun.tests` assertion.
+
+Top-level failures, each re-run alone on the base `f67be4a3` (a worktree with the same native core: B1 changes no Rust)
+and on this branch, on an idle machine, with `--test-name-pattern`:
+
+| Group | Failing subtest | Base `f67be4a3` | This branch |
+|---|---|---|---|
+| `parallel-p041.test.js` "jest: parallel lanes" | the `before` hook: Jest 30 with the default worker count runs in one lane (`node/src/jest/cli.js:92` "parallel refused, running in band"), the test expects a plan; its 3 tests are cancelled | fails (3 cancelled) | fails (3 cancelled) |
+| `repro-p041.test.js` "repro options (vitest)" | `--det-order: exactly the listed tests, in the listed order ...` (`beforeAll-a` placement and extra tests) | fails (9 pass, 1 fail) | fails (9 pass, 1 fail) |
+| `runner-bun.test.js` "bun: Level 0 controls" | `two --det runs give identical fingerprints; the controls are active inside bun test` | fails (2 pass, 1 fail) | fails (2 pass, 1 fail) |
+| `runner-node-test.test.js` "node-test: adversarial" | `a file another test file wrote: not cacheable` | fails (44 pass, 1 fail) | fails (44 pass, 1 fail) |
+
+A fifth failure in the full run, `customer-nodetest.test.js` "a flaky (order-dependent) test becomes a defect", was
+this container missing the `detpy` Python package (`ModuleNotFoundError: No module named 'detpy'`). After
+`maturin build --release` and installing the wheel, `node --test test/customer-nodetest.test.js` passes 4 of 4.
+None of these files or the code they test is changed by B1 (`git diff f67be4a3 --stat -- node/src` lists only
+`node/src/parallel-rerun.js`).
 
 ### 5. Real fixtures (patched runner, `--det-workers=2`, empty plan state)
 
