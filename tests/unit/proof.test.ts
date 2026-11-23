@@ -109,6 +109,10 @@ test("search: runs by number (with #) or commit prefix, open defects by test nam
   assert.equal(capped.length, 20);
   assert.deepEqual(capped.map((r) => r.id), [...many].reverse().slice(0, 20).map((r) => r.id), "newest first");
   assert.deepEqual(searchFrom([project], all, [d], "d"), [], "one character finds nothing");
+  // A run number of one digit is still a search.
+  const six = run("2026-11-11T09:00:00Z", { number: 6 });
+  assert.deepEqual(searchFrom([project], [six], [], "6").map((r) => r.id), [six.id]);
+  assert.deepEqual(searchFrom([project], [six], [], "#6").map((r) => r.id), [six.id]);
 });
 
 test("rows: proof and exit code only once finished; a test's cause only when it is not proven", () => {

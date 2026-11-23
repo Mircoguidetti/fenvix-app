@@ -2534,8 +2534,9 @@ export interface operations {
     };
     search: {
         parameters: {
-            query: {
-                q: string;
+            query?: {
+                /** @description No term, or one character that is not a run number, finds nothing. */
+                q?: string;
             };
             header: {
                 /** @description The organization the request is for. The person must be a member of it. */

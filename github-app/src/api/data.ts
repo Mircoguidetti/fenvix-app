@@ -327,7 +327,8 @@ export const search: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const q = String(ctx.query.q ?? "");
   const t = searchTerms(q);
-  if (t.text.length < SEARCH_MIN) return { items: [] };
+  // A run number ("6", "#6") is always a search; any other term needs SEARCH_MIN characters; no q finds nothing.
+  if (t.number === null && t.text.length < SEARCH_MIN) return { items: [] };
   const all = await projects(ctx.t, ws);
   const conds: string[] = [];
   const params: unknown[] = [ws];

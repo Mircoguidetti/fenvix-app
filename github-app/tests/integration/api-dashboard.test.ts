@@ -224,8 +224,11 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     assert.ok(d.body.items.length <= 20);
     const none = await call(api, "search", { ...base, query: { q: "no such test or run" } });
     assert.deepEqual(none.body.items, []);
-    const one = await call(api, "search", { ...base, query: { q: "4" } });
+    // One character that is not a run number finds nothing; no term finds nothing.
+    const one = await call(api, "search", { ...base, query: { q: "x" } });
     assert.deepEqual([one.status, one.body.items], [200, []], "one character finds nothing");
+    const empty = await call(api, "search", base);
+    assert.deepEqual([empty.status, empty.body.items], [200, []], "no term finds nothing");
   });
 
   it("search caps at 20: more than 20 matching open defects give exactly 20, newest first", async () => {

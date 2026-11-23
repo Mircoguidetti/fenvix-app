@@ -532,7 +532,8 @@ export function searchTerms(q: string): { number: number | null; commitPrefix: s
  */
 export function searchFrom(projects: Project[], runs: Run[], defects: Defect[], q: string): SearchResult[] {
   const t = searchTerms(q);
-  if (t.text.length < SEARCH_MIN) return [];
+  // A run number ("6", "#6") is always a search; any other term needs SEARCH_MIN characters.
+  if (t.number === null && t.text.length < SEARCH_MIN) return [];
   const name = new Map(projects.map((p) => [p.id, shortName(p.fullName)]));
   const hits: { at: string; r: SearchResult }[] = [];
   for (const r of runs) {
