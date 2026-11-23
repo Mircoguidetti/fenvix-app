@@ -126,4 +126,77 @@ price for every minute on our runners: $2.00 per 1,000 minutes.
 
 ## Setups 2-4: the three cheapest viable options from MACHINES.md
 
-Added after MACHINES.md (step 3).
+Chosen in `MACHINES.md` ("Viability"): the cheapest viable machine of each of three providers. All three run jobs in
+**Firecracker microVMs on long-lived bare-metal hosts** (isolation way B, the Customer-mode design moved to bare metal);
+that host software does not exist yet (`OPTIONS.md`). The API, queue and database stay where they are today.
+
+Common to setups 2-4 (ESTIMATED):
+- **Slots per server** = min(⌊(threads − 2) ÷ 2⌋, ⌊(RAM GB − 8) ÷ 4⌋) (`MACHINES.md`).
+- **Utilization** here is fleet occupancy: billed slot-minutes = V ÷ u. Monthly-billed servers are bought whole:
+  servers = ⌈(V ÷ u) ÷ (slots × 43,800)⌉ and billed slot-minutes = servers × slots × 43,800 (43,800 = 730 h × 60).
+  The cell shows the actual u when one server is more than the volume needs.
+- **Fixed per month:** Supabase Pro $25.00 + idle serverless $0.43 = **$25.43**. The cache service runs on a host
+  inside its 2-thread / 8 GB reserve (no cache machine, no EC2 left). Runner image: on the host's disk ($0).
+- **Per job:** serverless $0.000106 (as today). **Egress $0**: 20 MB × 100,000 jobs = 2 TB a month at 1M minutes,
+  inside every allowance (Hetzner dedicated unlimited, phoenixNAP 15 TB per location, Cherry up to 100 TB per
+  server; sources in `MACHINES.md`).
+- No boot overhead per job is billed separately: a microVM start (≤ 125 ms for Firecracker itself, plus the runner's
+  registration, ESTIMATED 5-15 s) is part of the occupancy that u stands for.
+- One server is a single point of failure; a second one for availability doubles the floor (not included).
+
+### Setup 2: Hetzner dedicated AX102 (Ryzen 9 7950X3D, 32 threads ESTIMATED, 128 GB), Falkenstein or Helsinki
+
+- Price: €159/month (cap) + €129 setup; setup spread over 12 months (ESTIMATED): €159 + €129 ÷ 12 = €169.75 per
+  server-month; × $1.10 per € (ASSUMED rate, see `MACHINES.md`) = $186.73 per server-month.
+  Source: https://www.hetzner.com/dedicated-rootserver/matrix-ax/ (read 2026-11-23).
+- Slots: min(⌊30 ÷ 2⌋, ⌊120 ÷ 4⌋) = **15**. Price per slot-minute: $186.73 ÷ 15 ÷ 43,800 = **$0.0002842**.
+
+| Volume (customer test-min/month) | u = 30% | u = 60% | u = 90% |
+|---|---|---|---|
+| **10,000** | 10,000/0.30 = 33,333 slot-min → 1 server(s) × 15 slots × 43,800 = 657,000 slot-min (actual u 1.5%) × $0.0002842 = $186.73; + 1,000 jobs × $0.000106 = $0.11; + fixed $25.43 = $212.26/month ÷ 10 = **$21.23** | 10,000/0.60 = 16,667 slot-min → 1 server(s) × 15 slots × 43,800 = 657,000 slot-min (actual u 1.5%) × $0.0002842 = $186.73; + 1,000 jobs × $0.000106 = $0.11; + fixed $25.43 = $212.26/month ÷ 10 = **$21.23** | 10,000/0.90 = 11,111 slot-min → 1 server(s) × 15 slots × 43,800 = 657,000 slot-min (actual u 1.5%) × $0.0002842 = $186.73; + 1,000 jobs × $0.000106 = $0.11; + fixed $25.43 = $212.26/month ÷ 10 = **$21.23** |
+| **100,000** | 100,000/0.30 = 333,333 slot-min → 1 server(s) × 15 slots × 43,800 = 657,000 slot-min (actual u 15.2%) × $0.0002842 = $186.73; + 10,000 jobs × $0.000106 = $1.06; + fixed $25.43 = $213.22/month ÷ 100 = **$2.13** | 100,000/0.60 = 166,667 slot-min → 1 server(s) × 15 slots × 43,800 = 657,000 slot-min (actual u 15.2%) × $0.0002842 = $186.73; + 10,000 jobs × $0.000106 = $1.06; + fixed $25.43 = $213.22/month ÷ 100 = **$2.13** | 100,000/0.90 = 111,111 slot-min → 1 server(s) × 15 slots × 43,800 = 657,000 slot-min (actual u 15.2%) × $0.0002842 = $186.73; + 10,000 jobs × $0.000106 = $1.06; + fixed $25.43 = $213.22/month ÷ 100 = **$2.13** |
+| **1,000,000** | 1,000,000/0.30 = 3,333,333 slot-min → 6 server(s) × 15 slots × 43,800 = 3,942,000 slot-min (actual u 25.4%) × $0.0002842 = $1,120.35; + 100,000 jobs × $0.000106 = $10.60; + fixed $25.43 = $1,156.38/month ÷ 1,000 = **$1.16** | 1,000,000/0.60 = 1,666,667 slot-min → 3 server(s) × 15 slots × 43,800 = 1,971,000 slot-min (actual u 50.7%) × $0.0002842 = $560.18; + 100,000 jobs × $0.000106 = $10.60; + fixed $25.43 = $596.21/month ÷ 1,000 = **$0.60** | 1,000,000/0.90 = 1,111,111 slot-min → 2 server(s) × 15 slots × 43,800 = 1,314,000 slot-min (actual u 76.1%) × $0.0002842 = $373.45; + 100,000 jobs × $0.000106 = $10.60; + fixed $25.43 = $409.48/month ÷ 1,000 = **$0.41** |
+
+### Setup 3: phoenixNAP d3.m6.xlarge (2× Xeon Platinum 8452Y, 144 threads UNVERIFIED, 512 GB), Amsterdam (this type's availability there UNKNOWN)
+
+- Price: $1.92/h + one public IP $0.0035/h; hourly billing, full-hour rounding.
+  Sources: https://phoenixnap.com/bare-metal-cloud/instances, https://phoenixnap.com/kb/phoenixnap-bare-metal-cloud-billing-models (read 2026-11-23).
+- Slots: min(⌊142 ÷ 2⌋, ⌊504 ÷ 4⌋) = **71**. Price per slot-minute: $1.9235 ÷ 71 ÷ 60 = **$0.0004515**.
+- Hourly billing lets the fleet follow demand, so billed slot-minutes = V ÷ u with no whole-server rounding. A
+  71-slot server at 30% occupancy for 10k minutes is ≈ 7.8 server-hours a month (33,333 ÷ 71 ÷ 60); with 1-15
+  minutes to provision, that needs a scheduler that starts the server ahead of demand (ESTIMATED feasible, not
+  designed). Full-hour rounding per start is not counted.
+
+| Volume (customer test-min/month) | u = 30% | u = 60% | u = 90% |
+|---|---|---|---|
+| **10,000** | 10,000/0.30 = 33,333 slot-min × $0.0004515 = $15.05; + 1,000 jobs × $0.000106 = $0.11; + fixed $25.43 = $40.59/month ÷ 10 = **$4.06** | 10,000/0.60 = 16,667 slot-min × $0.0004515 = $7.53; + 1,000 jobs × $0.000106 = $0.11; + fixed $25.43 = $33.06/month ÷ 10 = **$3.31** | 10,000/0.90 = 11,111 slot-min × $0.0004515 = $5.02; + 1,000 jobs × $0.000106 = $0.11; + fixed $25.43 = $30.55/month ÷ 10 = **$3.06** |
+| **100,000** | 100,000/0.30 = 333,333 slot-min × $0.0004515 = $150.51; + 10,000 jobs × $0.000106 = $1.06; + fixed $25.43 = $177.00/month ÷ 100 = **$1.77** | 100,000/0.60 = 166,667 slot-min × $0.0004515 = $75.25; + 10,000 jobs × $0.000106 = $1.06; + fixed $25.43 = $101.74/month ÷ 100 = **$1.02** | 100,000/0.90 = 111,111 slot-min × $0.0004515 = $50.17; + 10,000 jobs × $0.000106 = $1.06; + fixed $25.43 = $76.66/month ÷ 100 = **$0.77** |
+| **1,000,000** | 1,000,000/0.30 = 3,333,333 slot-min × $0.0004515 = $1,505.09; + 100,000 jobs × $0.000106 = $10.60; + fixed $25.43 = $1,541.12/month ÷ 1,000 = **$1.54** | 1,000,000/0.60 = 1,666,667 slot-min × $0.0004515 = $752.54; + 100,000 jobs × $0.000106 = $10.60; + fixed $25.43 = $788.57/month ÷ 1,000 = **$0.79** | 1,000,000/0.90 = 1,111,111 slot-min × $0.0004515 = $501.70; + 100,000 jobs × $0.000106 = $10.60; + fixed $25.43 = $537.73/month ÷ 1,000 = **$0.54** |
+
+### Setup 4: Cherry Servers Ryzen 9 9950X (32 threads, 128 GB), monthly billing; Frankfurt, Amsterdam, Stockholm or Lithuania
+
+- Price: $347.08/month. Source: https://www.cherryservers.com/bare-metal-dedicated-servers/instant-servers (read
+  2026-11-23). Setup fee: none shown (UNKNOWN).
+- Slots: **15**. Price per slot-minute: $347.08 ÷ 15 ÷ 43,800 = **$0.0005283**.
+
+| Volume (customer test-min/month) | u = 30% | u = 60% | u = 90% |
+|---|---|---|---|
+| **10,000** | 10,000/0.30 = 33,333 slot-min → 1 server(s) × 15 slots × 43,800 = 657,000 slot-min (actual u 1.5%) × $0.0005283 = $347.08; + 1,000 jobs × $0.000106 = $0.11; + fixed $25.43 = $372.62/month ÷ 10 = **$37.26** | 10,000/0.60 = 16,667 slot-min → 1 server(s) × 15 slots × 43,800 = 657,000 slot-min (actual u 1.5%) × $0.0005283 = $347.08; + 1,000 jobs × $0.000106 = $0.11; + fixed $25.43 = $372.62/month ÷ 10 = **$37.26** | 10,000/0.90 = 11,111 slot-min → 1 server(s) × 15 slots × 43,800 = 657,000 slot-min (actual u 1.5%) × $0.0005283 = $347.08; + 1,000 jobs × $0.000106 = $0.11; + fixed $25.43 = $372.62/month ÷ 10 = **$37.26** |
+| **100,000** | 100,000/0.30 = 333,333 slot-min → 1 server(s) × 15 slots × 43,800 = 657,000 slot-min (actual u 15.2%) × $0.0005283 = $347.08; + 10,000 jobs × $0.000106 = $1.06; + fixed $25.43 = $373.57/month ÷ 100 = **$3.74** | 100,000/0.60 = 166,667 slot-min → 1 server(s) × 15 slots × 43,800 = 657,000 slot-min (actual u 15.2%) × $0.0005283 = $347.08; + 10,000 jobs × $0.000106 = $1.06; + fixed $25.43 = $373.57/month ÷ 100 = **$3.74** | 100,000/0.90 = 111,111 slot-min → 1 server(s) × 15 slots × 43,800 = 657,000 slot-min (actual u 15.2%) × $0.0005283 = $347.08; + 10,000 jobs × $0.000106 = $1.06; + fixed $25.43 = $373.57/month ÷ 100 = **$3.74** |
+| **1,000,000** | 1,000,000/0.30 = 3,333,333 slot-min → 6 server(s) × 15 slots × 43,800 = 3,942,000 slot-min (actual u 25.4%) × $0.0005283 = $2,082.48; + 100,000 jobs × $0.000106 = $10.60; + fixed $25.43 = $2,118.51/month ÷ 1,000 = **$2.12** | 1,000,000/0.60 = 1,666,667 slot-min → 3 server(s) × 15 slots × 43,800 = 1,971,000 slot-min (actual u 50.7%) × $0.0005283 = $1,041.24; + 100,000 jobs × $0.000106 = $10.60; + fixed $25.43 = $1,077.27/month ÷ 1,000 = **$1.08** | 1,000,000/0.90 = 1,111,111 slot-min → 2 server(s) × 15 slots × 43,800 = 1,314,000 slot-min (actual u 76.1%) × $0.0005283 = $694.16; + 100,000 jobs × $0.000106 = $10.60; + fixed $25.43 = $730.19/month ÷ 1,000 = **$0.73** |
+
+### Summary: cost per 1,000 customer test-minutes (from the grids above)
+
+| Setup | 10k: u 30 / 60 / 90% | 100k: u 30 / 60 / 90% | 1M: u 30 / 60 / 90% |
+|---|---|---|---|
+| 1. AWS today (c6i.large per job) | $8.72 / $5.94 / $5.02 | $6.03 / $3.26 / $2.34 | $5.77 / $2.99 / $2.07 |
+| 2. Hetzner AX102 + Firecracker | $21.23 / $21.23 / $21.23 | $2.13 / $2.13 / $2.13 | $1.16 / $0.60 / $0.41 |
+| 3. phoenixNAP d3.m6.xlarge + Firecracker | $4.06 / $3.31 / $3.06 | $1.77 / $1.02 / $0.77 | $1.54 / $0.79 / $0.54 |
+| 4. Cherry 9950X monthly + Firecracker | $37.26 / $37.26 / $37.26 | $3.74 / $3.74 / $3.74 | $2.12 / $1.08 / $0.73 |
+| GitHub 2-core (customer's price) | $6.00 | $6.00 | $6.00 |
+
+Reading: at 10k minutes a month a whole server is mostly idle (actual u 1.5%), so the monthly-billed setups cost more
+than today's per-job VMs. From 100k minutes one Hetzner server ($2.13) already beats today's best case ($2.34), and at
+1M minutes bare metal costs 3-5× less per minute than per-job EC2 at the same utilization. The fixed database and
+serverless cost ($25.43) is small from 100k minutes up. These are list prices and ESTIMATED usage: the slot count per
+server and each CPU's per-thread speed must be measured before relying on the ratios.
