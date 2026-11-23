@@ -173,3 +173,99 @@ I could not start the local Supabase (Docker), so `api-dashboard.test.ts` and th
 This container had been reset between the two tasks: the checkout was on `claude/node-runner`, and `git merge origin/main`
 first fast-forwarded that local branch. I reset it to `origin/claude/node-runner` (nothing was pushed) and merged into
 `claude/console-proof` as asked.
+
+## Review fixes 2 (coordinator's second /review at 6056820, decision D1 A)
+
+The principle behind all of these: when we are not sure, the run is never green; and a run is never red for something
+the runner did not report as unproven.
+
+### Commands (run 2026-11-23 on 3c008b7, Postgres 16 on :54329)
+
+| Command | Result |
+| --- | --- |
+| `npm run api:check` | exit 0, "schema.d.ts matches openapi/fenvix-api.yaml" |
+| `npm run test:unit` | exit 0, 86 pass, 0 fail |
+| `cd github-app && npm test` | exit 0; typecheck clean; unit 175/175; integration 142/142 (the two local-Supabase suites skip themselves) |
+| `cd deploy && npm test` | exit 0; 88 tests, 87 pass, 0 fail, 1 skipped (local Supabase) |
+| `npm run check` | exit 0; checks 66/66, organizations 10/10, status colours 18/18, screenshots: all checks passed, 170 pictures |
+
+Also run: `supabase/tests/run-local.sh` (migrations 0014–0019 twice, all RLS checks, `run-proof-check.sql`): all OK.
+Not run (needs Docker): `api-dashboard.test.ts` (its new search-cap and one-character tests) and the deploy test on the local Supabase.
+
+### Per item
+
+1. **Malformed proof**: `notProvenOf` (`github-app/src/results/summary.ts`) treats a `proof` that is present but unreadable as
+   N ≥ max(1, its readable `not_proven`, ranExecuted − its readable `proven`), with reason "the proof of the parallel run
+   could not be read". Unit test "a malformed proof with no other signal …" covers `{}`, `true`, order_digest "",
+   parallel_seconds null, rerun_one_lane null and a 501-character cause, each with verify absent and with verify "identical".
+   All are `not_proven` with conclusion failure.
+2. **Unreadable summary**: `service.ts` `publish` logs the error and stores `not_proven`, N 1, reason "the runner's summary
+   could not be read". `runStatus` and `conclusionOf` take `summaryUnreadable` (conclusion failure; its own title and
+   comment). With no summary at all, the old rule still applies. Unit and integration tests: a stored summary with
+   reused + ran ≠ tests and job success → not_proven, check run failure. The intake already refuses such a summary
+   (422), so the test stores it directly, as one accepted earlier.
+3. **Proven over time** (`src/data/ci.ts` `parallelProofFrom`): (ranExecuted − N) / ranExecuted per run, N = max(run's,
+   proof's); 0 when nothing is proven; runs that ran nothing are left out. Unit: proven 95, not_proven 0, ran 100,
+   N 5 → 0.95.
+4. **Per-test rows raise the run**: `service.ts` `reconcileNotProven` runs after each application of chunks:
+   tests_not_proven = greatest(stored, rows), passed lowered, a `passed` run becomes `not_proven`. `publish` counts the
+   rows for its check run. Late chunks re-publish through `publish` (same check run, one usage event). Integration tests
+   cover both orders: rows before the summary → not_proven, check failure "2 not proven"; rows after publication →
+   passed becomes not_proven, the check run is updated in place to failure, billed once.
+5. **ranExecuted** = ran − `outcome_counts.skipped`. It is used in the proof-coverage rule, stored in the proof
+   (`RunProof.ranExecuted`, null for older rows), and shown in the card as "Proven n of ranExecuted". Documented.
+   Unit: the node-jest-cold-0-reused shape (ran 5, 1 skipped) with proof 4 + 0 → passed.
+6. **Contradictory verify**: the verify counts always count, and a non-zero (or non-numeric) `verify_exit` is a failed
+   verify whatever `verify_status` says. Only "identical" with all-zero counts and exit 0 keeps N at 0.
+7. **No double count**: verify N = not_proven + max(diverged, wrong_reuse) + missing. `input_differs` alone → N 1 with
+   reason "inputs differ". The console says "The parallel and serial runs could not be compared: their inputs differ."
+   (no "1 test"). Unit tests for both.
+8. **Missing or invalid `exit`**: `RunSummary.exit` is null, giving N ≥ 1 with reason "exit code missing" →
+   `not_proven`, conclusion failure. Unit: undefined, null, "0", 1.5.
+9. **One predicate**: `isNotProven` (`src/data/ci.ts`, status not_proven or tests.notProven > 0) is used by the Overview
+   block and the Parallel with proof page. Unit: a failed run with 3 not proven counts on both.
+10. **Filter counts**: the tests list gains `rowCounts` (per-test rows per outcome; `counts` stays the run's own). The
+    filters show row counts. When they differ, a line says "N not proven, M with per-test detail" (same for passed).
+    The mock's #4296 sends its proof but no per-test rows. Checks: the filter reads 0 and the line reads
+    "3 not proven, 0 with per-test detail".
+11. **Older API filters**: `compat.ts` turns a 400 on `status`/`outcome` = not_proven into an empty page (other errors
+    still throw). The old-API mock refuses those filters, and the compat check opens both filters (runs list and tests)
+    and asserts "No runs match." and "No test matches.", with no error.
+12. **Migration 0019**: the rollback comment now reads as given, and `set local statement_timeout = '60s'` sits next
+    to the lock timeout. Also new in 0019: the column `not_proven_reason` (≤ 200 characters). This is safe to change
+    because 0019 has not been deployed; its probes (first: `proof`; last: the outcome check) are unchanged.
+13. **Tests for earlier fixes**:
+    - One N: integration "nothing ran and verify crashed" → not_proven, tests_not_proven 1.
+    - The proof card's "Proven n of ranExecuted" and its Not proven = the run's N: check.
+    - No "See the N tests" on a proof run with N > 0 and no rows: check.
+    - "Unknown" pill for an unknown status and outcome (text and `data-tone` neutral): check on the styleguide, which
+      now shows both.
+    - `/search` at the API: more than 20 matching open defects → exactly 20, newest first; one character → `[]`
+      (api-dashboard, not run). Because of this I put the OpenAPI `minLength` back to 1, since 2 would answer 400; the
+      handler returns `[]` below 2 characters.
+    - The compat search check now always calls the search through the client (no visibility condition).
+14. **docs/data-contract.md**: the N section is rewritten to the fail-closed rule (with ranExecuted, the unreadable
+    summary, per-test rows, reasons). The malformed-proof sentence is corrected, and the Changes entry covers both review rounds.
+
+### Changed tests (each with its reason)
+
+- `github-app/tests/unit/status.test.ts`:
+  - "verify fails closed": the case "identical + wrong_reuse 3 → 0" is now "→ 3, not_proven" (item 6, as asked).
+  - "without proof": "identical with verify_counts.not_proven 4 → 0" is now "→ 4" (item 6: the counts always count).
+  - "a malformed proof never discards the summary": the "a list" case now expects N 374 (ranExecuted − 0 readable
+    proven; item 1) instead of 4.
+  - `proofRecord` now takes ranExecuted, and the expected record includes `ranExecuted: 374`.
+- `github-app/tests/integration/results.test.ts`, "a test not proven …": the proof in its second summary was
+  inconsistent (50 proven for 10 tests that ran). It is now 4 proven + 6 not proven, and the expected record includes
+  `ranExecuted: 10`.
+- `tests/unit/proof.test.ts`, "rows: proof and exit code only once finished": the mapped proof now includes
+  `ranExecuted: null` for a row stored without it.
+- `scripts/checks.mjs`, "an API one release older": the search part now runs on every screen size through the client
+  (no `isVisible` condition); it also covers the two filters.
+- `github-app/tests/helpers/harness.ts`: its migration probe now looks for the newest 0019 column (`not_proven_reason`).
+- Nothing was skipped, removed or weakened.
+
+### Accepted risk (founder, D1 A)
+
+A browser tab still holding the old console from before the deploy shows a `not_proven` test as "Skipped with proof"
+(its outcome pill fell through to that branch) until the tab is reloaded. There are no customers today.
