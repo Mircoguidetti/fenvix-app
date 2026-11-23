@@ -79,7 +79,9 @@ describe("the rows the App writes, read by the dashboard (src/data/ci-rows.ts)",
     assert.equal(new Date(run.startedAt).toISOString(), "2026-11-18T10:00:00.000Z");
     assert.equal(new Date(run.finishedAt!).toISOString(), "2026-11-18T10:03:00.000Z");
     // Counts as the run page shows them: passed + failed + skipped with proof = total; ran + skipped = total.
-    assert.deepEqual(run.tests, { total: 56, ran: 11, passed: 10, failed: 1, skippedWithProof: 45, flakyDefects: 0 });
+    assert.deepEqual(run.tests, { total: 56, ran: 11, passed: 10, failed: 1, skippedWithProof: 45, flakyDefects: 0, notProven: 0 });
+    // A serial run (no proof block in its summary): no proof.
+    assert.equal(run.proof, null);
     assert.equal(run.tests.passed + run.tests.failed + run.tests.skippedWithProof, run.tests.total);
     assert.ok(run.testTimeMs.ran > 0 && run.testTimeMs.skipped > 0);
     assert.ok(run.skipShare > 0 && run.skipShare < 1);

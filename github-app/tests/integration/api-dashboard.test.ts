@@ -190,7 +190,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     const base = { token: memberA.token, ws: ownerA.workspaceId, params: { runId: A.runs.latest } };
     let t = await call(api, "listTestResults", base);
     assert.equal(t.body.total, 3);
-    assert.deepEqual(t.body.counts, { passed: 40, failed: 0, skipped_with_proof: 160 });
+    assert.deepEqual(t.body.counts, { passed: 40, failed: 0, skipped_with_proof: 160, not_proven: 0 });
     assert.equal(t.body.items[0].outcome, "failed", "failures first");
     assert.equal(t.body.items[0].failure.defectId, A.defects.open);
     t = await call(api, "listTestResults", { ...base, query: { outcome: "skipped_with_proof" } });
@@ -207,6 +207,23 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     assert.equal(rc.body.reusedRunId, A.runs.reused);
     assert.equal(rc.body.reusedRunNumber, reusedNumber);
     assert.equal(rc.body.runtime.distributions, 42);
+  });
+
+  it("search: a run by number (with or without #) and by commit prefix, an open defect by test name; another organization's never", async () => {
+    const base = { token: memberA.token, ws: ownerA.workspaceId };
+    const run = (await admin.query("select number, commit_sha, branch from ci_runs where id = $1", [A.runs.latest])).rows[0];
+    for (const q of [String(run.number), `#${run.number}`, run.commit_sha.slice(0, 9)]) {
+      const r = await call(api, "search", { ...base, query: { q } });
+      assert.ok(r.body.items.some((x: { kind: string; id: string; label: string }) => x.kind === "run" && x.id === A.runs.latest && x.label === `Run #${run.number}`), q);
+      assert.ok(r.body.items.every((x: { projectId: string }) => [A.projects.shop, A.projects.web].includes(x.projectId)), q);
+    }
+    const defect = (await admin.query("select test_id from ci_defects where id = $1", [A.defects.open])).rows[0];
+    const name = String(defect.test_id).split("::").pop()!;
+    const d = await call(api, "search", { ...base, query: { q: name.toUpperCase() } });
+    assert.ok(d.body.items.some((x: { kind: string; id: string }) => x.kind === "defect" && x.id === A.defects.open));
+    assert.ok(d.body.items.length <= 20);
+    const none = await call(api, "search", { ...base, query: { q: "no such test or run" } });
+    assert.deepEqual(none.body.items, []);
   });
 
   it("the live run view: ETag, If-None-Match → 304; a progress update → 200 with a new ETag", async () => {
@@ -593,7 +610,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
   it("every dashboard operation of the contract was called and answered as the contract says", () => {
     const all = dashboardOperations().map((o) => o.operationId).sort();
     assert.deepEqual(all.filter((x) => !covered.has(x)), []);
-    assert.equal(all.length, 42);
+    assert.equal(all.length, 43);
     void NOW;
   });
 });

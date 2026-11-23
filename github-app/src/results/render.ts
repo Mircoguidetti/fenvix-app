@@ -44,7 +44,8 @@ function limit<T>(xs: T[], max: number): { shown: T[]; more: number } {
 export function conclusionOf(s: RunSummary | null, jobConclusion: string | null): Conclusion {
   if (jobConclusion === "cancelled" || jobConclusion === "skipped") return "cancelled";
   if (!s) return jobConclusion === "success" ? "neutral" : "failure";
-  if (s.failed.length || s.flaky.length || s.exit !== 0) return "failure";
+  // A test not proven identical to the serial run is never a green check, even with exit 0.
+  if (s.failed.length || s.flaky.length || s.exit !== 0 || s.notProven > 0) return "failure";
   return "success";
 }
 
@@ -52,7 +53,9 @@ export function title(s: RunSummary | null, c: Conclusion): string {
   if (!s) return c === "cancelled" ? "Cancelled before the tests reported" : "No fenvix summary: the job ended before the tests reported";
   const parts = [`${n(s.reusedWithProof)} of ${n(s.tests)} tests skipped with proof`, `${minutes(s.testSecondsSaved)} saved`];
   const fails = s.failed.length + s.flaky.length;
-  parts.push(fails === 0 ? "no failures" : `${n(fails)} failed${s.flaky.length ? ` (${n(s.flaky.length)} flaky, reproducible)` : ""}`);
+  if (fails > 0) parts.push(`${n(fails)} failed${s.flaky.length ? ` (${n(s.flaky.length)} flaky, reproducible)` : ""}`);
+  if (s.notProven > 0) parts.push(`${n(s.notProven)} not proven`);
+  else if (fails === 0) parts.push("no failures");
   return parts.join(" · ");
 }
 
@@ -67,6 +70,7 @@ function table(s: RunSummary, ctx: RenderContext): string[] {
     `| Minutes saved | **${minutes(s.testSecondsSaved)}** (${pct(s.shareOfTestTimeSaved)} of test time) |`,
     `| Failures | ${n(s.failed.length)} |`,
     `| Flaky, reproducible | ${n(s.flaky.length)} |`,
+    ...(s.notProven > 0 || s.proof ? [`| Not proven identical to the serial run | ${n(s.notProven)} |`] : []),
   ];
 }
 

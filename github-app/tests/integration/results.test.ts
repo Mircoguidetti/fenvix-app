@@ -155,6 +155,32 @@ describe("run results on GitHub, runs and usage events", () => {
     assert.deepEqual(run, { trigger: "push", pull_request: null, tests_flaky_defects: 1, tests_failed: 1 });
   });
 
+  it("a test not proven identical to the serial run: status not_proven, N stored, never a green check (console proof)", async () => {
+    // node-mocha-verify-failed: exit 0, verify_status diverged, one diverged test, no proof block.
+    const sha = "a".repeat(40);
+    h.gh.addRun("acme/shop", 9101, { event: "push", headSha: sha, headBranch: "main", message: "verify diverged" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6101, runId: 9101, sha, branch: "main" }));
+    await h.summary({ runId: 9101, summary: summary("node-mocha-verify-failed") });
+    await h.send("workflow_job", workflowJob("completed", { id: 6101, runId: 9101, sha, branch: "main", conclusion: "success" }));
+    const job = (await admin.query("select check_run_id from gh_jobs where job_id = 6101")).rows[0];
+    const cr = h.gh.repos.get("acme/shop")!.checkRuns.get(job.check_run_id)!;
+    assert.equal(cr.conclusion, "failure");
+    assert.match((cr.output as { title: string }).title, /1 not proven$/);
+    const run = (await admin.query("select status, tests_not_proven, tests_passed, tests_ran, proof from ci_runs where commit_sha = $1", [sha])).rows[0];
+    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 1, tests_passed: 4, tests_ran: 5, proof: null });
+
+    // A parallel run with a proof block: stored as the contract's RunProof.
+    const sha2 = "b".repeat(40);
+    h.gh.addRun("acme/shop", 9102, { event: "push", headSha: sha2, headBranch: "main", message: "parallel" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6102, runId: 9102, sha: sha2, branch: "main" }));
+    await h.summary({ runId: 9102, summary: { ...summary("job3-warm-pass"), proof: { workers: 4, proven: 50, not_proven: 6, rerun_one_lane: 6, parallel_seconds: 2.5, serial_seconds_estimate: null, order_digest: "ab12", not_proven_causes: [{ cause: "file read outside the project", tests: 6 }] } } });
+    await h.send("workflow_job", workflowJob("completed", { id: 6102, runId: 9102, sha: sha2, branch: "main", conclusion: "success" }));
+    const run2 = (await admin.query("select status, tests_not_proven, proof from ci_runs where commit_sha = $1", [sha2])).rows[0];
+    assert.equal(run2.status, "not_proven");
+    assert.equal(run2.tests_not_proven, 6);
+    assert.deepEqual(run2.proof, { workers: 4, proven: 50, notProven: 6, rerunOneLane: 6, parallelMs: 2500, serialMsEstimate: null, orderDigest: "ab12", notProvenCauses: [{ cause: "file read outside the project", tests: 6 }] });
+  });
+
   it("no summary at all: the sweep publishes it after the wait; billed as a run that used a machine", async () => {
     const sha = "2".repeat(40);
     h.gh.addRun("acme/shop", 9005, { event: "push", headSha: sha, headBranch: "main", message: "setup broke" });

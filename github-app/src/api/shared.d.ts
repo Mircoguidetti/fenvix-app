@@ -24,6 +24,7 @@ export type TestResult = S["TestResult"];
 export type SkipReceipt = S["SkipReceipt"];
 export type Installation = S["Installation"];
 export type GitHubRepository = S["GitHubRepository"];
+export type SearchResult = S["SearchResult"];
 
 export interface UsageEvent { projectId: string | null; occurredAt: string; billable: boolean; baselineMinutes: number }
 export interface TrialDates { startedAt: string; endsAt: string }
@@ -43,6 +44,9 @@ export function trialFrom(dates: TrialDates | null, runs: Run[], events: UsageEv
 export function auditFrom(runs: Run[], reruns: AuditRerun[], from: Date, to: Date): AuditSummary;
 export function familiesOf(defects: Defect[]): DefectFamily[];
 export function setupChange(project: Pick<Project, "language">): SetupChange;
+export const SEARCH_MAX: number;
+export function searchTerms(q: string): { number: number | null; commitPrefix: string | null; text: string };
+export function searchFrom(projects: Project[], runs: Run[], defects: Defect[], q: string): SearchResult[];
 export function activityFrom(projects: Project[], runs: Run[], defects: Defect[], explorations: Exploration[], limit?: number): ActivityItem[];
 
 export function fileOfTest(testId: string): string;

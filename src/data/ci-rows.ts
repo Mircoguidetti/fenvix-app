@@ -2,7 +2,7 @@
  * Postgres rows (supabase/migrations/0011_ci_runs.sql, snake_case) to the contract's records (camelCase). Pure, so
  * tests/unit/ci.test.ts covers it without a database.
  */
-import type { AuditRerun, Exploration, Defect, GitHubRate, GitHubRepository, Installation, OnboardingState, Plan, Project, Run, RunProgress, SkipReceipt, TestResult, TestRunner, WarmCache, WarmupStatus } from "./types";
+import type { AuditRerun, Exploration, Defect, GitHubRate, GitHubRepository, Installation, OnboardingState, Plan, Project, Run, RunProgress, RunProof, SkipReceipt, TestResult, TestRunner, WarmCache, WarmupStatus } from "./types";
 import { familyKeyOf, type UsageEvent } from "./ci.ts";
 
 export type Row = Record<string, unknown>;
@@ -72,7 +72,7 @@ export function mapRun(r: Row): Run {
     commitSha: str(r.commit_sha), commitMessage: str(r.commit_message), branch: str(r.branch), pullRequest: numOrNull(r.pull_request),
     trigger: str(r.trigger) as Run["trigger"], status: str(r.status) as Run["status"],
     pushedAt: str(r.pushed_at), startedAt: str(r.started_at), finishedAt: r.finished_at ? str(r.finished_at) : null, durationMs: num(r.duration_ms),
-    tests: { total: num(r.tests_total), ran: num(r.tests_ran), passed: num(r.tests_passed), failed: num(r.tests_failed), skippedWithProof: num(r.tests_skipped), flakyDefects: num(r.tests_flaky_defects) },
+    tests: { total: num(r.tests_total), ran: num(r.tests_ran), passed: num(r.tests_passed), failed: num(r.tests_failed), skippedWithProof: num(r.tests_skipped), flakyDefects: num(r.tests_flaky_defects), notProven: num(r.tests_not_proven) },
     testTimeMs: { ran: num(r.test_time_ran_ms), skipped: num(r.test_time_skipped_ms) },
     skipShare: num(r.skip_share), minutesSaved: num(r.minutes_saved), otherStepMinutes: num(r.other_step_minutes), githubEquivalentMinutes: num(r.github_equivalent_minutes),
     engineVersion: str(r.engine_version), seed: numOrNull(r.seed),
@@ -81,6 +81,17 @@ export function mapRun(r: Row): Run {
     audit: { rerun: num(r.audit_rerun), wrongSkips: num(r.audit_wrong_skips) },
     region: r.region === "us" || r.region === "eu" ? r.region : null,
     progress: str(r.status) === "running" && r.progress ? mapProgress(obj(r.progress), r.progress_at) : null,
+    // The proof exists only once the run finished.
+    proof: str(r.status) !== "running" && r.proof && typeof r.proof === "object" ? mapProof(obj(r.proof)) : null,
+  };
+}
+
+/** ci_runs.proof (the summary's `proof` as the App stores it, docs/data-contract.md "Parallel with proof"). */
+export function mapProof(p: Row): RunProof {
+  return {
+    workers: num(p.workers), proven: num(p.proven), notProven: num(p.notProven), rerunOneLane: num(p.rerunOneLane), parallelMs: num(p.parallelMs),
+    serialMsEstimate: numOrNull(p.serialMsEstimate), orderDigest: typeof p.orderDigest === "string" && p.orderDigest ? p.orderDigest : null,
+    notProvenCauses: arr<Row>(p.notProvenCauses).map((c) => ({ cause: str(c.cause), tests: num(c.tests) })).filter((c) => c.cause),
   };
 }
 
@@ -116,6 +127,7 @@ export function mapTestResult(r: Row): TestResult {
     runId: str(r.run_id), testId: str(r.test_id), file: fileOfTest(str(r.test_id)), outcome: str(r.outcome) as TestResult["outcome"], durationMs: num(r.duration_ms),
     failure: kind ? { kind, phase: str(r.failure_phase, "call"), exceptionType: str(r.exception_type), message: str(r.failure_message), location: str(r.failure_location), defectId: r.defect_id ? str(r.defect_id) : null } : null,
     receiptId: r.receipt_id ? str(r.receipt_id) : null,
+    notProvenCause: str(r.outcome) === "not_proven" && r.not_proven_cause ? str(r.not_proven_cause) : null,
   };
 }
 

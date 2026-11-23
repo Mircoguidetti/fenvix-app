@@ -2,7 +2,8 @@ import type { Client, Db } from "./db.ts";
 import { GitHubError, type GitHubApp, type GitHubHttp, repoPath } from "./github/client.ts";
 import { onboardRepository, type OnboardingResult } from "./onboarding/onboard.ts";
 import { CHECK_NAME, COMMENT_MARKER, checkRunOutput, conclusionOf, prComment, type RenderContext } from "./results/render.ts";
-import { parseSummary, type RunSummary } from "./results/summary.ts";
+import { parseSummary, proofRecord, type RunSummary } from "./results/summary.ts";
+import { runStatus } from "./results/status.ts";
 import { createHash, randomBytes, type KeyObject } from "node:crypto";
 import { applyChunks, applyExploration, type JobKey } from "./results/apply.ts";
 import { projectStack, type Stack } from "./results/detect.ts";
@@ -976,11 +977,14 @@ export class GitHubService {
     const event = run?.event ?? (pr ? "pull_request" : "push");
     const trigger = TRIGGERS.has(event) ? event : event === "pull_request_target" ? "pull_request" : "workflow_dispatch";
     const fails = s ? s.failed.length + s.flaky.length : 0;
-    const status = job.conclusion === "cancelled" ? "cancelled" : s ? (fails || s.exit !== 0 ? "failed" : "passed") : job.conclusion === "success" ? "passed" : "failed";
-    const passedRan = s ? Math.max(0, Math.min(s.ran - fails, (s.outcomeCounts.passed ?? s.ran) - s.reusedWithProof)) : 0;
+    const status = runStatus(job.conclusion, s);
+    // N (RunSummary.notProven): never counted as passed, so passed + failed + notProven stays within the tests that ran.
+    const notProven = s ? Math.min(s.notProven, s.ran) : 0;
+    const passedRan = s ? Math.max(0, Math.min(s.ran - fails, (s.outcomeCounts.passed ?? s.ran) - s.reusedWithProof) - notProven) : 0;
     return {
       trigger, status, commitMessage: (run?.head_commit?.message ?? "").split("\n")[0]!.slice(0, 500),
       tests: [s?.tests ?? 0, s?.ran ?? 0, passedRan, fails, s?.reusedWithProof ?? 0, s?.flaky.length ?? 0] as const,
+      notProven, proof: s?.proof ? JSON.stringify(proofRecord(s.proof)) : null,
       // Test time run: at most the job's own duration (GitHub's timings), whatever the summary says.
       timeRanMs: Math.round(Math.min((s?.testSecondsRun ?? 0) * 1000, durationMs ?? Infinity)), timeSkippedMs: Math.round((s?.testSecondsSaved ?? 0) * 1000),
     };
@@ -995,13 +999,13 @@ export class GitHubService {
     const r = await c.query<{ id: string }>(
       `insert into ci_runs (workspace_id, project_id, number, commit_sha, commit_message, branch, pull_request, trigger, status, pushed_at, started_at,
          finished_at, duration_ms, tests_total, tests_ran, tests_passed, tests_failed, tests_skipped, tests_flaky_defects, test_time_ran_ms,
-         test_time_skipped_ms, other_step_minutes, engine_version, skip_misses, mode, region)
+         test_time_skipped_ms, other_step_minutes, engine_version, skip_misses, mode, region, tests_not_proven, proof)
        values (public.cp_workspace(), $1, (select coalesce(max(number), 0) + 1 from ci_runs where project_id = $1), $2, $3, $4, $5, $6, $7, $8, $9,
-         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, round($20::numeric, 2), $21, $22, $23, $24)
+         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, round($20::numeric, 2), $21, $22, $23, $24, $25, $26::jsonb)
        returning id`,
       [projectId, job.head_sha, f.commitMessage, job.head_branch ?? "", pr, f.trigger, status,
         pushedAt, v.startedAt, v.completedAt, v.durationMs, ...f.tests, f.timeRanMs, f.timeSkippedMs, v.otherStepMinutes, s?.engineVersion ?? "",
-        JSON.stringify(s?.notReusedReasons ?? {}), v.mode, v.region]);
+        JSON.stringify(s?.notReusedReasons ?? {}), v.mode, v.region, v.completedAt ? f.notProven : 0, v.completedAt ? f.proof : null]);
     return r.rows[0]!.id;
   }
 
@@ -1012,10 +1016,10 @@ export class GitHubService {
       `update ci_runs set commit_message = case when $2 <> '' then $2 else commit_message end, pull_request = coalesce($3, pull_request), trigger = $4,
          status = $5, started_at = $6, finished_at = $7, duration_ms = $8, tests_total = $9, tests_ran = $10, tests_passed = $11, tests_failed = $12,
          tests_skipped = $13, tests_flaky_defects = $14, test_time_ran_ms = $15, test_time_skipped_ms = $16, other_step_minutes = round($17::numeric, 2),
-         engine_version = $18, skip_misses = $19, mode = $20
+         engine_version = $18, skip_misses = $19, mode = $20, tests_not_proven = $21, proof = $22::jsonb
        where id = $1`,
       [id, f.commitMessage, pr, f.trigger, f.status, v.startedAt, v.completedAt, v.durationMs, ...f.tests, f.timeRanMs, f.timeSkippedMs, v.otherStepMinutes,
-        s?.engineVersion ?? "", JSON.stringify(s?.notReusedReasons ?? {}), v.mode]);
+        s?.engineVersion ?? "", JSON.stringify(s?.notReusedReasons ?? {}), v.mode, f.notProven, f.proof]);
   }
 
   /** One fenvix comment per pull request: updated in place; found again by its marker if our record of it is lost. */
