@@ -166,8 +166,8 @@ describe("run results on GitHub, runs and usage events", () => {
     const cr = h.gh.repos.get("acme/shop")!.checkRuns.get(job.check_run_id)!;
     assert.equal(cr.conclusion, "failure");
     assert.match((cr.output as { title: string }).title, /1 not proven$/);
-    const run = (await admin.query("select status, tests_not_proven, tests_passed, tests_ran, proof from ci_runs where commit_sha = $1", [sha])).rows[0];
-    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 1, tests_passed: 4, tests_ran: 5, proof: null });
+    const run = (await admin.query("select status, tests_not_proven, tests_passed, tests_ran, proof, exit_code from ci_runs where commit_sha = $1", [sha])).rows[0];
+    assert.deepEqual(run, { status: "not_proven", tests_not_proven: 1, tests_passed: 4, tests_ran: 5, proof: null, exit_code: 0 });
 
     // A parallel run with a proof block: stored as the contract's RunProof.
     const sha2 = "b".repeat(40);

@@ -16,9 +16,9 @@ begin
     raise exception 'ci_test_results.outcome: %', d;
   end if;
   select count(*) into n from information_schema.columns
-   where table_schema = 'public' and ((table_name = 'ci_runs' and column_name in ('proof', 'tests_not_proven'))
+   where table_schema = 'public' and ((table_name = 'ci_runs' and column_name in ('proof', 'tests_not_proven', 'exit_code'))
       or (table_name = 'ci_test_results' and column_name = 'not_proven_cause'));
-  if n <> 3 then raise exception 'expected 3 new columns, found %', n; end if;
+  if n <> 4 then raise exception 'expected 4 new columns, found %', n; end if;
   raise notice 'RUN PROOF CHECK OK';
 end $$;
 select 'RUN PROOF CHECK OK';

@@ -984,7 +984,7 @@ export class GitHubService {
     return {
       trigger, status, commitMessage: (run?.head_commit?.message ?? "").split("\n")[0]!.slice(0, 500),
       tests: [s?.tests ?? 0, s?.ran ?? 0, passedRan, fails, s?.reusedWithProof ?? 0, s?.flaky.length ?? 0] as const,
-      notProven, proof: s?.proof ? JSON.stringify(proofRecord(s.proof)) : null,
+      notProven, proof: s?.proof ? JSON.stringify(proofRecord(s.proof)) : null, exitCode: s ? s.exit : null,
       // Test time run: at most the job's own duration (GitHub's timings), whatever the summary says.
       timeRanMs: Math.round(Math.min((s?.testSecondsRun ?? 0) * 1000, durationMs ?? Infinity)), timeSkippedMs: Math.round((s?.testSecondsSaved ?? 0) * 1000),
     };
@@ -999,13 +999,13 @@ export class GitHubService {
     const r = await c.query<{ id: string }>(
       `insert into ci_runs (workspace_id, project_id, number, commit_sha, commit_message, branch, pull_request, trigger, status, pushed_at, started_at,
          finished_at, duration_ms, tests_total, tests_ran, tests_passed, tests_failed, tests_skipped, tests_flaky_defects, test_time_ran_ms,
-         test_time_skipped_ms, other_step_minutes, engine_version, skip_misses, mode, region, tests_not_proven, proof)
+         test_time_skipped_ms, other_step_minutes, engine_version, skip_misses, mode, region, tests_not_proven, proof, exit_code)
        values (public.cp_workspace(), $1, (select coalesce(max(number), 0) + 1 from ci_runs where project_id = $1), $2, $3, $4, $5, $6, $7, $8, $9,
-         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, round($20::numeric, 2), $21, $22, $23, $24, $25, $26::jsonb)
+         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, round($20::numeric, 2), $21, $22, $23, $24, $25, $26::jsonb, $27)
        returning id`,
       [projectId, job.head_sha, f.commitMessage, job.head_branch ?? "", pr, f.trigger, status,
         pushedAt, v.startedAt, v.completedAt, v.durationMs, ...f.tests, f.timeRanMs, f.timeSkippedMs, v.otherStepMinutes, s?.engineVersion ?? "",
-        JSON.stringify(s?.notReusedReasons ?? {}), v.mode, v.region, v.completedAt ? f.notProven : 0, v.completedAt ? f.proof : null]);
+        JSON.stringify(s?.notReusedReasons ?? {}), v.mode, v.region, v.completedAt ? f.notProven : 0, v.completedAt ? f.proof : null, v.completedAt ? f.exitCode : null]);
     return r.rows[0]!.id;
   }
 
@@ -1016,10 +1016,10 @@ export class GitHubService {
       `update ci_runs set commit_message = case when $2 <> '' then $2 else commit_message end, pull_request = coalesce($3, pull_request), trigger = $4,
          status = $5, started_at = $6, finished_at = $7, duration_ms = $8, tests_total = $9, tests_ran = $10, tests_passed = $11, tests_failed = $12,
          tests_skipped = $13, tests_flaky_defects = $14, test_time_ran_ms = $15, test_time_skipped_ms = $16, other_step_minutes = round($17::numeric, 2),
-         engine_version = $18, skip_misses = $19, mode = $20, tests_not_proven = $21, proof = $22::jsonb
+         engine_version = $18, skip_misses = $19, mode = $20, tests_not_proven = $21, proof = $22::jsonb, exit_code = $23
        where id = $1`,
       [id, f.commitMessage, pr, f.trigger, f.status, v.startedAt, v.completedAt, v.durationMs, ...f.tests, f.timeRanMs, f.timeSkippedMs, v.otherStepMinutes,
-        s?.engineVersion ?? "", JSON.stringify(s?.notReusedReasons ?? {}), v.mode, f.notProven, f.proof]);
+        s?.engineVersion ?? "", JSON.stringify(s?.notReusedReasons ?? {}), v.mode, f.notProven, f.proof, f.exitCode]);
   }
 
   /** One fenvix comment per pull request: updated in place; found again by its marker if our record of it is lost. */

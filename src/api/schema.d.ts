@@ -1178,6 +1178,8 @@ export interface components {
             progress: components["schemas"]["RunProgress"] | null;
             /** @description null for a serial run (or a runner that does not send it yet) */
             proof: components["schemas"]["RunProof"] | null;
+            /** @description The test command's exit code (summary.json `exit`); null while running or without a summary */
+            exitCode: number | null;
         };
         RunPage: {
             items: components["schemas"]["Run"][];

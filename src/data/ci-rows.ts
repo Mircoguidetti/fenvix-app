@@ -83,6 +83,7 @@ export function mapRun(r: Row): Run {
     progress: str(r.status) === "running" && r.progress ? mapProgress(obj(r.progress), r.progress_at) : null,
     // The proof exists only once the run finished.
     proof: str(r.status) !== "running" && r.proof && typeof r.proof === "object" ? mapProof(obj(r.proof)) : null,
+    exitCode: str(r.status) === "running" ? null : numOrNull(r.exit_code),
   };
 }
 

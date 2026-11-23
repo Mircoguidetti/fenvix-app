@@ -26,9 +26,9 @@ import type { DataClient, RunLive, RunQuery } from "./client";
 import type {
   ActivityItem, AuditRerun, Exploration, Installation, MissKind, RunDetail, RunFile, RunProgress,
   Baseline, Defect, DefectCause, GitHubRate, GitHubRepository, Language, OnboardingState, Page, Plan, Project, Region, Run, RunTrigger, Settings, WarmCache,
-  SkipReceipt, TestOutcome, TestPage, TestResult, TestRunner,
+  RunProof, SearchResult, SkipReceipt, TestOutcome, TestPage, TestResult, TestRunner,
 } from "./types";
-import { activityFrom, auditFrom, billingFrom, dayStart, familiesOf, familyKeyOf, median, monthOf, overviewFrom, projectRow, setupChange, trialFrom, usageCsv, usageCsvName, usageFrom, type TrialDates, type UsageEvent } from "./ci";
+import { activityFrom, auditFrom, billingFrom, dayStart, familiesOf, familyKeyOf, finished, median, monthOf, overviewFrom, projectRow, searchFrom, setupChange, trialFrom, usageCsv, usageCsvName, usageFrom, type TrialDates, type UsageEvent } from "./ci";
 
 export const NOW = new Date("2026-11-17T12:00:00Z");
 const MIN = 60_000;
@@ -265,6 +265,8 @@ const fileOf = (testId: string) => testId.split(/::| > /)[0];
 interface Detail {
   ran: Set<number>;
   failures: { testId: string; defectId: string | null }[];
+  /** Tests not proven identical to the serial run, with the runner's cause when it gave one. */
+  notProven?: { testId: string; cause: string | null }[];
 }
 
 /** The running run: what it will be once finished, how many times the live view asked, and how far it is. */
@@ -463,7 +465,7 @@ function makeRun(x: RunInput): { run: Run; detail: Detail } {
     branch: x.trigger === "pull_request" ? `${pick(r, ["fix", "feat", "chore", "agent"])}/${hex(`${x.sha}b`, 6)}` : x.trigger === "merge_group" ? `gh-readonly-queue/main/pr-${x.prOf}` : "main",
     pullRequest: x.prNumber, trigger: x.trigger, status: failures.length ? "failed" : "passed", mode: x.shadow ? "shadow" : "enforce",
     pushedAt: pushedAt.toISOString(), startedAt: new Date(x.startMs).toISOString(), finishedAt: new Date(x.startMs + durationMs).toISOString(), durationMs,
-    tests: { total, ran: ranTests, passed: ranTests - failures.length, failed: failures.length, skippedWithProof: skippedTests, flakyDefects: failures.filter((f) => f.defectId).length },
+    tests: { total, ran: ranTests, passed: ranTests - failures.length, failed: failures.length, skippedWithProof: skippedTests, flakyDefects: failures.filter((f) => f.defectId).length, notProven: 0 },
     testTimeMs: { ran: ranMs, skipped: skippedMs },
     skipShare: Math.round((skippedMs / (ranMs + skippedMs)) * 10000) / 10000,
     minutesSaved: Math.round((skippedMs / MIN) * 100) / 100,
@@ -478,6 +480,8 @@ function makeRun(x: RunInput): { run: Run; detail: Detail } {
     audit: { rerun: x.shadow || skippedTests === 0 ? 0 : Math.max(1, Math.round(skippedTests * 0.004)), wrongSkips: 0 },
     region: x.region,
     progress: null,
+    proof: null,
+    exitCode: failures.length ? 1 : 0,
   };
   return { run, detail: { ran, failures } };
 }
@@ -577,6 +581,56 @@ function trialBelow(): boolean {
   }
 }
 
+/** The causes of the sample's not-proven tests (what the engine reports). */
+export const NOT_PROVEN_CAUSES = ["file read outside the project", "environment variable read outside any test"] as const;
+
+/**
+ * homehub runs its suite in parallel lanes: most of its last 30 days of finished runs carry a proof with every test
+ * proven (a few re-run in one lane); some stay serial (proof null). Among its newest 10 finished runs, never the newest
+ * one: two runs not proven with a cause each, and one whose summary reported 2 tests not proven without a proof block
+ * (and without a cause).
+ */
+function addParallelProof(specs: Spec[], runs: Run[], detail: Map<string, Detail>) {
+  const spec = specs.find((s) => s.id === "prj_homehub");
+  if (!spec) return;
+  const mine = runs.filter((r) => r.projectId === spec.id && r.status !== "running").sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const since = new Date(NOW.getTime() - 30 * DAY).toISOString();
+  const proofOf = (r: Run, notProven: number, causes: RunProof["notProvenCauses"]): RunProof => {
+    const parallelMs = Math.max(1000, r.durationMs - spec.setupMs);
+    const h = hash(`proof:${r.id}`);
+    return {
+      workers: 4, proven: r.tests.ran - notProven, notProven, rerunOneLane: notProven + (h % 6 === 0 ? 1 + (h % 3) : 0), parallelMs,
+      serialMsEstimate: h % 9 === 0 ? null : Math.round(parallelMs * 3.6), orderDigest: hex(`order:${r.id}`), notProvenCauses: causes,
+    };
+  };
+  for (const r of mine) {
+    if (r.startedAt < since || hash(`lanes:${r.id}`) % 4 === 0) continue;
+    r.proof = proofOf(r, 0, []);
+  }
+  // Not proven: passed runs among the newest 10, never the newest one.
+  const candidates = mine.slice(1, 10).filter((r) => r.status === "passed" && r.tests.ran > 20);
+  const plans: { notProven: number; causes: RunProof["notProvenCauses"]; proof: boolean; exit: number }[] = [
+    { notProven: 14, causes: [{ cause: NOT_PROVEN_CAUSES[0], tests: 14 }], proof: true, exit: 1 },
+    { notProven: 3, causes: [{ cause: NOT_PROVEN_CAUSES[1], tests: 3 }], proof: true, exit: 0 },
+    { notProven: 2, causes: [], proof: false, exit: 1 },
+  ];
+  plans.forEach((p, k) => {
+    const r = candidates[k * 2] ?? candidates[k];
+    if (!r || r.status !== "passed") return;
+    const d = detail.get(r.id)!;
+    const modules = suite(spec);
+    const tests = [...d.ran].sort((a, b) => a - b).flatMap((i) => modules[i].tests).filter((t) => !d.failures.some((f) => f.testId === t));
+    const picked = tests.slice(0, p.notProven);
+    const causes = p.causes.flatMap((c) => Array.from({ length: c.tests }, () => c.cause));
+    d.notProven = picked.map((testId, i) => ({ testId, cause: causes[i] ?? null }));
+    r.status = "not_proven";
+    r.exitCode = p.exit;
+    r.tests.notProven = picked.length;
+    r.tests.passed = Math.max(0, r.tests.ran - r.tests.failed - picked.length);
+    r.proof = p.proof ? proofOf(r, picked.length, p.causes) : null;
+  });
+}
+
 function buildSample(plan: OrgPlan): Store {
   const owner = plan.owner;
   const specs = SPECS.filter((s) => plan.specs.includes(s.id));
@@ -657,6 +711,8 @@ function buildSample(plan: OrgPlan): Store {
       runs.push(runningView(live));
     }
   }
+
+  if (plan.trialDays === null) addParallelProof(specs, runs, detail);
 
   const defects: Defect[] = seeds.map((s) => {
     const seen = occurrences.get(s.id) ?? [];
@@ -858,8 +914,10 @@ function runningView(l: Live): Run {
   };
   return {
     ...f, status: "running", finishedAt: null, durationMs: progress.elapsedMs,
-    tests: { total: f.tests.total, ran: done, passed: done, failed: 0, skippedWithProof: f.tests.skippedWithProof, flakyDefects: 0 },
+    tests: { total: f.tests.total, ran: done, passed: done, failed: 0, skippedWithProof: f.tests.skippedWithProof, flakyDefects: 0, notProven: 0 },
     testTimeMs: { ran: 0, skipped: 0 }, skipShare: 0, minutesSaved: 0, otherStepMinutes: 0, githubEquivalentMinutes: 0, audit: { rerun: 0, wrongSkips: 0 }, progress,
+    // The proof and the exit code exist only once the run finished.
+    proof: null, exitCode: null,
   };
 }
 
@@ -895,6 +953,7 @@ function testsOf(run: Run): TestResult[] {
   const d = store().detail.get(run.id);
   if (!spec || !d || run.status === "running") return [];
   const failures = new Map(d.failures.map((f) => [f.testId, f]));
+  const notProven = new Map((d.notProven ?? []).map((x) => [x.testId, x.cause]));
   const defects = store().defects;
   const out: TestResult[] = [];
   suite(spec).forEach((m, i) => {
@@ -903,9 +962,10 @@ function testsOf(run: Run): TestResult[] {
       const f = failures.get(testId);
       const defect = f?.defectId ? defects.find((x) => x.id === f.defectId) : null;
       const r = rng(hash(`${run.id}:${testId}`));
+      const np = !f && notProven.has(testId);
       out.push({
         runId: run.id, testId, file: m.file,
-        outcome: f ? "failed" : ran ? "passed" : "skipped_with_proof",
+        outcome: f ? "failed" : np ? "not_proven" : ran ? "passed" : "skipped_with_proof",
         durationMs: Math.round(m.durations[j] * (ran ? spec.overhead * (0.85 + r() * 0.3) : 1)),
         failure: f
           ? defect
@@ -913,6 +973,7 @@ function testsOf(run: Run): TestResult[] {
             : { kind: "real", phase: "call", exceptionType: "AssertionError", message: realFailure(testId, r), location: `${m.file}:${20 + Math.floor(r() * 400)}`, defectId: null }
           : null,
         receiptId: ran || f ? null : `rcp_${run.id}_${i}_${j}`,
+        notProvenCause: np ? (notProven.get(testId) ?? null) : null,
       });
     });
   });
@@ -992,7 +1053,7 @@ function filterRuns(projectId: string, q: RunQuery): Run[] {
       r.projectId === projectId &&
       (!q.since || r.startedAt >= q.since) &&
       (q.scope === "pr" ? r.pullRequest !== null : q.scope === "default" ? r.branch === project?.defaultBranch : true) &&
-      (q.status === "passed" || q.status === "failed" ? r.status === q.status : true),
+      (q.status === "passed" || q.status === "failed" || q.status === "not_proven" ? r.status === q.status : true),
   );
 }
 
@@ -1044,7 +1105,7 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     const from = dayStart(new Date(NOW.getTime() - (days - 1) * DAY));
     const byDay = new Map<string, number[]>();
     for (const r of store().runs) {
-      if (r.projectId !== projectId || r.startedAt < from.toISOString() || r.status === "running" || r.status === "cancelled") continue;
+      if (r.projectId !== projectId || r.startedAt < from.toISOString() || !finished(r)) continue;
       const k = dayStart(new Date(r.startedAt)).toISOString();
       (byDay.get(k) ?? byDay.set(k, []).get(k)!).push(r.skipShare);
     }
@@ -1086,11 +1147,11 @@ export const mockClient: DataClient & { liveCalls(): number } = {
   listTestResults(runId, q = {}) {
     const run = store().runs.find((r) => r.id === runId);
     const all = run ? testsOf(run) : [];
-    const counts: Record<TestOutcome, number> = { passed: 0, failed: 0, skipped_with_proof: 0 };
+    const counts: Record<TestOutcome, number> = { passed: 0, failed: 0, skipped_with_proof: 0, not_proven: 0 };
     for (const t of all) counts[t.outcome]++;
     const term = q.search?.trim().toLowerCase() ?? "";
-    // Failures first, then the tests that ran, then the skipped ones.
-    const rank: Record<TestOutcome, number> = { failed: 0, passed: 1, skipped_with_proof: 2 };
+    // Failures first, then the tests not proven, then the tests that ran, then the skipped ones.
+    const rank: Record<TestOutcome, number> = { failed: 0, not_proven: 1, passed: 2, skipped_with_proof: 3 };
     const rows = all.filter((t) => (!q.outcome || q.outcome === "all" || t.outcome === q.outcome) && (!term || t.testId.toLowerCase().includes(term))).sort((a, b) => rank[a.outcome] - rank[b.outcome]);
     const { page = 1, pageSize = 50 } = q;
     return wait<TestPage>({ items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize, counts });
@@ -1116,6 +1177,11 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     const s = store();
     const keep = <T extends { projectId: string }>(xs: T[]) => (projectId ? xs.filter((x) => x.projectId === projectId) : xs);
     return wait<ActivityItem[]>(activityFrom(keep(s.projects.map((p) => ({ ...p, projectId: p.id }))), keep(s.runs), keep(s.defects), keep(s.explorations), limit));
+  },
+
+  search(q) {
+    const s = store();
+    return wait<SearchResult[]>(searchFrom(s.projects, s.runs, s.defects, q));
   },
 
   listDefects: (q) => wait(copy(defectsFor(q))),

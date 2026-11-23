@@ -837,7 +837,7 @@ components:
       type: object
       required: [id, projectId, number, engineRunId, commitSha, commitMessage, branch, pullRequest, trigger, status, mode, pushedAt, startedAt, finishedAt,
         durationMs, tests, testTimeMs, skipShare, minutesSaved, otherStepMinutes, githubEquivalentMinutes, engineVersion, seed, skipMisses, missDetails,
-        wouldSkipTests, wouldSaveMs, audit, region, progress, proof]
+        wouldSkipTests, wouldSaveMs, audit, region, progress, proof, exitCode]
       properties:
         id: { type: string, format: uuid }
         projectId: { type: string, format: uuid }
@@ -881,6 +881,7 @@ components:
         region: { oneOf: [{ $ref: "#/components/schemas/Region" }, { type: "null" }] }
         progress: { oneOf: [{ $ref: "#/components/schemas/RunProgress" }, { type: "null" }] }
         proof: { oneOf: [{ $ref: "#/components/schemas/RunProof" }, { type: "null" }], description: "null for a serial run (or a runner that does not send it yet)" }
+        exitCode: { type: [integer, "null"], description: "The test command's exit code (summary.json `exit`); null while running or without a summary" }
     RunPage:
       type: object
       required: [items, total, page, pageSize]

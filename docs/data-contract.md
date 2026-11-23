@@ -96,6 +96,7 @@ the same row when the job completes (from the `workflow_job` event, the runner's
 | `audit` | `{ rerun, wrongSkips }` | audit reruns: skipped tests the engine ran anyway (5%), and how many of them failed (a wrong skip; expected 0) |
 | `region` | `"us"` \| `"eu"` \| null | where the machine ran (the organization's region when the App placed it; null when the App did not place it, e.g. an always-on runner) |
 | `progress` | Run progress \| null | while `status` is `running`: the runner's latest progress record |
+| `exitCode` | number \| null | the test command's exit code (summary.json `exit`, `ci_runs.exit_code`); null while running, without a summary, and for runs stored before migration 0019 |
 | `proof` | `{ workers, proven, notProven, rerunOneLane, parallelMs, serialMsEstimate, orderDigest, notProvenCauses: { cause, tests }[] }` \| null | the summary's `proof` (`ci_runs.proof`, jsonb): the test command ran in parallel lanes and each test was checked against the serial run. null for a serial run, and for every run until the runner sends it |
 
 **Minutes add up on screen.** Wherever the dashboard shows minutes it shows the three parts and their total:
@@ -733,6 +734,7 @@ database directly.
   cancelled, no summary, failures, N > 0, non-zero `exit`, passed), the per-test outcome `not_proven` with
   `notProvenCause`, the activity kind `run_not_proven`, the tests list's `counts.not_proven` and filter, the runs list's
   `status=not_proven` filter, the Overview's `proof` block (`runsWithProof`, `provenIdentical`, `notProven`) and
+  `exitCode` (the summary's `exit`, so the run page can say whether the run exited 1) and
   `GET /search?q=` (runs by number or commit prefix, open defects by test name; at most 20, newest first). N is
   `proof.not_proven`, else the larger of the top-level `not_proven` and (when `verify_status` is `diverged`)
   `verify_counts.not_proven + diverged + missing`, else 0; `status.not_proven` is not used. **The runner does not send
