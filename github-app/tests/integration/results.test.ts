@@ -181,6 +181,36 @@ describe("run results on GitHub, runs and usage events", () => {
     assert.deepEqual(run2.proof, { workers: 4, proven: 50, notProven: 6, rerunOneLane: 6, parallelMs: 2500, serialMsEstimate: null, orderDigest: "ab12", notProvenCauses: [{ cause: "file read outside the project", tests: 6 }] });
   });
 
+  it("a results chunk with not_proven tests, with and without a cause, is stored through apply.ts (console proof review)", async () => {
+    const sha = "c".repeat(40);
+    h.gh.addRun("acme/shop", 9103, { event: "push", headSha: sha, headBranch: "main", message: "chunk with not proven" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6103, runId: 9103, sha, branch: "main" }));
+    const cred = runnerCredential("fenvix-m1", REPOS.shop.id);
+    const res = await h.app.fastify.inject({
+      method: "POST", url: "/v1/runner/results", headers: { authorization: `Bearer ${cred}`, "content-type": "application/json" },
+      payload: {
+        repositoryId: REPOS.shop.id, runId: 9103, runAttempt: 1, runnerName: "fenvix-m1", chunk: 0, chunks: 1,
+        tests: [
+          { testId: "tests/test_io.py::test_home", outcome: "not_proven", durationMs: 7, notProvenCause: "file read outside the project" },
+          { testId: "tests/test_io.py::test_env", outcome: "not_proven", durationMs: 3 },
+          { testId: "tests/test_io.py::test_ok", outcome: "passed", durationMs: 2 },
+        ],
+      },
+    });
+    assert.equal(res.statusCode, 202, res.body);
+    await h.app.service.idle();
+    await h.summary({ runId: 9103, summary: { tests: 3, reused_with_proof: 0, ran: 3, exit: 1, failed: [], flaky: [], not_proven: 2, outcome_counts: { passed: 3 } } });
+    await h.send("workflow_job", workflowJob("completed", { id: 6103, runId: 9103, sha, branch: "main", conclusion: "failure" }));
+    const run = (await admin.query("select id, status, tests_not_proven, tests_passed from ci_runs where commit_sha = $1", [sha])).rows[0];
+    assert.deepEqual([run.status, run.tests_not_proven, run.tests_passed], ["not_proven", 2, 1]);
+    const rows = (await admin.query("select test_id, outcome, not_proven_cause, failure_kind from ci_test_results where run_id = $1 order by test_id", [run.id])).rows;
+    assert.deepEqual(rows, [
+      { test_id: "tests/test_io.py::test_env", outcome: "not_proven", not_proven_cause: null, failure_kind: null },
+      { test_id: "tests/test_io.py::test_home", outcome: "not_proven", not_proven_cause: "file read outside the project", failure_kind: null },
+      { test_id: "tests/test_io.py::test_ok", outcome: "passed", not_proven_cause: null, failure_kind: null },
+    ]);
+  });
+
   it("no summary at all: the sweep publishes it after the wait; billed as a run that used a machine", async () => {
     const sha = "2".repeat(40);
     h.gh.addRun("acme/shop", 9005, { event: "push", headSha: sha, headBranch: "main", message: "setup broke" });

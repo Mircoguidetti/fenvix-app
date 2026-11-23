@@ -471,7 +471,7 @@ A dropped chunk is still answered `202` (it is checked after the queue) and logg
 | `seed` | `--det-seed`, null for collection order | the run's `seed` |
 | `mode` | the mode the engine ran in (`FENVIX_MODE`) | ignored: the run's `mode` is the App's (`FENVIX_MODE` it gave the machine) |
 | `missDetails` | the top 5 reasons tests were not reused (summed `why` of `receipts.jsonl`) | the run's `missDetails` |
-| `tests[]` | one per test of the run (`passed`, `failed`, `skipped_with_proof`; a test the framework skipped is not sent); `durationMs` (for a skipped test: the recorded one; stored at most the job's own duration, GitHub's timings); `failure` for a failed test: `kind` `flaky_defect` when the engine reproduced it as a defect (with the bundle's `defectFingerprint`), else `real`; `cacheKey` of a skipped test | Per-test outcome (`ci_test_results`); `failure.defectId` is found by the defect's test and fingerprint, `receiptId` by the receipt's test |
+| `tests[]` | one per test of the run (`passed`, `failed`, `skipped_with_proof`, `not_proven`; a test the framework skipped is not sent); `notProvenCause` (optional, at most 500 characters) for a `not_proven` test: why it could not be proven identical to the serial run (stored for that outcome only); `durationMs` (for a skipped test: the recorded one; stored at most the job's own duration, GitHub's timings); `failure` for a failed test: `kind` `flaky_defect` when the engine reproduced it as a defect (with the bundle's `defectFingerprint`), else `real`; `cacheKey` of a skipped test | Per-test outcome (`ci_test_results`); `failure.defectId` is found by the defect's test and fingerprint, `receiptId` by the receipt's test |
 | `tests[].wouldSkip` | **shadow mode**: true when the engine would have skipped the test with proof (it ran anyway) | the run's `wouldSkipTests` (count) and `wouldSaveMs` (their `durationMs`, each at most the job's duration; the sum at most the run's own test time, `testTimeMs.ran + testTimeMs.skipped`, so a share computed from it is within 0 to 1) |
 | `receipts[]` | one per test skipped with proof: the `receipts.jsonl` line joined with the test's `proof-cache.json` entry (the lists: `code` = `Entry.units`, `modules` = content/skeleton/hooks, `filesRead` = `Entry.data`, `envRead` = `Entry.env`, `runtime`, `config`) | Skip receipt (`ci_skip_receipts`); `reusedRunId` = the project's run whose `engineRunId` is `reusedEngineRunId`. A skipped test and its receipt go in the same chunk (a skipped test whose receipt has not arrived waits for it) |
 | `defects[]` | each defect bundle the engine wrote this run (`bundle.json` + `order.txt`) with the engine's replay command (`command`, `replayCommand`) | Defect (`ci_defects`), by project, test and fingerprint: new, or seen again (`occurrences` + 1 once per run, `lastSeenAt`, `lastRunId`, reopened if it was fixed). `cause` from `kind`: `order` → polluter, `brittle` → state_setter, `fails-alone` → fails_alone; `causeTests` = `polluters` / `setters` / none; `familyKey` = them joined by `" + "`, or `"<none>"` |
@@ -528,15 +528,19 @@ run):
 
 `serial_seconds_estimate` and `order_digest` may be null; `proven + not_proven` = the tests that ran.
 
-**N, the not-proven count of a run** (`RunSummary.notProven` in `github-app/src/results/summary.ts`; one value used by
-the status, the check run's conclusion and title, and `tests.notProven`):
+**N, the not-proven count of a run** (`RunSummary.notProven`, `notProvenOf` in `github-app/src/results/summary.ts`; one
+value used by the status, the check run's conclusion and title, and `tests.notProven`). It fails closed: the largest of
 
-1. `proof.not_proven` when `proof` is present;
-2. else the larger of the summary's top-level `not_proven` and, when `verify_status` is `"diverged"`,
-   `verify_counts.not_proven + verify_counts.diverged + verify_counts.missing`;
-3. else 0.
+1. `proof.not_proven`, when `proof` is present and valid;
+2. the summary's top-level `not_proven`;
+3. the verify verdict: when `verify_status` is present and is not `"identical"` (`"diverged"`, `"not_proven"`, or any
+   value this version does not know), or when it is null or absent with a non-zero `verify_exit` (verify crashed):
+   `max(1, verify_counts.not_proven + diverged + missing + wrong_reuse)`; else 0;
+4. with a proof whose `proven + not_proven` is not `ran`: `ran - proven` (a proof never hides tests).
 
-`status.not_proven` is not used. Example: the Node fixture `node-mocha-verify-failed` (`exit` 0, `verify_status:
+`status.not_proven` is not used. A malformed `proof` (any field of the wrong type, an empty `order_digest`, a cause over
+500 characters, more than 50 causes) is stored as null; the rest of the summary is kept and N comes from the other
+sources, so an unreadable proof never makes a run green. Example: the Node fixture `node-mocha-verify-failed` (`exit` 0, `verify_status:
 diverged`, one diverged test) has N = 1 and status `not_proven`.
 
 A run with N > 0 is never green: its status is `not_proven` (unless it failed), its check run on GitHub concludes
@@ -729,6 +733,10 @@ database directly.
 
 ## Changes
 
+- 2026-11-23 (console proof review): N fails closed (any verify status but `identical`, a crashed verify, `wrong_reuse`,
+  a proof that does not cover the tests that ran); a malformed proof is stored as null instead of refusing the summary;
+  `GET /search` needs at least 2 characters. The console reads every response through `src/data/compat.ts`, so it
+  works against the API one release older (no proof, no not-proven counts, no Overview proof block, no `/search`).
 - 2026-11-23 (console proof, migration 0019): **parallel with proof and NOT PROVEN**. `summary.json` gains an optional
   `proof` object; the Run gains `proof` and `tests.notProven`, the status `not_proven` (rule above, first match wins:
   cancelled, no summary, failures, N > 0, non-zero `exit`, passed), the per-test outcome `not_proven` with

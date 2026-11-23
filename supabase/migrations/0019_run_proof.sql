@@ -4,8 +4,17 @@
 -- ci_runs: the summary's `exit` (exit_code), its `proof` object (null for a serial run, and until the runner sends it) and N, the run's count
 -- of tests not proven identical to the serial run; the status `not_proven` (finished, never green).
 -- ci_test_results: the outcome `not_proven` and its cause, when the runner says.
--- Rollback: a migration that drops the three columns and narrows the two CHECK constraints back, once no row uses
--- 'not_proven' (older code never reads the new columns).
+-- Rollback (a later migration, in this order): rewrite the rows that use the new values, then narrow the checks and
+-- drop the columns (older code never reads them):
+--   update public.ci_test_results set outcome = 'failed', failure_kind = 'real', failure_phase = 'call',
+--     failure_message = coalesce('not proven: ' || not_proven_cause, 'not proven identical to the serial run'), not_proven_cause = null
+--     where outcome = 'not_proven';
+--   update public.ci_runs set status = 'failed', tests_failed = tests_failed + tests_not_proven where status = 'not_proven';
+--   then re-create ci_runs_status_check and ci_test_results_outcome_check without 'not_proven', drop
+--   ci_test_results_not_proven_cause_check, ci_runs_proof_check, ci_runs_tests_not_proven_check and the columns
+--   not_proven_cause, proof, tests_not_proven, exit_code.
+-- The deploy (deploy/lib/migrate.mjs) runs this file in one transaction; it waits at most 5 s for each table's lock.
+set local lock_timeout = '5s';
 
 alter table public.ci_runs add column if not exists proof jsonb;
 alter table public.ci_runs add column if not exists tests_not_proven int not null default 0;

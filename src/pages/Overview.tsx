@@ -87,8 +87,8 @@ export function OverviewPage() {
                 id="kpi-proof"
                 wide
                 label="Proven identical"
-                value={o.proof.runsWithProof === 0 ? "–" : `${formatCount(o.proof.provenIdentical)} of ${formatCount(o.proof.runsWithProof)} runs`}
-                sub={o.proof.runsWithProof === 0 && o.proof.notProven === 0 ? "no parallel runs yet" : `${formatCount(o.proof.notProven)} not proven this month`}
+                value={(o.proof?.runsWithProof ?? 0) === 0 ? "–" : `${formatCount(o.proof?.provenIdentical ?? 0)} of ${formatCount(o.proof?.runsWithProof ?? 0)} runs`}
+                sub={(o.proof?.runsWithProof ?? 0) === 0 && (o.proof?.notProven ?? 0) === 0 ? "no parallel runs yet" : `${formatCount(o.proof?.notProven ?? 0)} not proven this month`}
               />
               <Kpi label="Minutes saved" value={formatMinutes(o.minutesSaved.thisMonth)} sub="skipped tests only" spark={o.minutesSaved.perDay.map((p) => p.value)} />
               <Kpi label="Skipped with proof" value={o.skipShare.median === null ? "–" : formatPercent(o.skipShare.median)} sub="median, test time per run" spark={o.skipShare.perDay.map((p) => p.value)} />

@@ -15,7 +15,7 @@ import { useAsync } from "../lib/useAsync";
 import { useLiveRun } from "../lib/useLiveRun";
 import { REGIONS } from "./Settings";
 import { formatCount, formatDateTime, formatDuration, formatMinutes, formatPercent, shortSha } from "../lib/format";
-import { runMinutes, setupSnippet } from "../data/ci";
+import { notProvenSentence, runMinutes, setupSnippet } from "../data/ci";
 import { languageLabel } from "./Projects";
 
 const PAGE_SIZE = 50;
@@ -165,33 +165,15 @@ function SuiteSquares({ files }: { files: RunFile[] }) {
 }
 
 /** "read a file outside the project": the engine's cause as the verb phrase of a sentence about tests. */
-const CAUSE_PHRASES: Record<string, string> = {
-  "file read outside the project": "read a file outside the project",
-  "environment variable read outside any test": "read an environment variable outside any test",
-};
-
 const testCount = (n: number) => `${formatCount(n)} ${n === 1 ? "test" : "tests"}`;
-
-/** After the sentence: what the run did with them. The run exits non-zero only when the summary said so. */
-function exitClause(run: Pick<Run, "exitCode">): string {
-  return `Their serial result is reported; ${run.exitCode !== null && run.exitCode !== 0 ? `the run exits ${run.exitCode}` : "the check on GitHub is marked failed"}.`;
-}
-
-/** One sentence about the tests not proven, from the largest cause the runner reported. */
-export function notProvenSentence(run: Pick<Run, "exitCode" | "tests">, proof: Pick<RunProof, "notProvenCauses"> | null): string {
-  const n = run.tests.notProven;
-  const top = proof ? [...proof.notProvenCauses].sort((a, b) => b.tests - a.tests)[0] : undefined;
-  if (!top) return `${testCount(n)} ${n === 1 ? "was" : "were"} not proven identical. ${NO_CAUSE}. ${exitClause(run)}`;
-  const what = CAUSE_PHRASES[top.cause] ?? `were not proven (${top.cause})`;
-  return `${testCount(top.tests)} ${what}, so the parallel result could not be proven equal to the serial one. ${exitClause(run)}`;
-}
 
 /**
  * The run's test command ran in parallel lanes, then each test was checked against the serial run (the summary's
  * proof). Not shown while running (the proof exists once the run has finished) nor for a serial run.
  */
-function ProofCard({ run, proof, testsLink }: { run: Run; proof: RunProof; testsLink: string }) {
-  const n = proof.notProven;
+function ProofCard({ run, proof, testsLink, hasRows }: { run: Run; proof: RunProof; testsLink: string; hasRows: boolean }) {
+  // N is the run's (the largest of every source, github-app/src/results/summary.ts), never less than the proof's.
+  const n = Math.max(run.tests.notProven ?? 0, proof.notProven ?? 0);
   return (
     <Card id="proof" title="Parallel with proof" description="Ran in parallel, then checked test by test against the serial run.">
       <dl className="facts facts-4">
@@ -206,7 +188,7 @@ function ProofCard({ run, proof, testsLink }: { run: Run; proof: RunProof; tests
         <div>
           <dt>Proven</dt>
           <dd className="mono">
-            {formatCount(proof.proven)} of {formatCount(proof.proven + proof.notProven)}
+            {formatCount(proof.proven)} of {formatCount(run.tests.ran)}
           </dd>
         </div>
         <div>
@@ -237,10 +219,15 @@ function ProofCard({ run, proof, testsLink }: { run: Run; proof: RunProof; tests
           <p className="callout-row">
             <ShieldQuestion size={16} aria-hidden="true" />
             <span>
-              {notProvenSentence({ ...run, tests: { ...run.tests, notProven: n } }, proof)}{" "}
-              <Link to={testsLink} className="row-link">
-                See the {testCount(n)}
-              </Link>
+              {notProvenSentence({ ...run, tests: { ...run.tests, notProven: n } }, proof)}
+              {hasRows && (
+                <>
+                  {" "}
+                  <Link to={testsLink} className="row-link">
+                    See the {testCount(n)}
+                  </Link>
+                </>
+              )}
             </span>
           </p>
         </div>
@@ -318,8 +305,8 @@ export function RunPage() {
   const tests = useAsync(() => client.listTestResults(runId, { outcome, search: q, page, pageSize: PAGE_SIZE }), [runId, outcome, q, page, status]);
   const receipt = useAsync(() => (receiptId ? client.getSkipReceipt(receiptId) : Promise.resolve(null)), [receiptId]);
   const files = useAsync(() => client.listRunFiles(runId), [runId, status]);
-  // A run not proven without a proof block: "See the N tests" only when it has per-test not_proven rows.
-  const unproven = live.detail && !live.detail.run.proof && live.detail.run.tests.notProven > 0 && status !== "running";
+  // A run not proven (with or without a proof block): "See the N tests" only when it has per-test not_proven rows.
+  const unproven = !!live.detail && (live.detail.run.tests.notProven ?? 0) > 0 && status !== "running";
   const unprovenRows = useAsync(() => (unproven ? client.listTestResults(runId, { outcome: "not_proven", pageSize: 1 }).then((p) => p.total) : Promise.resolve(0)), [runId, unproven, status]);
   // "See the N tests" and "How this was proven" lead to the tests table.
   useEffect(() => {
@@ -436,7 +423,7 @@ export function RunPage() {
         </div>
       )}
 
-      {!running && !run.proof && run.tests.notProven > 0 && (
+      {!running && run.proof == null && (run.tests.notProven ?? 0) > 0 && (
         <div className="callout callout-warning" role="note" id="not-proven-note">
           <p className="callout-row">
             <ShieldQuestion size={16} aria-hidden="true" />
@@ -455,7 +442,7 @@ export function RunPage() {
         </div>
       )}
 
-      {!running && run.proof && <ProofCard run={run} proof={run.proof} testsLink={testsLink} />}
+      {!running && run.proof != null && <ProofCard run={run} proof={run.proof} testsLink={testsLink} hasRows={unprovenRows.status === "ready" && unprovenRows.data > 0} />}
 
       <Card id="facts" title="Run" description="Where it came from and how it ran.">
         <dl className="facts facts-4">
@@ -539,7 +526,7 @@ export function RunPage() {
                 { value: "failed", label: "Failed", count: counts ? formatCount(counts.failed) : undefined },
                 { value: "passed", label: "Passed", count: counts ? formatCount(counts.passed) : undefined },
                 { value: "skipped_with_proof", label: "Skipped", count: counts ? formatCount(counts.skipped_with_proof) : undefined },
-                { value: "not_proven", label: "Not proven", count: counts ? formatCount(counts.not_proven) : undefined },
+                { value: "not_proven", label: "Not proven", count: counts ? formatCount(counts.not_proven ?? 0) : undefined },
               ]}
             />
           </div>

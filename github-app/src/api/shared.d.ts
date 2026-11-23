@@ -45,6 +45,7 @@ export function auditFrom(runs: Run[], reruns: AuditRerun[], from: Date, to: Dat
 export function familiesOf(defects: Defect[]): DefectFamily[];
 export function setupChange(project: Pick<Project, "language">): SetupChange;
 export const SEARCH_MAX: number;
+export const SEARCH_MIN: number;
 export function searchTerms(q: string): { number: number | null; commitPrefix: string | null; text: string };
 export function searchFrom(projects: Project[], runs: Run[], defects: Defect[], q: string): SearchResult[];
 export function activityFrom(projects: Project[], runs: Run[], defects: Defect[], explorations: Exploration[], limit?: number): ActivityItem[];

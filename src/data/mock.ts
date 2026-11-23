@@ -1063,6 +1063,29 @@ function defectsFor(q: { projectId?: string; state?: "open" | "fixed" | "all" } 
     .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
 }
 
+/**
+ * sessionStorage "fenvix-mock-api" = "before-proof": the mock answers as the API did before console proof (no proof,
+ * no not-proven counts, no Overview proof block, no GET /search), so a check can show the console still works against
+ * it (src/data/compat.ts).
+ */
+function olderApi(): boolean {
+  try {
+    return sessionStorage.getItem("fenvix-mock-api") === "before-proof";
+  } catch {
+    return false;
+  }
+}
+type Loose = Record<string, unknown>;
+function oldRun<T>(r: T): T {
+  if (!olderApi()) return r;
+  const { proof: _p, exitCode: _e, ...rest } = r as Loose;
+  const { notProven: _n, ...tests } = rest.tests as Loose;
+  return { ...rest, tests } as T;
+}
+function oldShape<T>(v: T, strip: (x: Loose) => Loose): T {
+  return olderApi() ? (strip(v as Loose) as T) : v;
+}
+
 /** Every live-view question, for the checks (polling must stop once the run has finished). */
 let liveCount = 0;
 
@@ -1074,12 +1097,13 @@ export const mockClient: DataClient & { liveCalls(): number } = {
 
   getOverview() {
     const s = store();
-    return wait(copy(overviewFrom(s.projects, s.runs, s.defects, currentPlan(), RATE, NOW, s.events, trial())));
+    const o = copy(overviewFrom(s.projects, s.runs, s.defects, currentPlan(), RATE, NOW, s.events, trial()));
+    return wait(oldShape(o, ({ proof: _p, projects, ...rest }) => ({ ...rest, projects: (projects as Loose[]).map(({ lastRunNotProven: _l, ...p }) => p) })));
   },
 
   listProjects() {
     const s = store();
-    return wait(copy(s.projects.map((p) => projectRow(p, s.runs, s.defects, NOW))));
+    return wait(copy(s.projects.map((p) => oldShape(projectRow(p, s.runs, s.defects, NOW), ({ lastRunNotProven: _l, ...p }) => p))));
   },
   getProject(id) {
     const s = store();
@@ -1097,9 +1121,9 @@ export const mockClient: DataClient & { liveCalls(): number } = {
   },
   listRuns(projectId, q = {}) {
     const rows = filterRuns(projectId, q);
-    if (q.since) return wait<Page<Run>>(copy({ items: rows, total: rows.length, page: 1, pageSize: rows.length }));
+    if (q.since) return wait<Page<Run>>(copy({ items: rows.map(oldRun), total: rows.length, page: 1, pageSize: rows.length }));
     const { page = 1, pageSize = 25 } = q;
-    return wait<Page<Run>>(copy({ items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize }));
+    return wait<Page<Run>>(copy({ items: rows.slice((page - 1) * pageSize, page * pageSize).map(oldRun), total: rows.length, page, pageSize }));
   },
   getSkipShareSeries(projectId, days) {
     const from = dayStart(new Date(NOW.getTime() - (days - 1) * DAY));
@@ -1132,7 +1156,7 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     const s = store();
     const run = s.runs.find((r) => r.id === id);
     const project = run && s.projects.find((p) => p.id === run.projectId);
-    return wait<RunDetail | null>(run && project ? copy({ run, project }) : null);
+    return wait<RunDetail | null>(run && project ? copy({ run: oldRun(run), project }) : null);
   },
   getRunLive(id, etag) {
     liveCount++;
@@ -1142,7 +1166,7 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     const project = run && s.projects.find((p) => p.id === run.projectId);
     if (!run || !project) return Promise.reject(mockError("not_found", 404, "That run does not exist."));
     const tag = etagOf(run);
-    return wait<RunLive>(etag === tag ? { notModified: true } : { notModified: false, detail: copy({ run, project }), etag: tag });
+    return wait<RunLive>(etag === tag ? { notModified: true } : { notModified: false, detail: copy({ run: oldRun(run), project }), etag: tag });
   },
   listTestResults(runId, q = {}) {
     const run = store().runs.find((r) => r.id === runId);
@@ -1154,7 +1178,11 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     const rank: Record<TestOutcome, number> = { failed: 0, not_proven: 1, passed: 2, skipped_with_proof: 3 };
     const rows = all.filter((t) => (!q.outcome || q.outcome === "all" || t.outcome === q.outcome) && (!term || t.testId.toLowerCase().includes(term))).sort((a, b) => rank[a.outcome] - rank[b.outcome]);
     const { page = 1, pageSize = 50 } = q;
-    return wait<TestPage>({ items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize, counts });
+    const out: TestPage = { items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize, counts };
+    return wait<TestPage>(oldShape(out, (x) => {
+      const { not_proven: _n, ...c } = x.counts as Loose;
+      return { ...x, counts: c };
+    }));
   },
   getSkipReceipt: (id) => wait(receiptOf(id)),
   listRunFiles(runId) {
@@ -1180,6 +1208,7 @@ export const mockClient: DataClient & { liveCalls(): number } = {
   },
 
   search(q) {
+    if (olderApi()) return Promise.reject(mockError("not_found", 404, "Not found."));
     const s = store();
     return wait<SearchResult[]>(searchFrom(s.projects, s.runs, s.defects, q));
   },

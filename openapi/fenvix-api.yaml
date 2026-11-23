@@ -286,7 +286,7 @@ paths:
       description: |
         Runs and open defects of the organization, newest first, at most 20. Runs match by number (`4299`, `#4299`) or by
         a commit prefix of 7 or more hex characters; open defects by test name (case-insensitive substring).
-      parameters: [{ name: q, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 200 } }]
+      parameters: [{ name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 200 } }]
       responses:
         "200":
           description: OK

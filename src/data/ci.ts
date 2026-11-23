@@ -4,7 +4,7 @@
  */
 import type {
   ActivityItem, AuditRerun, AuditSummary, Exploration, MissKind, SearchResult,
-  BillingOverview, DayPoint, Defect, DefectFamily, GitHubRate, MinuteBreakdown, Overview, Plan, Project, ProjectRow, Run, SetupChange, Trial, UsageProjectRow, UsageReport,
+  BillingOverview, DayPoint, Defect, DefectFamily, GitHubRate, MinuteBreakdown, Overview, Plan, Project, ProjectRow, Run, RunProof, SetupChange, Trial, UsageProjectRow, UsageReport,
 } from "./types";
 
 /**
@@ -194,10 +194,10 @@ export function overviewFrom(projects: Project[], runs: Run[], defects: Defect[]
  * not proven (with or without lanes).
  */
 export function proofOverview(thisMonth: Run[]): Overview["proof"] {
-  const withProof = thisMonth.filter((r) => r.proof !== null && r.status !== "running");
+  const withProof = thisMonth.filter((r) => r.proof != null && finished(r));
   return {
     runsWithProof: withProof.length,
-    provenIdentical: withProof.filter((r) => r.tests.notProven === 0 && r.proof!.notProven === 0).length,
+    provenIdentical: withProof.filter((r) => !r.tests.notProven && !r.proof!.notProven).length,
     notProven: thisMonth.filter((r) => r.status === "not_proven").length,
   };
 }
@@ -510,8 +510,9 @@ export function activityFrom(projects: Project[], runs: Run[], defects: Defect[]
 /** "homehub" of "acme/homehub". */
 export const shortName = (fullName: string) => fullName.split("/").pop() || fullName;
 
-/** At most this many search results (GET /search). */
+/** At most this many search results (GET /search), and the shortest search term. */
 export const SEARCH_MAX = 20;
+export const SEARCH_MIN = 2;
 
 /** What a search term asks for: a run number ("4299", "#4299"), a commit prefix (7+ hex), and test-name text. */
 export function searchTerms(q: string): { number: number | null; commitPrefix: string | null; text: string } {
@@ -528,7 +529,7 @@ export function searchTerms(q: string): { number: number | null; commitPrefix: s
  */
 export function searchFrom(projects: Project[], runs: Run[], defects: Defect[], q: string): SearchResult[] {
   const t = searchTerms(q);
-  if (!t.text) return [];
+  if (t.text.length < SEARCH_MIN) return [];
   const name = new Map(projects.map((p) => [p.id, shortName(p.fullName)]));
   const hits: { at: string; r: SearchResult }[] = [];
   for (const r of runs) {
@@ -546,11 +547,33 @@ export function searchFrom(projects: Project[], runs: Run[], defects: Defect[], 
 /** Said wherever the runner reported tests not proven without a cause. */
 export const NO_CAUSE_LABEL = "The runner did not report why";
 
+/** The engine's causes as the verb phrase of a sentence about tests ("14 tests read a file outside the project"). */
+const CAUSE_PHRASES: Record<string, string> = {
+  "file read outside the project": "read a file outside the project",
+  "environment variable read outside any test": "read an environment variable outside any test",
+};
+
+const countOf = (n: number) => `${new Intl.NumberFormat("en-US").format(n)} ${n === 1 ? "test" : "tests"}`;
+
+/**
+ * The run page's sentence about its tests not proven (Run.tsx): from the largest cause the runner reported, or that it
+ * did not report one; then what the run did with them. "the run exits N" only when the summary's exit was not 0.
+ */
+export function notProvenSentence(run: Pick<Run, "exitCode" | "tests">, proof: Pick<RunProof, "notProvenCauses"> | null): string {
+  const exit = run.exitCode != null && run.exitCode !== 0 ? `the run exits ${run.exitCode}` : "the check on GitHub is marked failed";
+  const after = `Their serial result is reported; ${exit}.`;
+  const n = run.tests.notProven ?? 0;
+  const top = proof != null ? [...(proof.notProvenCauses ?? [])].filter((c) => c.tests > 0).sort((a, b) => b.tests - a.tests)[0] : undefined;
+  if (!top) return `${countOf(n)} ${n === 1 ? "was" : "were"} not proven identical. ${NO_CAUSE_LABEL}. ${after}`;
+  const what = CAUSE_PHRASES[top.cause] ?? `${top.tests === 1 ? "was" : "were"} not proven (${top.cause})`;
+  return `${countOf(top.tests)} ${what}, so the parallel result could not be proven equal to the serial one. ${after}`;
+}
+
 /** A run's tests not proven by cause (largest first); what the runner did not explain is NO_CAUSE_LABEL. */
 export function notProvenCausesOf(r: Run): { cause: string; tests: number }[] {
   const n = r.tests.notProven || r.proof?.notProven || 0;
   if (n <= 0) return [];
-  const named = r.proof ? r.proof.notProvenCauses.filter((c) => c.tests > 0) : [];
+  const named = r.proof != null ? (r.proof.notProvenCauses ?? []).filter((c) => c.tests > 0) : [];
   const told = named.reduce((a, c) => a + c.tests, 0);
   const out = told < n ? [...named, { cause: NO_CAUSE_LABEL, tests: n - told }] : named;
   return [...out].sort((a, b) => b.tests - a.tests);
@@ -573,8 +596,8 @@ export interface ParallelProof {
 export function parallelProofFrom(runs: Run[], now: Date, days = 30): ParallelProof {
   const since = new Date(now.getTime() - days * DAY).toISOString();
   const window = runs.filter((r) => finished(r) && r.startedAt >= since);
-  const withProof = window.filter((r) => r.proof !== null);
-  const notProven = window.filter((r) => r.status === "not_proven" || r.tests.notProven > 0).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const withProof = window.filter((r) => r.proof != null);
+  const notProven = window.filter((r) => r.status === "not_proven" || (r.tests.notProven ?? 0) > 0).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   const byDay = new Map<string, Run[]>();
   for (const r of [...withProof].sort((a, b) => a.startedAt.localeCompare(b.startedAt))) {
     const k = dayStart(new Date(r.startedAt)).toISOString();

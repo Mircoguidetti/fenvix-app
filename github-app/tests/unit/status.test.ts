@@ -5,7 +5,7 @@ import { testRow } from "../../src/results/apply.ts";
 import { checkRunOutput, conclusionOf, prComment, title, type RenderContext } from "../../src/results/render.ts";
 import { parseResults } from "../../src/results/runner-records.ts";
 import { runStatus } from "../../src/results/status.ts";
-import { parseSummary, proofRecord, SummaryError } from "../../src/results/summary.ts";
+import { parseSummary, proofRecord } from "../../src/results/summary.ts";
 
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`../fixtures/runner/${name}.summary.json`, import.meta.url), "utf8")) as Record<string, unknown>;
 
@@ -42,6 +42,10 @@ describe("runStatus: the run's status, first match wins (github-app/src/results/
   it("only tests not proven: not_proven", () => assert.equal(runStatus("success", s(parallel(14))), "not_proven"));
   it("every test proven, no failure: passed", () => assert.equal(runStatus("success", s(parallel(0))), "passed"));
   it("a non-zero exit with every test proven and no failure: failed", () => assert.equal(runStatus("failure", s(parallel(0, { exit: 2 }))), "failed"));
+  it("tests not proven with exit 1 (the engine exits 1 then): not_proven, not failed; also without a proof", () => {
+    assert.equal(runStatus("failure", s(parallel(14, { exit: 1 }))), "not_proven");
+    assert.equal(runStatus("failure", s({ tests: 10, reused_with_proof: 0, ran: 10, exit: 1, not_proven: 2 })), "not_proven");
+  });
 });
 
 describe("N, the not-proven count of a summary", () => {
@@ -57,8 +61,29 @@ describe("N, the not-proven count of a summary", () => {
     assert.match(prComment(sum, ctx), /❌/);
     assert.match(checkRunOutput(sum, ctx).summary, /Not proven identical to the serial run \| 1/);
   });
-  it("proof.not_proven wins over the top-level not_proven and the verify counts", () => {
-    assert.equal(s(parallel(3, { not_proven: 9, verify_status: "diverged", verify_counts: { not_proven: 5, diverged: 5, missing: 5 } })).notProven, 3);
+  it("with a proof: the largest of proof.not_proven, the top-level not_proven and the verify count (a proof never hides tests)", () => {
+    assert.equal(s(parallel(3)).notProven, 3);
+    assert.equal(s(parallel(3, { not_proven: 9 })).notProven, 9);
+    assert.equal(s(parallel(3, { verify_status: "diverged", verify_counts: { not_proven: 5, diverged: 5, missing: 5 } })).notProven, 15);
+  });
+  it("with a proof that does not cover the tests that ran: N is at least ran - proven", () => {
+    // 374 ran, the proof accounts for 300 proven + 0 not proven: 74 tests were never proven.
+    const sum = s(parallel(0, { proof: { workers: 4, proven: 300, not_proven: 0, parallel_seconds: 10 } }));
+    assert.equal(sum.notProven, 74);
+    assert.equal(runStatus("success", sum), "not_proven");
+  });
+  it("verify fails closed: not_proven, a crashed verify (null with a non-zero exit), wrong_reuse, an unknown status; identical stays 0", () => {
+    const base = { tests: 10, reused_with_proof: 0, ran: 10, exit: 0 };
+    const zero = { not_proven: 0, diverged: 0, missing: 0, wrong_reuse: 0 };
+    assert.equal(s({ ...base, verify_status: "not_proven", verify_counts: { ...zero, not_proven: 2 } }).notProven, 2);
+    assert.equal(s({ ...base, verify_status: "not_proven", verify_counts: zero }).notProven, 1);
+    assert.equal(s({ ...base, verify_status: null, verify_exit: 2 }).notProven, 1);
+    assert.equal(s({ ...base, verify_exit: 2 }).notProven, 1);
+    assert.equal(s({ ...base, verify_status: null, verify_exit: 0 }).notProven, 0);
+    assert.equal(s({ ...base, verify_status: "diverged", verify_counts: { ...zero, wrong_reuse: 3 } }).notProven, 3);
+    assert.equal(s({ ...base, verify_status: "something new", verify_counts: zero }).notProven, 1);
+    assert.equal(s({ ...base, verify_status: "identical", verify_exit: 0, verify_counts: { ...zero, wrong_reuse: 3 } }).notProven, 0);
+    for (const v of ["not_proven", null, "something new"]) assert.equal(runStatus("success", s({ ...base, verify_status: v, verify_exit: 2 })), "not_proven", String(v));
   });
   it("without proof: the larger of the top-level not_proven and the diverged verify counts; status.not_proven is not used", () => {
     const base = { tests: 10, reused_with_proof: 0, ran: 10, exit: 0 };
@@ -99,10 +124,21 @@ describe("the summary's proof", () => {
     assert.equal(p.orderDigest, null);
     assert.equal(proofRecord(p).serialMsEstimate, null);
   });
-  it("a malformed proof is refused", () => {
-    assert.throws(() => s(parallel(0, { proof: [] })), SummaryError);
-    assert.throws(() => s(parallel(0, { proof: { workers: -1, proven: 1, not_proven: 0, parallel_seconds: 1 } })), SummaryError);
-    assert.throws(() => s(parallel(0, { proof: { workers: 2, proven: 1, not_proven: 0, parallel_seconds: 1, not_proven_causes: [{ cause: "" }] } })), SummaryError);
+  it("a malformed proof never discards the summary: proof null, the rest kept, N from the other sources, never green for it", () => {
+    const good = { workers: 4, proven: 370, not_proven: 4, rerun_one_lane: 4, parallel_seconds: 10, serial_seconds_estimate: null, order_digest: "ab", not_proven_causes: [{ cause: "c", tests: 4 }] };
+    const bad = [
+      ["a list", []], ["rerun_one_lane null", { ...good, rerun_one_lane: null }], ["order_digest empty", { ...good, order_digest: "" }],
+      ["a cause over 500 characters", { ...good, not_proven_causes: [{ cause: "x".repeat(501), tests: 4 }] }], ["parallel_seconds null", { ...good, parallel_seconds: null }],
+      ["workers -1", { ...good, workers: -1 }], ["an empty cause", { ...good, not_proven_causes: [{ cause: "", tests: 4 }] }],
+    ] as const;
+    for (const [what, proof] of bad) {
+      const sum = s(parallel(0, { proof, not_proven: 4 }));
+      assert.equal(sum.proof, null, what);
+      assert.equal(sum.tests, 374, `${what}: the summary is kept`);
+      assert.equal(sum.notProven, 4, `${what}: N from the top-level not_proven`);
+      assert.equal(runStatus("success", sum), "not_proven", what);
+    }
+    assert.notEqual(s(parallel(0, { proof: good })).proof, null);
   });
 });
 

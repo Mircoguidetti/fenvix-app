@@ -10,7 +10,7 @@ import { notFound } from "./errors.ts";
 import { LATEST_WARMUP } from "./github.ts";
 import {
   activityFrom, auditFrom, billingFrom, dayStart, familiesOf, mapAuditRerun, mapDefect, mapExploration, mapPlan, mapProject, mapRate, mapReceipt,
-  mapRun, mapTestResult, mapUsageEvent, median, monthBounds, monthOf, overviewFrom, type Plan, type Project, projectRow, type Run, SEARCH_MAX, searchFrom,
+  mapRun, mapTestResult, mapUsageEvent, median, monthBounds, monthOf, overviewFrom, type Plan, type Project, projectRow, type Run, SEARCH_MAX, SEARCH_MIN, searchFrom,
   searchTerms, setupChange, type Trial, trialFrom, usageCsv, usageCsvName, usageFrom,
 } from "./shared.js";
 
@@ -39,9 +39,10 @@ async function project(t: Tx, ws: string, id: string): Promise<Project> {
 
 const runs = async (t: Tx, sql: string, params: unknown[]): Promise<Run[]> => (await t.q(`select * from public.ci_runs where ${sql}`, params)).map(mapRun);
 
-async function defects(t: Tx, ws: string, where: string, params: unknown[], all: Project[]) {
+async function defects(t: Tx, ws: string, where: string, params: unknown[], all: Project[], limit?: number) {
   const byId = new Map(all.map((p) => [p.id, p]));
-  const rows = await t.q(`select * from public.ci_defects where workspace_id = $1 ${where} order by last_seen_at desc, id`, [ws, ...params]);
+  const cap = limit === undefined ? "" : ` limit ${Math.max(1, Math.floor(limit))}`;
+  const rows = await t.q(`select * from public.ci_defects where workspace_id = $1 ${where} order by last_seen_at desc, id${cap}`, [ws, ...params]);
   return rows.map((r) => mapDefect(r, byId.get(String(r.project_id))));
 }
 
@@ -322,15 +323,16 @@ export const search: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const q = String(ctx.query.q ?? "");
   const t = searchTerms(q);
-  if (!t.text) return { items: [] };
+  if (t.text.length < SEARCH_MIN) return { items: [] };
   const all = await projects(ctx.t, ws);
   const conds: string[] = [];
   const params: unknown[] = [ws];
   if (t.number !== null) { params.push(t.number); conds.push(`number = $${params.length}`); }
-  if (t.commitPrefix) { params.push(t.commitPrefix); conds.push(`left(commit_sha, length($${params.length})) = $${params.length}`); }
+  // The prefix is 7 to 40 hex characters (searchTerms), so it holds no LIKE wildcard.
+  if (t.commitPrefix) { params.push(t.commitPrefix); conds.push(`commit_sha like $${params.length} || '%'`); }
   const rs = conds.length ? await runs(ctx.t, `workspace_id = $1 and (${conds.join(" or ")}) order by started_at desc limit ${SEARCH_MAX}`, params) : [];
-  const ds = await defects(ctx.t, ws, "and state = 'open' and strpos(lower(test_id), $2) > 0", [t.text], all);
-  return { items: searchFrom(all, rs, ds.slice(0, SEARCH_MAX), q) };
+  const ds = await defects(ctx.t, ws, "and state = 'open' and strpos(lower(test_id), $2) > 0", [t.text], all, SEARCH_MAX);
+  return { items: searchFrom(all, rs, ds, q) };
 };
 
 // ---------------------------------------------------------------- defects

@@ -10,7 +10,7 @@ interface DashRun {
   testTimeMs: { ran: number; skipped: number }; skipMisses: Record<string, number>; proof: unknown; exitCode: number | null;
 }
 interface DashProject { id: string; fullName: string; language: string; testRunner: string; setupState: string; installationId: number }
-// The customer dashboard's own row mappers (src/data/ci-rows.ts, unchanged from main): what it shows is what it reads.
+// The customer dashboard's own row mappers (src/data/ci-rows.ts): what it shows is what it reads.
 // Loaded at run time (that file is type-checked by the dashboard's own tsconfig, not this one).
 const { mapProject, mapRun } = (await import(new URL("../../../src/data/ci-rows.ts", import.meta.url).href)) as {
   mapRun: (r: Row) => DashRun; mapProject: (r: Row) => DashProject;

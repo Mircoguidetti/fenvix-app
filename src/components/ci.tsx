@@ -3,6 +3,7 @@ import { CopyButton } from "./CopyButton";
 import { STATE_ICONS, StatusPill } from "./StateBadge";
 import type { Defect, DefectCause, MinuteBreakdown, RunTrigger, TestOutcome, WarmCache } from "../data";
 import { formatPercent, formatRelative } from "../lib/format";
+import { NO_CAUSE_LABEL } from "../data/ci";
 import { warmCacheText } from "../lib/warm";
 
 /** A block of code or a command, with a copy button. */
@@ -63,8 +64,8 @@ export function ReplayStatus({ d }: { d: Pick<Defect, "replays" | "status"> }) {
   );
 }
 
-/** Said when the runner reported a test (or run) not proven without a cause. */
-export const NO_CAUSE = "The runner did not report why";
+/** Said when the runner reported a test (or run) not proven without a cause (src/data/ci.ts). */
+export const NO_CAUSE = NO_CAUSE_LABEL;
 
 export function OutcomePill({ outcome, flaky, cause }: { outcome: TestOutcome; flaky?: boolean; cause?: string | null }) {
   if (outcome === "passed") return <StatusPill tone="ok">Passed</StatusPill>;
@@ -78,6 +79,7 @@ export function OutcomePill({ outcome, flaky, cause }: { outcome: TestOutcome; f
         </StatusPill>
       </span>
     );
+  if (outcome !== "skipped_with_proof") return <StatusPill tone="neutral">Unknown</StatusPill>;
   return (
     <StatusPill tone="neutral" icon={STATE_ICONS.seal}>
       Skipped with proof

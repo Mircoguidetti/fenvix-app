@@ -66,6 +66,9 @@ export function InvoiceStatus({ status }: { status: "paid" | "open" }) {
  */
 export function RunStatusPill({ status, count }: { status: RunStatus; count?: number }) {
   const tone: Tone = status === "passed" ? "ok" : status === "failed" ? "danger" : status === "running" || status === "not_proven" ? "warn" : "neutral";
+  const known: string[] = ["passed", "failed", "running", "not_proven", "cancelled"];
+  // A status this console does not know yet (a newer API): grey and "Unknown", never one of the known words.
+  if (!known.includes(status)) return <StatusPill tone="neutral">Unknown</StatusPill>;
   if (status === "not_proven")
     return (
       <StatusPill tone={tone} icon={STATE_ICONS.unproven}>

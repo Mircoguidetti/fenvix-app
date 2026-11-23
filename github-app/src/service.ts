@@ -978,8 +978,8 @@ export class GitHubService {
     const trigger = TRIGGERS.has(event) ? event : event === "pull_request_target" ? "pull_request" : "workflow_dispatch";
     const fails = s ? s.failed.length + s.flaky.length : 0;
     const status = runStatus(job.conclusion, s);
-    // N (RunSummary.notProven): never counted as passed, so passed + failed + notProven stays within the tests that ran.
-    const notProven = s ? Math.min(s.notProven, s.ran) : 0;
+    // N (RunSummary.notProven), the one value runStatus uses: never counted as passed (status not_proven ⇒ N ≥ 1).
+    const notProven = s ? s.notProven : 0;
     const passedRan = s ? Math.max(0, Math.min(s.ran - fails, (s.outcomeCounts.passed ?? s.ran) - s.reusedWithProof) - notProven) : 0;
     return {
       trigger, status, commitMessage: (run?.head_commit?.message ?? "").split("\n")[0]!.slice(0, 500),

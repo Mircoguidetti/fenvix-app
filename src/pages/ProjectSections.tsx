@@ -579,7 +579,7 @@ export function ParallelWithProofPage() {
         </div>
       </>
     );
-  const identical = proof.withProof.filter((r) => r.tests.notProven === 0 && r.proof!.notProven === 0).length;
+  const identical = proof.withProof.filter((r) => !r.tests.notProven && !r.proof!.notProven).length;
   const speedups = proof.withProof.filter((r) => r.proof!.serialMsEstimate).map((r) => r.proof!.serialMsEstimate! / Math.max(1, r.proof!.parallelMs));
   const speedup = median(speedups);
   const time = (ms: number) => formatDuration(ms);

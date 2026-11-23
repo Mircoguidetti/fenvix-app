@@ -2,9 +2,12 @@
 // proven is finished, never green, never "failed"; the Overview's proof block; the search; time to green per day.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { activityFrom, finished, medianTimeToGreen, NO_CAUSE_LABEL, notProvenCausesOf, overviewFrom, parallelProofFrom, projectRow, searchFrom, timeToGreenPerDay } from "../../src/data/ci.ts";
+import { activityFrom, finished, medianTimeToGreen, NO_CAUSE_LABEL, notProvenCausesOf, notProvenSentence, overviewFrom, parallelProofFrom, projectRow, searchFrom, timeToGreenPerDay } from "../../src/data/ci.ts";
+import { compatOverview, compatRun, compatTests, withCompat } from "../../src/data/compat.ts";
+import { ApiError } from "../../src/data/api-errors.ts";
+import type { DataClient } from "../../src/data/client.ts";
 import { mapRun, mapTestResult } from "../../src/data/ci-rows.ts";
-import type { Defect, GitHubRate, Project, Run, RunProof } from "../../src/data/types.ts";
+import type { Defect, GitHubRate, Overview, Project, Run, RunProof, TestPage } from "../../src/data/types.ts";
 
 const RATE: GitHubRate = { usdPerMinute: 0.008, runner: "x", source: "test", checkedOn: "2026-11-16" };
 const NOW = new Date("2026-11-17T12:00:00Z");
@@ -29,11 +32,13 @@ const proof = (notProven: number, causes: RunProof["notProvenCauses"] = [], o: P
   workers: 4, proven: 374 - notProven, notProven, rerunOneLane: notProven, parallelMs: 39_200, serialMsEstimate: 151_000, orderDigest: "7c1e", notProvenCauses: causes, ...o,
 });
 
-const proven = run("2026-11-10T10:00:00Z", { proof: proof(0) });
-const notProvenWithCause = run("2026-11-12T10:00:00Z", { status: "not_proven", exitCode: 1, proof: proof(14, [{ cause: "file read outside the project", tests: 14 }]) }, { notProven: 14, passed: 360 });
-const notProvenNoProof = run("2026-11-14T10:00:00Z", { status: "not_proven", exitCode: 1 }, { notProven: 2, passed: 372 });
-const serial = run("2026-11-15T10:00:00Z");
-const failed = run("2026-11-16T10:00:00Z", { status: "failed", exitCode: 1 }, { failed: 1, passed: 373 });
+// Skip shares 0.1 (proven), 0.9 and 0.8 (the two not proven), 0.2 (serial), 0.3 (failed): the median of the five is
+// 0.3; without the not-proven runs it would be 0.2.
+const proven = run("2026-11-10T10:00:00Z", { proof: proof(0), skipShare: 0.1 });
+const notProvenWithCause = run("2026-11-12T10:00:00Z", { status: "not_proven", exitCode: 1, skipShare: 0.9, proof: proof(14, [{ cause: "file read outside the project", tests: 14 }]) }, { notProven: 14, passed: 360 });
+const notProvenNoProof = run("2026-11-14T10:00:00Z", { status: "not_proven", exitCode: 1, skipShare: 0.8 }, { notProven: 2, passed: 372 });
+const serial = run("2026-11-15T10:00:00Z", { skipShare: 0.2 });
+const failed = run("2026-11-16T10:00:00Z", { status: "failed", exitCode: 1, skipShare: 0.3 }, { failed: 1, passed: 373 });
 const all = [failed, serial, notProvenNoProof, notProvenWithCause, proven];
 
 test("a run not proven is finished, never green: not counted by time to green, counted per day, its own activity kind", () => {
@@ -44,6 +49,9 @@ test("a run not proven is finished, never green: not counted by time to green, c
   const o = overviewFrom([project], all, [], null, RATE, NOW);
   assert.equal(o.runs.thisMonth, 5);
   assert.equal(o.runs.perDay.reduce((a, p) => a + p.value, 0), 5, "not proven runs are in the runs per day");
+  // The median share skipped counts finished runs, the not-proven ones included (0.2 without them).
+  assert.equal(o.skipShare.median, 0.3);
+  assert.equal(o.skipShare.perDay.find((p) => p.at.startsWith("2026-11-12"))!.value, 0.9);
   const act = activityFrom([project], all, [], [], 10);
   const np = act.filter((a) => a.kind === "run_not_proven");
   assert.deepEqual(np.map((a) => a.title).sort(), [`Run #${notProvenNoProof.number} not proven`, `Run #${notProvenWithCause.number} not proven`].sort());
@@ -54,6 +62,9 @@ test("a run not proven is finished, never green: not counted by time to green, c
 test("the Overview's proof block: runs with lanes, those all proven, every run not proven this month", () => {
   assert.deepEqual(overviewFrom([project], all, [], null, RATE, NOW).proof, { runsWithProof: 2, provenIdentical: 1, notProven: 2 });
   assert.deepEqual(overviewFrom([project], [serial], [], null, RATE, NOW).proof, { runsWithProof: 0, provenIdentical: 0, notProven: 0 });
+  // A cancelled run with a proof block is not finished: not counted.
+  const cancelled = run("2026-11-13T10:00:00Z", { status: "cancelled", proof: proof(0) });
+  assert.deepEqual(overviewFrom([project], [...all, cancelled], [], null, RATE, NOW).proof, { runsWithProof: 2, provenIdentical: 1, notProven: 2 });
 });
 
 test("a project row carries the last run's not-proven count for its pill", () => {
@@ -93,7 +104,11 @@ test("search: runs by number (with #) or commit prefix, open defects by test nam
   assert.deepEqual(searchFrom([project], all, [], serial.commitSha.slice(0, 8)).map((r) => r.id), [serial.id]);
   assert.deepEqual(searchFrom([project], all, [d, fixed], "DISCOVERY").map((r) => [r.kind, r.id, r.label, r.sublabel]), [["defect", "d1", "test_discovery_update", "homehub"]]);
   assert.deepEqual(searchFrom([project], all, [d], "nothing like this"), []);
-  assert.ok(searchFrom([project], Array.from({ length: 30 }, () => run("2026-11-11T10:00:00Z", { number: 7 })), [], "7").length <= 20);
+  const many = Array.from({ length: 30 }, (_, i) => run(new Date(Date.UTC(2026, 10, 1, 8, i)).toISOString(), { number: 77 }));
+  const capped = searchFrom([project], many, [], "77");
+  assert.equal(capped.length, 20);
+  assert.deepEqual(capped.map((r) => r.id), [...many].reverse().slice(0, 20).map((r) => r.id), "newest first");
+  assert.deepEqual(searchFrom([project], all, [d], "d"), [], "one character finds nothing");
 });
 
 test("rows: proof and exit code only once finished; a test's cause only when it is not proven", () => {
@@ -108,4 +123,35 @@ test("rows: proof and exit code only once finished; a test's cause only when it 
   assert.equal(mapRun({ id: "y", status: "passed" }).proof, null);
   assert.equal(mapTestResult({ run_id: "x", test_id: "t", outcome: "not_proven", not_proven_cause: "file read outside the project" }).notProvenCause, "file read outside the project");
   assert.equal(mapTestResult({ run_id: "x", test_id: "t", outcome: "passed", not_proven_cause: "x" }).notProvenCause, null);
+});
+
+test("the sentence about tests not proven: both causes, an unknown one, none, one test, exit 0 and 1", () => {
+  const r = (n: number, exitCode: number | null) => ({ exitCode, tests: { ...notProvenNoProof.tests, notProven: n } });
+  assert.equal(notProvenSentence(r(14, 1), { notProvenCauses: [{ cause: "file read outside the project", tests: 14 }] }),
+    "14 tests read a file outside the project, so the parallel result could not be proven equal to the serial one. Their serial result is reported; the run exits 1.");
+  assert.equal(notProvenSentence(r(3, 0), { notProvenCauses: [{ cause: "environment variable read outside any test", tests: 3 }] }),
+    "3 tests read an environment variable outside any test, so the parallel result could not be proven equal to the serial one. Their serial result is reported; the check on GitHub is marked failed.");
+  assert.equal(notProvenSentence(r(5, 0), { notProvenCauses: [{ cause: "a socket", tests: 1 }, { cause: "file read outside the project", tests: 4 }] }),
+    "4 tests read a file outside the project, so the parallel result could not be proven equal to the serial one. Their serial result is reported; the check on GitHub is marked failed.", "the largest cause");
+  assert.equal(notProvenSentence(r(1, 2), { notProvenCauses: [{ cause: "a socket", tests: 1 }] }),
+    "1 test was not proven (a socket), so the parallel result could not be proven equal to the serial one. Their serial result is reported; the run exits 2.");
+  assert.equal(notProvenSentence(r(2, 1), null), "2 tests were not proven identical. The runner did not report why. Their serial result is reported; the run exits 1.");
+  assert.equal(notProvenSentence(r(1, null), { notProvenCauses: [] }), "1 test was not proven identical. The runner did not report why. Their serial result is reported; the check on GitHub is marked failed.");
+});
+
+test("an API one release older: the missing fields read as nothing to show, never green, never an error", async () => {
+  const { proof: _p, exitCode: _e, ...bare } = proven;
+  const { notProven: _n, ...tests } = proven.tests;
+  const old = { ...bare, tests } as unknown as Run;
+  const r = compatRun(old);
+  assert.deepEqual([r.proof, r.exitCode, r.tests.notProven], [null, null, 0]);
+  const o = compatOverview({ ...overviewFrom([project], all, [], null, RATE, NOW), proof: undefined } as unknown as Overview);
+  assert.deepEqual(o.proof, { runsWithProof: 0, provenIdentical: 0, notProven: 0 });
+  const t = compatTests({ items: [{ runId: "x", testId: "t", file: "t", outcome: "passed", durationMs: 1, failure: null, receiptId: null }], total: 1, page: 1, pageSize: 50, counts: { passed: 1, failed: 0, skipped_with_proof: 0 } } as unknown as TestPage);
+  assert.equal(t.counts.not_proven, 0);
+  // A search on an API without GET /search: no results.
+  const c = withCompat({ search: () => Promise.reject(new ApiError("not_found", "Not found", 404)) } as unknown as DataClient);
+  assert.deepEqual(await c.search("4299"), []);
+  const broken = withCompat({ search: () => Promise.reject(new ApiError("internal", "boom", 500)) } as unknown as DataClient);
+  await assert.rejects(broken.search("4299"));
 });

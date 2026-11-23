@@ -50,9 +50,8 @@ export interface RunSummary {
   /** Null: a serial run (or a runner that does not send it yet). */
   proof: SummaryProof | null;
   /**
-   * N, the tests not proven identical to the serial run: `proof.not_proven` when `proof` is present; else the larger of
-   * the top-level `not_proven` and, when `verify_status` is "diverged", `verify_counts.not_proven + diverged + missing`;
-   * else 0. `status.not_proven` is not used. The status, the check run and `tests.notProven` all use this one value.
+   * N, the tests not proven identical to the serial run (notProvenOf: the largest of every source, failing closed).
+   * `status.not_proven` is not used. The status, the check run and `tests.notProven` all use this one value.
    */
   notProven: number;
 }
@@ -119,39 +118,57 @@ function engineVersionOf(raw: Record<string, unknown>): string {
   return "";
 }
 
-function parseProof(v: unknown): SummaryProof | null {
-  if (v === undefined || v === null) return null;
-  if (typeof v !== "object" || Array.isArray(v)) throw new SummaryError("summary.proof must be an object");
+/**
+ * The summary's `proof`, or null when it is absent or malformed. A malformed proof never discards the summary: the run
+ * keeps its other fields and N from the other sources (notProvenOf), and is never counted green for it.
+ */
+export function parseProof(v: unknown): SummaryProof | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   const o = v as Record<string, unknown>;
-  const p = (k: string, int = true) => {
-    try { return num(o, k, { required: true, int }); } catch { throw new SummaryError(`summary.proof.${k} must be a ${int ? "whole " : ""}number of 0 or more`); }
-  };
-  const orNull = (k: string, int: boolean) => (o[k] === undefined || o[k] === null ? null : p(k, int));
-  const causesRaw = o.not_proven_causes ?? [];
-  if (!Array.isArray(causesRaw)) throw new SummaryError("summary.proof.not_proven_causes must be a list");
-  const notProvenCauses = causesRaw.slice(0, 50).map((c, i) => {
-    const cc = (c ?? {}) as Record<string, unknown>;
-    const cause = str(cc.cause, 500);
-    if (!cause || typeof cc.tests !== "number" || !Number.isInteger(cc.tests) || cc.tests < 0) throw new SummaryError(`summary.proof.not_proven_causes[${i}] needs cause and tests`);
-    return { cause, tests: cc.tests };
-  });
+  const count = (x: unknown) => (typeof x === "number" && Number.isInteger(x) && x >= 0 ? x : null);
+  const secs = (x: unknown) => (typeof x === "number" && Number.isFinite(x) && x >= 0 ? x : null);
+  const workers = count(o.workers), proven = count(o.proven), notProven = count(o.not_proven), parallel = secs(o.parallel_seconds);
+  const rerun = o.rerun_one_lane === undefined ? 0 : count(o.rerun_one_lane);
+  if (workers === null || proven === null || notProven === null || parallel === null || rerun === null) return null;
+  const serial = o.serial_seconds_estimate === undefined || o.serial_seconds_estimate === null ? null : secs(o.serial_seconds_estimate);
+  if (serial === null && o.serial_seconds_estimate !== undefined && o.serial_seconds_estimate !== null) return null;
   const digest = o.order_digest;
-  if (digest !== undefined && digest !== null && !str(digest, 200)) throw new SummaryError("summary.proof.order_digest must be text");
+  if (digest !== undefined && digest !== null && !str(digest, 200)) return null;
+  const causesRaw = o.not_proven_causes ?? [];
+  if (!Array.isArray(causesRaw) || causesRaw.length > 50) return null;
+  const causes: SummaryProof["notProvenCauses"] = [];
+  for (const c of causesRaw) {
+    const cc = (c && typeof c === "object" ? c : {}) as Record<string, unknown>;
+    const cause = str(cc.cause, 500);
+    const tests = count(cc.tests);
+    if (!cause || tests === null) return null;
+    causes.push({ cause, tests });
+  }
   return {
-    workers: p("workers"), proven: p("proven"), notProven: p("not_proven"), rerunOneLane: o.rerun_one_lane === undefined ? 0 : p("rerun_one_lane"),
-    parallelSeconds: p("parallel_seconds", false), serialSecondsEstimate: orNull("serial_seconds_estimate", false),
-    orderDigest: typeof digest === "string" ? digest : null, notProvenCauses,
+    workers, proven, notProven, rerunOneLane: rerun, parallelSeconds: parallel, serialSecondsEstimate: serial,
+    orderDigest: typeof digest === "string" ? digest : null, notProvenCauses: causes,
   };
 }
 
-/** N of a summary: see RunSummary.notProven. */
-export function notProvenOf(o: Record<string, unknown>, proof: SummaryProof | null): number {
-  if (proof) return proof.notProven;
+/**
+ * N of a summary (see RunSummary.notProven). Fails closed: every source that says a test was not proven counts, and the
+ * largest wins. Sources: `proof.not_proven`; the top-level `not_proven`; the verify verdict (any `verify_status` other
+ * than "identical", or none with a non-zero `verify_exit`: at least 1, else `verify_counts.not_proven + diverged +
+ * missing + wrong_reuse`); and, with a proof whose `proven + not_proven` is not the tests that ran, `ran - proven`.
+ */
+export function notProvenOf(o: Record<string, unknown>, proof: SummaryProof | null, ran: number): number {
   const count = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : 0);
-  const top = count(o.not_proven);
   const vc = (o.verify_counts && typeof o.verify_counts === "object" ? o.verify_counts : {}) as Record<string, unknown>;
-  const verify = o.verify_status === "diverged" ? count(vc.not_proven) + count(vc.diverged) + count(vc.missing) : 0;
-  return Math.max(top, verify);
+  const verifyN = count(vc.not_proven) + count(vc.diverged) + count(vc.missing) + count(vc.wrong_reuse);
+  const status = o.verify_status;
+  const exit = o.verify_exit;
+  const failedVerify = status === undefined || status === null ? typeof exit === "number" && exit !== 0 : status !== "identical";
+  let n = Math.max(count(o.not_proven), failedVerify ? Math.max(1, verifyN) : 0);
+  if (proof) {
+    n = Math.max(n, proof.notProven);
+    if (proof.proven + proof.notProven !== ran) n = Math.max(n, ran - proof.proven);
+  }
+  return n;
 }
 
 export function parseSummary(raw: unknown): RunSummary {
@@ -200,7 +217,7 @@ export function parseSummary(raw: unknown): RunSummary {
     stack: stackFromSummary(o),
     mode: o.mode === "shadow" || o.mode === "enforce" ? o.mode : null,
     proof,
-    notProven: notProvenOf(o, proof),
+    notProven: notProvenOf(o, proof, ran),
   };
 }
 

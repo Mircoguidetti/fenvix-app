@@ -105,6 +105,7 @@ const TESTS = {
     }, "the not proven filter does not list exactly the run's not-proven tests");
     const pill = page.locator(".test-row").first().locator(".state");
     assert((await pill.innerText()) === "Not proven", "a not-proven test's pill does not say Not proven");
+    assert((await pill.getAttribute("data-tone")) === "warn", "a not-proven test's pill is not amber");
     assert((await pill.locator("xpath=..").getAttribute("title")) === "file read outside the project", "the test's cause is not its pill's tooltip");
     await page.locator(".test-row").first().getByText(/Not proven identical to the serial run: file read outside the project\./).waitFor();
     assert(/Not proven\s*14/.test(await page.locator("#tests").getByRole("button", { name: /^Not proven/ }).innerText()), "the Not proven filter does not show its count");
@@ -199,6 +200,7 @@ const TESTS = {
       };
     });
     assert(f.np === 3, `${f.np} not proven runs this window`);
+    assert(f.npOnlyCommits > 0, "no not-proven run has a commit of its own, so the time to green check below could not fail");
     assert(f.perDayMatches && f.npCounted, "the Overview's runs per day leave out not-proven runs");
     assert(f.activity.length === 3 && f.activity.every(([k, t]) => k === "run_not_proven" && / not proven$/.test(t)), `the activity shows not-proven runs as ${JSON.stringify(f.activity)}`);
     // The feed on the page: the not-proven icon, and the word, never "failed" or "green".
@@ -221,6 +223,53 @@ const TESTS = {
       return { passedOnly: [...first.values()].filter((r) => r.startedAt >= `${month}-01`).length, shown: o.timeToGreen.commits };
     });
     assert(ttg.passedOnly === ttg.shown, `time to green counts ${ttg.shown} commits, passed runs give ${ttg.passedOnly}`);
+  },
+
+  async "an API one release older (no proof fields, no /search): the Overview and Parallel with proof still render"(page) {
+    // The mock answers as the API did before console proof (src/data/mock.ts olderApi); the console reads it through
+    // src/data/compat.ts, as it would on the day the console is published before the API.
+    await page.goto(BASE + "overview");
+    await page.evaluate(() => sessionStorage.setItem("fenvix-mock-api", "before-proof"));
+    await signIn(page, "overview");
+    const raw = await page.evaluate(async () => {
+      const r = await window.__fenvixMock.getOverview();
+      return { proof: r.proof };
+    });
+    assert(raw.proof && raw.proof.runsWithProof === 0, "the console did not fill in the missing proof block");
+    await page.getByRole("heading", { name: "Northwind Cloud", level: 1 }).waitFor();
+    const kpi = page.locator("#kpi-proof");
+    assert((await kpi.locator(".kpi-value").innerText()) === "–", `with no proof block the KPI reads ${await kpi.locator(".kpi-value").innerText()}`);
+    assert((await kpi.locator(".kpi-sub").innerText()) === "no parallel runs yet", `with no proof block the sub-line reads ${await kpi.locator(".kpi-sub").innerText()}`);
+    await go(page, "projects/prj_homehub/parallel-with-proof");
+    await page.getByRole("heading", { name: "Parallel with proof", level: 1 }).waitFor();
+    await settled(page);
+    // The older API's runs have no proof: no "Proven over time" (it needs proof), the page renders, no error.
+    await page.locator("#parallel-empty, #not-proven-runs").first().waitFor();
+    assert(!(await page.locator("#proven-trend .chart").count()), "runs without proof drew a proven-over-time chart");
+    assert(!(await page.locator(".message-error").count()), "an error shows on Parallel with proof");
+    await go(page, "projects/prj_homehub");
+    await page.getByRole("heading", { name: "Runs", exact: true, level: 1 }).waitFor();
+    await settled(page);
+    assert(!(await page.locator(".message-error").count()), "an error shows on the Runs page");
+    const box = page.locator(".cx-search input");
+    if (await box.isVisible()) {
+      await box.fill("4299");
+      await page.locator(".cx-search-none, .cx-search-item").first().waitFor();
+      await page.waitForTimeout(600);
+      assert(!(await page.locator(".cx-search .message-error, .toast-error").count()), "a missing /search shows an error");
+    }
+    await page.evaluate(() => sessionStorage.removeItem("fenvix-mock-api"));
+  },
+
+  async "overview: no parallel run yet reads '–' and 'no parallel runs yet'"(page) {
+    // Harbor Analytics (its trial) has no parallel run and no not-proven run.
+    await signIn(page, "overview");
+    await useOrgOf(page, "org_harbor", "overview");
+    const o = await page.evaluate(async () => (await window.__fenvixMock.getOverview()).proof);
+    assert(o.runsWithProof === 0 && o.notProven === 0, `Harbor's proof block: ${JSON.stringify(o)}`);
+    const kpi = page.locator("#kpi-proof");
+    assert((await kpi.locator(".kpi-value").innerText()) === "–", "the zero state's value");
+    assert((await kpi.locator(".kpi-sub").innerText()) === "no parallel runs yet", "the zero state's sub-line");
   },
 
   async "F-001 F-003 F-008: the Runs title, the tab titles, time to green per day"(page) {
