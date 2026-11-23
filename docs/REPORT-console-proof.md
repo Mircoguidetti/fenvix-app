@@ -100,3 +100,76 @@ Each as `<name>-1440-light.png`, `<name>-1440-dark.png`, `<name>-390-light.png`,
 - The runner does not send `proof` yet (engine task): real runs show no proof card; real Node runs with a non-zero
   `not_proven` or a diverged verify get the `not_proven` status, the amber pill and a failed check on GitHub.
 - The proof card, filters and Overview block are proven on fixtures and the mock only, not on real data.
+
+## Review fixes (coordinator's /review, 2026-11-23, decision D1 A)
+
+`origin/main` (ccc1170) merged into the branch first (merge 1df9f9f, no conflict).
+
+### Commands after the fixes (run 2026-11-23, Postgres 16 on :54329)
+
+| Command | Result |
+| --- | --- |
+| `npm run api:check` | exit 0, "schema.d.ts matches openapi/fenvix-api.yaml" |
+| `npm run test:unit` | exit 0, 82 pass, 0 fail |
+| `cd github-app && npm test` | exit 0; typecheck clean; unit 171/171; integration 138/138 (the two local-Supabase suites skip themselves, as on main) |
+| `cd deploy && npm test` | exit 0; 88 tests, 87 pass, 0 fail, 1 skipped ("detects the newest migration" on the local Supabase: none here) |
+| `npm run check` | exit 0; checks 64/64, organizations 10/10, status colours 18/18, screenshots: all checks passed, 170 pictures |
+
+I could not start the local Supabase (Docker), so `api-dashboard.test.ts` and the deploy test on the local Supabase were not run.
+
+### Per item
+
+1. **Migration probe**: `deploy/lib/migrate.mjs` has a "0019" probe (first: column `ci_runs.proof`; last:
+   `ci_test_results_outcome_check` contains 'not_proven'); `deploy/test/pipeline-2.test.mjs` gets the case "0019 cut before
+   its last statement". (`scripts/local-supabase/up.sh` already applies `00{14..99}`, so 0019 is in it.) Test: `cd deploy && npm test` as above.
+2. **Rollout compatibility**: new `src/data/compat.ts`: every client is wrapped (`src/data/index.ts`), so missing `proof`,
+   `exitCode`, `tests.notProven`, Overview `proof`, `counts.not_proven` and `lastRunNotProven` read as null or 0; a 404/405
+   from `/search` gives no results (other errors still throw). Loose checks in the screens too (`!= null`,
+   `o.proof?.… ?? 0`, `counts.not_proven ?? 0`; `src/data/ci.ts`, `Run.tsx`, `Overview.tsx`). The mock can answer as the API
+   did before (`sessionStorage["fenvix-mock-api"] = "before-proof"`). Tests: the behaviour check "an API one release older
+   …: the Overview and Parallel with proof still render" (both viewports); unit test "an API one release older" (`tests/unit/proof.test.ts`).
+3. **Verify fails closed**: `notProvenOf` (`github-app/src/results/summary.ts`): any `verify_status` other than "identical",
+   or none with a non-zero `verify_exit`, gives N = max(1, not_proven + diverged + missing + wrong_reuse). Unit cases:
+   "not_proven" (with and without counts), null + verify_exit 2, absent + verify_exit 2, null + exit 0 (0), wrong_reuse 3,
+   an unknown status, "identical" with wrong_reuse (stays 0).
+4. **Proof never hides tests**: N = max(proof.not_proven, top-level not_proven, the verify count), and max(N, ran − proven)
+   when proof.proven + proof.not_proven ≠ ran. The card shows "n of {run.tests.ran}" and uses the run's N. Unit cases for both.
+5. **Malformed proof**: `parseProof` returns null on any invalid field and never throws, so the summary is kept and N comes
+   from the other sources. Unit cases: a list, rerun_one_lane null, order_digest "", a 501-character cause, parallel_seconds
+   null, workers −1, an empty cause; each one is still `not_proven` with top-level not_proven 4.
+6. **Regression tests**: `status.test.ts` "tests not proven with exit 1 … not_proven" (with proof, and top-level not_proven 2
+   without proof); `results.test.ts` "a results chunk with not_proven tests, with and without a cause, is stored through
+   apply.ts" (passes); `api-dashboard.test.ts` "a not-proven run (console proof): …" (runs filter, activity
+   `run_not_proven`, skip-share series +1, tests filter with `counts.not_proven`, order). It inserts into organization B and
+   deletes after, so the other assertions keep their seeded counts. **Not run here (needs Docker).**
+7. **One N**: `service.ts` stores `s.notProven` itself (no `min(N, ran)`); `passed` is reduced by it (floor 0).
+8. **/search**: defects `limit 20` in SQL (`defects()` takes a limit); minimum 2 characters (`SEARCH_MIN`, also
+   `minLength: 2` in the OpenAPI); commit prefix `commit_sha like $n || '%'`.
+9. **proofOverview** uses `finished()`; unit: a cancelled run with a proof is not counted.
+10. **Proof card "See the N tests"** shows only when per-test `not_proven` rows exist (the same probe as the no-proof callout).
+11. **Unknown statuses**: `RunStatusPill` and `OutcomePill` show a grey "Unknown" for a value they do not know.
+12. **Migration 0019**: `set local lock_timeout = '5s'` at the top; the rollback path written in its comment.
+13. **Small fixes**: `proof.test.ts` asserts `skipShare` (median 0.3 with the not-proven runs, 0.2 without); search cap is
+    exactly 20 and newest first, and one character finds nothing; `notProvenSentence` moved to `src/data/ci.ts` with a unit
+    test (exit 0, 1 and 2, both causes, the largest of two, an unknown cause, no cause, n = 1); `checks.mjs` asserts
+    `npOnlyCommits > 0` and the outcome pill's `data-tone` "warn"; new check "overview: no parallel run yet reads '–' and
+    'no parallel runs yet'" (Harbor); the contract's `tests[]` row names `not_proven` and `notProvenCause`, and the N section
+    and Changes describe the fail-closed rule; the stale "unchanged from main" comment is removed.
+
+### Changed tests (each with its reason)
+
+- `github-app/tests/unit/status.test.ts`: "proof.not_proven wins over the top-level not_proven and the verify counts" became
+  "with a proof: the largest of …" (expected N 3 → 9 and 15 for those inputs), because item 4 changes the rule. "a malformed
+  proof is refused" (expected a throw) became "a malformed proof never discards the summary", because item 5 changes the
+  behaviour. All other cases were added, none removed.
+- `tests/unit/proof.test.ts`: fixture runs get distinct `skipShare` values (so the median assertion can fail); the search cap
+  assertion is now `=== 20` with ordering. Before, it searched for "7", which is below the new 2-character minimum.
+- `scripts/checks.mjs` "an API one release older": expects either the empty state or the runs table. The old-shape mock still
+  holds `not_proven` statuses, which an older API would never send.
+- No test or check was skipped, removed or weakened.
+
+### Process note
+
+This container had been reset between the two tasks: the checkout was on `claude/node-runner`, and `git merge origin/main`
+first fast-forwarded that local branch. I reset it to `origin/claude/node-runner` (nothing was pushed) and merged into
+`claude/console-proof` as asked.
