@@ -181,7 +181,7 @@ function testOutcome(v: unknown, path: string): RunnerTestOutcome {
     cacheKey: opt(o, "cacheKey", path, orNull((x, p) => text(x, p, undefined, HEX32))),
     wouldSkip: opt(o, "wouldSkip", path, bool),
     notProvenCause: opt(o, "notProvenCause", path, orNull((x, p) => text(x, p, 500))),
-    failSeq: opt(o, "failSeq", path, (x, p) => int(x, p, 0)),
+    failSeq: opt(o, "failSeq", path, (x, p) => int(x, p, 0, 2147483647)),
     rerunAlone: opt(o, "rerunAlone", path, rerunAlone),
   });
 }

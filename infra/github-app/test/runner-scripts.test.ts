@@ -137,6 +137,21 @@ describe("per-test results (spec C1): spooled before the summary, sent first, th
     assert.deepEqual(readdirSync(s2.spool).map((n) => n.split("-")[3]), ["1"]);
   });
 
+  // protects=the hook against files the workflow planted in results/ (it runs as the job's user and must end);
+  // fails_when=a FIFO blocks the hook or a symlink/oversized file is read; no_claim=what a regular chunk says.
+  it("the hook reads regular chunk files only: a FIFO, a symlink or an oversized file is skipped, the summary still queued", () => {
+    const { spool, temp } = setup();
+    const res = join(temp, "fenvix", "results");
+    execFileSync("mkfifo", [join(res, "chunk-0.json")]);
+    execFileSync("ln", ["-s", "/etc/hostname", join(res, "chunk-1.json")]);
+    writeFileSync(join(res, "chunk-2.json"), " ".repeat(6 * 1024 * 1024 + 1));
+    writeFileSync(join(res, "chunk-3.json"), JSON.stringify(chunk(3)));
+    const out = execFileSync("bash", [join(FILES, "fenvix-job-completed")], { env: { PATH: process.env.PATH!, FENVIX_SPOOL: spool, RUNNER_TEMP: temp, ...job }, encoding: "utf8", timeout: 30_000 });
+    assert.equal((out.match(/not a regular file/g) ?? []).length, 3, out);
+    assert.match(out, /1 results chunk\(s\) queued/);
+    assert.deepEqual(readdirSync(spool).map((n) => n.split("-").slice(3, 5).join("-")).sort(), ["0-0003", `1-${readdirSync(spool).find((n) => n.split("-")[3] === "1")!.split("-")[4]}`].sort());
+  });
+
   // protects=3.2 (results URL derived from the summaries URL; a results envelope posts the chunk's fields with the
   // job's ids and this machine's name; chunks go before their summary); fails_when=a chunk goes to the summaries URL,
   // carries the job's word for the runner name, or the summary is sent first; no_claim=the App's handling.
@@ -175,6 +190,18 @@ describe("per-test results (spec C1): spooled before the summary, sent first, th
       assert.ok(!existsSync(join(spool, summary)), "the summary was sent");
       assert.equal(readdirSync(spool).filter((n) => n.split("-")[3] === "0").length, 1, "the chunk stays for the next pass");
     } finally { await a.close(); }
+    // a summary whose time is in the future (the clock stepped back since the hook ran) is never held
+    const f = setup();
+    writeFileSync(join(f.temp, "fenvix", "results", "chunk-0.json"), JSON.stringify(chunk(0)));
+    hook(f.spool, { RUNNER_TEMP: f.temp, ...job });
+    const fs = readdirSync(f.spool).find((n) => n.split("-")[3] === "1")!;
+    const later = new Date(Date.now() + 3600_000);
+    utimesSync(join(f.spool, fs), later, later);
+    const e = await app([503, 202]);
+    try {
+      await poster(f.spool, e.url, f.token);
+      assert.deepEqual(e.got.map((g) => g.path), ["/v1/runner/results", "/v1/runner/summaries"]);
+    } finally { await e.close(); }
     // a chunk refused for good (rejected/) holds nothing
     const b = setup();
     writeFileSync(join(b.temp, "fenvix", "results", "chunk-0.json"), JSON.stringify(chunk(0)));

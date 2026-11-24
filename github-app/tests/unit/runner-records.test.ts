@@ -97,7 +97,7 @@ describe("runner records: the request schemas of openapi/fenvix-api.yaml, checke
       [["tests", 0, "outcome"], "skipped", false], [["tests", 0, "durationMs"], -1, false], [["tests", 0, "testId"], "x".repeat(2001), false],
       [["tests", 0, "failure", "kind"], "flaky", false], [["tests", 0, "failure", "message"], "m".repeat(4001), false], [["tests", 0, "failure"], null, true],
       [["tests", 1, "failure", "defectFingerprint"], "ABC", false],
-      [["tests", 0, "failSeq"], -1, false], [["tests", 0, "failSeq"], 1.5, false], [["tests", 0, "failSeq"], "0", false], [["tests", 0, "failSeq"], undefined, true],
+      [["tests", 0, "failSeq"], -1, false], [["tests", 0, "failSeq"], 1.5, false], [["tests", 0, "failSeq"], "0", false], [["tests", 0, "failSeq"], undefined, true], [["tests", 0, "failSeq"], 2147483647, true], [["tests", 0, "failSeq"], 2147483648, false],
       [["tests", 0, "rerunAlone"], undefined, true], [["tests", 0, "rerunAlone"], { ran: false }, true], [["tests", 0, "rerunAlone"], {}, false],
       [["tests", 0, "rerunAlone", "ran"], "yes", false], [["tests", 0, "rerunAlone", "outcome"], "skipped", false],
       [["tests", 0, "rerunAlone", "outcome"], "not_proven", true], [["tests", 0, "rerunAlone", "failure"], { phase: "call" }, false],

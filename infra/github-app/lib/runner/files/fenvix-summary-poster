@@ -24,6 +24,8 @@ SPOOL = os.environ.get("FENVIX_SPOOL", "/var/spool/fenvix-summaries")
 ONCE = os.environ.get("FENVIX_POSTER_ONCE") == "1"
 MAX_AGE = 2 * 86400  # the App publishes without a summary after SUMMARY_WAIT_SECONDS anyway
 HOLD_SECONDS = 60  # a summary waits at most this long for its job's results chunks
+RESULTS_BUDGET = 30  # seconds a pass spends on results chunks at most: summaries always get their turn
+RESULTS_TIMEOUT = 15
 
 
 def log(msg):
@@ -35,7 +37,7 @@ def token():
         return f.read().strip()
 
 
-def send(path):
+def send(path, timeout=30):
     with open(path, encoding="utf-8") as f:
         env = json.load(f)
     ids = {k: env[k] for k in ("repositoryId", "runId", "runAttempt")}
@@ -52,7 +54,7 @@ def send(path):
                                  headers={"content-type": "application/json", "authorization": f"Bearer {token()}",
                                           "user-agent": "fenvix-summary-poster"})
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, ""
     except urllib.error.HTTPError as e:
         return e.code, e.read(500).decode("utf-8", "replace")
@@ -76,6 +78,7 @@ def results_pending(key):
 
 def one_pass():
     now = time.time()
+    results_spent = 0.0
     for name in sorted(os.listdir(SPOOL)):
         path = os.path.join(SPOOL, name)
         if not os.path.isfile(path):
@@ -90,13 +93,19 @@ def one_pass():
             os.remove(path)
             continue
         key, kind = job_of(name)
-        if kind == "1" and age < HOLD_SECONDS and results_pending(key):
+        # (a negative age is a clock that stepped back since the hook ran: never a reason to wait)
+        if kind == "1" and 0 <= age < HOLD_SECONDS and results_pending(key):
             log(f"{name}: held: results of this job not sent yet ({int(age)}s of {HOLD_SECONDS}s)")
             continue
+        if kind == "0" and results_spent >= RESULTS_BUDGET:
+            continue  # a slow results endpoint never keeps a summary from being tried in time; next pass
+        t0 = time.monotonic()
         try:
-            status, detail = send(path)
+            status, detail = send(path, RESULTS_TIMEOUT if kind == "0" else 30)
         except (ValueError, KeyError) as e:
             status, detail = 400, f"unreadable: {e}"
+        if kind == "0":
+            results_spent += time.monotonic() - t0
         if 200 <= status < 300:
             os.remove(path)
             log(f"{name}: sent ({status})")

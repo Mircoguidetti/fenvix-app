@@ -6,8 +6,9 @@
 summary="${FENVIX_SUMMARY_PATH:-${RUNNER_TEMP:-/nonexistent}/fenvix/summary.json}"
 if [ ! -f "$summary" ]; then echo "fenvix: no summary.json for this job"; exit 0; fi
 python3 -I - "$summary" "${FENVIX_SPOOL:-/var/spool/fenvix-summaries}" <<'PY' || echo "fenvix: could not queue the summary"
-import json, os, re, sys, uuid
+import json, os, re, stat, sys, uuid
 path, spool = sys.argv[1], sys.argv[2]
+CHUNK_MAX_BYTES = 6 * 1024 * 1024  # the App's request limit: a bigger file is not a chunk the runner wrote
 ids = {k: os.environ.get(v, "") for k, v in (("repositoryId", "GITHUB_REPOSITORY_ID"), ("runId", "GITHUB_RUN_ID"), ("runAttempt", "GITHUB_RUN_ATTEMPT"))}
 if not all(v.isdigit() for v in ids.values()):
     print(f"fenvix: job ids missing {ids}"); sys.exit(0)
@@ -37,14 +38,18 @@ except OSError:
     names = []
 for n in names:
     try:
-        with open(os.path.join(results, n), encoding="utf-8") as f:
+        p = os.path.join(results, n)
+        st = os.lstat(p)  # a regular file only: never a FIFO, a device or a link the workflow planted
+        if not stat.S_ISREG(st.st_mode) or st.st_size > CHUNK_MAX_BYTES:
+            raise ValueError("not a regular file of at most 6 MB")
+        with open(p, encoding="utf-8") as f:
             chunk = json.load(f)
         c = chunk.get("chunk") if isinstance(chunk, dict) else None
         if not isinstance(c, int) or isinstance(c, bool) or not 0 <= c <= 9999:
             raise ValueError("no chunk number")
         put(f"{key}-0-{c:04d}-{uuid.uuid4().hex}.json", {**job, "results": chunk})
         queued += 1
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, MemoryError) as e:
         print(f"fenvix: results {n} not queued: {e}")
 if queued:
     print(f"fenvix: {queued} results chunk(s) queued for run {job['runId']} attempt {job['runAttempt']}")
