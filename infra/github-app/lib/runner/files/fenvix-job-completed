@@ -1,25 +1,56 @@
 #!/usr/bin/env bash
-# GitHub runner job-completed hook (ACTIONS_RUNNER_HOOK_JOB_COMPLETED), as the job user. Puts the job's summary.json
-# (written by runner/fenvix-run, default $RUNNER_TEMP/fenvix/summary.json) with the job's ids into the spool; the
-# poster sends it. Never fails the job: no summary means the App publishes the run without one.
+# GitHub runner job-completed hook (ACTIONS_RUNNER_HOOK_JOB_COMPLETED), as the job user. Puts the job's per-test result
+# chunks (written by runner/fenvix-run next to its summary, <dir of summary.json>/results/chunk-<n>.json) and then its
+# summary.json (default $RUNNER_TEMP/fenvix/summary.json) with the job's ids into the spool; the poster sends them, the
+# chunks first (spec C1). Never fails the job: no summary means the App publishes the run without one.
 summary="${FENVIX_SUMMARY_PATH:-${RUNNER_TEMP:-/nonexistent}/fenvix/summary.json}"
 if [ ! -f "$summary" ]; then echo "fenvix: no summary.json for this job"; exit 0; fi
 python3 -I - "$summary" "${FENVIX_SPOOL:-/var/spool/fenvix-summaries}" <<'PY' || echo "fenvix: could not queue the summary"
-import json, os, sys, uuid
+import json, os, re, sys, uuid
 path, spool = sys.argv[1], sys.argv[2]
 ids = {k: os.environ.get(v, "") for k, v in (("repositoryId", "GITHUB_REPOSITORY_ID"), ("runId", "GITHUB_RUN_ID"), ("runAttempt", "GITHUB_RUN_ATTEMPT"))}
 if not all(v.isdigit() for v in ids.values()):
     print(f"fenvix: job ids missing {ids}"); sys.exit(0)
+job = {k: int(v) for k, v in ids.items()}
+key = f"{job['repositoryId']}-{job['runId']}-{job['runAttempt']}"
+
+
+def put(name, env):
+    """Written to a dot-temp file, then renamed: the poster never reads a half-written envelope."""
+    tmp = os.path.join(spool, "." + name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(env, f)
+    os.chmod(tmp, 0o644)
+    os.rename(tmp, os.path.join(spool, name))
+
+
+# the summary is read first: one that cannot be read queues nothing (as before), not chunks without their summary
 with open(path, encoding="utf-8") as f:
     summary = json.load(f)
-env = {k: int(v) for k, v in ids.items()}
-env["summary"] = summary
-name = f"{env['repositoryId']}-{env['runId']}-{env['runAttempt']}-{uuid.uuid4().hex}.json"
-tmp = os.path.join(spool, "." + name + ".tmp")
-with open(tmp, "w", encoding="utf-8") as f:
-    json.dump(env, f)
-os.chmod(tmp, 0o644)
-os.rename(tmp, os.path.join(spool, name))
-print(f"fenvix: summary queued for run {env['runId']} attempt {env['runAttempt']}")
+
+# 1. the per-test result chunks, each its own envelope (<key>-0-<chunk:04d>-<uuid>.json), before the summary
+results = os.path.join(os.path.dirname(path), "results")
+queued = 0
+try:
+    names = sorted((n for n in os.listdir(results) if re.fullmatch(r"chunk-\d{1,4}\.json", n)), key=lambda n: int(n[6:-5]))
+except OSError:
+    names = []
+for n in names:
+    try:
+        with open(os.path.join(results, n), encoding="utf-8") as f:
+            chunk = json.load(f)
+        c = chunk.get("chunk") if isinstance(chunk, dict) else None
+        if not isinstance(c, int) or isinstance(c, bool) or not 0 <= c <= 9999:
+            raise ValueError("no chunk number")
+        put(f"{key}-0-{c:04d}-{uuid.uuid4().hex}.json", {**job, "results": chunk})
+        queued += 1
+    except (OSError, ValueError) as e:
+        print(f"fenvix: results {n} not queued: {e}")
+if queued:
+    print(f"fenvix: {queued} results chunk(s) queued for run {job['runId']} attempt {job['runAttempt']}")
+
+# 2. the summary, last (<key>-1-<uuid>.json)
+put(f"{key}-1-{uuid.uuid4().hex}.json", {**job, "summary": summary})
+print(f"fenvix: summary queued for run {job['runId']} attempt {job['runAttempt']}")
 PY
 exit 0

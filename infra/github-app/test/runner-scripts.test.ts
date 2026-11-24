@@ -12,12 +12,12 @@ const SUMMARY = fileURLToPath(new URL("../../../github-app/tests/fixtures/runner
 
 /** A stand-in for POST /v1/runner/summaries: records requests, answers with the next status in `answers`. */
 async function app(answers: number[]) {
-  const got: { auth: string | undefined; body: Record<string, unknown> }[] = [];
+  const got: { auth: string | undefined; body: Record<string, unknown>; path?: string }[] = [];
   const srv = createServer((req: IncomingMessage, res) => {
     let b = "";
     req.on("data", (c) => (b += c));
     req.on("end", () => {
-      got.push({ auth: req.headers.authorization, body: JSON.parse(b) });
+      got.push({ auth: req.headers.authorization, body: JSON.parse(b), path: req.url });
       res.writeHead(answers.shift() ?? 202, { "content-type": "application/json" }).end("{}");
     });
   });
@@ -101,6 +101,90 @@ describe("runner machine scripts", () => {
       assert.ok(existsSync(join(spool, "rejected", "1-1-1-a.json")));
       assert.match(await poster("/nonexistent-spool-dir", a.url, token), /pass failed/);
     } finally { await a.close(); }
+  });
+});
+
+describe("per-test results (spec C1): spooled before the summary, sent first, the summary held at most 60 s", () => {
+  const job = { GITHUB_REPOSITORY_ID: "70001", GITHUB_RUN_ID: "9001", GITHUB_RUN_ATTEMPT: "2" };
+  const setup = () => {
+    const dir = mkdtempSync(join(tmpdir(), "fenvix-c1-"));
+    const spool = join(dir, "spool"); mkdirSync(spool);
+    const temp = join(dir, "runner-temp"); mkdirSync(join(temp, "fenvix", "results"), { recursive: true });
+    writeFileSync(join(temp, "fenvix", "summary.json"), readFileSync(SUMMARY));
+    const token = join(dir, "token"); writeFileSync(token, "t".repeat(40));
+    return { dir, spool, temp, token };
+  };
+  const chunk = (n: number, extra: object = {}) => ({ chunk: n, ...(n === 0 ? { chunks: 3, engineRunId: "r1", seed: null } : {}), tests: [{ testId: `t${n}`, outcome: "passed", durationMs: 1 }], receipts: [], ...extra });
+
+  // protects=3.1 (every chunk spooled, each as its own envelope, before the summary; the names sort chunks first);
+  // fails_when=a chunk is missing, the summary is spooled first, or a non-chunk file is sent; no_claim=the poster.
+  it("the hook spools every chunk (in chunk order, ids added), then the summary; other files in results/ are left", () => {
+    const { spool, temp } = setup();
+    for (const n of [2, 0, 10]) writeFileSync(join(temp, "fenvix", "results", `chunk-${n}.json`), JSON.stringify(chunk(n)));
+    writeFileSync(join(temp, "fenvix", "results", "notes.json"), "{}");
+    const out = hook(spool, { RUNNER_TEMP: temp, ...job });
+    assert.match(out, /3 results chunk\(s\) queued for run 9001 attempt 2/);
+    assert.match(out, /summary queued for run 9001 attempt 2/);
+    const names = readdirSync(spool).sort();
+    assert.equal(names.length, 4);
+    assert.deepEqual(names.map((n) => n.split("-").slice(0, 5).join("-")), ["70001-9001-2-0-0000", "70001-9001-2-0-0002", "70001-9001-2-0-0010", `70001-9001-2-1-${names[3]!.split("-")[4]}`]);
+    const env = JSON.parse(readFileSync(join(spool, names[0]!), "utf8"));
+    assert.deepEqual(env, { repositoryId: 70001, runId: 9001, runAttempt: 2, results: chunk(0) });
+    assert.ok("summary" in JSON.parse(readFileSync(join(spool, names[3]!), "utf8")));
+    // sending off: no chunk written by the runner, only the summary is spooled
+    const s2 = setup();
+    hook(s2.spool, { RUNNER_TEMP: s2.temp, ...job });
+    assert.deepEqual(readdirSync(s2.spool).map((n) => n.split("-")[3]), ["1"]);
+  });
+
+  // protects=3.2 (results URL derived from the summaries URL; a results envelope posts the chunk's fields with the
+  // job's ids and this machine's name; chunks go before their summary); fails_when=a chunk goes to the summaries URL,
+  // carries the job's word for the runner name, or the summary is sent first; no_claim=the App's handling.
+  it("the poster sends the chunks to /v1/runner/results first, then the summary; same credential", async () => {
+    const { spool, temp, token } = setup();
+    for (const n of [0, 1]) writeFileSync(join(temp, "fenvix", "results", `chunk-${n}.json`), JSON.stringify(chunk(n, { runnerName: "job-says", runId: 1 })));
+    hook(spool, { RUNNER_TEMP: temp, ...job });
+    const a = await app([202, 202, 202]);
+    try {
+      await poster(spool, a.url, token);
+      assert.deepEqual(a.got.map((g) => g.path), ["/v1/runner/results", "/v1/runner/results", "/v1/runner/summaries"]);
+      assert.deepEqual(a.got[0]!.body, { ...chunk(0), repositoryId: 70001, runId: 9001, runAttempt: 2, runnerName: "fenvix-ec2-1" });
+      assert.equal(a.got[1]!.body.chunk, 1);
+      assert.ok(a.got.every((g) => g.auth === `Bearer ${"t".repeat(40)}`));
+      assert.deepEqual(readdirSync(spool), []);
+    } finally { await a.close(); }
+  });
+
+  // protects=3.2's hold (a summary waits for its job's chunks, at most 60 s from its spooling); fails_when=the summary
+  // overtakes a chunk the App answered 503, or waits past 60 s (the machine powers off within 2 minutes); no_claim=a
+  // chunk refused for good (rejected/) never holds anything.
+  it("a chunk answered 503 holds its summary back for at most 60 s; then the summary is sent anyway", async () => {
+    const { spool, temp, token } = setup();
+    writeFileSync(join(temp, "fenvix", "results", "chunk-0.json"), JSON.stringify(chunk(0)));
+    hook(spool, { RUNNER_TEMP: temp, ...job });
+    const summary = readdirSync(spool).find((n) => n.split("-")[3] === "1")!;
+    const a = await app([503, 503, 202]);
+    try {
+      assert.match(await poster(spool, a.url, token), /held: results of this job not sent yet/);
+      assert.deepEqual(a.got.map((g) => g.path), ["/v1/runner/results"]);
+      assert.ok(existsSync(join(spool, summary)));
+      const old = new Date(Date.now() - 61_000);
+      utimesSync(join(spool, summary), old, old);
+      await poster(spool, a.url, token);
+      assert.deepEqual(a.got.map((g) => g.path), ["/v1/runner/results", "/v1/runner/results", "/v1/runner/summaries"]);
+      assert.ok(!existsSync(join(spool, summary)), "the summary was sent");
+      assert.equal(readdirSync(spool).filter((n) => n.split("-")[3] === "0").length, 1, "the chunk stays for the next pass");
+    } finally { await a.close(); }
+    // a chunk refused for good (rejected/) holds nothing
+    const b = setup();
+    writeFileSync(join(b.temp, "fenvix", "results", "chunk-0.json"), JSON.stringify(chunk(0)));
+    hook(b.spool, { RUNNER_TEMP: b.temp, ...job });
+    const c = await app([422, 202]);
+    try {
+      await poster(b.spool, c.url, b.token);
+      assert.deepEqual(c.got.map((g) => g.path), ["/v1/runner/results", "/v1/runner/summaries"]);
+      assert.equal(readdirSync(join(b.spool, "rejected")).length, 1);
+    } finally { await c.close(); }
   });
 });
 
