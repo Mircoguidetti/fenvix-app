@@ -1,7 +1,7 @@
 {
  "chunk": 0,
  "chunks": 1,
- "engineRunId": "20261124T164750-10045",
+ "engineRunId": "20261124T172030-5084",
  "seed": null,
  "tests": [
   {
@@ -18,7 +18,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert [1] == []",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_a_flaky.py:7"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_a_flaky.py:7"
    },
    "failSeq": 0,
    "rerunAlone": {
@@ -35,7 +35,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 0 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:4"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:4"
    },
    "failSeq": 1,
    "rerunAlone": {
@@ -46,7 +46,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 0 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:4"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:4"
     }
    }
   },
@@ -59,7 +59,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 1 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:7"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:7"
    },
    "failSeq": 2,
    "rerunAlone": {
@@ -70,7 +70,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 1 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:7"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:7"
     }
    }
   },
@@ -83,7 +83,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 2 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:10"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:10"
    },
    "failSeq": 3,
    "rerunAlone": {
@@ -94,7 +94,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 2 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:10"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:10"
     }
    }
   },
@@ -107,7 +107,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 3 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:13"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:13"
    },
    "failSeq": 4,
    "rerunAlone": {
@@ -118,7 +118,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 3 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:13"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:13"
     }
    }
   },
@@ -131,7 +131,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 4 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:16"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:16"
    },
    "failSeq": 5,
    "rerunAlone": {
@@ -142,7 +142,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 4 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:16"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:16"
     }
    }
   },
@@ -155,7 +155,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 5 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:19"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:19"
    },
    "failSeq": 6,
    "rerunAlone": {
@@ -166,7 +166,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 5 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:19"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:19"
     }
    }
   },
@@ -179,7 +179,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 6 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:22"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:22"
    },
    "failSeq": 7,
    "rerunAlone": {
@@ -190,7 +190,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 6 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:22"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:22"
     }
    }
   },
@@ -203,7 +203,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 7 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:25"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:25"
    },
    "failSeq": 8,
    "rerunAlone": {
@@ -214,7 +214,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 7 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:25"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:25"
     }
    }
   },
@@ -227,7 +227,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 8 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:28"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:28"
    },
    "failSeq": 9,
    "rerunAlone": {
@@ -238,7 +238,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 8 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:28"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:28"
     }
    }
   },
@@ -251,7 +251,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 9 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:31"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:31"
    },
    "failSeq": 10,
    "rerunAlone": {
@@ -262,7 +262,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 9 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:31"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:31"
     }
    }
   },
@@ -275,7 +275,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 10 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:34"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:34"
    },
    "failSeq": 11,
    "rerunAlone": {
@@ -286,7 +286,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 10 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:34"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:34"
     }
    }
   },
@@ -299,7 +299,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 11 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:37"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:37"
    },
    "failSeq": 12,
    "rerunAlone": {
@@ -310,7 +310,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 11 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:37"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:37"
     }
    }
   },
@@ -323,7 +323,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 12 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:40"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:40"
    },
    "failSeq": 13,
    "rerunAlone": {
@@ -334,7 +334,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 12 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:40"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:40"
     }
    }
   },
@@ -347,7 +347,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 13 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:43"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:43"
    },
    "failSeq": 14,
    "rerunAlone": {
@@ -358,7 +358,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 13 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:43"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:43"
     }
    }
   },
@@ -371,7 +371,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 14 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:46"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:46"
    },
    "failSeq": 15,
    "rerunAlone": {
@@ -382,7 +382,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 14 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:46"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:46"
     }
    }
   },
@@ -395,7 +395,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 15 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:49"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:49"
    },
    "failSeq": 16,
    "rerunAlone": {
@@ -406,7 +406,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 15 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:49"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:49"
     }
    }
   },
@@ -419,7 +419,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 16 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:52"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:52"
    },
    "failSeq": 17,
    "rerunAlone": {
@@ -430,7 +430,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 16 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:52"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:52"
     }
    }
   },
@@ -443,7 +443,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 17 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:55"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:55"
    },
    "failSeq": 18,
    "rerunAlone": {
@@ -454,7 +454,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 17 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:55"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:55"
     }
    }
   },
@@ -467,7 +467,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 18 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:58"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:58"
    },
    "failSeq": 19,
    "rerunAlone": {
@@ -478,7 +478,7 @@
      "phase": "call",
      "exceptionType": "AssertionError",
      "message": "assert 18 == -1",
-     "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:58"
+     "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:58"
     }
    }
   },
@@ -491,7 +491,7 @@
     "phase": "call",
     "exceptionType": "AssertionError",
     "message": "assert 19 == -1",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:61"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:61"
    },
    "failSeq": 20,
    "rerunAlone": {
@@ -507,7 +507,7 @@
     "phase": "teardown",
     "exceptionType": "RuntimeError",
     "message": "RuntimeError: teardown broke",
-    "location": "/tmp/pytest-of-root/pytest-11/test_pytest_job_sends_per_test0/proj/test_fails.py:66"
+    "location": "/tmp/pytest-of-root/pytest-18/test_pytest_job_sends_per_test0/proj/test_fails.py:66"
    },
    "failSeq": 21,
    "rerunAlone": {
@@ -515,21 +515,21 @@
    }
   },
   {
-   "testId": "test_reuse.py::test_reused",
+   "testId": "test_zz_reuse.py::test_reused",
    "outcome": "skipped_with_proof",
-   "durationMs": 2,
-   "cacheKey": "abf7d52cb566841c0b01933505549214"
+   "durationMs": 1,
+   "cacheKey": "301a1a22ca884379294d408bd9a33b79"
   }
  ],
  "receipts": [
   {
-   "testId": "test_reuse.py::test_reused",
-   "cacheKey": "abf7d52cb566841c0b01933505549214",
-   "reusedEngineRunId": "20261124T164729-9651",
-   "fingerprint": "f0280c69ed50158df227922cecc6bc8e",
-   "reusedDurationMs": 2,
+   "testId": "test_zz_reuse.py::test_reused",
+   "cacheKey": "301a1a22ca884379294d408bd9a33b79",
+   "reusedEngineRunId": "20261124T172009-4652",
+   "fingerprint": "3a17e58e7939697efc2fc32048f4110f",
+   "reusedDurationMs": 1,
    "config": {
-    "digest": "5b802bea6fb8d8907b4b318530eaadce"
+    "digest": "4b08dd6e2f7276a657f2f6e91e09e776"
    },
    "runtime": {
     "digest": "fcc8bf57fa186f93a5de40b2ba0dd400"
