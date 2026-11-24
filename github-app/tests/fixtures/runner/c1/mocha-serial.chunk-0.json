@@ -1,0 +1,539 @@
+{
+ "chunk": 0,
+ "chunks": 1,
+ "engineRunId": "20261124T164708-0f4d7f6e",
+ "seed": null,
+ "tests": [
+  {
+   "testId": "a_flaky.test.js::pollute",
+   "outcome": "passed",
+   "durationMs": 1
+  },
+  {
+   "testId": "a_flaky.test.js::victim",
+   "outcome": "failed",
+   "durationMs": 3,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 1 !== undefined",
+    "location": "a_flaky.test.js:4"
+   },
+   "failSeq": 0,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "passed"
+   }
+  },
+  {
+   "testId": "fails.test.js::f00",
+   "outcome": "failed",
+   "durationMs": 3,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 0 !== -1",
+    "location": "fails.test.js:3"
+   },
+   "failSeq": 1,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 0 !== -1",
+     "location": "fails.test.js:3"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f01",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 1 !== -1",
+    "location": "fails.test.js:4"
+   },
+   "failSeq": 2,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 1 !== -1",
+     "location": "fails.test.js:4"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f02",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 2 !== -1",
+    "location": "fails.test.js:5"
+   },
+   "failSeq": 3,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 2 !== -1",
+     "location": "fails.test.js:5"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f03",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 3 !== -1",
+    "location": "fails.test.js:6"
+   },
+   "failSeq": 4,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 3 !== -1",
+     "location": "fails.test.js:6"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f04",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 4 !== -1",
+    "location": "fails.test.js:7"
+   },
+   "failSeq": 5,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 4 !== -1",
+     "location": "fails.test.js:7"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f05",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 5 !== -1",
+    "location": "fails.test.js:8"
+   },
+   "failSeq": 6,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 5 !== -1",
+     "location": "fails.test.js:8"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f06",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 6 !== -1",
+    "location": "fails.test.js:9"
+   },
+   "failSeq": 7,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 6 !== -1",
+     "location": "fails.test.js:9"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f07",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 7 !== -1",
+    "location": "fails.test.js:10"
+   },
+   "failSeq": 8,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 7 !== -1",
+     "location": "fails.test.js:10"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f08",
+   "outcome": "failed",
+   "durationMs": 2,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 8 !== -1",
+    "location": "fails.test.js:11"
+   },
+   "failSeq": 9,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 8 !== -1",
+     "location": "fails.test.js:11"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f09",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 9 !== -1",
+    "location": "fails.test.js:12"
+   },
+   "failSeq": 10,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 9 !== -1",
+     "location": "fails.test.js:12"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f10",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 10 !== -1",
+    "location": "fails.test.js:13"
+   },
+   "failSeq": 11,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 10 !== -1",
+     "location": "fails.test.js:13"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f11",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 11 !== -1",
+    "location": "fails.test.js:14"
+   },
+   "failSeq": 12,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 11 !== -1",
+     "location": "fails.test.js:14"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f12",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 12 !== -1",
+    "location": "fails.test.js:15"
+   },
+   "failSeq": 13,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 12 !== -1",
+     "location": "fails.test.js:15"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f13",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 13 !== -1",
+    "location": "fails.test.js:16"
+   },
+   "failSeq": 14,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 13 !== -1",
+     "location": "fails.test.js:16"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f14",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 14 !== -1",
+    "location": "fails.test.js:17"
+   },
+   "failSeq": 15,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 14 !== -1",
+     "location": "fails.test.js:17"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f15",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 15 !== -1",
+    "location": "fails.test.js:18"
+   },
+   "failSeq": 16,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 15 !== -1",
+     "location": "fails.test.js:18"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f16",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 16 !== -1",
+    "location": "fails.test.js:19"
+   },
+   "failSeq": 17,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 16 !== -1",
+     "location": "fails.test.js:19"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f17",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 17 !== -1",
+    "location": "fails.test.js:20"
+   },
+   "failSeq": 18,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 17 !== -1",
+     "location": "fails.test.js:20"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f18",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 18 !== -1",
+    "location": "fails.test.js:21"
+   },
+   "failSeq": 19,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "AssertionError",
+     "message": "Expected values to be strictly equal: / 18 !== -1",
+     "location": "fails.test.js:21"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f19",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 19 !== -1",
+    "location": "fails.test.js:22"
+   },
+   "failSeq": 20,
+   "rerunAlone": {
+    "ran": false
+   }
+  },
+  {
+   "testId": "fails.test.js::f20",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "AssertionError",
+    "message": "Expected values to be strictly equal: / 20 !== -1",
+    "location": "fails.test.js:23"
+   },
+   "failSeq": 21,
+   "rerunAlone": {
+    "ran": false
+   }
+  },
+  {
+   "testId": "reuse.test.js::reused",
+   "outcome": "skipped_with_proof",
+   "durationMs": 1,
+   "cacheKey": "6161aa7239a1ecf5136e80ac9ed7e6b3"
+  }
+ ],
+ "receipts": [
+  {
+   "testId": "reuse.test.js::reused",
+   "cacheKey": "6161aa7239a1ecf5136e80ac9ed7e6b3",
+   "reusedEngineRunId": "20261124T164657-7853b408",
+   "fingerprint": "31af55e422bc4accd412eab03c7f8ad0",
+   "reusedDurationMs": 1,
+   "config": {
+    "digest": "405d01efc0e7025008f7b5e715593a12"
+   },
+   "runtime": {
+    "digest": "0a956adf6c6de8d1257f79c5b6b0d887"
+   }
+  }
+ ]
+}

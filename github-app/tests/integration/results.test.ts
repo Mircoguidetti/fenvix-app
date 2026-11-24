@@ -212,6 +212,51 @@ describe("run results on GitHub, runs and usage events", () => {
     ]);
   });
 
+  // protects=spec C1 criterion 7 (migration 0021 through apply.ts): failSeq and the re-run alone stored for failed tests,
+  // null for every other outcome, and a runner that sends neither field still accepted; fails_when=a column is not
+  // written, a non-failed test gets a value, or a chunk without the fields is refused; no_claim=what idea 3 decides.
+  it("C1: failSeq and the re-run alone of failed tests are stored, null for other outcomes and for older runners", async () => {
+    const sha = "f0".repeat(20);
+    h.gh.addRun("acme/shop", 9190, { event: "push", headSha: sha, headBranch: "main", message: "chunk with failure detail" });
+    await h.send("workflow_job", workflowJob("in_progress", { id: 6190, runId: 9190, sha, branch: "main" }));
+    const cred = runnerCredential("fenvix-m1", REPOS.shop.id);
+    const fail = { kind: "real", phase: "call", exceptionType: "AssertionError", message: "assert 1 == 2", location: "tests/test_c1.py:3" };
+    const res = await h.app.fastify.inject({
+      method: "POST", url: "/v1/runner/results", headers: { authorization: `Bearer ${cred}`, "content-type": "application/json" },
+      payload: {
+        repositoryId: REPOS.shop.id, runId: 9190, runAttempt: 1, runnerName: "fenvix-m1", chunk: 0, chunks: 1, engineRunId: "20261124T000000-1", seed: null,
+        tests: [
+          { testId: "tests/test_c1.py::test_flaky", outcome: "failed", durationMs: 5, failure: fail, failSeq: 0, rerunAlone: { ran: true, outcome: "passed" } },
+          { testId: "tests/test_c1.py::test_real", outcome: "failed", durationMs: 4, failure: fail, failSeq: 1,
+            rerunAlone: { ran: true, outcome: "failed", failure: { kind: "real", phase: "call", message: "again" } } },
+          { testId: "tests/test_c1.py::test_late", outcome: "failed", durationMs: 3, failSeq: 2, rerunAlone: { ran: false } },
+          { testId: "tests/test_c1.py::test_unsure", outcome: "failed", durationMs: 3, failSeq: 3, rerunAlone: { ran: true, outcome: "not_proven" } },
+          { testId: "tests/test_c1.py::test_old", outcome: "failed", durationMs: 2, failure: fail },
+          { testId: "tests/test_c1.py::test_ok", outcome: "passed", durationMs: 2, failSeq: 9, rerunAlone: { ran: true, outcome: "failed" } },
+        ],
+      },
+    });
+    assert.equal(res.statusCode, 202, res.body);
+    await h.app.service.idle();
+    await h.summary({ runId: 9190, summary: { tests: 6, reused_with_proof: 0, ran: 6, exit: 1, failed: ["tests/test_c1.py::test_real"], flaky: [], outcome_counts: { failed: 5, passed: 1 } } });
+    await h.send("workflow_job", workflowJob("completed", { id: 6190, runId: 9190, sha, branch: "main", conclusion: "failure" }));
+    const run = (await admin.query("select id from ci_runs where commit_sha = $1", [sha])).rows[0];
+    const rows = (await admin.query(`select test_id, fail_seq, rerun_alone_ran, rerun_alone_outcome, rerun_alone_failure from ci_test_results
+      where run_id = $1 order by test_id`, [run.id])).rows;
+    assert.deepEqual(rows, [
+      { test_id: "tests/test_c1.py::test_flaky", fail_seq: 0, rerun_alone_ran: true, rerun_alone_outcome: "passed", rerun_alone_failure: null },
+      { test_id: "tests/test_c1.py::test_late", fail_seq: 2, rerun_alone_ran: false, rerun_alone_outcome: null, rerun_alone_failure: null },
+      { test_id: "tests/test_c1.py::test_ok", fail_seq: null, rerun_alone_ran: null, rerun_alone_outcome: null, rerun_alone_failure: null },
+      { test_id: "tests/test_c1.py::test_old", fail_seq: null, rerun_alone_ran: null, rerun_alone_outcome: null, rerun_alone_failure: null },
+      { test_id: "tests/test_c1.py::test_real", fail_seq: 1, rerun_alone_ran: true, rerun_alone_outcome: "failed",
+        rerun_alone_failure: { kind: "real", phase: "call", message: "again" } },
+      { test_id: "tests/test_c1.py::test_unsure", fail_seq: 3, rerun_alone_ran: true, rerun_alone_outcome: "not_proven", rerun_alone_failure: null },
+    ]);
+    // the check holds in the database itself, not only in the App's mapping
+    await assert.rejects(admin.query("update ci_test_results set rerun_alone_outcome = 'skipped' where run_id = $1", [run.id]),
+      /ci_test_results_rerun_alone_outcome_check/);
+  });
+
   // ---------------------------------------------------------------- console proof review 2: never green when unsure
 
   const chunk = async (runId: number, tests: { testId: string; outcome: string; durationMs: number; notProvenCause?: string | null }[]) => {

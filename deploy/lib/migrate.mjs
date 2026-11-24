@@ -105,6 +105,12 @@ export const PROBES = {
     last: `exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'gh_run_summaries' and column_name = 'summary'
                     and is_nullable = 'YES')`,
   },
+  // 0021 (failure detail for idea 3) adds ci_test_results.fail_seq first and the rerun_alone_outcome CHECK last.
+  "0021": {
+    first: `exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'ci_test_results' and column_name = 'fail_seq')`,
+    last: `exists (select 1 from pg_constraint where conname = 'ci_test_results_rerun_alone_outcome_check'
+                    and conrelid = to_regclass('public.ci_test_results'))`,
+  },
 };
 /** The first migration with a probe: a database without it is either empty or not one of ours. */
 const FIRST_PROBED = "0011";

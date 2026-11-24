@@ -19,9 +19,13 @@ export interface RunnerProgress extends RunnerJob {
 export interface RunnerFailure {
   kind: "real" | "flaky_defect"; phase?: string; exceptionType?: string; message?: string; location?: string; defectFingerprint?: string;
 }
+/** A failed test re-run alone by the runner, without the cache (spec C1): its outcome and, when it failed, its failure. */
+export interface RunnerRerunAlone { ran: boolean; outcome?: "passed" | "failed" | "not_proven"; failure?: RunnerFailure }
 export interface RunnerTestOutcome {
   testId: string; outcome: "passed" | "failed" | "skipped_with_proof" | "not_proven"; durationMs: number; failure?: RunnerFailure | null;
   cacheKey?: string | null; wouldSkip?: boolean; notProvenCause?: string | null;
+  /** A failed test's place among the run's failed tests (0-based, run order). */
+  failSeq?: number; rerunAlone?: RunnerRerunAlone;
 }
 export interface RunnerReceipt {
   testId: string; cacheKey: string; reusedEngineRunId: string; fingerprint: string; reusedDurationMs: number;
@@ -158,6 +162,15 @@ function failure(v: unknown, path: string): RunnerFailure {
   });
 }
 
+function rerunAlone(v: unknown, path: string): RunnerRerunAlone {
+  const o = obj(v, path);
+  return def({
+    ran: bool(need(o, "ran", path), at(path, "ran")),
+    outcome: opt(o, "outcome", path, (x, p) => oneOf(x, p, ["passed", "failed", "not_proven"] as const)),
+    failure: opt(o, "failure", path, failure),
+  });
+}
+
 function testOutcome(v: unknown, path: string): RunnerTestOutcome {
   const o = obj(v, path);
   return def({
@@ -168,6 +181,8 @@ function testOutcome(v: unknown, path: string): RunnerTestOutcome {
     cacheKey: opt(o, "cacheKey", path, orNull((x, p) => text(x, p, undefined, HEX32))),
     wouldSkip: opt(o, "wouldSkip", path, bool),
     notProvenCause: opt(o, "notProvenCause", path, orNull((x, p) => text(x, p, 500))),
+    failSeq: opt(o, "failSeq", path, (x, p) => int(x, p, 0)),
+    rerunAlone: opt(o, "rerunAlone", path, rerunAlone),
   });
 }
 

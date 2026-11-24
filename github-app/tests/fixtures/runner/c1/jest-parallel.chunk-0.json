@@ -1,0 +1,498 @@
+{
+ "chunk": 0,
+ "chunks": 1,
+ "engineRunId": "20261124T165308-a30e0701",
+ "seed": null,
+ "tests": [
+  {
+   "testId": "a_flaky.test.js::pollute",
+   "outcome": "passed",
+   "durationMs": 5
+  },
+  {
+   "testId": "a_flaky.test.js::victim",
+   "outcome": "failed",
+   "durationMs": 6,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / undefined / Received:"
+   },
+   "failSeq": 0,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "passed"
+   }
+  },
+  {
+   "testId": "fails.test.js::f00",
+   "outcome": "failed",
+   "durationMs": 7,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 1,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f01",
+   "outcome": "failed",
+   "durationMs": 2,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 2,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f02",
+   "outcome": "failed",
+   "durationMs": 2,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 3,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f03",
+   "outcome": "failed",
+   "durationMs": 2,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 4,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f04",
+   "outcome": "failed",
+   "durationMs": 2,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 5,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f05",
+   "outcome": "failed",
+   "durationMs": 2,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 6,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f06",
+   "outcome": "failed",
+   "durationMs": 5,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 7,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f07",
+   "outcome": "failed",
+   "durationMs": 2,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 8,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f08",
+   "outcome": "failed",
+   "durationMs": 2,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 9,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f09",
+   "outcome": "failed",
+   "durationMs": 2,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 10,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f10",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 11,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f11",
+   "outcome": "failed",
+   "durationMs": 5,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 12,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f12",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 13,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f13",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 14,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f14",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 15,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f15",
+   "outcome": "failed",
+   "durationMs": 5,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 16,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f16",
+   "outcome": "failed",
+   "durationMs": 2,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 17,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f17",
+   "outcome": "failed",
+   "durationMs": 2,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 18,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f18",
+   "outcome": "failed",
+   "durationMs": 1,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 19,
+   "rerunAlone": {
+    "ran": true,
+    "outcome": "failed",
+    "failure": {
+     "kind": "real",
+     "phase": "call",
+     "exceptionType": "Object",
+     "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+    }
+   }
+  },
+  {
+   "testId": "fails.test.js::f19",
+   "outcome": "failed",
+   "durationMs": 2,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 20,
+   "rerunAlone": {
+    "ran": false
+   }
+  },
+  {
+   "testId": "fails.test.js::f20",
+   "outcome": "failed",
+   "durationMs": 3,
+   "failure": {
+    "kind": "real",
+    "phase": "call",
+    "exceptionType": "Object",
+    "message": "assert.strictEqual(received, expected) / Expected value to strictly be equal to: / -1 / Received:"
+   },
+   "failSeq": 21,
+   "rerunAlone": {
+    "ran": false
+   }
+  },
+  {
+   "testId": "reuse.test.js::reused",
+   "outcome": "skipped_with_proof",
+   "durationMs": 1,
+   "cacheKey": "9097e0804d0168e45dcd65db313b4b81"
+  }
+ ],
+ "receipts": [
+  {
+   "testId": "reuse.test.js::reused",
+   "cacheKey": "9097e0804d0168e45dcd65db313b4b81",
+   "reusedEngineRunId": "20261124T165247-a641f8f5",
+   "fingerprint": "31af55e422bc4accd412eab03c7f8ad0",
+   "reusedDurationMs": 1,
+   "config": {
+    "digest": "cfc70c6265d8134141c7e0d8d937ae16"
+   },
+   "runtime": {
+    "digest": "7e2fa5622807d1bd263dcc7beb1ea1d6"
+   }
+  }
+ ]
+}

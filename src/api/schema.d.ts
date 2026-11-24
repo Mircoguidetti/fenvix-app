@@ -1684,6 +1684,27 @@ export interface components {
             wouldSkip?: boolean;
             /** @description not_proven: why the test could not be proven (a conflict between parallel lanes in what it touched not ruled out) */
             notProvenCause?: string | null;
+            /** @description failed: the test's place among the run's failed tests (0-based, run order) */
+            failSeq?: number;
+            /** @description failed: the runner's re-run of the test alone, without the cache (ran false: not re-run, e.g. past the re-run limit) */
+            rerunAlone?: {
+                ran: boolean;
+                /**
+                 * @description ran: the re-run's outcome (anything but passed or failed, or no result: not_proven)
+                 * @enum {string}
+                 */
+                outcome?: "passed" | "failed" | "not_proven";
+                /** @description outcome failed: the re-run's failure */
+                failure?: {
+                    /** @enum {string} */
+                    kind: "real" | "flaky_defect";
+                    phase?: string;
+                    exceptionType?: string;
+                    message?: string;
+                    location?: string;
+                    defectFingerprint?: string;
+                };
+            };
         };
         /** @description One reused test's receipt (receipts.jsonl line plus the lists from proof-cache.json). */
         RunnerReceipt: {

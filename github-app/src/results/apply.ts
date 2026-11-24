@@ -1,7 +1,7 @@
 import type { Client } from "../db.ts";
 import {
-  causeOf, causeTestsOf, familyKeyOf, type RunnerAuditRerun, type RunnerDefect, type RunnerExploration, type RunnerReceipt, type RunnerResults,
-  type RunnerTestOutcome,
+  causeOf, causeTestsOf, familyKeyOf, type RunnerAuditRerun, type RunnerDefect, type RunnerExploration, type RunnerFailure, type RunnerReceipt,
+  type RunnerResults, type RunnerTestOutcome,
 } from "./runner-records.ts";
 
 /**
@@ -43,17 +43,29 @@ export interface TestRow {
   defect_fingerprint: string | null;
   /** Only for a not_proven test: why, when the runner said (ci_test_results' check allows it on no other outcome). */
   not_proven_cause?: string | null;
+  /** Only for a failed test (0021, idea 3): its place among the run's failed tests, and its re-run alone. */
+  fail_seq: number | null; rerun_alone_ran: boolean | null; rerun_alone_outcome: "passed" | "failed" | "not_proven" | null;
+  rerun_alone_failure: RunnerFailure | null;
 }
 
-/** A per-test outcome as ci_test_results stores it: failure fields only for a failed test (a failed test always has a kind). */
+/**
+ * A per-test outcome as ci_test_results stores it: failure fields only for a failed test (a failed test always has a
+ * kind), and so its failSeq and re-run alone (the re-run's outcome only when it ran, its failure only when it failed).
+ */
 export function testRow(t: RunnerTestOutcome): TestRow {
   const f = t.outcome === "failed" ? (t.failure ?? { kind: "real" as const }) : null;
+  const alone = t.outcome === "failed" ? t.rerunAlone : undefined;
+  const aloneOutcome = alone?.ran ? (alone.outcome ?? null) : null;
   return {
     test_id: t.testId, outcome: t.outcome, duration_ms: t.durationMs,
     failure_kind: f?.kind ?? null, failure_phase: f ? (f.phase ?? "call") : null, exception_type: f?.exceptionType ?? null,
     failure_message: f?.message ?? null, failure_location: f?.location ?? null,
     defect_fingerprint: f?.kind === "flaky_defect" ? (f.defectFingerprint ?? null) : null,
     ...(t.outcome === "not_proven" ? { not_proven_cause: t.notProvenCause ?? null } : {}),
+    fail_seq: t.outcome === "failed" ? (t.failSeq ?? null) : null,
+    rerun_alone_ran: alone ? alone.ran : null,
+    rerun_alone_outcome: aloneOutcome,
+    rerun_alone_failure: aloneOutcome === "failed" ? (alone!.failure ?? null) : null,
   };
 }
 
@@ -202,7 +214,7 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
   if (ready.length) {
     await c.query(
       `insert into ci_test_results (run_id, workspace_id, test_id, outcome, duration_ms, failure_kind, failure_phase, exception_type, failure_message,
-         failure_location, defect_id, receipt_id, not_proven_cause)
+         failure_location, defect_id, receipt_id, not_proven_cause, fail_seq, rerun_alone_ran, rerun_alone_outcome, rerun_alone_failure)
        select $1, public.cp_workspace(), x.test_id, x.outcome, x.duration_ms, x.failure_kind, x.failure_phase, x.exception_type, x.failure_message,
          x.failure_location,
          case when x.failure_kind = 'flaky_defect' then (
@@ -210,13 +222,17 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
              and (d.fingerprint = x.defect_fingerprint or (x.defect_fingerprint is null and d.last_run_id = $1))
            order by d.last_seen_at desc limit 1) end,
          case when x.outcome = 'skipped_with_proof' then (select r.id from ci_skip_receipts r where r.run_id = $1 and r.test_id = x.test_id) end,
-         case when x.outcome = 'not_proven' then x.not_proven_cause end
+         case when x.outcome = 'not_proven' then x.not_proven_cause end,
+         case when x.outcome = 'failed' then x.fail_seq end, case when x.outcome = 'failed' then x.rerun_alone_ran end,
+         case when x.outcome = 'failed' then x.rerun_alone_outcome end, case when x.outcome = 'failed' then x.rerun_alone_failure end
        from jsonb_to_recordset($3::jsonb) as x(test_id text, outcome text, duration_ms bigint, failure_kind text, failure_phase text, exception_type text,
-         failure_message text, failure_location text, defect_fingerprint text, not_proven_cause text)
+         failure_message text, failure_location text, defect_fingerprint text, not_proven_cause text, fail_seq int, rerun_alone_ran boolean,
+         rerun_alone_outcome text, rerun_alone_failure jsonb)
        on conflict (run_id, test_id) do update set outcome = excluded.outcome, duration_ms = excluded.duration_ms, failure_kind = excluded.failure_kind,
          failure_phase = excluded.failure_phase, exception_type = excluded.exception_type, failure_message = excluded.failure_message,
          failure_location = excluded.failure_location, defect_id = coalesce(excluded.defect_id, ci_test_results.defect_id),
-         receipt_id = excluded.receipt_id, not_proven_cause = excluded.not_proven_cause`,
+         receipt_id = excluded.receipt_id, not_proven_cause = excluded.not_proven_cause, fail_seq = excluded.fail_seq,
+         rerun_alone_ran = excluded.rerun_alone_ran, rerun_alone_outcome = excluded.rerun_alone_outcome, rerun_alone_failure = excluded.rerun_alone_failure`,
       [run.id, run.projectId, JSON.stringify(ready)]);
   }
   // A flaky failure whose bundle came in a later chunk: linked now.

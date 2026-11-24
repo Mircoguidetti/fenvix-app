@@ -180,7 +180,8 @@ describe("F5: half-applied migrations other than 0017 (scratch Postgres)", () =>
 
   for (const [version, cut] of [["0013", "drop policy if exists ci_usage_events_github_app"], ["0015", "drop policy if exists workspace_invites_api_revoke"], ["0014", "drop policy if exists workspaces_github_app"],
     ["0018", "alter table public.gh_repositories drop constraint if exists"], ["0019", "alter table public.ci_test_results drop constraint if exists ci_test_results_outcome_check"],
-    ["0020", "alter table public.gh_run_summaries alter column summary drop not null"]]) {
+    ["0020", "alter table public.gh_run_summaries alter column summary drop not null"],
+    ["0021", "alter table public.ci_test_results add constraint ci_test_results_rerun_alone_outcome_check"]]) {
     it(`${version} cut before its last statement: the deploy stops, nothing recorded`, async () => {
       await fresh();
       for (const m of files.filter((x) => x.version < version)) psqlFile(join(MIGRATIONS_DIR, m.name));
@@ -204,6 +205,21 @@ describe("F5: half-applied migrations other than 0017 (scratch Postgres)", () =>
       psqlFile(join(MIGRATIONS_DIR, files.find((x) => x.version === "0020").name));
       assert.deepEqual(await probe(), { first: true, last: true });
       psqlFile(join(MIGRATIONS_DIR, files.find((x) => x.version === "0020").name));
+      assert.deepEqual(await probe(), { first: true, last: true });
+    } finally { await c.end(); }
+  });
+  // protects=the deploy recognises 0021 applied by hand (its first and last effects); fails_when=a probe misses the
+  // column fail_seq or the rerun_alone_outcome check, or fires before 0021 ran; no_claim=what the App writes there.
+  it("0021's probes: both false on 0001 to 0020, both true once 0021 ran (and again: safe to repeat)", async () => {
+    await fresh();
+    for (const m of files.filter((x) => x.version < "0021")) psqlFile(join(MIGRATIONS_DIR, m.name));
+    const c = new pg.Client(url()); await c.connect();
+    const probe = async () => (await c.query(`select (${PROBES["0021"].first}) as first, (${PROBES["0021"].last}) as last`)).rows[0];
+    try {
+      assert.deepEqual(await probe(), { first: false, last: false });
+      psqlFile(join(MIGRATIONS_DIR, files.find((x) => x.version === "0021").name));
+      assert.deepEqual(await probe(), { first: true, last: true });
+      psqlFile(join(MIGRATIONS_DIR, files.find((x) => x.version === "0021").name));
       assert.deepEqual(await probe(), { first: true, last: true });
     } finally { await c.end(); }
   });

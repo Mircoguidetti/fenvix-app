@@ -1361,6 +1361,25 @@ components:
         cacheKey: { type: [string, "null"], pattern: "^[0-9a-f]{32}$", description: "skipped_with_proof: the receipt's key" }
         wouldSkip: { type: boolean, description: "Shadow mode: the engine would have skipped it" }
         notProvenCause: { type: [string, "null"], maxLength: 500, description: "not_proven: why the test could not be proven (a conflict between parallel lanes in what it touched not ruled out)" }
+        failSeq: { type: integer, minimum: 0, description: "failed: the test's place among the run's failed tests (0-based, run order)" }
+        rerunAlone:
+          type: object
+          description: "failed: the runner's re-run of the test alone, without the cache (ran false: not re-run, e.g. past the re-run limit)"
+          required: [ran]
+          properties:
+            ran: { type: boolean }
+            outcome: { type: string, enum: [passed, failed, not_proven], description: "ran: the re-run's outcome (anything but passed or failed, or no result: not_proven)" }
+            failure:
+              type: object
+              description: "outcome failed: the re-run's failure"
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [real, flaky_defect] }
+                phase: { type: string }
+                exceptionType: { type: string }
+                message: { type: string, maxLength: 4000 }
+                location: { type: string }
+                defectFingerprint: { type: string, pattern: "^[0-9a-f]{32}$" }
     RunnerReceipt:
       type: object
       description: One reused test's receipt (receipts.jsonl line plus the lists from proof-cache.json).

@@ -33,7 +33,8 @@ const defect = {
 const results = {
   runId: 31000, runAttempt: 1, repositoryId: 70001, runnerName: "fenvix-j81000", chunk: 0, chunks: 2, engineRunId: "20261118T094005-4412", seed: 3, mode: "shadow",
   tests: [
-    { testId: "tests/test_tax.py::test_vat[3]", outcome: "failed", durationMs: 12, failure: { kind: "real", phase: "call", exceptionType: "AssertionError", message: "assert 30 == 31", location: "tests/test_tax.py:40" } },
+    { testId: "tests/test_tax.py::test_vat[3]", outcome: "failed", durationMs: 12, failure: { kind: "real", phase: "call", exceptionType: "AssertionError", message: "assert 30 == 31", location: "tests/test_tax.py:40" },
+      failSeq: 0, rerunAlone: { ran: true, outcome: "failed", failure: { kind: "real", phase: "call", exceptionType: "AssertionError", message: "assert 30 == 31" } } },
     { testId: defect.testId, outcome: "failed", durationMs: 3, failure: { kind: "flaky_defect", defectFingerprint: H("a") } },
     { testId: "tests/test_cart.py::test_total", outcome: "skipped_with_proof", durationMs: 8, cacheKey: H("b") },
     { testId: "tests/test_cart.py::test_empty", outcome: "passed", durationMs: 5, failure: null, cacheKey: null, wouldSkip: true },
@@ -95,7 +96,12 @@ describe("runner records: the request schemas of openapi/fenvix-api.yaml, checke
       [["engineRunId"], "x".repeat(101), false], [["seed"], null, true], [["seed"], 1.5, false], [["mode"], "both", false],
       [["tests", 0, "outcome"], "skipped", false], [["tests", 0, "durationMs"], -1, false], [["tests", 0, "testId"], "x".repeat(2001), false],
       [["tests", 0, "failure", "kind"], "flaky", false], [["tests", 0, "failure", "message"], "m".repeat(4001), false], [["tests", 0, "failure"], null, true],
-      [["tests", 1, "failure", "defectFingerprint"], "ABC", false], [["tests", 2, "cacheKey"], "b".repeat(31), false], [["tests", 3, "wouldSkip"], "yes", false],
+      [["tests", 1, "failure", "defectFingerprint"], "ABC", false],
+      [["tests", 0, "failSeq"], -1, false], [["tests", 0, "failSeq"], 1.5, false], [["tests", 0, "failSeq"], "0", false], [["tests", 0, "failSeq"], undefined, true],
+      [["tests", 0, "rerunAlone"], undefined, true], [["tests", 0, "rerunAlone"], { ran: false }, true], [["tests", 0, "rerunAlone"], {}, false],
+      [["tests", 0, "rerunAlone", "ran"], "yes", false], [["tests", 0, "rerunAlone", "outcome"], "skipped", false],
+      [["tests", 0, "rerunAlone", "outcome"], "not_proven", true], [["tests", 0, "rerunAlone", "failure"], { phase: "call" }, false],
+      [["tests", 0, "rerunAlone", "failure", "message"], "m".repeat(4001), false], [["tests", 0, "rerunAlone", "extra"], 1, true], [["tests", 2, "cacheKey"], "b".repeat(31), false], [["tests", 3, "wouldSkip"], "yes", false],
       [["tests"], Array.from({ length: 5001 }, (_, i) => ({ testId: `t${i}`, outcome: "passed", durationMs: 1 })), false],
       [["tests"], Array.from({ length: 5000 }, (_, i) => ({ testId: `t${i}`, outcome: "passed", durationMs: 1 })), true],
       [["receipts", 0, "cacheKey"], undefined, false], [["receipts", 0, "reusedEngineRunId"], "x".repeat(101), false],
@@ -159,7 +165,8 @@ describe("results mapping to the dashboard's rows", () => {
 
   it("a test outcome: failure fields only when it failed (a failure always has a kind); the defect's fingerprint for a flaky one", () => {
     const [real, flaky, skipped, passed] = parseResults(results).tests!;
-    assert.deepEqual(testRow(real!), { test_id: real!.testId, outcome: "failed", duration_ms: 12, failure_kind: "real", failure_phase: "call", exception_type: "AssertionError", failure_message: "assert 30 == 31", failure_location: "tests/test_tax.py:40", defect_fingerprint: null });
+    assert.deepEqual(testRow(real!), { test_id: real!.testId, outcome: "failed", duration_ms: 12, failure_kind: "real", failure_phase: "call", exception_type: "AssertionError", failure_message: "assert 30 == 31", failure_location: "tests/test_tax.py:40", defect_fingerprint: null,
+      fail_seq: 0, rerun_alone_ran: true, rerun_alone_outcome: "failed", rerun_alone_failure: { kind: "real", phase: "call", exceptionType: "AssertionError", message: "assert 30 == 31" } });
     assert.equal(testRow(flaky!).defect_fingerprint, H("a"));
     assert.equal(testRow(flaky!).failure_phase, "call");
     assert.equal(testRow(skipped!).failure_kind, null);

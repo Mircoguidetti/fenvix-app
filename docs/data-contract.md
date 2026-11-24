@@ -476,6 +476,36 @@ A dropped chunk is still answered `202` (it is checked after the queue) and logg
 | `receipts[]` | one per test skipped with proof: the `receipts.jsonl` line joined with the test's `proof-cache.json` entry (the lists: `code` = `Entry.units`, `modules` = content/skeleton/hooks, `filesRead` = `Entry.data`, `envRead` = `Entry.env`, `runtime`, `config`) | Skip receipt (`ci_skip_receipts`); `reusedRunId` = the project's run whose `engineRunId` is `reusedEngineRunId`. A skipped test and its receipt go in the same chunk (a skipped test whose receipt has not arrived waits for it) |
 | `defects[]` | each defect bundle the engine wrote this run (`bundle.json` + `order.txt`) with the engine's replay command (`command`, `replayCommand`) | Defect (`ci_defects`), by project, test and fingerprint: new, or seen again (`occurrences` + 1 once per run, `lastSeenAt`, `lastRunId`, reopened if it was fixed). `cause` from `kind`: `order` → polluter, `brittle` → state_setter, `fails-alone` → fails_alone; `causeTests` = `polluters` / `setters` / none; `familyKey` = them joined by `" + "`, or `"<none>"` |
 | `audit[]` | the audit reruns (5% of the tests skipped with proof, run anyway): `confirmed` or `wrong_skip`, `untrusted` when the engine stopped trusting the key | Audit rerun (`ci_audit_reruns`); the run's `audit.rerun` and `audit.wrongSkips` |
+| `tests[].failSeq` | optional, a **failed** test only (spec C1): its place among the run's failed tests, 0-based, in run order (the order `rerunAlone` follows) | `ci_test_results.fail_seq` (migration 0021); null for every other outcome and for a runner that does not send it |
+| `tests[].rerunAlone` | optional, a **failed** test only (spec C1): the runner's re-run of the test alone, without the cache, at the run's epoch: `{"ran": false}` (not re-run: past the first `--max-reruns`, 20 by default, or `--no-rerun`), or `{"ran": true, "outcome": "passed" \| "failed" \| "not_proven", "failure"?}` (anything but passed or failed, or no readable result, is `not_proven`; `failure`, same shape as `failure`, only when it failed again) | `ci_test_results.rerun_alone_ran`, `rerun_alone_outcome` (only when it ran), `rerun_alone_failure` (only when it failed); null for other outcomes and older runners |
+
+**What `runner/fenvix-run` sends** (spec C1, every `runs-on: fenvix` job; the operator stops it with
+`FENVIX_SEND_RESULTS=0` in the machine's environment). It writes the chunks to `<out>/results/chunk-<n>.json` (old ones
+removed first), at most 5,000 tests, 2,000 receipts and 4,000,000 bytes each, a reused test and its receipt in the same
+chunk; `engineRunId` is the engine's cache run (Node `cache-summary.json` `run`, pytest outcomes `cache.run`), `seed`
+the outcomes file's seed, null when the order was not shuffled. One entry per test, in run order, from the engine's
+outcome:
+
+| Engine outcome | Sent as |
+| --- | --- |
+| a test a parallel Node run's one-lane re-run did not account for (`meta.hazard_rerun.unaccounted`) | `not_proven`, `notProvenCause` = its file's cause |
+| `passed`, `xpassed`, with a receipt of reuse that has a run id and a 32-hex key and fingerprint | `skipped_with_proof`, `cacheKey` = the receipt's, `durationMs` = the receipt's duration, and its receipt (`config: {digest}`, `runtime: {digest}` when known; the lists are not sent yet) |
+| `passed`, `xpassed` | `passed` |
+| `failed`, `error`, `unknown`, any value with `failed` or `error` in it (`passed+teardown-error`), any other value | `failed` with `failure` from the engine's record (`{"kind": "real", "phase": "call"}` when it wrote none), `failSeq`, `rerunAlone` |
+| `skipped`, `todo`, `xfailed` | not sent |
+
+A Node test of a hazard file whose one-lane re-run was complete is sent with the re-run's outcome (its failure is
+`{"kind": "real", "phase": "call"}`: the re-run writes no failure record). `durationMs` is the test's real time (Node:
+its bracket on the engine's real clock; pytest: setup, call and teardown). A test id over 2,000 characters is not sent
+(the runner logs it).
+
+**Spool order on the machine.** `fenvix-job-completed` spools every chunk of the job
+(`<repositoryId>-<runId>-<runAttempt>-0-<chunk:04d>-<uuid>.json` = `{repositoryId, runId, runAttempt, results: <chunk>}`)
+before the summary (`…-1-<uuid>.json`); `fenvix-summary-poster` posts a results envelope to `POST /v1/runner/results`
+(the summaries URL with its last segment `results`), and holds a summary back while a results envelope of the same job
+is still in the spool, for at most 60 seconds from the summary's spooling (then it is sent anyway: the machine powers
+off within 2 minutes, and the App publishes without a summary after its wait). A job's records are written by the
+customer's own workflow, like `summary.json`: they describe only that customer's runs.
 
 ### 3. The run summary, when the test step ends: `POST /v1/runner/summaries`
 
@@ -792,6 +822,12 @@ database directly.
 
 ## Changes
 
+- 2026-11-24 (spec C1, idea 3 "is this red real?", migration 0021): every `runs-on: fenvix` job sends its per-test
+  results (`runner/fenvix-run` writes the chunks, the machine spools them before the summary and posts them to
+  `/v1/runner/results`). A failed test carries optional `failSeq` and `rerunAlone`, stored in
+  `ci_test_results.fail_seq`, `rerun_alone_ran`, `rerun_alone_outcome` and `rerun_alone_failure` (null for any other
+  outcome); older runners stay accepted. The runner's re-run loop now runs the failed tests in `failSeq` order
+  (`unknown` and teardown errors included): `summary.json`'s `failed`, `flaky` and `reruns` follow that set.
 - 2026-11-23 (proof to the customer, migration 0020): **honest proof words**: every surface says what the engine proves
   ("Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane."),
   never a claim of equality with a run in one lane, which the engine does not make; labels only, no field renamed
