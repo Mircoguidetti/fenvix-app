@@ -12,12 +12,24 @@ const launch: RunnerLaunch = {
 const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://api.fenvix.dev/v1/runner/summaries" };
 
 /** An EC2 client in memory: images, running machines, the calls made. */
-function fakeEc2(o: { running?: number; images?: { ImageId: string; CreationDate: string }[]; runError?: string; instances?: { InstanceId: string; LaunchTime: Date }[] } = {}) {
+type Machine = { InstanceId: string; ImageId?: string; InstanceType?: string };
+function fakeEc2(o: {
+  running?: number; images?: { ImageId: string; CreationDate: string }[]; runError?: string; instances?: { InstanceId: string; LaunchTime: Date }[];
+  /** RunInstances answer; default: the requested image, m7i.large. */
+  launched?: (input: RunInstancesCommand["input"]) => Machine;
+  /** Machines by client token (the DescribeInstances filter `client-token`); a lookup throws when `byTokenError` is set. */
+  byToken?: Record<string, Machine[]>; byTokenError?: string;
+} = {}) {
   const calls: unknown[] = [];
   return {
     calls,
     send: async (c: unknown) => {
       calls.push(c);
+      const token = c instanceof DescribeInstancesCommand ? c.input.Filters?.find((f) => f.Name === "client-token")?.Values?.[0] : undefined;
+      if (token !== undefined) {
+        if (o.byTokenError) throw Object.assign(new Error(o.byTokenError), { name: o.byTokenError });
+        return { Reservations: [{ Instances: o.byToken?.[token] ?? [] }] };
+      }
       if (c instanceof DescribeInstancesCommand) {
         const list = o.instances ?? Array.from({ length: o.running ?? 0 }, (_, i) => ({ InstanceId: `i-${i}`, LaunchTime: new Date() }));
         return { Reservations: [{ Instances: list }] };
@@ -25,7 +37,7 @@ function fakeEc2(o: { running?: number; images?: { ImageId: string; CreationDate
       if (c instanceof DescribeImagesCommand) return { Images: o.images ?? [{ ImageId: "ami-old", CreationDate: "2026-11-01T00:00:00Z" }, { ImageId: "ami-new", CreationDate: "2026-11-17T00:00:00Z" }] };
       if (c instanceof RunInstancesCommand) {
         if (o.runError) throw Object.assign(new Error(o.runError), { name: o.runError });
-        return { Instances: [{ InstanceId: "i-0abc" }] };
+        return { Instances: [o.launched ? o.launched(c.input) : { InstanceId: "i-0abc", ImageId: c.input.ImageId, InstanceType: "m7i.large" }] };
       }
       if (c instanceof TerminateInstancesCommand) return {};
       throw new Error("unexpected command");
@@ -72,7 +84,8 @@ describe("per-job runner machines", () => {
   it("launch: newest own image, the launch template, one machine per job (client token), tagged", async () => {
     const ec2 = fakeEc2();
     const l = new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE, tags: { project: "fenvix", env: "prod" } });
-    assert.deepEqual(await l.launch(launch), { instanceId: "i-0abc", already: false });
+    // The image and instance type EC2 reports for the machine (C4: stored on the job row).
+    assert.deepEqual(await l.launch(launch), { instanceId: "i-0abc", already: false, imageId: "ami-new", instanceType: "m7i.large" });
     const imgs = ec2.calls.find((c) => c instanceof DescribeImagesCommand) as DescribeImagesCommand;
     assert.deepEqual(imgs.input.Owners, ["self"]);
     const run = ec2.calls.find((c) => c instanceof RunInstancesCommand) as RunInstancesCommand;
@@ -94,9 +107,42 @@ describe("per-job runner machines", () => {
   });
 
   it("a retry with a new just-in-time config hits the same client token: the first machine stands", async () => {
+    // No machine found for the token: nothing is known about it (all null), and the launch path does not fail.
     const l = new Ec2Launcher({ ec2: fakeEc2({ runError: "IdempotentParameterMismatch" }), launchTemplateId: "lt", maxRunning: 4, machineEnv: MACHINE });
-    assert.deepEqual(await l.launch(launch), { instanceId: null, already: true });
+    assert.deepEqual(await l.launch(launch), { instanceId: null, already: true, imageId: null, instanceType: null });
     await assert.rejects(new Ec2Launcher({ ec2: fakeEc2({ runError: "InsufficientInstanceCapacity" }), launchTemplateId: "lt", maxRunning: 4, machineEnv: MACHINE }).launch(launch), /InsufficientInstanceCapacity/);
+  });
+
+  it("launch: EC2's answer without an image or type: the requested image, type unknown", async () => {
+    // protects=the stored image is never invented; fails_when=a missing InstanceType becomes a value, or a missing ImageId
+    // drops the image that was requested; no_claim=what EC2 really omits.
+    const l = new Ec2Launcher({ ec2: fakeEc2({ launched: () => ({ InstanceId: "i-0abc" }) }), launchTemplateId: "lt", maxRunning: 4, machineEnv: MACHINE });
+    assert.deepEqual(await l.launch(launch), { instanceId: "i-0abc", already: false, imageId: "ami-new", instanceType: null });
+  });
+
+  it("the machine already exists (same client token): its image and type are read once, by that token", async () => {
+    // protects=a redelivered job still records the machine EC2 started for it; fails_when=the lookup uses another filter
+    // than the launch token, or returns the newest image instead of the machine's; no_claim=the real EC2 filter semantics.
+    const logs: { o: object; msg?: string }[] = [];
+    const ec2 = fakeEc2({ runError: "IdempotentParameterMismatch", byToken: { "fenvix-job-601": [{ InstanceId: "i-first", ImageId: "ami-old", InstanceType: "c7i.xlarge" }] } });
+    const l = new Ec2Launcher({ ec2, launchTemplateId: "lt", maxRunning: 4, machineEnv: MACHINE, log: { info: () => {}, warn: (o, msg) => logs.push({ o, msg }) } });
+    assert.deepEqual(await l.launch(launch), { instanceId: "i-first", already: true, imageId: "ami-old", instanceType: "c7i.xlarge" });
+    const lookups = ec2.calls.filter((c) => c instanceof DescribeInstancesCommand && c.input.Filters?.some((f) => f.Name === "client-token")) as DescribeInstancesCommand[];
+    assert.equal(lookups.length, 1);
+    assert.deepEqual(lookups[0]!.input.Filters, [{ Name: "client-token", Values: ["fenvix-job-601"] }]);
+    assert.equal(logs.length, 0);
+  });
+
+  it("the machine already exists but the read fails: nulls, already, a warn line, no exception", async () => {
+    // protects=the launch path never fails because of the identity read; fails_when=the error propagates or a value is
+    // guessed; no_claim=which EC2 errors happen in production.
+    const logs: { o: object; msg?: string }[] = [];
+    const ec2 = fakeEc2({ runError: "IdempotentParameterMismatch", byTokenError: "UnauthorizedOperation" });
+    const l = new Ec2Launcher({ ec2, launchTemplateId: "lt", maxRunning: 4, machineEnv: MACHINE, log: { info: () => {}, warn: (o, msg) => logs.push({ o, msg }) } });
+    assert.deepEqual(await l.launch(launch), { instanceId: null, already: true, imageId: null, instanceType: null });
+    assert.equal(logs.length, 1);
+    assert.match(logs[0]!.msg!, /could not be read/);
+    assert.equal((logs[0]!.o as { clientToken: string }).clientToken, "fenvix-job-601");
   });
 
   it("the reaper terminates only machines past the hard limit", async () => {

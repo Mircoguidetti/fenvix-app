@@ -120,15 +120,21 @@ describe("warm-up machine: user data", () => {
 
 // ---------------------------------------------------------------- the EC2 side
 
-function fakeEc2(o: { instances?: { InstanceId: string; Tags?: { Key: string; Value: string }[] }[] } = {}) {
+function fakeEc2(o: { instances?: { InstanceId: string; Tags?: { Key: string; Value: string }[] }[]; runError?: string;
+  byToken?: Record<string, { InstanceId: string; ImageId?: string; InstanceType?: string }[]> } = {}) {
   const calls: unknown[] = [];
   return {
     calls,
     send: async (c: unknown) => {
       calls.push(c);
+      const token = c instanceof DescribeInstancesCommand ? c.input.Filters?.find((f) => f.Name === "client-token")?.Values?.[0] : undefined;
+      if (token !== undefined) return { Reservations: [{ Instances: o.byToken?.[token] ?? [] }] };
       if (c instanceof DescribeInstancesCommand) return { Reservations: [{ Instances: o.instances ?? [] }] };
       if (c instanceof DescribeImagesCommand) return { Images: [{ ImageId: "ami-new", CreationDate: "2026-11-17T00:00:00Z" }] };
-      if (c instanceof RunInstancesCommand) return { Instances: [{ InstanceId: "i-warm" }] };
+      if (c instanceof RunInstancesCommand) {
+        if (o.runError) throw Object.assign(new Error(o.runError), { name: o.runError });
+        return { Instances: [{ InstanceId: "i-warm", ImageId: c.input.ImageId, InstanceType: "m7i.large" }] };
+      }
       if (c instanceof TerminateInstancesCommand) return {};
       throw new Error("unexpected command");
     },
@@ -145,12 +151,20 @@ describe("warm-up machine: EC2", () => {
   it("launch: the job role tag (so the IAM conditions and the reaper apply), the warm-up tags, one machine per attempt", async () => {
     const ec2 = fakeEc2();
     const r = await new Ec2Launcher({ ec2, launchTemplateId: "lt-1", maxRunning: 4, machineEnv: MACHINE, tags: { project: "fenvix" } }).launchWarmup(warm({ attempt: 2, runnerName: "fenvix-w17-2" }));
-    assert.deepEqual(r, { instanceId: "i-warm", already: false });
+    assert.deepEqual(r, { instanceId: "i-warm", already: false, imageId: "ami-new", instanceType: "m7i.large" });
     const run = ec2.calls.find((c) => c instanceof RunInstancesCommand) as RunInstancesCommand;
     assert.equal(run.input.ClientToken, "fenvix-warmup-17-2");
     const tags = Object.fromEntries(run.input.TagSpecifications![0]!.Tags!.map((t) => [t.Key, t.Value]));
     assert.deepEqual(tags, { project: "fenvix", "fenvix:role": "runner-job", [KIND_TAG]: "warmup", [WARMUP_TAG]: "17", "fenvix:repository": "acme/shop", "fenvix:region": "us", Name: "fenvix-w17-2" });
     assert.match(Buffer.from(run.input.UserData!, "base64").toString(), /fenvix-warmup\.target/);
+  });
+
+  it("launch: the attempt's machine already exists: its image and type, read by the attempt's client token", async () => {
+    // protects=a re-run tick records the warm-up machine EC2 started; fails_when=the lookup token is not the attempt's;
+    // no_claim=the real EC2 filter semantics.
+    const ec2 = fakeEc2({ runError: "IdempotentParameterMismatch", byToken: { "fenvix-warmup-17-2": [{ InstanceId: "i-w", ImageId: "ami-old", InstanceType: "m7i.large" }] } });
+    const r = await new Ec2Launcher({ ec2, launchTemplateId: "lt-1", maxRunning: 4, machineEnv: MACHINE }).launchWarmup(warm({ attempt: 2, runnerName: "fenvix-w17-2" }));
+    assert.deepEqual(r, { instanceId: "i-w", already: true, imageId: "ami-old", instanceType: "m7i.large" });
   });
 
   it("launch at the limit: RetryLater (the warm-up stays pending)", async () => {

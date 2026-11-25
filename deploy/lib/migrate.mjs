@@ -111,6 +111,14 @@ export const PROBES = {
     last: `exists (select 1 from pg_constraint where conname = 'ci_test_results_rerun_alone_outcome_check'
                     and conrelid = to_regclass('public.ci_test_results'))`,
   },
+  // 0022 (machine identity for idea 3) adds gh_jobs.image_id first and grants gh_machine_kind to the App last (the
+  // function exists, the App may execute it and the browser roles may not: true only once the final grant ran).
+  "0022": {
+    first: `exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'gh_jobs' and column_name = 'image_id')`,
+    last: `case when to_regprocedure('public.gh_machine_kind(bigint,text,text)') is null then false
+                else has_function_privilege('fenvix_github_app', 'public.gh_machine_kind(bigint,text,text)', 'execute')
+                     and not has_function_privilege('anon', 'public.gh_machine_kind(bigint,text,text)', 'execute') end`,
+  },
 };
 /** The first migration with a probe: a database without it is either empty or not one of ours. */
 const FIRST_PROBED = "0011";

@@ -66,6 +66,10 @@ export async function resetDb(): Promise<pg.Client> {
   if (!(await admin.query("select 1 from information_schema.columns where table_name = 'ci_test_results' and column_name = 'fail_seq'")).rowCount) {
     execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0021_test_failure_detail.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
   }
+  // A database prepared before migration 0022 (machine identity for idea 3): safe to repeat.
+  if (!(await admin.query("select 1 from information_schema.columns where table_name = 'gh_jobs' and column_name = 'image_id'")).rowCount) {
+    execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0022_machine_identity.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
+  }
   await admin.query(`truncate gh_install_completions, ci_trial_accounts, gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_warmups, gh_repositories,
     gh_installations, ci_test_results, ci_skip_receipts, ci_audit_reruns, ci_defects, ci_explorations, ci_runs, ci_projects, ci_subscriptions cascade`);
   await admin.query("delete from auth.users where email like '%@gh.fenvix.invalid'");

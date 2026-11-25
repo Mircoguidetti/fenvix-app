@@ -27,13 +27,16 @@ class FakeFleet implements RunnerLauncher {
   async launch(l: RunnerLaunch) {
     if (this.used(l.region ?? "us") >= this.max) throw new RetryLater("full");
     this.jobs.push(l); this.busy++;
-    return { instanceId: `i-j${l.jobId}`, already: false };
+    return { instanceId: `i-j${l.jobId}`, already: false, imageId: "ami-test", instanceType: "m7i.large" };
   }
   async slots(region: Region) { return { running: this.used(region), warmups: [...this.live.values()].filter((r) => r === region).length, max: this.max }; }
+  /** The next warm-up launch fails (EC2 refused it): the App releases the warm-up. */
+  failNextWarmup: Error | null = null;
   async launchWarmup(w: WarmupLaunch) {
+    if (this.failNextWarmup) { const e = this.failNextWarmup; this.failNextWarmup = null; throw e; }
     if (this.used(w.region) >= this.max) throw new RetryLater("full");
     this.warmups.push(w); this.live.set(w.warmupId, w.region);
-    return { instanceId: `i-w${w.warmupId}-${w.attempt}`, already: false };
+    return { instanceId: `i-w${w.warmupId}-${w.attempt}`, already: false, imageId: "ami-test", instanceType: "m7i.large" };
   }
   async terminateWarmup(_region: Region, id: number) {
     if (!this.live.delete(id)) return [];
@@ -507,6 +510,27 @@ describe("the usual path: the installation is linked, then the setup pull reques
     // A pull request on the merge commit's branch is not a default-branch push.
     await h.send("push", push("8".repeat(40), "refs/heads/feature", Date.parse("2026-11-18T10:05:00Z") / 1000));
     assert.equal((await admin.query("select count(*)::int as n from gh_warmups")).rows[0].n, 1);
+  });
+  // protects=acceptance 1 and 5 for warm-ups: the launched machine's image and type are stored with kind 'ec2', and a
+  // re-claim clears them until its own launch writes them; fails_when=a failed re-launch leaves the previous attempt's
+  // machine on the row, or the columns are not written; no_claim=EC2's real answer (unit tests cover Ec2Launcher).
+  it("C4: the warm-up stores its machine (kind 'ec2'); a re-claim clears it until the new launch writes it", async () => {
+    const machine = async () => (await admin.query("select status, attempts, instance_id, image_id, instance_type, machine_kind from gh_warmups")).rows[0];
+    await admin.query("update gh_warmups set not_before = now() - interval '1 second' where status = 'pending'");
+    assert.equal((await h.app.service.warmups.tick()).dispatched, 1);
+    const first = await machine();
+    assert.deepEqual({ ...first, instance_id: undefined }, { status: "dispatched", attempts: 1, instance_id: undefined, image_id: "ami-test", instance_type: "m7i.large", machine_kind: "ec2" });
+    // The machine never started: the App gives it up and claims the warm-up again; that launch fails.
+    await admin.query("update gh_warmups set dispatched_at = now() - interval '20 minutes'");
+    fleet.failNextWarmup = new Error("InsufficientInstanceCapacity");
+    await h.app.service.warmups.tick();
+    assert.equal(fleet.failNextWarmup, null, "the re-claim tried a launch");
+    assert.deepEqual(await machine(), { status: "pending", attempts: 1, instance_id: null, image_id: null, instance_type: null, machine_kind: null });
+    await admin.query("update gh_warmups set not_before = now() - interval '1 second' where status = 'pending'");
+    assert.equal((await h.app.service.warmups.tick()).dispatched, 1);
+    const again = await machine();
+    assert.deepEqual({ status: again.status, attempts: again.attempts, image_id: again.image_id, instance_type: again.instance_type, machine_kind: again.machine_kind },
+      { status: "dispatched", attempts: 2, image_id: "ami-test", instance_type: "m7i.large", machine_kind: "ec2" });
   });
 });
 

@@ -36,7 +36,7 @@ class FakeLauncher implements RunnerLauncher {
   launches: RunnerLaunch[] = [];
   regions: Region[] = ["us", "eu"];
   canPlace(region: Region) { return this.regions.includes(region); }
-  async launch(l: RunnerLaunch) { this.launches.push(l); return { instanceId: `i-${l.jobId}`, already: false }; }
+  async launch(l: RunnerLaunch) { this.launches.push(l); return { instanceId: `i-${l.jobId}`, already: false, imageId: "ami-test", instanceType: "m7i.large" }; }
 }
 
 const H = (c: string) => c.repeat(32);

@@ -21,12 +21,12 @@ class FakeFleet implements RunnerLauncher {
   max = 10;
   canPlace(region: Region) { return region === "us"; }
   async hasCapacity() { return this.jobs.length + this.live.size < this.max; }
-  async launch(l: RunnerLaunch) { this.jobs.push(l); return { instanceId: `i-j${l.jobId}`, already: false }; }
+  async launch(l: RunnerLaunch) { this.jobs.push(l); return { instanceId: `i-j${l.jobId}`, already: false, imageId: "ami-test", instanceType: "m7i.large" }; }
   async slots() { return { running: this.live.size, warmups: this.live.size, max: this.max }; }
   async launchWarmup(w: WarmupLaunch) {
     if (this.live.size >= this.max) throw new RetryLater("full");
     this.warmups.push(w); this.live.set(w.warmupId, w.region);
-    return { instanceId: `i-w${w.warmupId}-${w.attempt}`, already: false };
+    return { instanceId: `i-w${w.warmupId}-${w.attempt}`, already: false, imageId: "ami-test", instanceType: "m7i.large" };
   }
   async terminateWarmup(_r: Region, id: number) { return this.live.delete(id) ? [`i-w${id}`] : []; }
 }

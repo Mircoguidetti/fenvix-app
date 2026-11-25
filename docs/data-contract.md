@@ -320,15 +320,25 @@ vitest or jest named by the summary), else not yet (a Node repository is never l
 same organization keeps its project.
 
 **Job** (`gh_jobs`): one GitHub job that asked for `runs-on: fenvix`; `region` is where its machine was placed, `mode`
-the run mode the App chose for it (`FENVIX_MODE`, migration 0015), `ciRunId` its run row.
+the run mode the App chose for it (`FENVIX_MODE`, migration 0015), `ciRunId` its run row. Machine identity (migration
+0022, idea 3): `image_id` and `instance_type` are what EC2 reports for the machine the App launched FOR this job (null
+when it launched none, or could not read it back); `machine_kind` is `ec2` only when the runner GitHub reports for the
+job is the just-in-time runner the App registered for it (`fenvix-j<job id>`, or `fenvix-j<job id>-<suffix>` after a
+409) and the image is known; another job's just-in-time runner (GitHub does not bind one to the job it was registered
+for) gives null; any other runner name (demo machine, prototype, always-on runner) gives `prototype`; no runner yet
+gives null (SQL `gh_machine_kind(job_id, runner_name, image_id)`). `image_id` / `instance_type` describe the machine
+that RAN the job only when `machine_kind = 'ec2'`: a reader must ignore them otherwise and treat null as not
+comparable. Existing rows are not backfilled (null). Not in the dashboard API.
 
 **Warm-up** (`gh_warmups`, migration 0017): one warm-up run of a repository's default branch at one commit (unique
 per repository and commit; at most one pending or running per repository). `commitSha`, `ref`, `trigger`
 (`onboarded` | `push` | `linked`), `status` (`pending` | `dispatched` | `running` | `succeeded` | `failed` |
 `unsupported` | `covered` | `superseded` | `cancelled`), `detail` (why it waits or how it ended, for a person),
 `pushedAt` (ordering), `notBefore`, `region`, `runnerName`, `attempts`, `preemptions`, `coveredByJob`,
-`machineSeconds` (our cost), `summary` (the runner's, trimmed). Members read their organization's warm-ups through the
-API; the App writes them.
+`machineSeconds` (our cost), `summary` (the runner's, trimmed), `image_id`, `instance_type` and `machine_kind`
+(migration 0022: the machine EC2 reports for the current attempt, `machine_kind` `ec2` once its image is known, else
+null; all three cleared when the warm-up is claimed again, until that attempt's launch writes them; not in the API).
+Members read their organization's warm-ups through the API; the App writes them.
 
 **Repository cache state** (`gh_repositories.cache_warm_sha`, `cache_warm_at`, `cache_warm_source` = `warmup` | `run`,
 `cache_warm_pushed_at`, migration 0017): the newest default-branch commit (by push time) whose proofs are in the shared
@@ -822,6 +832,10 @@ database directly.
 
 ## Changes
 
+- 2026-11-25 (spec C4, idea 3 "is this red real?", migration 0022): `gh_jobs` and `gh_warmups` store the launched
+  machine's `image_id` and `instance_type` and a `machine_kind` (`ec2` | `prototype` | null; warm-ups `ec2` | null),
+  so two jobs can be called comparable only when they ran on the same kind of machine from the same image. When EC2
+  answers that the machine already exists (same client token), the App reads it back by that token. No backfill.
 - 2026-11-24 (spec C1, idea 3 "is this red real?", migration 0021): every `runs-on: fenvix` job sends its per-test
   results (`runner/fenvix-run` writes the chunks, the machine spools them before the summary and posts them to
   `/v1/runner/results`). A failed test carries optional `failSeq` and `rerunAlone`, stored in

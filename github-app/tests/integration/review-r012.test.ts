@@ -17,7 +17,7 @@ class FakeLauncher implements RunnerLauncher {
   async launch(l: RunnerLaunch) {
     if (this.refuse) throw this.refuse;
     this.launches.push(l);
-    return { instanceId: `i-${l.jobId}`, already: false };
+    return { instanceId: `i-${l.jobId}`, already: false, imageId: "ami-test", instanceType: "m7i.large" };
   }
 }
 

@@ -9,7 +9,7 @@ import { applyChunks, applyExploration, type JobKey } from "./results/apply.ts";
 import { projectStack, type Stack } from "./results/detect.ts";
 import { parseResults, progressRecord, type RunnerExploration, type RunnerProgress, type RunnerResults } from "./results/runner-records.ts";
 import { signCacheToken, signSummaryCredential } from "./runners/credentials.ts";
-import { type Region, RetryLater, type RunMode, type RunnerLauncher } from "./runners/launcher.ts";
+import { type LaunchResult, type Region, RetryLater, type RunMode, type RunnerLauncher } from "./runners/launcher.ts";
 import { DEFAULT_WARMUP, type WarmupSettings } from "./warmup/policy.ts";
 import { Warmups } from "./warmup/warmups.ts";
 
@@ -441,10 +441,13 @@ export class GitHubService {
     // Events can arrive out of order: a row never goes back from completed to in_progress.
     await this.db.q(
       `insert into gh_jobs (job_id, repository_id, installation_id, run_id, run_attempt, workflow_name, job_name, head_sha, head_branch, labels,
-         runner_name, status, conclusion, created_at, started_at, completed_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         runner_name, status, conclusion, created_at, started_at, completed_at, machine_kind)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, gh_machine_kind($1, $11, null))
        on conflict (job_id) do update set
          runner_name = coalesce(excluded.runner_name, gh_jobs.runner_name),
+         -- The kind follows the runner GitHub reports and the image the launch stored (migration 0022): right
+         -- whichever arrives first, this event or the launch write.
+         machine_kind = gh_machine_kind(gh_jobs.job_id, coalesce(excluded.runner_name, gh_jobs.runner_name), gh_jobs.image_id),
          status = case when (case excluded.status when 'completed' then 3 when 'in_progress' then 2 else 1 end)
                          >= (case gh_jobs.status when 'completed' then 3 when 'in_progress' then 2 else 1 end) then excluded.status else gh_jobs.status end,
          conclusion = coalesce(excluded.conclusion, gh_jobs.conclusion),
@@ -592,7 +595,7 @@ export class GitHubService {
     const cacheAccess = trusted ? "write" as const : "read" as const;
     const summaryToken = signSummaryCredential(this.s.summaryKey, { runnerName, repositoryId: repo.id, runId: row.run_id, runAttempt: row.run_attempt, exp });
     const cacheToken = this.s.cacheSigningKey ? signCacheToken(this.s.cacheSigningKey, { installationId, write: trusted, exp, jobId }) : undefined;
-    let res: { instanceId: string | null; already: boolean };
+    let res: LaunchResult;
     try {
       res = await this.launcher!.launch({
         jobId, runId: row.run_id, repositoryId: repo.id, repositoryFullName: repo.full_name, installationId, runnerName,
@@ -602,7 +605,11 @@ export class GitHubService {
       await unregister(e instanceof RetryLater ? "the fleet is full" : "the machine did not start");
       throw e;
     }
-    await this.db.q("update gh_jobs set launched_at = coalesce(launched_at, now()) where job_id = $1", [jobId]);
+    // The machine launched for this job (migration 0022). machine_kind is 'ec2' only once the job's own runner took it.
+    await this.db.q(
+      `update gh_jobs set launched_at = coalesce(launched_at, now()), image_id = coalesce($2, image_id), instance_type = coalesce($3, instance_type),
+         machine_kind = gh_machine_kind(job_id, runner_name, coalesce($2, image_id))
+       where job_id = $1`, [jobId, res.imageId, res.instanceType]);
     // A redelivery after a partial failure: EC2 returned the first machine (same client token), which has the first
     // just-in-time configuration; this one would never be used.
     if (res.already) await unregister("the job's machine already exists");

@@ -498,7 +498,8 @@ export class Warmups {
     const runnerName = warmupRunnerName(row.id, attempt);
     const claimed = await this.db.q<Row>(
       `update gh_warmups set status = 'dispatched', attempts = $2, runner_name = $3, region = $4, dispatched_at = now(), started_at = null,
-         terminate_requested_at = null, terminated_at = null, instance_id = null, detail = $5, updated_at = now()
+         terminate_requested_at = null, terminated_at = null, instance_id = null,
+         image_id = null, instance_type = null, machine_kind = null, detail = $5, updated_at = now()
        where id = $1 and status = 'pending' returning *`,
       [row.id, attempt, runnerName, region, `a machine was requested in ${region}`]);
     if (!claimed[0]) return "waiting";
@@ -521,7 +522,11 @@ export class Warmups {
         commitSha: row.commit_sha, ref: row.ref, workflowPath: repo.onboarding_workflow_path!, job: repo.onboarding_job!, runnerName,
         checkoutToken: tok.data.token, summaryToken, ...(cacheToken ? { cacheToken } : {}), region,
       });
-      await this.db.q("update gh_warmups set instance_id = $2 where id = $1", [row.id, res.instanceId]);
+      // Warm-ups always run on the machine the launcher started (migration 0022).
+      await this.db.q(
+        `update gh_warmups set instance_id = $2, image_id = $3, instance_type = $4,
+           machine_kind = case when $3::text is null then null else 'ec2' end where id = $1`,
+        [row.id, res.instanceId, res.imageId, res.instanceType]);
       slot!.running++;
       this.log.info({ warmup: row.id, repository: repo.full_name, sha: row.commit_sha, region, instance: res.instanceId, attempt }, "warm-up machine requested");
       return "dispatched";

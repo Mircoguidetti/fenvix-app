@@ -63,15 +63,24 @@ export interface WarmupLaunch {
   region: Region;
 }
 
+/** What a launch started: the machine, and the image and instance type EC2 reports for it (null when unknown). */
+export interface LaunchResult {
+  instanceId: string | null;
+  /** True when the machine already existed (same client token): no second machine was started. */
+  already: boolean;
+  imageId: string | null;
+  instanceType: string | null;
+}
+
 export interface RunnerLauncher {
-  launch(l: RunnerLaunch): Promise<{ instanceId: string | null; already: boolean }>;
+  launch(l: RunnerLaunch): Promise<LaunchResult>;
   /** False while the fleet (of that region) is at its limit: no just-in-time runner is registered for a job that gets no machine. */
   hasCapacity?(region?: Region): Promise<boolean>;
   /** False when no machine can be placed in that region (no placement configured): the job gets no machine at all. */
   canPlace?(region: Region): boolean;
   /** Warm-ups: the region's machines (jobs and warm-ups) and its limit. Absent: no warm-ups. */
   slots?(region: Region): Promise<{ running: number; warmups: number; max: number }>;
-  launchWarmup?(w: WarmupLaunch): Promise<{ instanceId: string | null; already: boolean }>;
+  launchWarmup?(w: WarmupLaunch): Promise<LaunchResult>;
   /** Terminates the warm-up's machines in that region (superseded, cancelled, preempted). Returns the instance ids. */
   terminateWarmup?(region: Region, warmupId: number): Promise<string[]>;
 }
@@ -213,7 +222,7 @@ export interface Ec2LauncherOptions {
   machineEnv: Record<string, string>;
   /** Tags copied onto every machine (project, env). */
   tags?: Record<string, string>;
-  log?: { info(o: object, msg?: string): void };
+  log?: { info(o: object, msg?: string): void; warn?(o: object, msg?: string): void };
   now?: () => number;
 }
 
@@ -296,7 +305,7 @@ export class Ec2Launcher implements RunnerLauncher {
     return { running: all.length, warmups, max: this.o.maxRunning };
   }
 
-  async launchWarmup(w: WarmupLaunch): Promise<{ instanceId: string | null; already: boolean }> {
+  async launchWarmup(w: WarmupLaunch): Promise<LaunchResult> {
     const p = this.placement(w.region);
     const n = await this.running(w.region);
     if (n >= this.o.maxRunning) throw new RetryLater(`${n} fenvix machines are running in ${w.region} (limit ${this.o.maxRunning}); warm-up ${w.warmupId} waits`);
@@ -316,11 +325,13 @@ export class Ec2Launcher implements RunnerLauncher {
         UserData: Buffer.from(warmupUserData(w, { ...this.o.machineEnv, ...(p.machineEnv ?? {}) })).toString("base64"),
         TagSpecifications: [{ ResourceType: "instance", Tags: tags }, { ResourceType: "volume", Tags: tags }],
       }));
-      const id = r.Instances?.[0]?.InstanceId ?? null;
-      this.o.log?.info({ warmup: w.warmupId, instance: id, image: imageId, region: w.region, awsRegion: p.awsRegion ?? null }, "warm-up machine started");
-      return { instanceId: id, already: false };
+      const inst = r.Instances?.[0];
+      const id = inst?.InstanceId ?? null;
+      const instanceType = inst?.InstanceType ?? null;
+      this.o.log?.info({ warmup: w.warmupId, instance: id, image: imageId, instanceType, region: w.region, awsRegion: p.awsRegion ?? null }, "warm-up machine started");
+      return { instanceId: id, already: false, imageId: inst?.ImageId ?? imageId, instanceType };
     } catch (e) {
-      if ((e as { name?: string }).name === "IdempotentParameterMismatch") return { instanceId: null, already: true };
+      if ((e as { name?: string }).name === "IdempotentParameterMismatch") return this.existing(p, `fenvix-warmup-${w.warmupId}-${w.attempt}`, { warmup: w.warmupId });
       throw e;
     }
   }
@@ -336,7 +347,7 @@ export class Ec2Launcher implements RunnerLauncher {
     return ids;
   }
 
-  async launch(l: RunnerLaunch): Promise<{ instanceId: string | null; already: boolean }> {
+  async launch(l: RunnerLaunch): Promise<LaunchResult> {
     const region = l.region ?? "us";
     const p = this.placement(region);
     const n = await this.running(region);
@@ -357,15 +368,37 @@ export class Ec2Launcher implements RunnerLauncher {
         UserData: Buffer.from(jobUserData({ ...l, region }, { ...this.o.machineEnv, ...(p.machineEnv ?? {}) })).toString("base64"),
         TagSpecifications: [{ ResourceType: "instance", Tags: tags }, { ResourceType: "volume", Tags: tags }],
       }));
-      const id = r.Instances?.[0]?.InstanceId ?? null;
-      this.o.log?.info({ job: l.jobId, instance: id, image: imageId, cache: l.cacheAccess, region, awsRegion: p.awsRegion ?? null, mode: l.mode ?? "enforce" }, "runner machine started");
-      return { instanceId: id, already: false };
+      const inst = r.Instances?.[0];
+      const id = inst?.InstanceId ?? null;
+      const instanceType = inst?.InstanceType ?? null;
+      this.o.log?.info({ job: l.jobId, instance: id, image: imageId, instanceType, cache: l.cacheAccess, region, awsRegion: p.awsRegion ?? null, mode: l.mode ?? "enforce" }, "runner machine started");
+      return { instanceId: id, already: false, imageId: inst?.ImageId ?? imageId, instanceType };
     } catch (e) {
       // The same token with other parameters (a retry that got a new just-in-time configuration): the machine exists.
-      if ((e as { name?: string }).name === "IdempotentParameterMismatch") return { instanceId: null, already: true };
+      if ((e as { name?: string }).name === "IdempotentParameterMismatch") return this.existing(p, `fenvix-job-${l.jobId}`, { job: l.jobId });
       throw e;
     }
   }
+
+  /**
+   * The machine an earlier launch with this client token started: its id, image and instance type, read once. Not
+   * found, or the read fails: all null (a warn line), never an exception: the launch path does not fail on this read.
+   */
+  private async existing(p: Placement, clientToken: string, ctx: Record<string, unknown>): Promise<LaunchResult> {
+    try {
+      const r = await p.ec2.send(new DescribeInstancesCommand({ Filters: [{ Name: "client-token", Values: [clientToken] }] }));
+      const inst = (r.Reservations ?? []).flatMap((x) => x.Instances ?? [])[0];
+      if (inst) return { instanceId: inst.InstanceId ?? null, already: true, imageId: inst.ImageId ?? null, instanceType: inst.InstanceType ?? null };
+      this.o.log?.warn?.({ ...ctx, clientToken }, "the machine of this client token was not found: image unknown");
+    } catch (e) {
+      this.o.log?.warn?.({ ...ctx, clientToken, err: errMessage(e) }, "the machine of this client token could not be read: image unknown");
+    }
+    return { instanceId: null, already: true, imageId: null, instanceType: null };
+  }
+}
+
+function errMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 /** The newest runner image this account built (EC2 Image Builder tags it fenvix:image=runner). */
