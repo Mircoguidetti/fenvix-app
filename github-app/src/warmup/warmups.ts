@@ -522,11 +522,13 @@ export class Warmups {
         commitSha: row.commit_sha, ref: row.ref, workflowPath: repo.onboarding_workflow_path!, job: repo.onboarding_job!, runnerName,
         checkoutToken: tok.data.token, summaryToken, ...(cacheToken ? { cacheToken } : {}), region,
       });
-      // Warm-ups always run on the machine the launcher started (migration 0022).
-      await this.db.q(
+      // Warm-ups always run on the machine the launcher started (migration 0022). Only this attempt's row: a launch
+      // that returns after the warm-up was claimed again never stamps its (given up) machine on the newer attempt.
+      const wrote = await this.db.q<Row>(
         `update gh_warmups set instance_id = $2, image_id = $3, instance_type = $4,
-           machine_kind = case when $3::text is null then null else 'ec2' end where id = $1`,
-        [row.id, res.instanceId, res.imageId, res.instanceType]);
+           machine_kind = case when $3::text is null then null else 'ec2' end where id = $1 and attempts = $5 returning id`,
+        [row.id, res.instanceId, res.imageId, res.instanceType, attempt]);
+      if (!wrote[0]) this.log.warn({ warmup: row.id, attempt, instance: res.instanceId }, "warm-up claimed again during this launch: its machine is not recorded");
       slot!.running++;
       this.log.info({ warmup: row.id, repository: repo.full_name, sha: row.commit_sha, region, instance: res.instanceId, attempt }, "warm-up machine requested");
       return "dispatched";

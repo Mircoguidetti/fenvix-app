@@ -34,12 +34,17 @@ class FakeFleet implements RunnerLauncher {
   failNextWarmup: Error | null = null;
   /** The next warm-up launch reports no image or type (EC2's machine could not be read back). */
   unknownImageNext = false;
+  /** Report image ami-a<attempt> (so two attempts' machines differ). */
+  imageByAttempt = false;
+  /** Runs once inside the next warm-up launch, before it returns (a launch still in flight). */
+  duringWarmup: ((w: WarmupLaunch) => Promise<void>) | null = null;
   async launchWarmup(w: WarmupLaunch) {
     if (this.failNextWarmup) { const e = this.failNextWarmup; this.failNextWarmup = null; throw e; }
     if (this.used(w.region) >= this.max) throw new RetryLater("full");
     this.warmups.push(w); this.live.set(w.warmupId, w.region);
+    if (this.duringWarmup) { const f = this.duringWarmup; this.duringWarmup = null; await f(w); }
     if (this.unknownImageNext) { this.unknownImageNext = false; return { instanceId: null, already: true, imageId: null, instanceType: null }; }
-    return { instanceId: `i-w${w.warmupId}-${w.attempt}`, already: false, imageId: "ami-test", instanceType: "m7i.large" };
+    return { instanceId: `i-w${w.warmupId}-${w.attempt}`, already: false, imageId: this.imageByAttempt ? `ami-a${w.attempt}` : "ami-test", instanceType: "m7i.large" };
   }
   async terminateWarmup(_region: Region, id: number) {
     if (!this.live.delete(id)) return [];
@@ -542,6 +547,48 @@ describe("the usual path: the installation is linked, then the setup pull reques
     const unknown = await machine();
     assert.deepEqual({ status: unknown.status, image_id: unknown.image_id, instance_type: unknown.instance_type, machine_kind: unknown.machine_kind },
       { status: "dispatched", image_id: null, instance_type: null, machine_kind: null });
+  });
+});
+
+describe("C4: a slow launch of an earlier attempt never stamps its machine on a newer attempt", () => {
+  const h = new Harness();
+  const fleet = new FakeFleet();
+  let admin: pg.Client;
+  before(async () => {
+    admin = await resetDb();
+    await h.start({}, { launcher: fleet });
+    const org = await makeOrg(admin, "warm-stale");
+    h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });
+    h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": CI_YAML } });
+    await h.send("installation", installationCreated([REPOS.shop]));
+    await h.app.service.linkInstallation(INSTALLATION_ID, org.workspaceId, org.userId);
+  });
+  after(async () => { await h.stop(); await admin.end(); });
+
+  // protects=the machine identity on a warm-up row is always the current attempt's; fails_when=the post-launch write
+  // of attempt 1, returning after attempt 2 was claimed and launched, overwrites attempt 2's instance and image;
+  // no_claim=how slow EC2 can be in production.
+  it("attempt 1's launch returns after attempt 2 was claimed and launched: attempt 2's machine stays on the row", async () => {
+    const row = async () => (await admin.query("select status, attempts, instance_id, image_id, machine_kind from gh_warmups")).rows[0];
+    const pr = (await admin.query("select setup_pr_number from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].setup_pr_number as number;
+    await h.send("pull_request", pullRequest("closed", { number: pr, headRef: "fenvix/runs-on", headSha: "1".repeat(40), merged: true, mergeSha: h.gh.repos.get("acme/shop")!.branches.get("main")!.sha, mergedAt: "2026-11-18T10:00:00Z" }));
+    assert.equal((await row()).status, "pending");
+    await admin.query("update gh_warmups set not_before = now() - interval '1 second' where status = 'pending'");
+    fleet.imageByAttempt = true;
+    fleet.duringWarmup = async (w) => {
+      assert.equal(w.attempt, 1);
+      // While attempt 1's launch is in flight, its machine is given up and the warm-up is claimed and launched again.
+      await admin.query("update gh_warmups set dispatched_at = now() - interval '20 minutes'");
+      await admin.query("update gh_warmups set not_before = now() - interval '1 second'");
+      await h.app.service.warmups.tick();
+      assert.deepEqual(await row(), { status: "dispatched", attempts: 2, instance_id: `i-w${w.warmupId}-2`, image_id: "ami-a2", machine_kind: "ec2" });
+    };
+    assert.equal((await h.app.service.warmups.tick()).dispatched, 1);
+    assert.equal(fleet.duringWarmup, null, "attempt 1's launch ran");
+    const r = await row();
+    assert.deepEqual({ attempts: r.attempts, instance_id: r.instance_id, image_id: r.image_id, machine_kind: r.machine_kind },
+      { attempts: 2, instance_id: r.instance_id, image_id: "ami-a2", machine_kind: "ec2" });
+    assert.match(String(r.instance_id), /-2$/);
   });
 });
 
