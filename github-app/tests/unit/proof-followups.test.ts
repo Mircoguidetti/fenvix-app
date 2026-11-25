@@ -152,10 +152,10 @@ describe("A2 the check run's proof rows and causes list", () => {
   const causes = Array.from({ length: 12 }, (_, i) => ({ cause: `f${i}.test.js: the one-lane re-run ran 0 of its 1 test(s)`, tests: 1 }));
   // protects=the customer reads what the engine proves, and why tests are not proven; fails_when=the old "identical to
   // the serial run" words, a missing row, more than 10 causes listed; no_claim=the console's own card.
-  it("with a proof: 'Proven: no conflict between lanes | proven of ranExecuted' and 'Not proven | N'; causes listed, at most 10, then 'and K more'", () => {
+  it("with a proof: 'Proven: no conflict recorded between lanes | proven of ranExecuted' and 'Not proven | N'; causes listed, at most 10, then 'and K more'", () => {
     const sum = parseSummary({ ...base, ran: 20, tests: 20, outcome_counts: { passed: 20 }, proof: proof(8, 12, causes) });
     for (const out of [checkRunOutput(sum, ctx).summary, prComment(sum, ctx)]) {
-      assert.match(out, /\| Proven: no conflict between lanes \| 8 of 20 \|/);
+      assert.match(out, /\| Proven: no conflict recorded between lanes \| 8 of 20 \|/);
       assert.match(out, /\| Not proven \| 12 \|/);
       assert.match(out, /### Not proven\n\n- f0\.test\.js: the one-lane re-run ran 0 of its 1 test\(s\): 1 test\(s\)\n/);
       assert.match(out, /- f9\.test\.js[^\n]*\n- and 2 more/);
@@ -163,9 +163,21 @@ describe("A2 the check run's proof rows and causes list", () => {
       assert.doesNotMatch(out, /serial run|identical/);
     }
   });
+  // protects=the check run and PR comment bound the claim to what the engine recorded and list its known limits next
+  // to the proof (founder decision 2026-11-25); fails_when=the limits line is missing, drops a limit, or shows without
+  // a proof; no_claim=the engine closing the limits.
+  it("with a proof: the known limits line follows the table; without a proof: no limits line", () => {
+    const sum = parseSummary({ ...base, proof: proof(10, 0) });
+    for (const out of [checkRunOutput(sum, ctx).summary, prComment(sum, ctx)]) {
+      assert.match(out, /\| Not proven \| 0 \|\n\n_Not recorded, so not ruled out: [^\n]+\._\n/);
+      for (const limit of ["shared local services", "recursive directory operations", "a cache directory at the project root", "module reads through Vitest's main process", "child processes", "native addons", "worker threads"]) assert.ok(out.includes(limit), `missing limit: ${limit}`);
+    }
+    const serial = checkRunOutput(parseSummary({ ...base, not_proven: 2 }), ctx).summary;
+    assert.doesNotMatch(serial, /Not recorded, so not ruled out/);
+  });
   it("every test proven: both rows, Not proven 0, no causes heading", () => {
     const out = checkRunOutput(parseSummary({ ...base, proof: proof(10, 0) }), ctx).summary;
-    assert.match(out, /\| Proven: no conflict between lanes \| 10 of 10 \|/);
+    assert.match(out, /\| Proven: no conflict recorded between lanes \| 10 of 10 \|/);
     assert.match(out, /\| Not proven \| 0 \|/);
     assert.doesNotMatch(out, /### Not proven/);
   });

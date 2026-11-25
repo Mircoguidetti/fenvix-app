@@ -31,7 +31,7 @@ export type ProjectRow = S["ProjectRow"];
 export type MinuteBreakdown = S["MinuteBreakdown"];
 export type RunTests = S["RunTests"];
 export type RunProgress = S["RunProgress"];
-/** The run's test command ran in parallel lanes. Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane. */
+/** The run's test command ran in parallel lanes. Proven: no conflict between parallel lanes in what the engine recorded for each test; files in conflict ran again in one lane. */
 export type RunProof = S["RunProof"];
 /** skipMisses is keyed by the reason a test was not reused. */
 export type Run = Omit<S["Run"], "skipMisses"> & { skipMisses: Partial<Record<MissKind, number>> };

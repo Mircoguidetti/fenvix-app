@@ -97,7 +97,7 @@ the same row when the job completes (from the `workflow_job` event, the runner's
 | `region` | `"us"` \| `"eu"` \| null | where the machine ran (the organization's region when the App placed it; null when the App did not place it, e.g. an always-on runner) |
 | `progress` | Run progress \| null | while `status` is `running`: the runner's latest progress record |
 | `exitCode` | number \| null | the test command's exit code (summary.json `exit`, `ci_runs.exit_code`); null while running, without a summary, and for runs stored before migration 0019 |
-| `proof` | `{ workers, proven, notProven, rerunOneLane, parallelMs, serialMsEstimate, orderDigest, notProvenCauses: { cause, tests }[] }` \| null | the summary's `proof` (`ci_runs.proof`, jsonb): the test command ran in parallel lanes. Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane. null for a run in one lane, and for every run until the runner sends it |
+| `proof` | `{ workers, proven, notProven, rerunOneLane, parallelMs, serialMsEstimate, orderDigest, notProvenCauses: { cause, tests }[] }` \| null | the summary's `proof` (`ci_runs.proof`, jsonb): the test command ran in parallel lanes. Proven: no conflict between parallel lanes in what the engine recorded for each test; files in conflict ran again in one lane. null for a run in one lane, and for every run until the runner sends it |
 
 **Minutes add up on screen.** Wherever the dashboard shows minutes it shows the three parts and their total:
 "875 run + 1,959 skipped with proof + 1,296 setup and build = 4,130 min". The parts are rounded with the
@@ -528,9 +528,9 @@ From the summary (and the job) to the Run summary:
 **What the engine proves (Node).** A test is **proven** when the footprints the engine recorded show no unresolved
 conflict between lanes in what the test touched (paths, ports, network), or when its file ran again alone in one lane
 after a conflict. The engine does not compare each test with a real run in one lane. Every surface says it with this
-sentence (short forms where space is small: "Proven: no conflict between lanes", "not proven"):
+sentence (short forms where space is small: "Proven: no conflict recorded between lanes", "not proven"), with the known limits next to it ("Not recorded, so not ruled out: shared local services (a database or cache the tests connect to); recursive directory operations; a cache directory at the project root; module reads through Vitest's main process; writes by child processes, native addons or worker threads."):
 
-> Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane.
+> Proven: no conflict between parallel lanes in what the engine recorded for each test; files in conflict ran again in one lane.
 
 When the test command ran with parallel lanes, `summary.json` carries an optional `proof` object (absent for a run in
 one lane; `runner/fenvix-run` in fenvix-engine-cli writes it for vitest, jest and node:test with more than one worker;
@@ -598,7 +598,7 @@ reconciles the run with its rows every time, and the run's final write locks the
 at that moment (`live_n`): `tests_not_proven = greatest(N, live_n)`, a `passed` run with `live_n > 0` becomes
 `not_proven`, `passed` is lowered by the rows N did not count, and a `not_proven` run is never lowered to `passed`.
 
-**The check run's proof rows**: with a `proof`, `| Proven: no conflict between lanes | {proven} of {ranExecuted} |`;
+**The check run's proof rows**: with a `proof`, `| Proven: no conflict recorded between lanes | {proven} of {ranExecuted} |`, and the known limits line in italics after the table;
 with a proof or N > 0, `| Not proven | {N} |`; when N > 0 and the proof has causes, a `### Not proven` list after the
 table (`- {cause}: {tests} test(s)`, at most 10, then "and K more").
 
@@ -793,7 +793,7 @@ database directly.
 ## Changes
 
 - 2026-11-23 (proof to the customer, migration 0020): **honest proof words**: every surface says what the engine proves
-  ("Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane."),
+  ("Proven: no conflict between parallel lanes in what the engine recorded for each test; files in conflict ran again in one lane."),
   never a claim of equality with a run in one lane, which the engine does not make; labels only, no field renamed
   (`provenIdentical` keeps its name). Reasons: "the proof does not match the tests that ran" (was "does not cover every
   test that ran"; now also a proof above `ranExecuted`), "the comparison of two runs failed" (verify's reason), and new "the

@@ -199,7 +199,7 @@ describe("recorded end to end: installation → onboarding pull request → work
     const x = await nodeJob({ jobId: 81009, runId: 31009, sha: "9a".repeat(20), fixture: "node-vitest-parallel-proof", conclusion: "success", at: "2026-11-23T11:00" });
     assert.equal(x.run.status, "passed");
     assert.equal(x.cr.conclusion, "success");
-    assert.match(x.output.summary, new RegExp(`Proven: no conflict between lanes \\| ${x.raw.proof.proven} of 4`));
+    assert.match(x.output.summary, new RegExp(`Proven: no conflict recorded between lanes \\| ${x.raw.proof.proven} of 4`));
     const a = await apiRun(81009);
     if (!a) { t.diagnostic("no local Supabase: the API read was not made"); return; }
     assert.equal(a.status, "passed");
@@ -213,7 +213,7 @@ describe("recorded end to end: installation → onboarding pull request → work
     const x = await nodeJob({ jobId: 81010, runId: 31010, sha: "10".repeat(20), fixture: "node-vitest-parallel-hazard", conclusion: "success", at: "2026-11-23T11:10" });
     assert.equal(x.run.status, "passed");
     assert.equal(x.cr.conclusion, "success");
-    assert.match(x.output.summary, new RegExp(`Proven: no conflict between lanes \\| ${x.raw.proof.proven} of 4`));
+    assert.match(x.output.summary, new RegExp(`Proven: no conflict recorded between lanes \\| ${x.raw.proof.proven} of 4`));
     const a = await apiRun(81010);
     if (!a) { t.diagnostic("no local Supabase: the API read was not made"); return; }
     assert.equal(a.status, "passed");

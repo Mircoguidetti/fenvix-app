@@ -201,3 +201,20 @@ test("an older API refuses the not_proven filters (400): an empty page, never an
   assert.deepEqual([t.items, t.total, t.counts.not_proven], [[], 0, 0]);
   await assert.rejects(c.listRuns("p1", { status: "failed" }), "a 400 on another filter is still an error");
 });
+
+// ---------------------------------------------------------------- the customer sentence (founder decision 2026-11-25)
+
+test("the proof sentence says what the engine recorded, and the limits name every known gap", async () => {
+  // protects=the shown claim is bounded to what the engine recorded and lists the known limits next to it (engine
+  // review 2026-11-25: shared local services, recursive directory operations, a cache directory at the project root,
+  // module reads through Vitest's main process, writes by child processes / native addons / worker threads);
+  // fails_when=the sentence claims "what each test touched" or a limit is dropped; no_claim=the engine closing them.
+  const { PROOF_SENTENCE, PROOF_LIMITS, PROOF_LIMITS_SENTENCE } = await import("../../src/data/ci.ts");
+  assert.equal(PROOF_SENTENCE, "Proven: no conflict between parallel lanes in what the engine recorded for each test; files in conflict ran again in one lane.");
+  assert.doesNotMatch(PROOF_SENTENCE, /what each test touched/);
+  for (const limit of ["shared local services", "recursive directory operations", "a cache directory at the project root", "module reads through Vitest's main process", "child processes", "native addons", "worker threads"]) {
+    assert.ok(PROOF_LIMITS.some((l: string) => l.includes(limit)), `missing limit: ${limit}`);
+    assert.ok(PROOF_LIMITS_SENTENCE.includes(limit), `the shown limits miss: ${limit}`);
+  }
+  assert.match(PROOF_LIMITS_SENTENCE, /^Not recorded, so not ruled out: /);
+});

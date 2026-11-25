@@ -550,6 +550,21 @@ export function searchFrom(projects: Project[], runs: Run[], defects: Defect[], 
 
 /** Said wherever the runner reported tests not proven without a cause. */
 export const NO_CAUSE_LABEL = "The runner did not report why";
+/**
+ * The customer sentence of a parallel run's proof (founder decision 2026-11-25): bounded to what the engine recorded,
+ * with the known limits shown next to it (engine review 2026-11-25; the engine does not record these, so a conflict
+ * through them is not ruled out).
+ */
+export const PROOF_SENTENCE = "Proven: no conflict between parallel lanes in what the engine recorded for each test; files in conflict ran again in one lane.";
+export const PROOF_LIMITS = [
+  "shared local services (a database or cache the tests connect to)",
+  "recursive directory operations",
+  "a cache directory at the project root",
+  "module reads through Vitest's main process",
+  "writes by child processes, native addons or worker threads",
+] as const;
+export const PROOF_LIMITS_SENTENCE = `Not recorded, so not ruled out: ${PROOF_LIMITS.join("; ")}.`;
+
 /** The App's reason when the verify could not compare the runs (github-app/src/results/summary.ts NOT_PROVEN_REASONS). */
 export const NOT_PROVEN_INPUTS_DIFFER = "inputs differ";
 

@@ -15,7 +15,7 @@ import { useAsync } from "../lib/useAsync";
 import { useLiveRun } from "../lib/useLiveRun";
 import { REGIONS } from "./Settings";
 import { formatCount, formatDateTime, formatDuration, formatMinutes, formatPercent, shortSha } from "../lib/format";
-import { notProvenSentence, runMinutes, setupSnippet } from "../data/ci";
+import { notProvenSentence, PROOF_LIMITS_SENTENCE, PROOF_SENTENCE, runMinutes, setupSnippet } from "../data/ci";
 import { languageLabel } from "./Projects";
 
 const PAGE_SIZE = 50;
@@ -169,18 +169,18 @@ const testCount = (n: number) => `${formatCount(n)} ${n === 1 ? "test" : "tests"
 
 /**
  * The run's test command ran in parallel lanes (the summary's proof): a test is proven when the engine's footprints show
- * no conflict between lanes in what it touched, or when its file ran again alone in one lane after a conflict. Not
+ * no conflict between lanes in what it recorded, or when its file ran again alone in one lane after a conflict. Not
  * shown while running (the proof exists once the run has finished) nor for a run in one lane.
  */
 function ProofCard({ run, proof, testsLink, hasRows }: { run: Run; proof: RunProof; testsLink: string; hasRows: boolean }) {
   // N is the run's (the largest of every source, github-app/src/results/summary.ts), never less than the proof's.
   const n = Math.max(run.tests.notProven ?? 0, proof.notProven ?? 0);
   return (
-    <Card id="proof" title="Parallel with proof" description="Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane.">
+    <Card id="proof" title="Parallel with proof" description={PROOF_SENTENCE}>
       <dl className="facts facts-4">
         <div>
           <dt>Result</dt>
-          <dd>{n === 0 ? "Proven: no conflict between lanes" : `Not proven for ${testCount(n)}`}</dd>
+          <dd>{n === 0 ? "Proven: no conflict recorded between lanes" : `Not proven for ${testCount(n)}`}</dd>
         </div>
         <div>
           <dt>Workers</dt>
@@ -233,6 +233,9 @@ function ProofCard({ run, proof, testsLink, hasRows }: { run: Run; proof: RunPro
           </p>
         </div>
       )}
+      <p className="muted small" id="proof-limits">
+        {PROOF_LIMITS_SENTENCE}
+      </p>
       <p className="small">
         <a href="#tests" className="row-link">
           How this was proven

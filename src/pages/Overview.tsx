@@ -87,7 +87,7 @@ export function OverviewPage() {
                 id="kpi-proof"
                 wide
                 label="Proven"
-                help="no conflict between parallel lanes"
+                help="no conflict recorded between parallel lanes"
                 value={(o.proof?.runsWithProof ?? 0) === 0 ? "–" : `${formatCount(o.proof?.provenIdentical ?? 0)} of ${formatCount(o.proof?.runsWithProof ?? 0)} runs`}
                 sub={(o.proof?.runsWithProof ?? 0) === 0 && (o.proof?.notProven ?? 0) === 0 ? "no parallel runs yet" : `${formatCount(o.proof?.notProven ?? 0)} not proven this month`}
               />

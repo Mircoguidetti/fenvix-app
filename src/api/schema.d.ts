@@ -1092,7 +1092,7 @@ export interface components {
             /** @description Tests not proven (docs/data-contract.md, "Parallel with proof"). */
             notProven: number;
         };
-        /** @description The run's test command ran in parallel lanes (summary.json `proof`). Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane. */
+        /** @description The run's test command ran in parallel lanes (summary.json `proof`). Proven: no conflict between parallel lanes in what the engine recorded for each test; files in conflict ran again in one lane. */
         RunProof: {
             workers: number;
             proven: number;

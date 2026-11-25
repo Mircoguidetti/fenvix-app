@@ -70,7 +70,7 @@ export interface RunSummary {
   /** Null: a run in one lane, without parallel lanes (or a runner that does not send it yet). */
   proof: SummaryProof | null;
   /**
-   * N, the tests not proven (no conflict between parallel lanes in what each test touched; notProvenOf: the largest of every source, failing closed).
+   * N, the tests not proven (no conflict between parallel lanes in what the engine recorded for each test; notProvenOf: the largest of every source, failing closed).
    * `status.not_proven` is not used. The status, the check run and `tests.notProven` all use this one value.
    */
   notProven: number;

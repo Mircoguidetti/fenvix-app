@@ -79,13 +79,19 @@ const TESTS = {
       await page.getByRole("heading", { name: `Run #${x.number}`, level: 1 }).waitFor();
       await settled(page);
     };
-    // Every test proven: the card, "Proven: no conflict between lanes", no warning.
+    // Every test proven: the card, "Proven: no conflict recorded between lanes", the known limits, no warning.
     await runPage(r.proven);
     const card = page.locator("#proof");
     await card.getByRole("heading", { name: "Parallel with proof" }).waitFor();
-    await card.getByText("Proven: no conflict between parallel lanes in what each test touched; files in conflict ran again in one lane.").waitFor();
+    await card.getByText("Proven: no conflict between parallel lanes in what the engine recorded for each test; files in conflict ran again in one lane.").waitFor();
+    // the known limits next to the proof (founder decision 2026-11-25)
+    {
+      const lim = await card.locator("#proof-limits").innerText();
+      assert(lim.startsWith("Not recorded, so not ruled out: "), `the proof card's limits read ${lim}`);
+      for (const l of ["shared local services", "recursive directory operations", "a cache directory at the project root", "module reads through Vitest's main process", "child processes", "native addons", "worker threads"]) assert(lim.includes(l), `the proof card's limits miss ${l}`);
+    }
     for (const dt of ["Result", "Workers", "Proven", "Re-run in one lane", "Not proven", "Parallel time", "Order digest"]) await card.locator("dt", { hasText: new RegExp(`^${dt}$`) }).waitFor();
-    assert((await card.locator("dd").first().innerText()) === "Proven: no conflict between lanes", "the proven run's result is not 'Proven: no conflict between lanes'");
+    assert((await card.locator("dd").first().innerText()) === "Proven: no conflict recorded between lanes", "the proven run's result is not 'Proven: no conflict recorded between lanes'");
     assert(!(await page.locator("#not-proven-note").count()), "a proven run shows the not-proven note");
     await card.getByRole("link", { name: "How this was proven" }).waitFor();
     assert((await page.locator(".page-title-row .state").innerText()) === "Passed", "a proven run is not Passed");
@@ -166,6 +172,9 @@ const TESTS = {
     await settled(page);
     const r = await proofRuns(page);
     await page.locator("#proven-trend .chart svg").waitFor();
+    // the project page states the bounded claim and the known limits (founder decision 2026-11-25)
+    await page.getByText("Proven: no conflict between parallel lanes in what the engine recorded for each test; files in conflict ran again in one lane. A run is green only when every test is proven.").waitFor();
+    assert((await page.locator("#proof-limits").innerText()).includes("shared local services"), "the parallel page lacks the known limits");
     await page.locator("#speed .chart svg").waitFor();
     const causes = await page.locator("#causes tbody tr td:first-child").allTextContents();
     assert(causes.includes("file read outside the project") && causes.includes("environment variable read outside any test") && causes.includes("The runner did not report why"), `the causes read ${causes.join(" | ")}`);
@@ -188,7 +197,7 @@ const TESTS = {
     const kpi = page.locator("#kpi-proof");
     assert((await kpi.locator(".kpi-label").innerText()) === "Proven", "the KPI's label");
     assert((await kpi.locator(".kpi-value").innerText()) === `${o.provenIdentical.toLocaleString("en-US")} of ${o.runsWithProof.toLocaleString("en-US")} runs`, `the KPI reads ${await kpi.locator(".kpi-value").innerText()}`);
-    assert((await kpi.locator(".kpi-sub").innerText()) === "no conflict between parallel lanes · 3 not proven this month", `the KPI's sub-line reads ${await kpi.locator(".kpi-sub").innerText()}`);
+    assert((await kpi.locator(".kpi-sub").innerText()) === "no conflict recorded between parallel lanes · 3 not proven this month", `the KPI's sub-line reads ${await kpi.locator(".kpi-sub").innerText()}`);
     const labels = await page.locator(".kpi-label").allTextContents();
     assert(labels[0] === "Runs" && labels[1] === "Proven", `the KPI is not after Runs: ${labels.join(", ")}`);
   },
@@ -259,7 +268,7 @@ const TESTS = {
     await page.getByRole("heading", { name: "Northwind Cloud", level: 1 }).waitFor();
     const kpi = page.locator("#kpi-proof");
     assert((await kpi.locator(".kpi-value").innerText()) === "–", `with no proof block the KPI reads ${await kpi.locator(".kpi-value").innerText()}`);
-    assert((await kpi.locator(".kpi-sub").innerText()) === "no conflict between parallel lanes · no parallel runs yet", `with no proof block the sub-line reads ${await kpi.locator(".kpi-sub").innerText()}`);
+    assert((await kpi.locator(".kpi-sub").innerText()) === "no conflict recorded between parallel lanes · no parallel runs yet", `with no proof block the sub-line reads ${await kpi.locator(".kpi-sub").innerText()}`);
     await go(page, "projects/prj_homehub/parallel-with-proof");
     await page.getByRole("heading", { name: "Parallel with proof", level: 1 }).waitFor();
     await settled(page);
@@ -307,7 +316,7 @@ const TESTS = {
     assert(o.runsWithProof === 0 && o.notProven === 0, `Harbor's proof block: ${JSON.stringify(o)}`);
     const kpi = page.locator("#kpi-proof");
     assert((await kpi.locator(".kpi-value").innerText()) === "–", "the zero state's value");
-    assert((await kpi.locator(".kpi-sub").innerText()) === "no conflict between parallel lanes · no parallel runs yet", "the zero state's sub-line");
+    assert((await kpi.locator(".kpi-sub").innerText()) === "no conflict recorded between parallel lanes · no parallel runs yet", "the zero state's sub-line");
   },
 
   async "F-001 F-003 F-008: the Runs title, the tab titles, time to green per day"(page) {

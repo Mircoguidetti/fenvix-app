@@ -5,6 +5,14 @@ export const CHECK_NAME = "fenvix";
 /** Marks the one fenvix comment on a pull request, so it is found and updated in place. */
 export const COMMENT_MARKER = "<!-- fenvix:run-summary -->";
 
+/**
+ * What the engine does not record, shown next to a parallel run's proof (founder decision 2026-11-25; the console's
+ * src/data/ci.ts PROOF_LIMITS_SENTENCE says the same): a conflict through these is not ruled out.
+ */
+export const PROOF_LIMITS_TEXT =
+  "Not recorded, so not ruled out: shared local services (a database or cache the tests connect to); recursive directory operations; " +
+  "a cache directory at the project root; module reads through Vitest's main process; writes by child processes, native addons or worker threads.";
+
 export interface RenderContext {
   repository: string;
   headSha: string;
@@ -77,8 +85,9 @@ function table(s: RunSummary, ctx: RenderContext): string[] {
     `| Minutes saved | **${minutes(s.testSecondsSaved)}** (${pct(s.shareOfTestTimeSaved)} of test time) |`,
     `| Failures | ${n(s.failed.length)} |`,
     `| Flaky, reproducible | ${n(s.flaky.length)} |`,
-    ...(s.proof ? [`| Proven: no conflict between lanes | ${n(s.proof.proven)} of ${n(s.ranExecuted)} |`] : []),
+    ...(s.proof ? [`| Proven: no conflict recorded between lanes | ${n(s.proof.proven)} of ${n(s.ranExecuted)} |`] : []),
     ...(s.notProven > 0 || s.proof ? [`| Not proven | ${n(s.notProven)} |`] : []),
+    ...(s.proof ? ["", `_${PROOF_LIMITS_TEXT}_`] : []),
   ];
 }
 
