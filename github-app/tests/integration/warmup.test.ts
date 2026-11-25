@@ -32,10 +32,13 @@ class FakeFleet implements RunnerLauncher {
   async slots(region: Region) { return { running: this.used(region), warmups: [...this.live.values()].filter((r) => r === region).length, max: this.max }; }
   /** The next warm-up launch fails (EC2 refused it): the App releases the warm-up. */
   failNextWarmup: Error | null = null;
+  /** The next warm-up launch reports no image or type (EC2's machine could not be read back). */
+  unknownImageNext = false;
   async launchWarmup(w: WarmupLaunch) {
     if (this.failNextWarmup) { const e = this.failNextWarmup; this.failNextWarmup = null; throw e; }
     if (this.used(w.region) >= this.max) throw new RetryLater("full");
     this.warmups.push(w); this.live.set(w.warmupId, w.region);
+    if (this.unknownImageNext) { this.unknownImageNext = false; return { instanceId: null, already: true, imageId: null, instanceType: null }; }
     return { instanceId: `i-w${w.warmupId}-${w.attempt}`, already: false, imageId: "ami-test", instanceType: "m7i.large" };
   }
   async terminateWarmup(_region: Region, id: number) {
@@ -531,6 +534,14 @@ describe("the usual path: the installation is linked, then the setup pull reques
     const again = await machine();
     assert.deepEqual({ status: again.status, attempts: again.attempts, image_id: again.image_id, instance_type: again.instance_type, machine_kind: again.machine_kind },
       { status: "dispatched", attempts: 2, image_id: "ami-test", instance_type: "m7i.large", machine_kind: "ec2" });
+    // A launch whose machine could not be read back (no image): kind null, never 'ec2' without an image.
+    await admin.query("update gh_warmups set dispatched_at = now() - interval '20 minutes'");
+    fleet.unknownImageNext = true;
+    await h.app.service.warmups.tick();
+    assert.equal(fleet.unknownImageNext, false, "the re-claim launched");
+    const unknown = await machine();
+    assert.deepEqual({ status: unknown.status, image_id: unknown.image_id, instance_type: unknown.instance_type, machine_kind: unknown.machine_kind },
+      { status: "dispatched", image_id: null, instance_type: null, machine_kind: null });
   });
 });
 
