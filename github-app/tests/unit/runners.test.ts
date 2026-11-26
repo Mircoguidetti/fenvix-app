@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DescribeImagesCommand, DescribeInstancesCommand, RunInstancesCommand, TerminateInstancesCommand } from "@aws-sdk/client-ec2";
 import { launcherFrom, machineEnv } from "../../src/lambda/runtime.ts";
-import { Ec2Launcher, jobUserData, NoPlacement, placementsFromEnv, reap, RetryLater, type RunnerLaunch } from "../../src/runners/launcher.ts";
+import { Ec2Launcher, jobUserData, KIND_TAG, NoPlacement, placementsFromEnv, reap, RetryLater, type RunnerLaunch, SKIP_MACHINES_MAX_RUNNING, SkipCeiling } from "../../src/runners/launcher.ts";
 import { jsonLogger } from "../../src/work.ts";
 
 const launch: RunnerLaunch = {
@@ -12,7 +12,7 @@ const launch: RunnerLaunch = {
 const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://api.fenvix.dev/v1/runner/summaries" };
 
 /** An EC2 client in memory: images, running machines, the calls made. */
-function fakeEc2(o: { running?: number; images?: { ImageId: string; CreationDate: string }[]; runError?: string; instances?: { InstanceId: string; LaunchTime: Date; InstanceType?: string }[] } = {}) {
+function fakeEc2(o: { running?: number; images?: { ImageId: string; CreationDate: string }[]; runError?: string; instances?: { InstanceId: string; LaunchTime: Date; InstanceType?: string; Tags?: { Key: string; Value: string }[] }[] } = {}) {
   const calls: unknown[] = [];
   return {
     calls,
@@ -191,7 +191,8 @@ describe("side-by-side machines (spec 20261126-side-by-side-runs items 11, 12)",
   it("skip machine: no instance type, the skip file, fenvix-skip-<job>-<attempt>, started on a full fleet", async () => {
     const ec2 = fakeEc2({ running: 4 });
     await new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE }).launch({ ...launch, mode: "shadow", instanceType: "c6i.2xlarge", skip: { attempt: 2 }, skipCapacityCheck: true });
-    assert.equal(ec2.calls.some((c) => c instanceof DescribeInstancesCommand), false, "no capacity check");
+    // Rule 3: it now lists the region's machines (for the skip machines' own ceiling), and still starts on a full fleet.
+    assert.equal(ec2.calls.filter((c) => c instanceof RunInstancesCommand).length, 1, "started on a full fleet");
     const run = ec2.calls.find((c) => c instanceof RunInstancesCommand) as RunInstancesCommand;
     assert.equal(run.input.InstanceType, undefined);
     assert.equal(run.input.ClientToken, "fenvix-skip-601-2");
@@ -238,5 +239,26 @@ describe("side-by-side machines (spec 20261126-side-by-side-runs items 11, 12)",
     await assert.rejects(l.launch({ ...launch, instanceType: "c6i.2xlarge" }), RetryLater);
     await l.launch(launch);
     assert.equal(ec2.calls.filter((c) => c instanceof RunInstancesCommand).length, 1);
+  });
+
+  // protects=skip machines take no slot of the fleet limit (a paying job never waits for one) and at most
+  // SKIP_MACHINES_MAX_RUNNING (4) run at once in a region; above it, no machine; fails_when=a skip machine counts as a
+  // slot, or a fifth one starts; no_claim=EC2.
+  it("skip machines: no fleet slot; at most 4 at once in a region", async () => {
+    const skip = (i: number) => ({ InstanceId: `s-${i}`, LaunchTime: new Date(), InstanceType: "c6i.large", Tags: [{ Key: KIND_TAG, Value: "side-by-side-skip" }] });
+    const job = (i: number) => ({ InstanceId: `j-${i}`, LaunchTime: new Date(), InstanceType: "c6i.large" });
+    assert.equal(SKIP_MACHINES_MAX_RUNNING, 4);
+    const three = fakeEc2({ instances: [skip(1), skip(2), skip(3), job(1), job(2), job(3)] });
+    const l3 = new Ec2Launcher({ ec2: three, launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE });
+    assert.equal(await l3.running(), 3, "the three skip machines take no slot");
+    assert.equal(await l3.hasCapacity(), true);
+    await l3.launch({ ...launch, skip: { attempt: 1 }, skipCapacityCheck: true });
+    await l3.launch(launch);
+    assert.equal(three.calls.filter((c) => c instanceof RunInstancesCommand).length, 2, "a skip machine (the 4th) and a paying job");
+    const four = fakeEc2({ instances: [skip(1), skip(2), skip(3), skip(4)] });
+    const l4 = new Ec2Launcher({ ec2: four, launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE });
+    await assert.rejects(l4.launch({ ...launch, skip: { attempt: 1 }, skipCapacityCheck: true }), SkipCeiling);
+    assert.equal(four.calls.filter((c) => c instanceof RunInstancesCommand).length, 0, "no fifth skip machine");
+    assert.equal(await l4.hasCapacity(), true, "the fleet is empty for paying jobs");
   });
 });

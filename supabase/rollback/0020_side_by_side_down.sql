@@ -20,6 +20,13 @@ begin
   update public.gh_repositories set onboarding_state = 'pending', onboarding_detail = 'the setup pull request has not been opened yet'
     where onboarding_state in ('side_by_side_pr_open', 'side_by_side');
   delete from public.ci_usage_events where kind = 'side_by_side';
+  -- Our side-by-side jobs, while gh_jobs.kind still tells them apart: marked published, so that the code before 0020
+  -- (its sweep: completed, published_at null, publish_attempts < 5; its webhooks: tryPublish stops at published_at)
+  -- never publishes one as an ordinary job (a check run, a comment, a billable usage event).
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'gh_jobs' and column_name = 'kind') then
+    update public.gh_jobs set published_at = coalesce(published_at, now()), publish_attempts = greatest(publish_attempts, 5)
+      where kind = 'side_by_side';
+  end if;
   if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'ci_runs' and column_name = 'kind') then
     update public.gh_jobs set ci_run_id = null where ci_run_id in (select id from public.ci_runs where kind = 'side_by_side');
     delete from public.ci_runs where kind = 'side_by_side';

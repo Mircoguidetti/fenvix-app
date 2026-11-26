@@ -105,6 +105,11 @@ export class NoPlacement extends Error {}
 
 /** Thrown when the fleet is at its limit: the queue retries the job later. */
 export class RetryLater extends Error {}
+/** The region's skip machines are at SKIP_MACHINES_MAX_RUNNING: the job gets no machine (it is never retried). */
+export class SkipCeiling extends Error {}
+/** At most this many side-by-side skip machines run at once in a region (they take no slot of the fleet limit). */
+export const SKIP_MACHINES_MAX_RUNNING = 4;
+const isSkip = (i: { Tags?: { Key?: string; Value?: string }[] }) => (i.Tags ?? []).some((t) => t.Key === KIND_TAG && t.Value === "side-by-side-skip");
 
 /** The tag every per-job machine carries (the reaper and the IAM conditions use it). */
 export const ROLE_TAG = "fenvix:role";
@@ -309,12 +314,20 @@ export class Ec2Launcher implements RunnerLauncher {
     return id;
   }
 
-  /** The region's machines pending or running, in slots (sizes.ts: a c6i.2xlarge counts 4). */
-  async running(region: Region = "us"): Promise<number> {
+  /** The region's machines pending or running. */
+  private async instances(region: Region) {
     const r = await this.placement(region).ec2.send(new DescribeInstancesCommand({
       Filters: [{ Name: `tag:${ROLE_TAG}`, Values: [ROLE_VALUE] }, { Name: "instance-state-name", Values: ["pending", "running"] }],
     }));
-    return (r.Reservations ?? []).flatMap((x) => x.Instances ?? []).reduce((n, i) => n + slotsOf(i.InstanceType), 0);
+    return (r.Reservations ?? []).flatMap((x) => x.Instances ?? []);
+  }
+
+  /**
+   * The region's machines pending or running, in slots (sizes.ts: a c6i.2xlarge counts 4). Skip machines take none
+   * (they have their own ceiling, SKIP_MACHINES_MAX_RUNNING): a paying job never waits for one.
+   */
+  async running(region: Region = "us"): Promise<number> {
+    return (await this.instances(region)).filter((i) => !isSkip(i)).reduce((n, i) => n + slotsOf(i.InstanceType), 0);
   }
 
   async hasCapacity(region: Region = "us", instanceType?: string): Promise<boolean> {
@@ -322,10 +335,7 @@ export class Ec2Launcher implements RunnerLauncher {
   }
 
   async slots(region: Region): Promise<{ running: number; warmups: number; max: number }> {
-    const r = await this.placement(region).ec2.send(new DescribeInstancesCommand({
-      Filters: [{ Name: `tag:${ROLE_TAG}`, Values: [ROLE_VALUE] }, { Name: "instance-state-name", Values: ["pending", "running"] }],
-    }));
-    const all = (r.Reservations ?? []).flatMap((x) => x.Instances ?? []);
+    const all = (await this.instances(region)).filter((i) => !isSkip(i));
     const warmups = all.filter((i) => (i.Tags ?? []).some((t) => t.Key === KIND_TAG && t.Value === "warmup")).length;
     return { running: all.reduce((n, i) => n + slotsOf(i.InstanceType), 0), warmups, max: this.o.maxRunning };
   }
@@ -373,6 +383,10 @@ export class Ec2Launcher implements RunnerLauncher {
   async launch(l: RunnerLaunch): Promise<{ instanceId: string | null; already: boolean }> {
     const region = l.region ?? "us";
     const p = this.placement(region);
+    if (l.skip) {
+      const skips = (await this.instances(region)).filter(isSkip).length;
+      if (skips >= SKIP_MACHINES_MAX_RUNNING) throw new SkipCeiling(`${skips} skip machines are running in ${region} (at most ${SKIP_MACHINES_MAX_RUNNING}): job ${l.jobId} gets no machine`);
+    }
     if (!l.skipCapacityCheck) {
       const n = await this.running(region);
       const need = slotsOf(l.skip ? undefined : l.instanceType);

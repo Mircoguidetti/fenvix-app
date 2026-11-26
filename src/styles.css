@@ -1833,7 +1833,7 @@ table.data.dbs thead th { font-size: 12px; }
 /* Project page: side-by-side runs ("Today", "Side by side"). */
 .side-by-side { display: grid; gap: 16px; margin-bottom: 16px; }
 .sbs-notes { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 2px; }
-.side-by-side .kpi-value { overflow-wrap: anywhere; }
+.side-by-side .kpi-value { white-space: normal; overflow-wrap: anywhere; }
 .side-by-side .kpis .kpi-value { font-size: clamp(17px, 2.2vw, 24px); }
 .sbs-table .name-cell > .state { align-self: flex-start; }
 @media (max-width: 640px) { .connect-kind .seg button { min-height: var(--touch); } }

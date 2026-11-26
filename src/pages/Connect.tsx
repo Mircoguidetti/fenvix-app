@@ -76,7 +76,7 @@ function runnerText(r: GitHubRepository): string {
   return `${r.language ? languageLabel(r.language) : "Language not detected"} · ${r.testRunner ?? "test runner not detected"}`;
 }
 
-function RepoRow({ repo, installation, queued, onOpen }: { repo: GitHubRepository; installation: Installation | undefined; queued: boolean; onOpen: (r: GitHubRepository) => void }) {
+function RepoRow({ repo, installation, queued, onOpen, kind }: { repo: GitHubRepository; installation: Installation | undefined; queued: boolean; onOpen: (r: GitHubRepository) => void; kind: OnboardingKind }) {
   const org = useOrg();
   const active = installation?.status === "active";
   const canOpen = CAN_OPEN.has(repo.onboardingState);
@@ -103,7 +103,9 @@ function RepoRow({ repo, installation, queued, onOpen }: { repo: GitHubRepositor
           <WarmCacheNote cache={repo.warmCache} now={client.now()} full />
         </p>
       )}
-      {canOpen && repo.workflowPath && repo.job && <SetupDiff change={{ path: repo.workflowPath, job: repo.job, before: "runs-on: ubuntu-latest", after: "runs-on: fenvix" }} />}
+      {canOpen && repo.workflowPath && repo.job && (kind === "side_by_side"
+        ? <p className="small muted">The pull request adds <span className="mono">.github/workflows/fenvix-side-by-side.yml</span>, a copy of job <strong>{repo.job}</strong> on fenvix; <span className="mono">{repo.workflowPath}</span> stays as it is.</p>
+        : <SetupDiff change={{ path: repo.workflowPath, job: repo.job, before: "runs-on: ubuntu-latest", after: "runs-on: fenvix" }} />)}
       {(repo.setupPullRequest || repo.projectId || (repo.workflowPath && !canOpen)) && (
         <p className="setup-done">
           {repo.setupPullRequest && (
@@ -139,7 +141,7 @@ function RepoRow({ repo, installation, queued, onOpen }: { repo: GitHubRepositor
   );
 }
 
-function InstallationBlock({ installation, repos, queued, onOpen, highlight }: { installation: Installation; repos: GitHubRepository[]; queued: Set<number>; onOpen: (r: GitHubRepository) => void; highlight: boolean }) {
+function InstallationBlock({ installation, repos, queued, onOpen, highlight, kind }: { installation: Installation; repos: GitHubRepository[]; queued: Set<number>; onOpen: (r: GitHubRepository) => void; highlight: boolean; kind: OnboardingKind }) {
   const mine = repos.filter((r) => r.installationId === installation.installationId && !r.removed);
   const headingId = `inst-${installation.installationId}`;
   return (
@@ -170,7 +172,7 @@ function InstallationBlock({ installation, repos, queued, onOpen, highlight }: {
       ) : (
         <ul className="setup-list">
           {mine.map((r) => (
-            <RepoRow key={r.repositoryId} repo={r} installation={installation} queued={queued.has(r.repositoryId)} onOpen={onOpen} />
+            <RepoRow key={r.repositoryId} repo={r} installation={installation} queued={queued.has(r.repositoryId)} onOpen={onOpen} kind={kind} />
           ))}
         </ul>
       )}
@@ -457,7 +459,7 @@ export function ConnectPage() {
           {repos.status === "loading" && <Message>Loading repositories</Message>}
           {repos.status === "error" && <Message role="alert">{repos.message}</Message>}
           {connection.status === "ready" && repos.status === "ready" && installations.length === 0 && <p className="muted small">No installation yet: install the app first.</p>}
-          {connection.status === "ready" && repos.status === "ready" && installations.map((i) => <InstallationBlock key={i.installationId} installation={i} repos={list} queued={queued} onOpen={open} highlight={i.installationId === highlighted} />)}
+          {connection.status === "ready" && repos.status === "ready" && installations.map((i) => <InstallationBlock key={i.installationId} installation={i} repos={list} queued={queued} onOpen={open} highlight={i.installationId === highlighted} kind={shownKind} />)}
         </Step>
         <Step n={3} done={merged} title="Merge it on GitHub">
           <p className="muted">After the merge, the next test run goes to fenvix and the repository becomes a project, with its runs, defects and minutes saved. fenvix also runs the test job once on the default branch, at no charge, so your first pull request finds the cache warm.</p>

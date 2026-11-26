@@ -758,7 +758,9 @@ or `side_by_side`. Not to be confused with the trial's `FENVIX_MODE=shadow`: sid
   `/etc/fenvix/sbs-skip`, the gate step reads it and no kept step runs), at most `SIDE_BY_SIDE_SKIP_DAILY_CAP` a day.
   Hard lifetimes: a skip machine powers off 10 minutes after boot; a full machine at our job's `timeout-minutes`
   (his, at most 60: `gh_repositories.side_by_side_timeout_minutes`) plus 10 minutes, whatever the file says later.
-  A full machine counts 4 slots of the fleet limit (one slot = a c6i.large, 2 vCPU). A machine only for code of the
+  A full machine counts 4 slots of the fleet limit (one slot = a c6i.large, 2 vCPU): with `RUNNER_MAX_RUNNING` 4 it
+  needs an empty fleet, else the job gets a skip machine. Skip machines take no slot; at most 4 run at once per region,
+  above that the job gets no machine (it waits; his workflow is not affected). A machine only for code of the
   repository itself: a run GitHub does not show, a fork's pull request or a run without its head repository gets
   none; a failed lookup of the run is retried, never guessed.
   Its run row is `ci_runs.kind = 'side_by_side'` (without a summary: `not_proven`, never passed); every reader of runs

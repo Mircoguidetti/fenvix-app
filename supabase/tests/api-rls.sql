@@ -162,7 +162,10 @@ begin
   assert (select count(*) from public.api_members()) = 3, 'api_members() does not list W''s members';
   assert (select email from public.api_me()) = 'api.member@fenvix.invalid', 'api_me() is not the member';
   assert (select count(*) from public.workspace_invites) = 0, 'a member reads the invitations';
-  foreach t in array array['gh_jobs', 'gh_pull_requests', 'gh_pushes', 'gh_run_summaries', 'gh_webhook_deliveries', 'gh_run_results']
+  -- 0020: gh_jobs is readable, its side-by-side rows of the organization only (the console's pairs, side-by-side-check
+  -- and api-dashboard.test.ts cover the rows); none of its ordinary jobs.
+  assert (select count(*) from public.gh_jobs where kind <> 'side_by_side') = 0, 'the API reads ordinary App jobs';
+  foreach t in array array['gh_pull_requests', 'gh_pushes', 'gh_run_summaries', 'gh_webhook_deliveries', 'gh_run_results']
   loop
     begin
       execute format('select count(*) from public.%I', t) into n;

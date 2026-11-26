@@ -9,7 +9,7 @@ import { after, before, describe, it } from "node:test";
 import { parse } from "yaml";
 import type pg from "pg";
 import { SIDE_BY_SIDE_PATH } from "../../src/onboarding/workflow.ts";
-import { type Region, RetryLater, type RunnerLaunch, type RunnerLauncher } from "../../src/runners/launcher.ts";
+import { type Region, RetryLater, type RunnerLaunch, type RunnerLauncher, SkipCeiling } from "../../src/runners/launcher.ts";
 import { makeWorkerHandler } from "../../src/lambda/handlers.ts";
 import { jsonLogger, runWork } from "../../src/work.ts";
 import { ACCOUNT, CI_YAML, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, REPOS, resetDb, runnerCredential, workflowJob } from "../helpers/harness.ts";
@@ -33,6 +33,8 @@ class Fleet implements RunnerLauncher {
   skipFails = false;
   /** EC2 answers that the machine exists already (the same ClientToken). */
   already = false;
+  /** The region's skip machines are at their ceiling (4 running). */
+  skipCeiling = false;
   canPlace(_r: Region) { return this.places; }
   async hasCapacity(_r?: Region, instanceType?: string) { this.capacityAsked.push(instanceType); return !this.full; }
   async launch(l: RunnerLaunch) {
@@ -40,6 +42,7 @@ class Fleet implements RunnerLauncher {
     if ((this.full || this.race) && !l.skipCapacityCheck) throw new RetryLater("full");
     if (this.failTimes > 0) { this.failTimes--; throw new Error("InsufficientInstanceCapacity"); }
     if (this.skipFails && l.skip) throw new Error("InsufficientInstanceCapacity");
+    if (this.skipCeiling && l.skip) throw new SkipCeiling("4 skip machines are running");
     this.launches.push(l);
     return { instanceId: `i-${l.jobId}`, already: this.already };
   }
@@ -133,6 +136,23 @@ describe("side by side: the organization's choice, and the pull request after th
     const row = (await admin.query("select onboarding_state, side_by_side_job_name, onboarding_detail from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
     assert.deepEqual({ s: row.onboarding_state, j: row.side_by_side_job_name }, { s: "side_by_side", j: "test" });
     assert.match(row.onboarding_detail, /the merged side-by-side file keeps running/);
+  });
+
+  // protects=the organization switched to move: onboard() of a repository that runs side by side opens nothing (no
+  // runs-on pull request fenvix would not track) and says what to do; fails_when=a fenvix/runs-on PR is opened or the
+  // state changes; no_claim=-.
+  it("kind move on a repository that runs side by side: refused, no pull request, the detail says why", async () => {
+    const shop = h.gh.repos.get("acme/shop")!;
+    const pulls = shop.pulls.length;
+    await admin.query("update workspaces set onboarding_kind = 'move' where id = $1", [org.workspaceId]);
+    try {
+      await h.app.service.onboard(REPOS.shop.id);
+    } finally { await admin.query("update workspaces set onboarding_kind = 'side_by_side' where id = $1", [org.workspaceId]); }
+    assert.equal(shop.pulls.length, pulls, "no pull request");
+    assert.equal(shop.branches.has("fenvix/runs-on"), false);
+    const row = (await admin.query("select onboarding_state, onboarding_detail from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
+    assert.equal(row.onboarding_state, "side_by_side");
+    assert.match(row.onboarding_detail, /remove the side-by-side file first/);
   });
 });
 
@@ -357,6 +377,20 @@ describe("side by side: our job (AC 3, AC 6)", () => {
     try { await ourJob(7822); } finally { fleet.race = false; fleet.skipFails = false; }
     assert.equal(deletes() - d, 2, "both runners deleted");
     assert.equal((await admin.query("select launched_at from gh_jobs where job_id = 7822")).rows[0].launched_at, null);
+  });
+
+  // protects=above the region's ceiling of skip machines, a job that would get one gets no machine (it waits; his own
+  // workflow is not affected), its slot released and its runner deleted; fails_when=a skip machine starts, the job
+  // keeps launched_at, or a runner is left registered; no_claim=-.
+  it("the skip machines' ceiling: no machine, the slot released", async () => {
+    await admin.query("delete from gh_jobs where kind = 'side_by_side'");
+    const deletes = () => h.gh.exchanges.filter((x) => x.method === "DELETE" && /\/actions\/runners\//.test(x.path)).length;
+    const d = deletes(); const n = fleet.launches.length;
+    fleet.full = true; fleet.skipCeiling = true;
+    try { await ourJob(7851); } finally { fleet.full = false; fleet.skipCeiling = false; }
+    assert.equal(fleet.launches.length, n, "no machine");
+    assert.deepEqual((await admin.query("select launched_at, skip_machine from gh_jobs where job_id = 7851")).rows[0], { launched_at: null, skip_machine: true });
+    assert.equal(deletes() - d, 1, "its runner deleted");
   });
 
   // protects=a job whose every lookup failed (never classified) is classified when it is published: our job gets no
@@ -636,16 +670,17 @@ describe("side by side: turned off, and the pull request closed (state matrix)",
     await link(h, admin, org);
     const pr = h.gh.repos.get("acme/shop")!.pulls[0]!;
     await h.send("pull_request", pullRequest("closed", { number: pr.number, headRef: "fenvix/side-by-side", headSha: pr.headSha, merged: false }));
-    const row = (await admin.query("select onboarding_state, onboarding_detail from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
+    const row = (await admin.query("select onboarding_state, onboarding_detail, side_by_side_job_name from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
     assert.equal(row.onboarding_state, "closed");
+    assert.equal(row.side_by_side_job_name, null, "no longer side by side: its side-by-side job is forgotten");
     assert.match(row.onboarding_detail, /side-by-side pull request #1 was closed without merging/);
     // protects=reopened, the repository runs side by side again and its history reading, stopped while it was closed,
     // goes on; fails_when=the history stays partial for good; no_claim=-.
     await admin.query("update gh_repositories set history_cursor = $2::jsonb, history_next_at = null where repository_id = $1", [REPOS.shop.id, JSON.stringify({ page: 1, lastRunId: null, since: "2026-10-27" })]);
     await h.send("pull_request", pullRequest("reopened", { number: pr.number, headRef: "fenvix/side-by-side", headSha: pr.headSha }));
     await h.app.service.idle();
-    const again = (await admin.query("select onboarding_state, history_cursor from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
-    assert.deepEqual({ s: again.onboarding_state, done: again.history_cursor?.done }, { s: "side_by_side_pr_open", done: true });
+    const again = (await admin.query("select onboarding_state, history_cursor, side_by_side_job_name from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
+    assert.deepEqual({ s: again.onboarding_state, done: again.history_cursor?.done, j: again.side_by_side_job_name }, { s: "side_by_side_pr_open", done: true, j: "test" });
   });
 });
 

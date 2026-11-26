@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { client, type ProjectRow, type SideBySidePair, type SideBySideResult } from "../data";
-import { Card, Message } from "../components/PageHeader";
+import { Card } from "../components/PageHeader";
 import { ListSkeleton } from "../components/Skeleton";
 import { Pagination } from "../components/Pagination";
 import { StatusPill } from "../components/StateBadge";
@@ -33,7 +33,8 @@ export function SideBySideCards({ project }: { project: ProjectRow }) {
   useEffect(() => setPage(1), [project.id]);
   const data = useAsync(() => client.getSideBySide(project.id, page), [project.id, page]);
   if (data.status === "loading") return <ListSkeleton rows={3} label="Loading side by side" />;
-  if (data.status === "error") return <Message role="alert">{data.message}</Message>;
+  // An optional card: a failed request shows nothing (the Runs tab stays as it is for every project).
+  if (data.status === "error") return null;
   const d = data.data;
   if (!d.available || !d.today) return null;
   const t = d.today;

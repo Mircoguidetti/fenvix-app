@@ -11,7 +11,7 @@ import { applyChunks, applyExploration, type JobKey } from "./results/apply.ts";
 import { projectStack, type Stack } from "./results/detect.ts";
 import { parseResults, progressRecord, type RunnerExploration, type RunnerProgress, type RunnerResults } from "./results/runner-records.ts";
 import { signCacheToken, signSummaryCredential } from "./runners/credentials.ts";
-import { type Region, RetryLater, type RunMode, type RunnerLauncher } from "./runners/launcher.ts";
+import { type Region, RetryLater, type RunMode, type RunnerLauncher, SkipCeiling } from "./runners/launcher.ts";
 import { DEFAULT_WARMUP, type WarmupSettings } from "./warmup/policy.ts";
 import { Warmups } from "./warmup/warmups.ts";
 
@@ -117,6 +117,13 @@ const SIDE_BY_SIDE_STATES = ["side_by_side_pr_open", "side_by_side"];
 /** One side-by-side history message reads at most this long, and stops with this much of the Lambda left. */
 const HISTORY_BUDGET_MS = 30_000;
 const HISTORY_RESERVE_MS = 30_000;
+
+/** The onboarding results that mean "it did not work" (nothing opened, nothing found). */
+const ONBOARDING_FAILURES = ["failed", "no_workflow", "no_test_job", "unsupported"];
+
+/** A repository that leaves side by side forgets its side-by-side job (built again if it comes back). */
+const FORGET_SIDE_BY_SIDE = `side_by_side_matrix = null, side_by_side_matrix_suffix = null, side_by_side_job_name = null,
+  side_by_side_test_step = null, side_by_side_timeout_minutes = null`;
 
 /**
  * His test job's matrix suffix: "" -> null for the job's resolved name itself, " (a, b)" for that name + " (" + matrix
@@ -334,13 +341,21 @@ export class GitHubService {
       this.log.info({ repository: repo.full_name, kind }, "onboarding: side-by-side runs are off");
       return { state: "failed", detail, defaultBranch: repo.default_branch, language: null, testRunner: null };
     }
+    // A repository that runs side by side is not moved: its runs-on pull request would run beside the merged
+    // side-by-side file, and fenvix would not track it. The customer removes the side-by-side file first.
+    if (kind === "move" && SIDE_BY_SIDE_STATES.includes(repo.onboarding_state)) {
+      const detail = `this repository runs side by side: to move its test job to fenvix, remove the side-by-side file first (delete ${SIDE_BY_SIDE_PATH}, or close its pull request)`;
+      await this.db.q("update gh_repositories set onboarding_detail = $2, awaiting_link = false, updated_at = now() where repository_id = $1", [repositoryId, detail]);
+      this.log.warn({ repository: repo.full_name, state: repo.onboarding_state }, "onboarding: move refused for a repository that runs side by side");
+      return { state: "failed", detail, defaultBranch: repo.default_branch, language: null, testRunner: null };
+    }
     const options = { label: this.s.runsOnLabel, dashboardUrl: this.s.dashboardUrl };
     const res: SideBySideResult = kind === "side_by_side"
       ? await onboardSideBySide(this.gh.installation(repo.installation_id), repo.full_name, { ...options, branch: this.sbs.branch, dailyCap: this.sbs.dailyCap })
       : await onboardRepository(this.gh.installation(repo.installation_id), repo.full_name, { ...options, branch: this.s.onboardingBranch });
     // A repository that runs side by side (or has its side-by-side pull request open), onboarded again when that now
     // fails (his workflow changed, GitHub erred): it stays as it is, with what it stored; the merged file still runs.
-    if (SIDE_BY_SIDE_STATES.includes(repo.onboarding_state) && !SIDE_BY_SIDE_STATES.includes(res.state)) {
+    if (SIDE_BY_SIDE_STATES.includes(repo.onboarding_state) && ONBOARDING_FAILURES.includes(res.state)) {
       const detail = `onboarding again: ${res.detail}; the merged side-by-side file keeps running`.slice(0, 1000);
       await this.db.q("update gh_repositories set onboarding_detail = $2, awaiting_link = false, updated_at = now() where repository_id = $1", [repositoryId, detail]);
       this.log.warn({ repository: repo.full_name, state: res.state, kept: repo.onboarding_state }, "onboarding again failed: the repository stays side by side");
@@ -361,6 +376,7 @@ export class GitHubService {
        where repository_id = $1`,
       [repositoryId, res.state, res.detail, res.workflowPath ?? null, res.job ?? null, res.pr?.number ?? null, res.pr?.url ?? null,
         res.language, res.testRunner, res.defaultBranch]);
+    if (!SIDE_BY_SIDE_STATES.includes(res.state)) await this.db.q(`update gh_repositories set ${FORGET_SIDE_BY_SIDE} where repository_id = $1`, [repositoryId]);
     this.log.info({ repository: repo.full_name, state: res.state, pr: res.pr?.number }, "onboarding");
     const fresh = await this.repo(repositoryId);
     if (fresh?.workspace_id) await this.db.tx(fresh.workspace_id, (c) => this.syncProject(c, fresh, null));
@@ -509,10 +525,15 @@ export class GitHubService {
           `update ci_projects set setup_pr_number = $2, setup_pr_url = $3, setup_pr_state = $4 where id = $1`,
           [row.project_id, pr.number, pr.html_url, state]));
       }
-      // Back to side by side (the pull request reopened): a history reading stopped while it was closed goes on.
-      if (sideBySide && row && SIDE_BY_SIDE_STATES.includes(row.onboarding_state) && !SIDE_BY_SIDE_STATES.includes(was ?? "")
-        && !(row.history_cursor as { done?: boolean } | null)?.done) {
-        await this.startHistory(repo.id, { resume: true });
+      // Out of side by side (closed without merging): its side-by-side job is forgotten.
+      if (sideBySide && row && row.setup_pr_number === pr.number && SIDE_BY_SIDE_STATES.includes(was ?? "") && !SIDE_BY_SIDE_STATES.includes(row.onboarding_state)) {
+        await this.db.q(`update gh_repositories set ${FORGET_SIDE_BY_SIDE} where repository_id = $1`, [repo.id]);
+      }
+      // Back to side by side (the pull request reopened): its side-by-side job built again from the open pull request,
+      // and a history reading stopped while it was closed goes on.
+      if (sideBySide && row && SIDE_BY_SIDE_STATES.includes(row.onboarding_state) && !SIDE_BY_SIDE_STATES.includes(was ?? "")) {
+        if (!row.side_by_side_job_name) await this.onboard(repo.id);
+        if (!(row.history_cursor as { done?: boolean } | null)?.done) await this.startHistory(repo.id, { resume: true });
       }
       // Merged: the test job is on fenvix from the merge commit on. Warm the cache at it before the first pull request.
       if (state === "merged" && row?.onboarding_state === "merged" && row.setup_pr_number === pr.number) {
@@ -972,6 +993,8 @@ export class GitHubService {
         const id = jit?.data?.runner?.id;
         if (id) await gh.request("DELETE", `${base}/actions/runners/${id}`, { allow: [404, 422] }).catch(() => undefined);
         // A full fleet at launch (a race with another job): a skip machine instead, once.
+        // The region's skip machines at their ceiling: no machine (our job waits; his workflow is not affected).
+        if (e instanceof SkipCeiling) { await release(); return none(e.message); }
         if (e instanceof RetryLater && !skipWhy) {
           // Counted again under the repository's lock: another job may have taken a skip slot meanwhile.
           const ok = await this.db.tx(inst.workspace_id, async (c) => {
@@ -1014,7 +1037,8 @@ export class GitHubService {
     } catch (e) {
       if (runnerId) await gh.request("DELETE", `${base}/actions/runners/${runnerId}`, { allow: [404, 422] }).catch(() => undefined);
       await this.db.q("update gh_jobs set launched_at = null where job_id = $1", [jobId]);
-      this.log.warn({ job: jobId, err: e instanceof Error ? e.message : String(e) }, "side-by-side job: no machine (its skip machine did not start)");
+      this.log.warn({ job: jobId, err: e instanceof Error ? e.message : String(e) }, e instanceof SkipCeiling
+        ? "side-by-side job: no machine (the region's skip machines are at their ceiling)" : "side-by-side job: no machine (its skip machine did not start)");
     }
   }
 

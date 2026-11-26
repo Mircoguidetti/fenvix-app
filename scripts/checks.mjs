@@ -1089,6 +1089,11 @@ const TESTS = {
     await toast(page, "New pull requests will add a side-by-side workflow");
     assert((await side.getAttribute("aria-pressed")) === "true", "side by side is not chosen after the click");
     await page.getByText("The pull request adds one new workflow file").waitFor();
+    // protects=with side by side chosen, a repository's preview is the new file, not the runs-on change; fails_when=the
+    // runs-on diff is still shown; no_claim=-.
+    const row = page.locator(".repo-row", { hasText: "northwind/billing-worker" });
+    await row.getByText(".github/workflows/fenvix-side-by-side.yml", { exact: false }).first().waitFor();
+    assert(!(await row.locator(".diff").innerText().catch(() => "")).includes("runs-on: ubuntu-latest"), "the runs-on diff is shown for side by side");
     await go(page, "overview");
     await go(page, "projects/connect");
     await page.getByRole("group", { name: "How fenvix runs your tests" }).getByRole("button", { name: "Run side by side (your workflow stays as it is)", pressed: true }).waitFor();
@@ -1109,12 +1114,26 @@ const TESTS = {
     await table.getByText("Different", { exact: true }).waitFor();
     await table.getByText("your job failed at step Install dependencies").waitFor();
     await page.locator("#side-by-side").getByText("1 of 2 gave the same result").waitFor();
+    // protects=the numbers stay inside their cards on a phone; fails_when=a value runs past its card; no_claim=-.
+    const over = await page.locator("#today .kpi").evaluateAll((ks) => ks.filter((k) => { const v = k.querySelector(".kpi-value"); return v && v.scrollWidth > k.clientWidth + 1; }).map((k) => k.textContent));
+    assert(over.length === 0, `values overflow their cards: ${over.join(" | ")}`);
     await go(page, "projects/prj_homehub");
     await page.getByRole("heading", { name: "Runs", exact: true, level: 1 }).waitFor();
     await settled(page);
     await page.locator("#today").waitFor({ state: "detached" });
     await page.locator("#latest-run, .latest, .muted").first().waitFor();
     assert((await page.locator("#today, #side-by-side").count()) === 0, "a project that does not run side by side shows neither card");
+  },
+
+  // protects=the side-by-side card is optional: when its request fails, a project's Runs tab shows no error for it;
+  // fails_when=an alert appears; no_claim=the API's own errors.
+  async "project: a failed side-by-side request shows no error on the Runs tab"(page) {
+    await page.addInitScript(() => { window.__fenvixMockFail = ["getSideBySide"]; });
+    await signIn(page, "projects/prj_storefront");
+    await page.getByRole("heading", { name: "Runs", exact: true, level: 1 }).waitFor();
+    await settled(page);
+    assert((await page.locator("#today, #side-by-side").count()) === 0, "a side-by-side card is shown");
+    assert((await page.getByRole("alert").count()) === 0, `an alert is shown: ${await page.getByRole("alert").allTextContents()}`);
   },
 
   async "connect a project always offers more repositories and another GitHub account"(page, vp) {

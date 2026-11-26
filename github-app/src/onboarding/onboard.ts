@@ -178,7 +178,7 @@ export function sideBySidePullRequestBody(o: { job: JobAnalysis; file: string; d
     "- Creating this branch and pull request runs your own push and pull_request workflows once (your minutes).",
     "- The file reads with `permissions: contents: read`, never pushes, and skips steps that write to GitHub. A kept step can still write through a token you pass in `env` to a script; and `contents: read` can break tests that read GitHub Packages.",
     "- Your code and the secrets the copied steps use reach fenvix machines.",
-    "- External side effects of your tests happen twice: shared test databases, rate-limited APIs. If your tests call a model API (OpenAI, Anthropic, ...), the fenvix run calls it too and doubles that cost for the runs fenvix makes (at most ${o.dailyCap} a day per repository).",
+    `- External side effects of your tests happen twice: shared test databases, rate-limited APIs. If your tests call a model API (OpenAI, Anthropic, ...), the fenvix run calls it too and doubles that cost for the runs fenvix makes (at most ${o.dailyCap} a day per repository).`,
     "- Pull requests from forks are not run. Only the first matrix combination is run.",
     "",
     "### The file",

@@ -1307,6 +1307,9 @@ export const mockClient: DataClient & { liveCalls(): number } = {
   },
 
   getSideBySide(projectId: string, page = 1) {
+    // The checks make it fail (window.__fenvixMockFail) to see the page without it.
+    const fail = (globalThis as { __fenvixMockFail?: string[] }).__fenvixMockFail;
+    if (fail?.includes("getSideBySide")) return Promise.reject(new Error("The side-by-side runs could not be loaded."));
     return wait(copy(mockSideBySide(projectId, page)));
   },
   getOnboardingKind: () => wait({ kind: store().onboardingKind ?? "move", sideBySideAvailable: true }),
