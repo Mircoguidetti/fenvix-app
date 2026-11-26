@@ -1260,7 +1260,7 @@ export class GitHubService {
         }
         if (ciRunId) await c.query("update gh_jobs set ci_run_id = $2 where job_id = $1", [job.job_id, ciRunId]);
       }
-      await c.query("update gh_jobs set has_summary = $2 where job_id = $1", [job.job_id, !!summary]);
+      await c.query("update gh_jobs set has_summary = $2, checkout_sha = coalesce($3, checkout_sha) where job_id = $1", [job.job_id, !!summary, summary?.commit || null]);
       await c.query(
         `insert into ci_usage_events (installation_id, repository_id, repository_full_name, project_id, ci_run_id, github_job_id, github_run_id,
            github_run_attempt, billable, reason, plan_id, conclusion, test_minutes_ran, minutes_saved, other_step_minutes, held_minutes, occurred_at, kind)

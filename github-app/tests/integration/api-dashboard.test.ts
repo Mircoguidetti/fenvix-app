@@ -424,6 +424,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       removeMember: async (who, role) => (await call(api, "removeMember", { token: who.token, ws, params: { userId: targets[role === "owner" ? 1 : role === "admin" ? 2 : 3]!.userId } })).status,
       createInstallLink: async (who) => (await call(api, "createInstallLink", { token: who.token, ws })).status,
       openSetupPullRequest: async (who) => (await call(api, "openSetupPullRequest", { token: who.token, ws, params: { repositoryId } })).status,
+      setOnboardingKind: async (who, role) => (await call(api, "setOnboardingKind", { token: who.token, ws, body: { kind: role === "admin" ? "side_by_side" : "move" } })).status,
     };
 
     it("the matrix covers exactly the contract's admin operations", () => {
@@ -671,10 +672,84 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     }
   });
 
+  // protects=a side-by-side run is in no reader of runs (trial, runs list, overview, usage months, run page) and the
+  // console's side by side pairs his job with ours; the choice is read back; RLS keeps another organization's jobs
+  // out; fails_when=a count moves with side-by-side rows, the pair is missing or wrong, or A reads B's jobs;
+  // no_claim=how the App writes those rows (github-app tests/integration/side-by-side.test.ts).
+  it("side by side: the readers of runs leave side-by-side runs out (AC 4); the console's pairs; the choice; RLS", async () => {
+    const base = { token: ownerB.token, ws: ownerB.workspaceId };
+    const proj = { ...base, params: { projectId: B.projects.shop } };
+    const counts = async () => {
+      const runs = await call(api, "listRuns", proj);
+      const ov = await call(api, "getOverview", base);
+      const months = await call(api, "listUsageMonths", base);
+      return { runs: runs.body.total, month: ov.body.runs.thisMonth, trial: ov.body.trial?.runs ?? null, months: months.body.items.length };
+    };
+    const before = await counts();
+    const kind = await call(api, "getOnboardingKind", base);
+    assert.deepEqual(kind.body, { kind: "move", sideBySideAvailable: true });
+    const S = sha();
+    const ids: string[] = [];
+    const jobIds = [githubId(), githubId()];
+    try {
+      // Two side-by-side runs in the trial window, this month, shadow: what the App writes for our side-by-side jobs.
+      for (const [i, status] of (["passed", "failed"] as const).entries()) {
+        const started = at(0.2 + i);
+        ids.push((await admin.query(
+          `insert into public.ci_runs (project_id, workspace_id, number, commit_sha, branch, trigger, status, mode, pushed_at, started_at, finished_at, duration_ms,
+             tests_total, tests_ran, tests_passed, tests_failed, tests_skipped, would_skip_tests, would_save_ms, kind)
+           values ($1, $2, (select coalesce(max(number), 0) + 1 from public.ci_runs where project_id = $1), $3, 'main', 'push', $4, 'shadow', $5, $5, $6, 360000,
+             100, 100, 100, 0, 0, 70, 200000, 'side_by_side') returning id`,
+          [B.projects.shop, ownerB.workspaceId, i === 0 ? S : sha(), status, started, new Date(started.getTime() + 360_000)])).rows[0].id as string);
+      }
+      assert.deepEqual(await counts(), before, "the side-by-side runs count nowhere");
+      assert.equal((await call(api, "getRun", { ...base, params: { runId: ids[0]! } })).status, 404, "no run page for a side-by-side run");
+      assert.ok(!(await call(api, "search", { ...base, query: { q: S.slice(0, 10) } })).body.items.some((x: { id: string }) => x.id === `run-${ids[0]}`));
+
+      // His test job and ours on the same commit and event: one pair, the same result.
+      assert.equal((await call(api, "getSideBySide", proj)).body.available, false, "not side by side yet");
+      await admin.query(`update public.gh_repositories set onboarding_state = 'side_by_side', side_by_side_test_step = 'Run python -m pytest', side_by_side_job_name = 'test',
+        history_cursor = '{"done": true}' where repository_id = $1`, [B.repoIds.shop]);
+      await admin.query(`insert into public.gh_customer_jobs (job_id, repository_id, run_id, head_sha, event, name, labels, conclusion, started_at, completed_at, steps, source)
+        values ($1, $2, 1, $3, 'push', 'test', '{ubuntu-latest}', 'success', $4, $5, '[{"name": "Run python -m pytest", "conclusion": "success"}]', 'webhook')`,
+        [jobIds[0], B.repoIds.shop, S, at(0.25), at(0.25, 0.25)]);
+      await admin.query(`insert into public.gh_jobs (job_id, repository_id, installation_id, run_id, head_sha, status, conclusion, started_at, completed_at, kind, event,
+        has_summary, ci_run_id, checkout_sha) values ($1, $2, $3, 2, $4, 'completed', 'success', $5, $6, 'side_by_side', 'push', true, $7, $4)`,
+        [jobIds[1], B.repoIds.shop, B.installationId, S, at(0.2), at(0.2, 0.1), ids[0]]);
+      const sbs = await call(api, "getSideBySide", proj);
+      assert.equal(sbs.body.available, true);
+      assert.equal(sbs.body.items.length, 1);
+      const p0 = sbs.body.items[0];
+      assert.deepEqual({ r: p0.result, his: p0.his.jobId, ours: p0.ours.jobId, ran: p0.ours.testsRan, skip: p0.ours.wouldSkipTests, checkout: p0.ours.checkoutSha },
+        { r: "same", his: jobIds[0], ours: jobIds[1], ran: 100, skip: 70, checkout: S });
+      assert.equal(p0.his.price, "$0.006 per minute (GitHub-hosted Linux, 2 cores)");
+      assert.deepEqual(p0.his.cost, { min: 0.09, max: 0.09 }, "15 minutes at 0.006");
+      assert.equal(p0.ours.vcpuMinutes, 48, "8 vCPU for 6 minutes");
+      assert.equal(sbs.body.today.runs, 1);
+      assert.deepEqual(sbs.body.header.pairs, 1);
+      // Another organization: no project, and RLS keeps B's jobs out.
+      assert.equal((await call(api, "getSideBySide", { token: ownerA.token, ws: ownerA.workspaceId, params: { projectId: B.projects.shop } })).status, 404);
+      const c = new pg.Client({ connectionString: LOCAL!.apiDbUrl });
+      await c.connect();
+      try {
+        await c.query("begin");
+        await c.query("select set_config('app.user_id', $1, true), set_config('app.workspace_id', $2, true)", [ownerA.userId, ownerA.workspaceId]);
+        for (const t of ["gh_customer_jobs", "gh_jobs"]) assert.equal((await c.query(`select count(*)::int as n from public.${t} where repository_id = $1`, [B.repoIds.shop])).rows[0].n, 0, t);
+        await c.query("rollback");
+      } finally { await c.end(); }
+    } finally {
+      await admin.query("delete from public.gh_jobs where job_id = any($1::bigint[])", [jobIds]);
+      await admin.query("delete from public.gh_customer_jobs where job_id = any($1::bigint[])", [jobIds]);
+      await admin.query("delete from public.ci_runs where id = any($1::uuid[])", [ids]);
+      await admin.query("update public.gh_repositories set onboarding_state = 'merged', side_by_side_test_step = null, side_by_side_job_name = null, history_cursor = null where repository_id = $1", [B.repoIds.shop]);
+    }
+  });
+
   it("every dashboard operation of the contract was called and answered as the contract says", () => {
     const all = dashboardOperations().map((o) => o.operationId).sort();
     assert.deepEqual(all.filter((x) => !covered.has(x)), []);
-    assert.equal(all.length, 43);
+    // Rule 3 (spec 20261126-side-by-side-runs): three operations added (getOnboardingKind, setOnboardingKind, getSideBySide).
+    assert.equal(all.length, 46);
     void NOW;
   });
 });

@@ -297,6 +297,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{projectId}/side-by-side": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * @description A repository that runs side by side: "Today" (its own test job's last 30 days: runs per day, time, runner and
+         *     cost) and the pairs of its test job with ours, newest first, 50 per page, each with the comparison result.
+         *     available false (and no items) for a repository that does not run side by side.
+         */
+        get: operations["getSideBySide"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{projectId}/runs": {
         parameters: {
             query?: never;
@@ -1638,6 +1664,88 @@ export interface components {
          * @enum {string}
          */
         OnboardingState: "pending" | "pr_open" | "merged" | "closed" | "no_workflow" | "no_test_job" | "already_fenvix" | "unsupported" | "failed" | "side_by_side_pr_open" | "side_by_side";
+        CostRange: {
+            min: number;
+            max: number;
+        };
+        /** @enum {string} */
+        SideBySideResult: "same" | "different" | "not_comparable" | "not_proven" | "waiting";
+        SideBySidePair: {
+            headSha: string;
+            event: string | null;
+            prNumber: number | null;
+            result: components["schemas"]["SideBySideResult"];
+            detail: string;
+            notes: string[];
+            his: null | {
+                jobId: number;
+                attempt: number;
+                conclusion: string | null;
+                /** Format: date-time */
+                completedAt: string | null;
+                seconds: number | null;
+                price: string;
+                cost: components["schemas"]["CostRange"] | null;
+            };
+            ours: null | {
+                jobId: number;
+                attempt: number;
+                /** Format: date-time */
+                completedAt: string | null;
+                seconds: number;
+                vcpuMinutes: number;
+                machineCost: number;
+                testsRan: number;
+                wouldSkipTests: number;
+                wouldSaveMs: number;
+                skipMachine: boolean;
+                /** @description The commit our runner checked out (for a pull request, the merge commit). */
+                checkoutSha: string | null;
+            };
+        };
+        SideBySide: {
+            available: boolean;
+            repository: null | {
+                fullName: string;
+                state: components["schemas"]["OnboardingState"];
+                jobName: string | null;
+                testStep: string | null;
+                matrixSuffix: string | null;
+            };
+            today: null | {
+                runs: number;
+                /** @description Median of the last 30 days' daily counts. */
+                runsPerDay: number | null;
+                medianSeconds: number | null;
+                runnerLabel: string | null;
+                /** @description The rate, its range, "price unknown for <label>" or $0 for a public repository on GitHub-hosted runners. */
+                price: string;
+                costPerRun: components["schemas"]["CostRange"] | null;
+                costPerMonth: components["schemas"]["CostRange"] | null;
+                /** @enum {string} */
+                history: "read" | "reading";
+                notes: string[];
+            };
+            header: null | {
+                pairs: number;
+                same: number;
+                hisSeconds: number | null;
+                oursSeconds: number | null;
+                hisCost: number | null;
+                oursMachineCost: number | null;
+                oursVcpuMinutes: number | null;
+            };
+            ours: {
+                instanceType: string;
+                vcpus: number;
+                /** @description SIDE_BY_SIDE_USD_PER_HOUR: our machine's on-demand price. */
+                usdPerHour: number;
+            };
+            items: components["schemas"]["SideBySidePair"][];
+            total: number;
+            page: number;
+            pageSize: number;
+        };
         /**
          * @description move: the test job's runs-on becomes fenvix. side_by_side: a new workflow file runs a copy of the test job on fenvix.
          * @enum {string}
@@ -2446,6 +2554,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Project"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSideBySide: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+            };
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SideBySide"];
                 };
             };
             default: components["responses"]["Error"];

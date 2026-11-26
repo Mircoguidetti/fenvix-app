@@ -1827,3 +1827,10 @@ table.data.dbs thead th { font-size: 12px; }
 .connect-kind { display: grid; gap: 6px; margin: 4px 0 12px; }
 .connect-kind .seg { flex-wrap: wrap; }
 .connect-kind .seg button { white-space: normal; height: auto; min-height: 28px; text-align: left; }
+
+/* Project page: side-by-side runs ("Today", "Side by side"). */
+.side-by-side { display: grid; gap: 16px; margin-bottom: 16px; }
+.sbs-notes { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 2px; }
+.side-by-side .kpi-value { overflow-wrap: anywhere; }
+.side-by-side .kpis .kpi-value { font-size: clamp(17px, 2.2vw, 24px); }
+.sbs-table .name-cell > .state { align-self: flex-start; }

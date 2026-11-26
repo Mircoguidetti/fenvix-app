@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { sideBySideFromEnv } from "../config.ts";
 
 /**
  * The dashboard API's settings (docs/DEPLOY-AWS.md, "The dashboard API"). Two secrets only: the connection string of
@@ -28,6 +29,10 @@ export interface ApiConfig {
   webUrl: string;
   /** SIDE_BY_SIDE_ENABLED (default true): the organization may choose side-by-side runs (Connect). */
   sideBySideEnabled: boolean;
+  /** SIDE_BY_SIDE_INSTANCE_TYPE, its vCPUs and SIDE_BY_SIDE_USD_PER_HOUR: our machine in the console's side by side. */
+  sideBySideInstanceType: string;
+  sideBySideVcpus: number;
+  sideBySideUsdPerHour: number;
 }
 
 type Env = Record<string, string | undefined>;
@@ -91,10 +96,9 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     appSlug,
     githubConfigured: appSlug !== "",
     webUrl: url(env, "GITHUB_WEB_URL", "https://github.com", nodeEnv),
-    sideBySideEnabled: (() => {
-      const v = (env.SIDE_BY_SIDE_ENABLED ?? "true").trim().toLowerCase();
-      if (!["true", "false"].includes(v)) throw new Error("SIDE_BY_SIDE_ENABLED must be true or false");
-      return v === "true";
+    ...(() => {
+      const sbs = sideBySideFromEnv(env);
+      return { sideBySideEnabled: sbs.enabled, sideBySideInstanceType: sbs.instanceType, sideBySideVcpus: sbs.vcpus, sideBySideUsdPerHour: sbs.usdPerHour };
     })(),
   };
 }

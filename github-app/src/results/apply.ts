@@ -179,7 +179,7 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
       `insert into ci_skip_receipts (workspace_id, run_id, test_id, cache_key, reused_run_id, reused_engine_run_id, fingerprint, reused_duration_ms,
          code, modules, files_read, env_read, runtime, config, changed_files_proven)
        select public.cp_workspace(), $1, x.test_id, x.cache_key,
-         (select r.id from ci_runs r where r.project_id = $2 and r.engine_run_id = x.reused_engine_run_id and r.id <> $1 order by r.number desc limit 1),
+         (select r.id from ci_runs r where r.kind = 'ci_run' and r.project_id = $2 and r.engine_run_id = x.reused_engine_run_id and r.id <> $1 order by r.number desc limit 1),
          x.reused_engine_run_id, x.fingerprint, x.reused_duration_ms, x.code, x.modules, x.files_read, x.env_read, x.runtime, x.config, x.changed_files_proven
        from jsonb_to_recordset($3::jsonb) as x(test_id text, cache_key text, reused_engine_run_id text, fingerprint text, reused_duration_ms bigint,
          code jsonb, modules jsonb, files_read jsonb, env_read jsonb, runtime jsonb, config jsonb, changed_files_proven int)

@@ -286,3 +286,68 @@ describe("side by side: our job (AC 3, AC 6)", () => {
       [[7301, "queued", null], [7302, "queued", null], [7303, "queued", null]]);
   });
 });
+
+describe("side by side: his test job, from webhooks and from his history (item 17, AC 10)", () => {
+  const h = new Harness();
+  let admin: pg.Client;
+  const CI = ".github/workflows/ci.yml";
+  const jobs = (runId: number) => [
+    { id: runId * 10 + 1, name: "test", conclusion: "success", steps: [{ name: "Run python -m pytest -q", number: 3, conclusion: "success" }] },
+    { id: runId * 10 + 2, name: "lint", conclusion: "success" },
+  ];
+  const stored = async () => (await admin.query("select job_id, source, event, pr_number from gh_customer_jobs order by job_id")).rows;
+  before(async () => {
+    admin = await resetDb();
+    await h.start();
+    const org = await makeOrg(admin, "sbs-history-owner");
+    await admin.query("update workspaces set onboarding_kind = 'side_by_side' where id = $1", [org.workspaceId]);
+    h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });
+    h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { [CI]: CI_YAML } });
+    for (const id of [30001, 30002, 30003]) h.gh.addRun("acme/shop", id, { event: "push", headSha: "e".repeat(40), headBranch: "main", message: "m", path: CI, jobs: jobs(id) });
+    // GitHub's rate limit is low when the jobs of run 30002 come back.
+    h.gh.rateRemaining = (path) => (path.endsWith("/actions/runs/30002/jobs") ? 99 : 5000);
+    await h.send("installation", installationCreated([REPOS.shop]));
+    await link(h, admin, org);
+  });
+  after(async () => { await h.stop(); await admin.end(); });
+
+  // protects=his history stops below 100 requests left, keeps where it stopped and when to go on (24 hours), and the
+  // sweep resumes it there; only his test job is kept; fails_when=it reads on, loses its place, reads a job twice, or
+  // keeps other jobs; no_claim=GitHub's real limits.
+  it("history: stops at X-RateLimit-Remaining 99 with its cursor and history_next_at; the sweep resumes it after 24 hours", async () => {
+    const row = (await admin.query("select history_cursor, history_next_at, onboarding_state from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
+    assert.equal(row.onboarding_state, "side_by_side_pr_open");
+    assert.deepEqual({ page: row.history_cursor.page, last: row.history_cursor.lastRunId }, { page: 1, last: 30002 });
+    const in24h = Date.now() + 24 * 3_600_000;
+    assert.ok(Math.abs(new Date(row.history_next_at).getTime() - in24h) < 60_000, `history_next_at ${row.history_next_at}`);
+    assert.deepEqual(await stored(), [{ job_id: 300021, source: "history", event: "push", pr_number: null }, { job_id: 300031, source: "history", event: "push", pr_number: null }]);
+    // Not due yet: the sweep leaves it.
+    await h.app.service.sweep();
+    await h.app.service.idle();
+    assert.equal((await stored()).length, 2);
+    // 24 hours later (the clock moved): the sweep resumes after run 30002.
+    h.gh.rateRemaining = 5000;
+    await admin.query("update gh_repositories set history_next_at = now() - interval '1 second' where repository_id = $1", [REPOS.shop.id]);
+    const listed = h.gh.exchanges.filter((x) => x.path.endsWith("/jobs")).length;
+    await h.app.service.sweep();
+    await h.app.service.idle();
+    assert.deepEqual((await stored()).map((r) => r.job_id), [300011, 300021, 300031]);
+    assert.deepEqual(h.gh.exchanges.filter((x) => x.path.endsWith("/jobs")).slice(listed).map((x) => x.path), ["/repos/acme/shop/actions/runs/30001/jobs"], "resumed after its cursor");
+    const done = (await admin.query("select history_cursor, history_next_at from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
+    assert.deepEqual({ done: done.history_cursor.done, next: done.history_next_at }, { done: true, next: null });
+  });
+
+  // protects=a completed job of his test job (by name and workflow file) is stored with the run's event and pull
+  // request; other jobs and other workflows are not; fails_when=lint is stored, another file's "test" is stored, or
+  // the PR number is missing; no_claim=-.
+  it("webhooks: his completed test job is stored with event and PR; lint and another workflow's job are not", async () => {
+    h.gh.addRun("acme/shop", 30010, { event: "pull_request", headSha: "f".repeat(40), headBranch: "feature", message: "m", path: CI, pullRequests: [5] });
+    h.gh.addRun("acme/shop", 30011, { event: "push", headSha: "f".repeat(40), headBranch: "feature", message: "m", path: ".github/workflows/nightly.yml" });
+    const done = (id: number, runId: number, name: string) => h.send("workflow_job", workflowJob("completed", { id, runId, sha: "f".repeat(40), branch: "feature", labels: ["ubuntu-latest"], name, runner: "GitHub Actions 2" }));
+    await done(301001, 30010, "test");
+    await done(301002, 30010, "lint");
+    await done(301003, 30011, "test");
+    const rows = (await admin.query("select job_id, source, event, pr_number, steps is not null as steps from gh_customer_jobs where job_id > 301000 order by job_id")).rows;
+    assert.deepEqual(rows, [{ job_id: 301001, source: "webhook", event: "pull_request", pr_number: 5, steps: true }]);
+  });
+});

@@ -214,6 +214,8 @@ describe("side-by-side runs: the five SIDE_BY_SIDE_* settings (spec 20261126-sid
       { en: "true", cap: "10", skip: "30", type: "c6i.2xlarge", usd: "0.3648" });
     assert.ok(e.WORK_QUEUE_URL, "worker: the queue");
     assert.ok(env("sweep").WORK_QUEUE_URL, "sweep: the queue");
+    // The dashboard API: the choice in Connect and our machine's price in the console.
+    assert.deepEqual({ en: env("api").SIDE_BY_SIDE_ENABLED, type: env("api").SIDE_BY_SIDE_INSTANCE_TYPE, usd: env("api").SIDE_BY_SIDE_USD_PER_HOUR }, { en: "true", type: "c6i.2xlarge", usd: "0.3648" });
   });
 
   // protects=the settings are checked (a typo fails the synth, not a customer's job); fails_when=a bad value passes;

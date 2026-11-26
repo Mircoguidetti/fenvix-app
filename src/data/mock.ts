@@ -1306,6 +1306,9 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     return wait(copy(repo));
   },
 
+  getSideBySide(projectId: string, page = 1) {
+    return wait(copy(mockSideBySide(projectId, page)));
+  },
   getOnboardingKind: () => wait({ kind: store().onboardingKind ?? "move", sideBySideAvailable: true }),
   async setOnboardingKind(kind) {
     assertMockCanManage();
@@ -1321,3 +1324,27 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     return wait({ ...store().settings, workspaceName: mockOrgName() ?? next.workspaceName });
   },
 };
+
+/**
+ * The sample side-by-side repository (northwind/storefront): its own test job on Ubicloud beside ours, one pair per
+ * result. Every other project does not run side by side.
+ */
+function mockSideBySide(projectId: string, page: number): import("./types").SideBySide {
+  const ours = { instanceType: "c6i.2xlarge", vcpus: 8, usdPerHour: 0.3648 };
+  if (projectId !== "prj_storefront") return { available: false, repository: null, today: null, header: null, ours, items: [], total: 0, page, pageSize: 50 };
+  const at = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
+  const his = (s: number, c = "success") => ({ jobId: 9_000 + s, attempt: 1, conclusion: c, completedAt: at(s / 100), seconds: s, price: "$0.00125-0.002 per minute (Ubicloud x64, 2 vCPU)", cost: { min: Math.ceil(s / 60) * 0.00125, max: Math.ceil(s / 60) * 0.002 } });
+  const our = (s: number, ran: number, skip: number) => ({ jobId: 8_000 + s, attempt: 1, completedAt: at(s / 100), seconds: s, vcpuMinutes: Math.round(8 * s / 60 * 100) / 100, machineCost: Math.round(s / 60 * 0.3648 / 60 * 10_000) / 10_000, testsRan: ran, wouldSkipTests: skip, wouldSaveMs: skip * 4_000, skipMachine: false, checkoutSha: null });
+  const sha = (n: number) => n.toString(16).padStart(40, "7");
+  const items = [
+    { headSha: sha(1), event: "push", prNumber: null, result: "same" as const, detail: "both passed", notes: [], his: his(902), ours: our(361, 1721, 1410) },
+    { headSha: sha(2), event: "pull_request", prNumber: 48, result: "different" as const, detail: "your tests passed; at least one of ours failed", notes: ["A different result can come from other checks your test command runs (for example lint inside npm test), or from a model API answering differently between your run and ours."], his: his(915), ours: our(377, 1721, 1388) },
+    { headSha: sha(3), event: "push", prNumber: null, result: "not_comparable" as const, detail: "your job failed at step Install dependencies", notes: [], his: his(120, "failure"), ours: our(355, 1721, 1402) },
+  ];
+  return {
+    available: true, repository: { fullName: "northwind/storefront", state: "side_by_side", jobName: "test", testStep: "Run npm test", matrixSuffix: null },
+    today: { runs: 214, runsPerDay: 7, medianSeconds: 908, runnerLabel: "ubicloud-standard-2", price: "$0.00125-0.002 per minute (Ubicloud x64, 2 vCPU)", costPerRun: { min: 0.01875, max: 0.03 }, costPerMonth: { min: 3.94, max: 6.3 }, history: "read", notes: ["GitHub plans include monthly minutes: the cost shown is before those.", "From your last 214 runs (30 days).", "Ubicloud includes 1,250 free minutes a month."] },
+    header: { pairs: 2, same: 1, hisSeconds: 908.5, oursSeconds: 369, hisCost: 0.01875, oursMachineCost: 0.0374, oursVcpuMinutes: 49.2 },
+    ours, items, total: items.length, page, pageSize: 50,
+  };
+}

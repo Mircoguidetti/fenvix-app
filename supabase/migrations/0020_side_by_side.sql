@@ -58,6 +58,8 @@ alter table public.gh_jobs add column if not exists pr_number int;
 alter table public.gh_jobs add column if not exists skip_machine boolean not null default false;
 -- Whether the runner's summary came by the time the job was published (a side-by-side result is judged from it only).
 alter table public.gh_jobs add column if not exists has_summary boolean;
+-- The commit the runner checked out (summary.json `commit`): for a pull request, the merge commit both workflows test.
+alter table public.gh_jobs add column if not exists checkout_sha text;
 create index if not exists gh_jobs_side_by_side on public.gh_jobs (repository_id, launched_at) where kind = 'side_by_side';
 
 alter table public.ci_runs add column if not exists kind text not null default 'ci_run';

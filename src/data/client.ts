@@ -1,6 +1,6 @@
 import type {
   ActivityItem, AuditSummary, BillingOverview, Defect, DefectFamily, DefectQuery, Exploration, ExportResult, GitHubConnection, GitHubRepository, Overview, Page,
-  OnboardingKind, OnboardingKindState, Plan, Project, ProjectRow, ProjectSettings, Run, RunDetail, RunFile, SearchResult, Settings, SetupChange, SkipReceipt, SkipSharePoint, TestPage, TestQuery, UsageReport,
+  OnboardingKind, OnboardingKindState, Plan, SideBySide, Project, ProjectRow, ProjectSettings, Run, RunDetail, RunFile, SearchResult, Settings, SetupChange, SkipReceipt, SkipSharePoint, TestPage, TestQuery, UsageReport,
 } from "./types";
 
 /** GET /projects/{projectId}/runs. With `since` (ISO), every run since then, newest first, on one page. */
@@ -85,6 +85,8 @@ export interface DataClient {
   openSetupPullRequest(repositoryId: number): Promise<GitHubRepository>;
   /** How the organization's repositories are onboarded (move, or side by side), and whether side by side is on. */
   getOnboardingKind(): Promise<OnboardingKindState>;
+  /** A side-by-side repository: its own test job's last 30 days ("Today") and its pairs with ours, 50 per page. */
+  getSideBySide(projectId: string, page?: number): Promise<SideBySide>;
   /** Owner or admin: the kind of the pull requests opened from now on. */
   setOnboardingKind(kind: OnboardingKind): Promise<{ kind: OnboardingKind }>;
 

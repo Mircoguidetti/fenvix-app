@@ -153,7 +153,9 @@ describe("the stack, demo mode (an option)", async () => {
 
   it("the dashboard API function: its own settings, its two parameters, may only send to the work queue", () => {
     const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-api")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
-    assert.deepEqual(Object.keys(vars).sort(), ["DASHBOARD_URL", "DB_POOL_MAX", "GITHUB_APP_SLUG", "LOG_LEVEL", "NODE_ENV", "NODE_OPTIONS", "SSM_PREFIX", "SUPABASE_URL", "WORK_QUEUE_URL"]);
+    // Rule 3 (spec 20261126-side-by-side-runs item 15): the five SIDE_BY_SIDE_* settings (plain values) are added.
+    assert.deepEqual(Object.keys(vars).sort(), ["DASHBOARD_URL", "DB_POOL_MAX", "GITHUB_APP_SLUG", "LOG_LEVEL", "NODE_ENV", "NODE_OPTIONS", "SIDE_BY_SIDE_DAILY_CAP", "SIDE_BY_SIDE_ENABLED",
+      "SIDE_BY_SIDE_INSTANCE_TYPE", "SIDE_BY_SIDE_SKIP_DAILY_CAP", "SIDE_BY_SIDE_USD_PER_HOUR", "SSM_PREFIX", "SUPABASE_URL", "WORK_QUEUE_URL"]);
     assert.equal(vars.DASHBOARD_URL, "https://console.fenvix.dev");
     assert.equal(vars.DB_POOL_MAX, "1");
     const st = statementsOf(fnRole("api"));

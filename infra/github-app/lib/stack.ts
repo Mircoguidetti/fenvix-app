@@ -142,12 +142,19 @@ export class FenvixGitHubAppStack extends Stack {
 
     // The dashboard API: its own settings only (no App id, no OAuth client, no machine settings), its two parameters
     // (the fenvix_api database URL and the state signing key), and the work queue (the setup pull request is queued).
+    // Side-by-side runs (github-app/src/config.ts sideBySideFromEnv): the worker opens their pull requests and starts
+    // their machines; the dashboard API offers the choice (SIDE_BY_SIDE_ENABLED).
+    const sideBySideEnv: Record<string, string> = {
+      SIDE_BY_SIDE_ENABLED: String(s.sideBySideEnabled), SIDE_BY_SIDE_DAILY_CAP: String(s.sideBySideDailyCap),
+      SIDE_BY_SIDE_SKIP_DAILY_CAP: String(s.sideBySideSkipDailyCap), SIDE_BY_SIDE_INSTANCE_TYPE: s.sideBySideInstanceType,
+      SIDE_BY_SIDE_USD_PER_HOUR: s.sideBySideUsdPerHour,
+    };
     const dashboardApi = fn("DashboardApi", "api.ts", {
       timeout: Duration.seconds(29), memory: 512, reads: readersOf(s.env, "api"), short: "api",
       baseEnv: {
         NODE_ENV: "production", NODE_OPTIONS: "--enable-source-maps", LOG_LEVEL: "info", SSM_PREFIX: appPrefix(s.env),
         SUPABASE_URL: s.supabaseUrl, DASHBOARD_URL: s.dashboardUrl, GITHUB_APP_SLUG: s.githubAppSlug, DB_POOL_MAX: "1",
-        WORK_QUEUE_URL: queue.queueUrl, ...(s.apiCorsOrigins ? { API_CORS_ORIGINS: s.apiCorsOrigins } : {}),
+        WORK_QUEUE_URL: queue.queueUrl, ...(s.apiCorsOrigins ? { API_CORS_ORIGINS: s.apiCorsOrigins } : {}), ...sideBySideEnv,
       },
       description: "fenvix dashboard API (openapi/fenvix-api.yaml): /v1/* except /v1/runner/*",
     });
@@ -177,13 +184,6 @@ export class FenvixGitHubAppStack extends Stack {
       WARMUP_ENABLED: String(s.warmupEnabled), WARMUP_DAILY_CAP: String(s.warmupDailyCap), WARMUP_ORG_CONCURRENCY: String(s.warmupOrgConcurrency),
       WARMUP_RESERVE: String(s.warmupReserve), WARMUP_GRACE_SECONDS: String(s.warmupGraceSeconds), WARMUP_TICK_SECONDS: "0",
     } : { WARMUP_ENABLED: "false" };
-    // Side-by-side runs (github-app/src/config.ts sideBySideFromEnv): the worker opens their pull requests and starts
-    // their machines; the dashboard API offers the choice (SIDE_BY_SIDE_ENABLED).
-    const sideBySideEnv: Record<string, string> = {
-      SIDE_BY_SIDE_ENABLED: String(s.sideBySideEnabled), SIDE_BY_SIDE_DAILY_CAP: String(s.sideBySideDailyCap),
-      SIDE_BY_SIDE_SKIP_DAILY_CAP: String(s.sideBySideSkipDailyCap), SIDE_BY_SIDE_INSTANCE_TYPE: s.sideBySideInstanceType,
-      SIDE_BY_SIDE_USD_PER_HOUR: s.sideBySideUsdPerHour,
-    };
     // The worker signs each machine's credentials (per-job only): the summary key and the cache signing key.
     const workerReads = readersOf(s.env, "worker").filter((p) => perJob || !/\/(runner-token|signing-key)$/.test(p));
     const worker = fn("Worker", "worker.ts", {
