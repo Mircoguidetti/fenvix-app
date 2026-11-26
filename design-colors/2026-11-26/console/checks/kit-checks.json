@@ -1,0 +1,2646 @@
+[
+ {
+  "kit": "K0",
+  "scheme": "light",
+  "pages": {
+   "overview": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#06080e",
+      "bg": "#f6f6f7",
+      "ratio": 18.54
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#06080e",
+      "bg": "#ffffff",
+      "ratio": 20.02
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#5f636b",
+      "bg": "#f6f6f7",
+      "ratio": 5.58
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#5f636b",
+      "bg": "#ffffff",
+      "ratio": 6.03
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#5f636b",
+      "bg": "#f6f6f8",
+      "ratio": 5.59
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#f6f6f7",
+      "bg": "#06080e",
+      "ratio": 18.54
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#676b73",
+      "bg": "#ffffff",
+      "ratio": 5.35
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#676b73",
+      "bg": "#f6f6f8",
+      "ratio": 4.95
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#0d4fa3",
+      "bg": "#e6eef9",
+      "ratio": 6.74
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#0d4fa3",
+      "bg": "#f6f6f7",
+      "ratio": 7.3
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#0d4fa3",
+      "bg": "#ffffff",
+      "ratio": 7.88
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Northwind Cloud",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Runs per day",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Skipped with proof",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Time to green",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Cost compared",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Projects",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Latest defects",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Live activity",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#06080e",
+     "--text": "#06080e",
+     "--page": "#f6f6f7",
+     "--bg": "#ffffff",
+     "--muted": "#5f636b",
+     "--nav-on": "#0d4fa3",
+     "--chart": "#0d4fa3",
+     "--success": "#067a3a",
+     "--danger": "#d6140a",
+     "--warning": "#9c5900",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ]
+   },
+   "run": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#06080e",
+      "bg": "#f6f6f7",
+      "ratio": 18.54
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#06080e",
+      "bg": "#ffffff",
+      "ratio": 20.02
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#5f636b",
+      "bg": "#f6f6f7",
+      "ratio": 5.58
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#5f636b",
+      "bg": "#ffffff",
+      "ratio": 6.03
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#5f636b",
+      "bg": "#f6f6f8",
+      "ratio": 5.59
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#f6f6f7",
+      "bg": "#06080e",
+      "ratio": 18.54
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#676b73",
+      "bg": "#ffffff",
+      "ratio": 5.35
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#676b73",
+      "bg": "#f6f6f8",
+      "ratio": 4.95
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#0d4fa3",
+      "bg": "#e6eef9",
+      "ratio": 6.74
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#0d4fa3",
+      "bg": "#f6f6f7",
+      "ratio": 7.3
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#0d4fa3",
+      "bg": "#ffffff",
+      "ratio": 7.88
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Run #4299",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Parallel with proof",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Run",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Test suite",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Tests",
+      "colors": [
+       "rgb(6, 8, 14)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#06080e",
+     "--text": "#06080e",
+     "--page": "#f6f6f7",
+     "--bg": "#ffffff",
+     "--muted": "#5f636b",
+     "--nav-on": "#0d4fa3",
+     "--chart": "#0d4fa3",
+     "--success": "#067a3a",
+     "--danger": "#d6140a",
+     "--warning": "#9c5900",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ],
+    "url": "http://localhost:5173/projects/prj_homehub/runs/run_homehub_4299"
+   }
+  },
+  "runPath": "projects/prj_homehub/runs/run_homehub_4299",
+  "consoleErrors": [],
+  "foreignRequests": [],
+  "hosts": [
+   "localhost:5173"
+  ]
+ },
+ {
+  "kit": "K0",
+  "scheme": "dark",
+  "pages": {
+   "overview": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#f6f6f7",
+      "bg": "#06080e",
+      "ratio": 18.54
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#f6f6f7",
+      "bg": "#0d1321",
+      "ratio": 17.17
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#a9b2c6",
+      "bg": "#06080e",
+      "ratio": 9.41
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#a9b2c6",
+      "bg": "#0d1321",
+      "ratio": 8.72
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#a9b2c6",
+      "bg": "#10182b",
+      "ratio": 8.31
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#06080e",
+      "bg": "#f6f6f7",
+      "ratio": 18.54
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#97a1ba",
+      "bg": "#0d1321",
+      "ratio": 7.17
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#97a1ba",
+      "bg": "#10182b",
+      "ratio": 6.84
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#f6f6f7",
+      "bg": "#202c48",
+      "ratio": 12.79
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#b6c6ed",
+      "bg": "#06080e",
+      "ratio": 11.72
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#b6c6ed",
+      "bg": "#0d1321",
+      "ratio": 10.85
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Northwind Cloud",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Runs per day",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Skipped with proof",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Time to green",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Cost compared",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Projects",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Latest defects",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Live activity",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#06080e",
+     "--text": "#f6f6f7",
+     "--page": "#06080e",
+     "--bg": "#0d1321",
+     "--muted": "#a9b2c6",
+     "--nav-on": "#f6f6f7",
+     "--chart": "#b6c6ed",
+     "--success": "#3ddc84",
+     "--danger": "#ff6a5c",
+     "--warning": "#ffb020",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ]
+   },
+   "run": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#f6f6f7",
+      "bg": "#06080e",
+      "ratio": 18.54
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#f6f6f7",
+      "bg": "#0d1321",
+      "ratio": 17.17
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#a9b2c6",
+      "bg": "#06080e",
+      "ratio": 9.41
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#a9b2c6",
+      "bg": "#0d1321",
+      "ratio": 8.72
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#a9b2c6",
+      "bg": "#10182b",
+      "ratio": 8.31
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#06080e",
+      "bg": "#f6f6f7",
+      "ratio": 18.54
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#97a1ba",
+      "bg": "#0d1321",
+      "ratio": 7.17
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#97a1ba",
+      "bg": "#10182b",
+      "ratio": 6.84
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#f6f6f7",
+      "bg": "#202c48",
+      "ratio": 12.79
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#b6c6ed",
+      "bg": "#06080e",
+      "ratio": 11.72
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#b6c6ed",
+      "bg": "#0d1321",
+      "ratio": 10.85
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Run #4299",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Parallel with proof",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Run",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Test suite",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Tests",
+      "colors": [
+       "rgb(246, 246, 247)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#06080e",
+     "--text": "#f6f6f7",
+     "--page": "#06080e",
+     "--bg": "#0d1321",
+     "--muted": "#a9b2c6",
+     "--nav-on": "#f6f6f7",
+     "--chart": "#b6c6ed",
+     "--success": "#3ddc84",
+     "--danger": "#ff6a5c",
+     "--warning": "#ffb020",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ],
+    "url": "http://localhost:5173/projects/prj_homehub/runs/run_homehub_4299"
+   }
+  },
+  "runPath": "projects/prj_homehub/runs/run_homehub_4299",
+  "consoleErrors": [],
+  "foreignRequests": [],
+  "hosts": [
+   "localhost:5173"
+  ]
+ },
+ {
+  "kit": "K1",
+  "scheme": "light",
+  "pages": {
+   "overview": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#1e293b",
+      "bg": "#f8fafc",
+      "ratio": 13.98
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#1e293b",
+      "bg": "#ffffff",
+      "ratio": 14.63
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#475569",
+      "bg": "#f8fafc",
+      "ratio": 7.24
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#475569",
+      "bg": "#ffffff",
+      "ratio": 7.58
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#475569",
+      "bg": "#f1f5f9",
+      "ratio": 6.92
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#f8fafc",
+      "bg": "#1e293b",
+      "ratio": 13.98
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#64748b",
+      "bg": "#ffffff",
+      "ratio": 4.76
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#64748b",
+      "bg": "#f1f5f9",
+      "ratio": 4.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#2563eb",
+      "bg": "#eef3fd",
+      "ratio": 4.65
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#2563eb",
+      "bg": "#f8fafc",
+      "ratio": 4.94
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#2563eb",
+      "bg": "#ffffff",
+      "ratio": 5.17
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Northwind Cloud",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Runs per day",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Skipped with proof",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Time to green",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Cost compared",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Projects",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Latest defects",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Live activity",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#1E293B",
+     "--page": "#F8FAFC",
+     "--bg": "#FFFFFF",
+     "--muted": "#475569",
+     "--nav-on": "#2563EB",
+     "--chart": "#2563EB",
+     "--success": "#067a3a",
+     "--danger": "#d6140a",
+     "--warning": "#9c5900",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ]
+   },
+   "run": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#1e293b",
+      "bg": "#f8fafc",
+      "ratio": 13.98
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#1e293b",
+      "bg": "#ffffff",
+      "ratio": 14.63
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#475569",
+      "bg": "#f8fafc",
+      "ratio": 7.24
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#475569",
+      "bg": "#ffffff",
+      "ratio": 7.58
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#475569",
+      "bg": "#f1f5f9",
+      "ratio": 6.92
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#f8fafc",
+      "bg": "#1e293b",
+      "ratio": 13.98
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#64748b",
+      "bg": "#ffffff",
+      "ratio": 4.76
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#64748b",
+      "bg": "#f1f5f9",
+      "ratio": 4.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#2563eb",
+      "bg": "#eef3fd",
+      "ratio": 4.65
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#2563eb",
+      "bg": "#f8fafc",
+      "ratio": 4.94
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#2563eb",
+      "bg": "#ffffff",
+      "ratio": 5.17
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Run #4299",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Parallel with proof",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Run",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Test suite",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Tests",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#1E293B",
+     "--page": "#F8FAFC",
+     "--bg": "#FFFFFF",
+     "--muted": "#475569",
+     "--nav-on": "#2563EB",
+     "--chart": "#2563EB",
+     "--success": "#067a3a",
+     "--danger": "#d6140a",
+     "--warning": "#9c5900",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ],
+    "url": "http://localhost:5173/projects/prj_homehub/runs/run_homehub_4299"
+   }
+  },
+  "runPath": "projects/prj_homehub/runs/run_homehub_4299",
+  "consoleErrors": [],
+  "foreignRequests": [],
+  "hosts": [
+   "localhost:5173"
+  ]
+ },
+ {
+  "kit": "K1",
+  "scheme": "dark",
+  "pages": {
+   "overview": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#f1f5f9",
+      "bg": "#0f172a",
+      "ratio": 16.3
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#f1f5f9",
+      "bg": "#1e293b",
+      "ratio": 13.35
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#a3b1c6",
+      "bg": "#0f172a",
+      "ratio": 8.21
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#a3b1c6",
+      "bg": "#1e293b",
+      "ratio": 6.73
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#a3b1c6",
+      "bg": "#172033",
+      "ratio": 7.48
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#0f172a",
+      "bg": "#f1f5f9",
+      "ratio": 16.3
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#94a3b8",
+      "bg": "#1e293b",
+      "ratio": 5.71
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#94a3b8",
+      "bg": "#172033",
+      "ratio": 6.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#60a5fa",
+      "bg": "#263852",
+      "ratio": 4.67
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#60a5fa",
+      "bg": "#0f172a",
+      "ratio": 7.02
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#60a5fa",
+      "bg": "#1e293b",
+      "ratio": 5.75
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Northwind Cloud",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Runs per day",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Skipped with proof",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Time to green",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Cost compared",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Projects",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Latest defects",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Live activity",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#F1F5F9",
+     "--page": "#0F172A",
+     "--bg": "#1E293B",
+     "--muted": "#A3B1C6",
+     "--nav-on": "#60A5FA",
+     "--chart": "#60A5FA",
+     "--success": "#3ddc84",
+     "--danger": "#ff6a5c",
+     "--warning": "#ffb020",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ]
+   },
+   "run": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#f1f5f9",
+      "bg": "#0f172a",
+      "ratio": 16.3
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#f1f5f9",
+      "bg": "#1e293b",
+      "ratio": 13.35
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#a3b1c6",
+      "bg": "#0f172a",
+      "ratio": 8.21
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#a3b1c6",
+      "bg": "#1e293b",
+      "ratio": 6.73
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#a3b1c6",
+      "bg": "#172033",
+      "ratio": 7.48
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#0f172a",
+      "bg": "#f1f5f9",
+      "ratio": 16.3
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#94a3b8",
+      "bg": "#1e293b",
+      "ratio": 5.71
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#94a3b8",
+      "bg": "#172033",
+      "ratio": 6.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#60a5fa",
+      "bg": "#263852",
+      "ratio": 4.67
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#60a5fa",
+      "bg": "#0f172a",
+      "ratio": 7.02
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#60a5fa",
+      "bg": "#1e293b",
+      "ratio": 5.75
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Run #4299",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Parallel with proof",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Run",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Test suite",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Tests",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#F1F5F9",
+     "--page": "#0F172A",
+     "--bg": "#1E293B",
+     "--muted": "#A3B1C6",
+     "--nav-on": "#60A5FA",
+     "--chart": "#60A5FA",
+     "--success": "#3ddc84",
+     "--danger": "#ff6a5c",
+     "--warning": "#ffb020",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ],
+    "url": "http://localhost:5173/projects/prj_homehub/runs/run_homehub_4299"
+   }
+  },
+  "runPath": "projects/prj_homehub/runs/run_homehub_4299",
+  "consoleErrors": [],
+  "foreignRequests": [],
+  "hosts": [
+   "localhost:5173"
+  ]
+ },
+ {
+  "kit": "K2",
+  "scheme": "light",
+  "pages": {
+   "overview": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#1e293b",
+      "bg": "#f8fafc",
+      "ratio": 13.98
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#1e293b",
+      "bg": "#ffffff",
+      "ratio": 14.63
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#475569",
+      "bg": "#f8fafc",
+      "ratio": 7.24
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#475569",
+      "bg": "#ffffff",
+      "ratio": 7.58
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#475569",
+      "bg": "#f1f5f9",
+      "ratio": 6.92
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#f8fafc",
+      "bg": "#1e293b",
+      "ratio": 13.98
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#64748b",
+      "bg": "#ffffff",
+      "ratio": 4.76
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#64748b",
+      "bg": "#f1f5f9",
+      "ratio": 4.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#2563eb",
+      "bg": "#eef3fd",
+      "ratio": 4.65
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#2563eb",
+      "bg": "#f8fafc",
+      "ratio": 4.94
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#2563eb",
+      "bg": "#ffffff",
+      "ratio": 5.17
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Northwind Cloud",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Runs per day",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Skipped with proof",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Time to green",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Cost compared",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Projects",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Latest defects",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Live activity",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#1E293B",
+     "--page": "#F8FAFC",
+     "--bg": "#FFFFFF",
+     "--muted": "#475569",
+     "--nav-on": "#2563EB",
+     "--chart": "#2563EB",
+     "--success": "#067a3a",
+     "--danger": "#d6140a",
+     "--warning": "#9c5900",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ]
+   },
+   "run": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#1e293b",
+      "bg": "#f8fafc",
+      "ratio": 13.98
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#1e293b",
+      "bg": "#ffffff",
+      "ratio": 14.63
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#475569",
+      "bg": "#f8fafc",
+      "ratio": 7.24
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#475569",
+      "bg": "#ffffff",
+      "ratio": 7.58
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#475569",
+      "bg": "#f1f5f9",
+      "ratio": 6.92
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#f8fafc",
+      "bg": "#1e293b",
+      "ratio": 13.98
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#64748b",
+      "bg": "#ffffff",
+      "ratio": 4.76
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#64748b",
+      "bg": "#f1f5f9",
+      "ratio": 4.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#2563eb",
+      "bg": "#eef3fd",
+      "ratio": 4.65
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#2563eb",
+      "bg": "#f8fafc",
+      "ratio": 4.94
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#2563eb",
+      "bg": "#ffffff",
+      "ratio": 5.17
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Run #4299",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Parallel with proof",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Run",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Test suite",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Tests",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#1E293B",
+     "--page": "#F8FAFC",
+     "--bg": "#FFFFFF",
+     "--muted": "#475569",
+     "--nav-on": "#2563EB",
+     "--chart": "#2563EB",
+     "--success": "#067a3a",
+     "--danger": "#d6140a",
+     "--warning": "#9c5900",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ],
+    "url": "http://localhost:5173/projects/prj_homehub/runs/run_homehub_4299"
+   }
+  },
+  "runPath": "projects/prj_homehub/runs/run_homehub_4299",
+  "consoleErrors": [],
+  "foreignRequests": [],
+  "hosts": [
+   "localhost:5173"
+  ]
+ },
+ {
+  "kit": "K2",
+  "scheme": "dark",
+  "pages": {
+   "overview": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#f1f5f9",
+      "bg": "#0f172a",
+      "ratio": 16.3
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#f1f5f9",
+      "bg": "#1e293b",
+      "ratio": 13.35
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#a3b1c6",
+      "bg": "#0f172a",
+      "ratio": 8.21
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#a3b1c6",
+      "bg": "#1e293b",
+      "ratio": 6.73
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#a3b1c6",
+      "bg": "#172033",
+      "ratio": 7.48
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#0f172a",
+      "bg": "#f1f5f9",
+      "ratio": 16.3
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#94a3b8",
+      "bg": "#1e293b",
+      "ratio": 5.71
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#94a3b8",
+      "bg": "#172033",
+      "ratio": 6.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#60a5fa",
+      "bg": "#263852",
+      "ratio": 4.67
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#60a5fa",
+      "bg": "#0f172a",
+      "ratio": 7.02
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#60a5fa",
+      "bg": "#1e293b",
+      "ratio": 5.75
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Northwind Cloud",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Runs per day",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Skipped with proof",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Time to green",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Cost compared",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Projects",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Latest defects",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Live activity",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#F1F5F9",
+     "--page": "#0F172A",
+     "--bg": "#1E293B",
+     "--muted": "#A3B1C6",
+     "--nav-on": "#60A5FA",
+     "--chart": "#60A5FA",
+     "--success": "#3ddc84",
+     "--danger": "#ff6a5c",
+     "--warning": "#ffb020",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ]
+   },
+   "run": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#f1f5f9",
+      "bg": "#0f172a",
+      "ratio": 16.3
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#f1f5f9",
+      "bg": "#1e293b",
+      "ratio": 13.35
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#a3b1c6",
+      "bg": "#0f172a",
+      "ratio": 8.21
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#a3b1c6",
+      "bg": "#1e293b",
+      "ratio": 6.73
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#a3b1c6",
+      "bg": "#172033",
+      "ratio": 7.48
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#0f172a",
+      "bg": "#f1f5f9",
+      "ratio": 16.3
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#94a3b8",
+      "bg": "#1e293b",
+      "ratio": 5.71
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#94a3b8",
+      "bg": "#172033",
+      "ratio": 6.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#60a5fa",
+      "bg": "#263852",
+      "ratio": 4.67
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#60a5fa",
+      "bg": "#0f172a",
+      "ratio": 7.02
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#60a5fa",
+      "bg": "#1e293b",
+      "ratio": 5.75
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Run #4299",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Parallel with proof",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Run",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Test suite",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Tests",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#F1F5F9",
+     "--page": "#0F172A",
+     "--bg": "#1E293B",
+     "--muted": "#A3B1C6",
+     "--nav-on": "#60A5FA",
+     "--chart": "#60A5FA",
+     "--success": "#3ddc84",
+     "--danger": "#ff6a5c",
+     "--warning": "#ffb020",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ],
+    "url": "http://localhost:5173/projects/prj_homehub/runs/run_homehub_4299"
+   }
+  },
+  "runPath": "projects/prj_homehub/runs/run_homehub_4299",
+  "consoleErrors": [],
+  "foreignRequests": [],
+  "hosts": [
+   "localhost:5173"
+  ]
+ },
+ {
+  "kit": "K3",
+  "scheme": "light",
+  "pages": {
+   "overview": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#1e293b",
+      "bg": "#f8fafc",
+      "ratio": 13.98
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#1e293b",
+      "bg": "#ffffff",
+      "ratio": 14.63
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#475569",
+      "bg": "#f8fafc",
+      "ratio": 7.24
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#475569",
+      "bg": "#ffffff",
+      "ratio": 7.58
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#475569",
+      "bg": "#f1f5f9",
+      "ratio": 6.92
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#f8fafc",
+      "bg": "#1e293b",
+      "ratio": 13.98
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#64748b",
+      "bg": "#ffffff",
+      "ratio": 4.76
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#64748b",
+      "bg": "#f1f5f9",
+      "ratio": 4.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#1d4ed8",
+      "bg": "#edf1fc",
+      "ratio": 5.93
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#1d4ed8",
+      "bg": "#f8fafc",
+      "ratio": 6.41
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#1d4ed8",
+      "bg": "#ffffff",
+      "ratio": 6.7
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Northwind Cloud",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Runs per day",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Skipped with proof",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Time to green",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Cost compared",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Projects",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Latest defects",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Live activity",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#1E293B",
+     "--page": "#F8FAFC",
+     "--bg": "#FFFFFF",
+     "--muted": "#475569",
+     "--nav-on": "#1D4ED8",
+     "--chart": "#1D4ED8",
+     "--success": "#067a3a",
+     "--danger": "#d6140a",
+     "--warning": "#9c5900",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ]
+   },
+   "run": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#1e293b",
+      "bg": "#f8fafc",
+      "ratio": 13.98
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#1e293b",
+      "bg": "#ffffff",
+      "ratio": 14.63
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#475569",
+      "bg": "#f8fafc",
+      "ratio": 7.24
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#475569",
+      "bg": "#ffffff",
+      "ratio": 7.58
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#475569",
+      "bg": "#f1f5f9",
+      "ratio": 6.92
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#f8fafc",
+      "bg": "#1e293b",
+      "ratio": 13.98
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#64748b",
+      "bg": "#ffffff",
+      "ratio": 4.76
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#64748b",
+      "bg": "#f1f5f9",
+      "ratio": 4.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#1d4ed8",
+      "bg": "#edf1fc",
+      "ratio": 5.93
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#1d4ed8",
+      "bg": "#f8fafc",
+      "ratio": 6.41
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#1d4ed8",
+      "bg": "#ffffff",
+      "ratio": 6.7
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Run #4299",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Parallel with proof",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Run",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Test suite",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Tests",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#1E293B",
+     "--page": "#F8FAFC",
+     "--bg": "#FFFFFF",
+     "--muted": "#475569",
+     "--nav-on": "#1D4ED8",
+     "--chart": "#1D4ED8",
+     "--success": "#067a3a",
+     "--danger": "#d6140a",
+     "--warning": "#9c5900",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ],
+    "url": "http://localhost:5173/projects/prj_homehub/runs/run_homehub_4299"
+   }
+  },
+  "runPath": "projects/prj_homehub/runs/run_homehub_4299",
+  "consoleErrors": [],
+  "foreignRequests": [],
+  "hosts": [
+   "localhost:5173"
+  ]
+ },
+ {
+  "kit": "K3",
+  "scheme": "dark",
+  "pages": {
+   "overview": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#f1f5f9",
+      "bg": "#0f172a",
+      "ratio": 16.3
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#f1f5f9",
+      "bg": "#1e293b",
+      "ratio": 13.35
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#a3b1c6",
+      "bg": "#0f172a",
+      "ratio": 8.21
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#a3b1c6",
+      "bg": "#1e293b",
+      "ratio": 6.73
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#a3b1c6",
+      "bg": "#172033",
+      "ratio": 7.48
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#0f172a",
+      "bg": "#f1f5f9",
+      "ratio": 16.3
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#94a3b8",
+      "bg": "#1e293b",
+      "ratio": 5.71
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#94a3b8",
+      "bg": "#172033",
+      "ratio": 6.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#60a5fa",
+      "bg": "#263852",
+      "ratio": 4.67
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#60a5fa",
+      "bg": "#0f172a",
+      "ratio": 7.02
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#60a5fa",
+      "bg": "#1e293b",
+      "ratio": 5.75
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Northwind Cloud",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Runs per day",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Skipped with proof",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Time to green",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Cost compared",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Projects",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Latest defects",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Live activity",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#F1F5F9",
+     "--page": "#0F172A",
+     "--bg": "#1E293B",
+     "--muted": "#A3B1C6",
+     "--nav-on": "#60A5FA",
+     "--chart": "#60A5FA",
+     "--success": "#3ddc84",
+     "--danger": "#ff6a5c",
+     "--warning": "#ffb020",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ]
+   },
+   "run": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#f1f5f9",
+      "bg": "#0f172a",
+      "ratio": 16.3
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#f1f5f9",
+      "bg": "#1e293b",
+      "ratio": 13.35
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#a3b1c6",
+      "bg": "#0f172a",
+      "ratio": 8.21
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#a3b1c6",
+      "bg": "#1e293b",
+      "ratio": 6.73
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#a3b1c6",
+      "bg": "#172033",
+      "ratio": 7.48
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#0f172a",
+      "bg": "#f1f5f9",
+      "ratio": 16.3
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#94a3b8",
+      "bg": "#1e293b",
+      "ratio": 5.71
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#94a3b8",
+      "bg": "#172033",
+      "ratio": 6.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#60a5fa",
+      "bg": "#263852",
+      "ratio": 4.67
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#60a5fa",
+      "bg": "#0f172a",
+      "ratio": 7.02
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#60a5fa",
+      "bg": "#1e293b",
+      "ratio": 5.75
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Run #4299",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Parallel with proof",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Run",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Test suite",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Tests",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#F1F5F9",
+     "--page": "#0F172A",
+     "--bg": "#1E293B",
+     "--muted": "#A3B1C6",
+     "--nav-on": "#60A5FA",
+     "--chart": "#60A5FA",
+     "--success": "#3ddc84",
+     "--danger": "#ff6a5c",
+     "--warning": "#ffb020",
+     "--font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif"
+    },
+    "font": "\"Schibsted Grotesk Variable\", \"Schibsted Grotesk\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "Schibsted Grotesk Variable",
+     "JetBrains Mono Variable"
+    ],
+    "url": "http://localhost:5173/projects/prj_homehub/runs/run_homehub_4299"
+   }
+  },
+  "runPath": "projects/prj_homehub/runs/run_homehub_4299",
+  "consoleErrors": [],
+  "foreignRequests": [],
+  "hosts": [
+   "localhost:5173"
+  ]
+ },
+ {
+  "kit": "K4",
+  "scheme": "light",
+  "pages": {
+   "overview": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#1e293b",
+      "bg": "#f8fafc",
+      "ratio": 13.98
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#1e293b",
+      "bg": "#ffffff",
+      "ratio": 14.63
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#475569",
+      "bg": "#f8fafc",
+      "ratio": 7.24
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#475569",
+      "bg": "#ffffff",
+      "ratio": 7.58
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#475569",
+      "bg": "#f1f5f9",
+      "ratio": 6.92
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#f8fafc",
+      "bg": "#1e293b",
+      "ratio": 13.98
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#64748b",
+      "bg": "#ffffff",
+      "ratio": 4.76
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#64748b",
+      "bg": "#f1f5f9",
+      "ratio": 4.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#2563eb",
+      "bg": "#eef3fd",
+      "ratio": 4.65
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#2563eb",
+      "bg": "#f8fafc",
+      "ratio": 4.94
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#2563eb",
+      "bg": "#ffffff",
+      "ratio": 5.17
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Northwind Cloud",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Runs per day",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Skipped with proof",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Time to green",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Cost compared",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Projects",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Latest defects",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Live activity",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#1E293B",
+     "--page": "#F8FAFC",
+     "--bg": "#FFFFFF",
+     "--muted": "#475569",
+     "--nav-on": "#2563EB",
+     "--chart": "#2563EB",
+     "--success": "#067a3a",
+     "--danger": "#d6140a",
+     "--warning": "#9c5900",
+     "--font": "\"Plus Jakarta Sans\", system-ui, sans-serif"
+    },
+    "font": "\"Plus Jakarta Sans\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "JetBrains Mono Variable",
+     "Plus Jakarta Sans"
+    ]
+   },
+   "run": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#1e293b",
+      "bg": "#f8fafc",
+      "ratio": 13.98
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#1e293b",
+      "bg": "#ffffff",
+      "ratio": 14.63
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#475569",
+      "bg": "#f8fafc",
+      "ratio": 7.24
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#475569",
+      "bg": "#ffffff",
+      "ratio": 7.58
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#475569",
+      "bg": "#f1f5f9",
+      "ratio": 6.92
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#f8fafc",
+      "bg": "#1e293b",
+      "ratio": 13.98
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#64748b",
+      "bg": "#ffffff",
+      "ratio": 4.76
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#64748b",
+      "bg": "#f1f5f9",
+      "ratio": 4.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#2563eb",
+      "bg": "#eef3fd",
+      "ratio": 4.65
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#2563eb",
+      "bg": "#f8fafc",
+      "ratio": 4.94
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#2563eb",
+      "bg": "#ffffff",
+      "ratio": 5.17
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Run #4299",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Parallel with proof",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Run",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Test suite",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Tests",
+      "colors": [
+       "rgb(30, 41, 59)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#1E293B",
+     "--page": "#F8FAFC",
+     "--bg": "#FFFFFF",
+     "--muted": "#475569",
+     "--nav-on": "#2563EB",
+     "--chart": "#2563EB",
+     "--success": "#067a3a",
+     "--danger": "#d6140a",
+     "--warning": "#9c5900",
+     "--font": "\"Plus Jakarta Sans\", system-ui, sans-serif"
+    },
+    "font": "\"Plus Jakarta Sans\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "JetBrains Mono Variable",
+     "Plus Jakarta Sans"
+    ],
+    "url": "http://localhost:5173/projects/prj_homehub/runs/run_homehub_4299"
+   }
+  },
+  "runPath": "projects/prj_homehub/runs/run_homehub_4299",
+  "consoleErrors": [],
+  "foreignRequests": [],
+  "hosts": [
+   "localhost:5173",
+   "fonts.googleapis.com",
+   "fonts.gstatic.com"
+  ]
+ },
+ {
+  "kit": "K4",
+  "scheme": "dark",
+  "pages": {
+   "overview": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#f1f5f9",
+      "bg": "#0f172a",
+      "ratio": 16.3
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#f1f5f9",
+      "bg": "#1e293b",
+      "ratio": 13.35
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#a3b1c6",
+      "bg": "#0f172a",
+      "ratio": 8.21
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#a3b1c6",
+      "bg": "#1e293b",
+      "ratio": 6.73
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#a3b1c6",
+      "bg": "#172033",
+      "ratio": 7.48
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#0f172a",
+      "bg": "#f1f5f9",
+      "ratio": 16.3
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#94a3b8",
+      "bg": "#1e293b",
+      "ratio": 5.71
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#94a3b8",
+      "bg": "#172033",
+      "ratio": 6.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#60a5fa",
+      "bg": "#263852",
+      "ratio": 4.67
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#60a5fa",
+      "bg": "#0f172a",
+      "ratio": 7.02
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#60a5fa",
+      "bg": "#1e293b",
+      "ratio": 5.75
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Northwind Cloud",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Runs per day",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Skipped with proof",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Time to green",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Cost compared",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Projects",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Latest defects",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Live activity",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#F1F5F9",
+     "--page": "#0F172A",
+     "--bg": "#1E293B",
+     "--muted": "#A3B1C6",
+     "--nav-on": "#60A5FA",
+     "--chart": "#60A5FA",
+     "--success": "#3ddc84",
+     "--danger": "#ff6a5c",
+     "--warning": "#ffb020",
+     "--font": "\"Plus Jakarta Sans\", system-ui, sans-serif"
+    },
+    "font": "\"Plus Jakarta Sans\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "JetBrains Mono Variable",
+     "Plus Jakarta Sans"
+    ]
+   },
+   "run": {
+    "contrast": {
+     "body text on page (--text/--page)": {
+      "fg": "#f1f5f9",
+      "bg": "#0f172a",
+      "ratio": 16.3
+     },
+     "body text on card (--text/--bg)": {
+      "fg": "#f1f5f9",
+      "bg": "#1e293b",
+      "ratio": 13.35
+     },
+     "muted text on page (--muted/--page)": {
+      "fg": "#a3b1c6",
+      "bg": "#0f172a",
+      "ratio": 8.21
+     },
+     "muted text on card (--muted/--bg)": {
+      "fg": "#a3b1c6",
+      "bg": "#1e293b",
+      "ratio": 6.73
+     },
+     "muted text on surface (--muted/--surface)": {
+      "fg": "#a3b1c6",
+      "bg": "#172033",
+      "ratio": 7.48
+     },
+     "primary button text (.btn-primary)": {
+      "fg": "#0f172a",
+      "bg": "#f1f5f9",
+      "ratio": 16.3
+     },
+     "[info] soft text on card (--muted-2/--bg)": {
+      "fg": "#94a3b8",
+      "bg": "#1e293b",
+      "ratio": 5.71
+     },
+     "[info] soft text on surface (--muted-2/--surface)": {
+      "fg": "#94a3b8",
+      "bg": "#172033",
+      "ratio": 6.34
+     },
+     "[info] selected nav item (--nav-on/--nav-active over --nav-sub)": {
+      "fg": "#60a5fa",
+      "bg": "#263852",
+      "ratio": 4.67
+     },
+     "[info] blue (--chart) on page": {
+      "fg": "#60a5fa",
+      "bg": "#0f172a",
+      "ratio": 7.02
+     },
+     "[info] blue (--chart) on card": {
+      "fg": "#60a5fa",
+      "bg": "#1e293b",
+      "ratio": 5.75
+     }
+    },
+    "headings": [
+     {
+      "tag": "H1",
+      "text": "Run #4299",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Parallel with proof",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Run",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Test suite",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     },
+     {
+      "tag": "H2",
+      "text": "Tests",
+      "colors": [
+       "rgb(241, 245, 249)"
+      ]
+     }
+    ],
+    "multiColourHeadings": [],
+    "tokens": {
+     "--black": "#0F172A",
+     "--text": "#F1F5F9",
+     "--page": "#0F172A",
+     "--bg": "#1E293B",
+     "--muted": "#A3B1C6",
+     "--nav-on": "#60A5FA",
+     "--chart": "#60A5FA",
+     "--success": "#3ddc84",
+     "--danger": "#ff6a5c",
+     "--warning": "#ffb020",
+     "--font": "\"Plus Jakarta Sans\", system-ui, sans-serif"
+    },
+    "font": "\"Plus Jakarta Sans\", system-ui, sans-serif",
+    "fontsLoaded": [
+     "JetBrains Mono Variable",
+     "Plus Jakarta Sans"
+    ],
+    "url": "http://localhost:5173/projects/prj_homehub/runs/run_homehub_4299"
+   }
+  },
+  "runPath": "projects/prj_homehub/runs/run_homehub_4299",
+  "consoleErrors": [],
+  "foreignRequests": [],
+  "hosts": [
+   "localhost:5173",
+   "fonts.googleapis.com",
+   "fonts.gstatic.com"
+  ]
+ }
+]

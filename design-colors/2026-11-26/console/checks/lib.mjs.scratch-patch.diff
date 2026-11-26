@@ -1,0 +1,11 @@
+2,3c2,5
+< import { chromium } from "playwright";
+< import AxeBuilder from "@axe-core/playwright";
+---
+> import { createRequire } from "node:module";
+> import { readFileSync } from "node:fs";
+> const { chromium } = createRequire("/opt/node-tools/")("playwright"); // scratch patch: pre-installed Playwright
+> const AxeBuilder = null; // scratch patch: axe not used by status-colors-checks
+60a63,64
+>   // scratch patch: inject the kit CSS named by env KIT_CSS
+>   if (process.env.KIT_CSS) await ctx.addInitScript((css) => { const add = () => { const st = document.createElement("style"); st.textContent = css; document.head.appendChild(st); }; if (document.head) add(); else document.addEventListener("DOMContentLoaded", add); }, readFileSync(process.env.KIT_CSS, "utf8"));

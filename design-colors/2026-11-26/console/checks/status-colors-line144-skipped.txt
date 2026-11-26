@@ -1,0 +1,28 @@
+== K1
+LINE144 (reported, not thrown): the receipt's Close button is rgb(30, 41, 59)
+ok   a run: failed is red with its word, skipped with proof stays grey, the receipt dialog has no border (desktop)
+LINE144 (reported, not thrown): the receipt's Close button is rgb(30, 41, 59)
+ok   a run: failed is red with its word, skipped with proof stays grey, the receipt dialog has no border (mobile)
+status colour checks: all 2 passed
+exit 0
+== K2
+LINE144 (reported, not thrown): the receipt's Close button is rgb(30, 41, 59)
+ok   a run: failed is red with its word, skipped with proof stays grey, the receipt dialog has no border (desktop)
+LINE144 (reported, not thrown): the receipt's Close button is rgb(30, 41, 59)
+ok   a run: failed is red with its word, skipped with proof stays grey, the receipt dialog has no border (mobile)
+status colour checks: all 2 passed
+exit 0
+== K3
+LINE144 (reported, not thrown): the receipt's Close button is rgb(30, 41, 59)
+ok   a run: failed is red with its word, skipped with proof stays grey, the receipt dialog has no border (desktop)
+LINE144 (reported, not thrown): the receipt's Close button is rgb(30, 41, 59)
+ok   a run: failed is red with its word, skipped with proof stays grey, the receipt dialog has no border (mobile)
+status colour checks: all 2 passed
+exit 0
+== K4
+LINE144 (reported, not thrown): the receipt's Close button is rgb(30, 41, 59)
+ok   a run: failed is red with its word, skipped with proof stays grey, the receipt dialog has no border (desktop)
+LINE144 (reported, not thrown): the receipt's Close button is rgb(30, 41, 59)
+ok   a run: failed is red with its word, skipped with proof stays grey, the receipt dialog has no border (mobile)
+status colour checks: all 2 passed
+exit 0

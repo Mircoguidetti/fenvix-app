@@ -1,0 +1,126 @@
+/* K3: K1 with a deeper blue: primary #1D4ED8 (hover #1E40AF); Schibsted Grotesk
+   Token overrides only, injected over src/styles.css (doubled :root raises specificity above the app's own rules).
+   Status colours (--success, --danger, --warning and -on-dark) are not touched. */
+:root:root {
+  --black: #0F172A;
+  --text: #1E293B;
+  --bg: #FFFFFF;
+  --page: #F8FAFC;
+  --surface: #F1F5F9;
+  --surface-2: #E9EFF8;
+  --border: #E2E8F0;
+  --border-strong: #CBD5E1;
+  --line-soft: #F1F5F9;
+  --muted: #475569;
+  --muted-2: #64748B;
+  --on-text: #F8FAFC;
+  --on-text-muted: #94A3B8;
+  --primary-hover: #334155;
+  --nav-bg: #FCFDFE;
+  --nav-sub: #FFFFFF;
+  --nav-text: #0F172A;
+  --nav-muted: #475569;
+  --nav-label: #64748B;
+  --nav-border: #E2E8F0;
+  --nav-hover: #F1F5F9;
+  --nav-active: #EDF1FC;
+  --nav-on: #1D4ED8;
+  --nav-box: #F1F5F9;
+  --grid: #F1F5F9;
+  --ink-2: #7795E8;
+  --ink-3: #C7D3F5;
+  --chart: #1D4ED8;
+  --chart-fill: rgba(29, 78, 216, 0.06);
+  --area-1: #1D4ED8;
+  --area-2: #1D4ED8;
+  --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12);
+  --focus: 0 0 0 3px rgba(29, 78, 216, 0.18);
+  --stack-0: #1D4ED8;
+  --stack-1: #4A71E0;
+  --stack-2: #7795E8;
+  --stack-3: #A5B8EF;
+  --stack-4: #D2DCF7;
+  --stack-5: #E2E8F0;
+}
+:root:root[data-theme="dark"] {
+  --bg: #1E293B;
+  --page: #0F172A;
+  --surface: #172033;
+  --surface-2: #243247;
+  --border: #334155;
+  --border-strong: #475569;
+  --line-soft: #273449;
+  --text: #F1F5F9;
+  --muted: #A3B1C6;
+  --muted-2: #94A3B8;
+  --on-text: #0F172A;
+  --on-text-muted: #475569;
+  --primary-hover: #CBD5E1;
+  --nav-bg: #0F172A;
+  --nav-sub: #1E293B;
+  --nav-text: #F1F5F9;
+  --nav-muted: #A3B1C6;
+  --nav-label: #94A3B8;
+  --nav-hover: rgba(96, 165, 250, 0.08);
+  --nav-active: rgba(96, 165, 250, 0.12);
+  --nav-on: #60A5FA;
+  --nav-box: #172033;
+  --nav-border: #1E293B;
+  --grid: #273449;
+  --ink-2: #497AB7;
+  --ink-3: #324E74;
+  --chart: #60A5FA;
+  --chart-fill: rgba(96, 165, 250, 0.08);
+  --area-1: #60A5FA;
+  --area-2: #1D4ED8;
+  --shadow-lg: 0 12px 32px rgba(2, 6, 23, 0.7);
+  --focus: 0 0 0 3px rgba(96, 165, 250, 0.35);
+  --stack-0: #D7E9FE;
+  --stack-1: #A8CEFC;
+  --stack-2: #60A5FA;
+  --stack-3: #497AB7;
+  --stack-4: #385B87;
+  --stack-5: #273449;
+}
+@media (prefers-color-scheme: dark) {
+  :root:root:not([data-theme="light"]) {
+    --bg: #1E293B;
+    --page: #0F172A;
+    --surface: #172033;
+    --surface-2: #243247;
+    --border: #334155;
+    --border-strong: #475569;
+    --line-soft: #273449;
+    --text: #F1F5F9;
+    --muted: #A3B1C6;
+    --muted-2: #94A3B8;
+    --on-text: #0F172A;
+    --on-text-muted: #475569;
+    --primary-hover: #CBD5E1;
+    --nav-bg: #0F172A;
+    --nav-sub: #1E293B;
+    --nav-text: #F1F5F9;
+    --nav-muted: #A3B1C6;
+    --nav-label: #94A3B8;
+    --nav-hover: rgba(96, 165, 250, 0.08);
+    --nav-active: rgba(96, 165, 250, 0.12);
+    --nav-on: #60A5FA;
+    --nav-box: #172033;
+    --nav-border: #1E293B;
+    --grid: #273449;
+    --ink-2: #497AB7;
+    --ink-3: #324E74;
+    --chart: #60A5FA;
+    --chart-fill: rgba(96, 165, 250, 0.08);
+    --area-1: #60A5FA;
+    --area-2: #1D4ED8;
+    --shadow-lg: 0 12px 32px rgba(2, 6, 23, 0.7);
+    --focus: 0 0 0 3px rgba(96, 165, 250, 0.35);
+    --stack-0: #D7E9FE;
+    --stack-1: #A8CEFC;
+    --stack-2: #60A5FA;
+    --stack-3: #497AB7;
+    --stack-4: #385B87;
+    --stack-5: #273449;
+  }
+}

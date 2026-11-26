@@ -1,0 +1,5 @@
+K0 exit 0
+K1 exit 1
+K2 exit 1
+K3 exit 1
+K4 exit 1
