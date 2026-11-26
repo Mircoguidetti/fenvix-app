@@ -716,6 +716,9 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       await admin.query(`insert into public.gh_jobs (job_id, repository_id, installation_id, run_id, head_sha, status, conclusion, started_at, completed_at, kind, event,
         has_summary, ci_run_id, checkout_sha) values ($1, $2, $3, 2, $4, 'completed', 'success', $5, $6, 'side_by_side', 'push', true, $7, $4)`,
         [jobIds[1], B.repoIds.shop, B.installationId, S, at(0.2), at(0.2, 0.1), ids[0]]);
+      // The repositories list keeps the new states (the shared mapper), with the merged side-by-side pull request.
+      const listed = (await call(api, "listGitHubRepositories", base)).body.items.find((r: { repositoryId: number }) => r.repositoryId === B.repoIds.shop);
+      assert.deepEqual({ s: listed.onboardingState, pr: listed.setupPullRequest?.state }, { s: "side_by_side", pr: "merged" });
       const sbs = await call(api, "getSideBySide", proj);
       assert.equal(sbs.body.available, true);
       assert.equal(sbs.body.items.length, 1);

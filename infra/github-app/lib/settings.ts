@@ -132,7 +132,8 @@ export interface Settings {
   /**
    * Side-by-side runs (github-app SIDE_BY_SIDE_*): on (the choice in Connect, the side-by-side pull request), the
    * full machines per repository per rolling 24 hours, the skip machines per repository per rolling 24 hours, the full
-   * machine's instance type (8 vCPU) and its on-demand price per hour (shown in the console).
+   * machine's instance type (8 vCPU) and its on-demand price per hour (shown in the console; c6i.2xlarge eu-west-1 $0.3648/h, AWS
+   * EC2 on-demand pricing page, read by the founder 2026-11-26).
    */
   sideBySideEnabled: boolean;
   sideBySideDailyCap: number;

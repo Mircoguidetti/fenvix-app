@@ -394,6 +394,29 @@ jobs:
   });
 });
 
+describe("buildSideBySideWorkflow: conditions GitHub would read as text", () => {
+  // protects=an if: mixing text and ${{ }} (a string to GitHub, always true) is refused, since the fork guard and the
+  // gate would vanish; fails_when=it is copied; no_claim=-.
+  it("a job or step if: that mixes text and ${{ }}: refused", () => {
+    refused(`on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    if: \${{ github.event_name == 'push' }} && \${{ github.ref == 'refs/heads/main' }}
+    steps:
+      - run: npm test
+`, /job's if: mixes text/);
+    refused(`on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - if: success() && \${{ env.X == '1' }}
+        run: npm test
+`, /has an if: that mixes text/);
+  });
+});
+
 describe("our own file is never read as one of the customer's workflows", () => {
   // protects=detection skips .github/workflows/fenvix-side-by-side.yml (it runs tests and is on fenvix); fails_when=our
   // file's job is chosen as the test job, or seen as already on fenvix; no_claim=-.

@@ -328,7 +328,7 @@ export class GitHubService {
     }
     const options = { label: this.s.runsOnLabel, dashboardUrl: this.s.dashboardUrl };
     const res: SideBySideResult = kind === "side_by_side"
-      ? await onboardSideBySide(this.gh.installation(repo.installation_id), repo.full_name, { ...options, branch: this.sbs.branch })
+      ? await onboardSideBySide(this.gh.installation(repo.installation_id), repo.full_name, { ...options, branch: this.sbs.branch, dailyCap: this.sbs.dailyCap })
       : await onboardRepository(this.gh.installation(repo.installation_id), repo.full_name, { ...options, branch: this.s.onboardingBranch });
     if (res.sideBySide) {
       await this.db.q(
@@ -350,7 +350,7 @@ export class GitHubService {
     // Already on runs-on: fenvix: nothing to merge, so the default branch is warmed now.
     if (res.state === "already_fenvix" && kind === "move") await this.warm("onboarded", () => this.warmups.requestHead(repositoryId, "onboarded"));
     // Side by side: his last 30 days of runs, for the console's "Today" (once per entry into side by side).
-    if ((res.state === "side_by_side_pr_open" || res.state === "side_by_side") && !["side_by_side_pr_open", "side_by_side"].includes(repo.onboarding_state)) {
+    if (SIDE_BY_SIDE_STATES.includes(res.state) && !SIDE_BY_SIDE_STATES.includes(repo.onboarding_state)) {
       await this.startHistory(repositoryId);
     }
     return res;
@@ -367,7 +367,7 @@ export class GitHubService {
    * or moves to another installation of the same organization (found by gh_repositories.project_id).
    */
   private async syncProject(c: Client, repo: RepoRow, fromRun: Stack | null): Promise<string | null> {
-    const prState = ["merged", "side_by_side"].includes(repo.onboarding_state) && repo.setup_pr_number ? "merged" : repo.onboarding_state === "closed" ? "closed" : repo.setup_pr_number ? "open" : null;
+    const prState = repo.onboarding_state === "merged" || (repo.onboarding_state === "side_by_side" && repo.setup_pr_number) ? "merged" : repo.onboarding_state === "closed" ? "closed" : repo.setup_pr_number ? "open" : null;
     const setup = repo.onboarding_state === "pr_open" || repo.onboarding_state === "side_by_side_pr_open" ? "pr_open" : "app_installed";
     if (repo.project_id) {
       const moved = await c.query<{ id: string }>(
@@ -606,9 +606,15 @@ export class GitHubService {
    */
   async readHistory(repositoryId: number, now: () => Date = () => new Date()): Promise<"done" | "paused" | "skipped"> {
     const repo = await this.repo(repositoryId);
-    if (!repo || repo.removed_at || !SIDE_BY_SIDE_STATES.includes(repo.onboarding_state) || !repo.onboarding_workflow_path || !repo.side_by_side_job_name) return "skipped";
+    const stop = () => this.db.q("update gh_repositories set history_next_at = null where repository_id = $1", [repositoryId]);
+    if (!repo || repo.removed_at || !SIDE_BY_SIDE_STATES.includes(repo.onboarding_state) || !repo.onboarding_workflow_path || !repo.side_by_side_job_name) {
+      if (repo) await stop();
+      return "skipped";
+    }
     const prev = (repo.history_cursor ?? null) as { page?: number; lastRunId?: number | null; since?: string; done?: boolean } | null;
-    if (prev?.done) return "done";
+    if (prev?.done) { await stop(); return "done"; }
+    // A Lambda has minutes, not hours: past this budget the reading stops where it is and the sweep goes on with it.
+    const budgetEnds = Date.now() + 90_000;
     const since = prev?.since ?? new Date(now().getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
     const gh = this.gh.installation(repo.installation_id);
     const base = repoPath(repo.full_name);
@@ -641,6 +647,12 @@ export class GitHubService {
         }
         last = run.id;
         if (low(jobs)) return pause(last);
+        // Where it is, after every run: a reading cut short (timeout) goes on from here, not from the start.
+        await this.db.q("update gh_repositories set history_cursor = $2::jsonb where repository_id = $1", [repositoryId, JSON.stringify({ page, lastRunId: last, since })]);
+        if (Date.now() > budgetEnds) {
+          await this.db.q("update gh_repositories set history_next_at = now() where repository_id = $1", [repositoryId]);
+          return "paused";
+        }
       }
       last = null;
       if (runs.length < 100) break;
@@ -660,7 +672,10 @@ export class GitHubService {
     if (row?.workflow_path) return row.kind;
     const [r] = await this.db.q<{ run_id: number }>("select run_id from gh_jobs where job_id = $1", [jobId]);
     if (!r) return "ci_run";
-    const run = await this.workflowRun(this.gh.installation(installationId), repoPath(repo.full_name), r.run_id);
+    // A failed lookup throws (the delivery is retried) instead of guessing ci_run: a side-by-side job taken for an
+    // ordinary one would get a check run, a comment and a billable machine. A run GitHub does not know: ci_run.
+    const res = await this.gh.installation(installationId).request<WorkflowRunP>("GET", `${repoPath(repo.full_name)}/actions/runs/${r.run_id}`, { allow: [404] });
+    const run = res.status === 404 ? null : res.data;
     if (!run?.path) return row?.kind ?? "ci_run";
     const kind: JobKind = run.path === SIDE_BY_SIDE_PATH ? "side_by_side" : "ci_run";
     await this.db.q("update gh_jobs set workflow_path = $2, event = $3, pr_number = $4, kind = $5 where job_id = $1",
@@ -833,6 +848,10 @@ export class GitHubService {
       "select workspace_id, suspended_at, deleted_at from gh_installations where installation_id = $1", [installationId]);
     const none = (why: string) => { this.log.warn({ job: jobId, installation: installationId, repository: repo.full_name, why }, "side-by-side job: no machine (it waits queued; GitHub cancels it)"); };
     if (!inst?.workspace_id || inst.deleted_at) return none("the installation is not linked to an organization");
+    // Only a repository fenvix onboarded side by side gets side-by-side machines: a file of that name added by hand to
+    // another repository gets none (they would be free machines).
+    const state = (await this.repo(repo.id))?.onboarding_state ?? "";
+    if (!SIDE_BY_SIDE_STATES.includes(state)) return none(`the repository is not onboarded side by side (state ${state || "unknown"})`);
     const org = await this.db.tx(inst.workspace_id, (c) => this.orgContext(c));
     await this.db.q("update gh_jobs set region = $2, mode = 'shadow' where job_id = $1", [jobId, org.region]);
     if (this.launcher!.canPlace && !this.launcher!.canPlace(org.region)) return none(`no placement for the organization's region (${org.region})`);
@@ -848,6 +867,8 @@ export class GitHubService {
     const gh = this.gh.installation(installationId);
     const base = repoPath(repo.full_name);
     const run = await this.workflowRun(gh, base, row.run_id);
+    // A pull request from a fork never runs on our machines, whatever the workflow file of its merge commit says.
+    if (run?.event === "pull_request" && run.head_repository && run.head_repository.id !== repo.id) return none("a pull request from a fork");
     const defaultBranch = repo.default_branch ?? (await this.repo(repo.id))?.default_branch ?? null;
     const trusted = !skipWhy && !!run && ["push", "schedule", "workflow_dispatch", "merge_group"].includes(run.event ?? "")
       && !!defaultBranch && run.head_branch === defaultBranch && run.head_repository?.id === repo.id;
@@ -896,11 +917,13 @@ export class GitHubService {
   private async launchSkipAfterFull(jobId: number, installationId: number, repo: RepoFull, row: { run_id: number; run_attempt: number }, region: Region, exp: number): Promise<void> {
     const gh = this.gh.installation(installationId);
     const base = repoPath(repo.full_name);
-    const name = `fenvix-s${jobId}-${row.run_attempt}`;
+    const name = `fenvix-s${jobId}-${row.run_attempt}-${Date.now().toString(36)}`;
+    let runnerId: number | undefined;
     try {
-      const jit = await gh.request<{ encoded_jit_config: string }>("POST", `${base}/actions/runners/generate-jitconfig`, {
+      const jit = await gh.request<{ encoded_jit_config: string; runner?: { id?: number } }>("POST", `${base}/actions/runners/generate-jitconfig`, {
         body: { name, runner_group_id: 1, labels: [this.s.runsOnLabel], work_folder: "_work" },
       });
+      runnerId = jit.data.runner?.id;
       const summaryToken = signSummaryCredential(this.s.summaryKey!, { runnerName: name, repositoryId: repo.id, runId: row.run_id, runAttempt: row.run_attempt, exp });
       await this.launcher!.launch({
         jobId, runId: row.run_id, repositoryId: repo.id, repositoryFullName: repo.full_name, installationId, runnerName: name,
@@ -908,6 +931,7 @@ export class GitHubService {
       });
       await this.db.q("update gh_jobs set launched_at = coalesce(launched_at, now()) where job_id = $1", [jobId]);
     } catch (e) {
+      if (runnerId) await gh.request("DELETE", `${base}/actions/runners/${runnerId}`, { allow: [404, 422] }).catch(() => undefined);
       this.log.warn({ job: jobId, err: e instanceof Error ? e.message : String(e) }, "side-by-side job: no machine (its skip machine did not start)");
     }
   }
@@ -1048,11 +1072,11 @@ export class GitHubService {
     try {
       const out = await this.db.tx(ws, async (c) => {
         // One application at a time per run (chunks arriving together).
-        const run = (await c.query<{ id: string; project_id: string; seen_at: Date; language: string; duration_ms: number | string | null }>(
-          `select r.id, r.project_id, coalesce(r.finished_at, r.started_at) as seen_at, p.language, r.duration_ms
+        const run = (await c.query<{ id: string; project_id: string; seen_at: Date; language: string; duration_ms: number | string | null; kind: string }>(
+          `select r.id, r.project_id, coalesce(r.finished_at, r.started_at) as seen_at, p.language, r.duration_ms, r.kind
            from ci_runs r join ci_projects p on p.id = r.project_id where r.id = $1 for update of r`, [ciRunId])).rows[0];
         if (!run) return null;
-        const res = await applyChunks(c, { id: run.id, projectId: run.project_id, language: run.language, seenAt: run.seen_at, maxTestMs: run.duration_ms === null ? null : Number(run.duration_ms) }, key, chunks);
+        const res = await applyChunks(c, { id: run.id, projectId: run.project_id, language: run.language, seenAt: run.seen_at, maxTestMs: run.duration_ms === null ? null : Number(run.duration_ms), noDefects: run.kind === "side_by_side" }, key, chunks);
         if (res.applied.length) await c.query("update gh_run_results set applied_at = now(), apply_error = null where id = any($1::bigint[])", [res.applied]);
         for (const p of res.pending) await c.query("update gh_run_results set apply_error = $2 where id = $1", [p.id, p.error]);
         return { ...res, flipped: await this.reconcileNotProven(c, run.id) };
@@ -1468,8 +1492,13 @@ export class GitHubService {
     for (const x of waiting) {
       if (!x.workspace_id) continue;
       // Onboarded meanwhile by another path (the dashboard): nothing more to open.
-      if (x.onboarding_state === "pending") await this.onboard(x.repository_id);
-      await this.db.q("update gh_repositories set awaiting_link = false where repository_id = $1", [x.repository_id]);
+      // One repository's failure does not hold back the others (it keeps awaiting_link: the next link tries again).
+      try {
+        if (x.onboarding_state === "pending") await this.onboard(x.repository_id);
+        await this.db.q("update gh_repositories set awaiting_link = false where repository_id = $1", [x.repository_id]);
+      } catch (e) {
+        this.log.error({ repositoryId: x.repository_id, err: e instanceof Error ? e.message : String(e) }, "onboarding after the link failed");
+      }
     }
     const onboarded = await this.db.q<{ repository_id: number }>(
       "select repository_id from gh_repositories where installation_id = $1 and removed_at is null and onboarding_state in ('merged', 'already_fenvix') order by repository_id",

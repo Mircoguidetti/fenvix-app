@@ -1,5 +1,6 @@
 import { DescribeImagesCommand, DescribeInstancesCommand, EC2Client, type _InstanceType, RunInstancesCommand, TerminateInstancesCommand } from "@aws-sdk/client-ec2";
 import { cacheOrgOf } from "./credentials.ts";
+import { SIDE_BY_SIDE_SKIP_FILE } from "../onboarding/workflow.ts";
 
 /**
  * "One machine per job": when GitHub queues a job with the fenvix label, the App asks GitHub for a just-in-time runner
@@ -37,15 +38,15 @@ export interface RunnerLaunch {
   instanceType?: string;
   /**
    * A side-by-side skip machine: the launch template's size, /etc/fenvix/sbs-skip written (the job's gate step then
-   * runs no kept step), its own ClientToken fenvix-skip-<jobId>-<attempt>, and no capacity check (skipCapacityCheck).
+   * runs no kept step), its own ClientToken fenvix-skip-<jobId>-<attempt>. Set skipCapacityCheck too to start it on a full fleet.
    */
   skip?: { attempt: number };
   /** Starts the machine even when the region's fleet is at its limit (a skip machine runs about two minutes). */
   skipCapacityCheck?: boolean;
 }
 
-/** The file a side-by-side skip machine writes; the job's gate step reads it (src/onboarding/workflow.ts). */
-export const SKIP_FILE = "/etc/fenvix/sbs-skip";
+/** The file a side-by-side skip machine writes; the job's gate step reads it (one constant, src/onboarding/workflow.ts). */
+export const SKIP_FILE = SIDE_BY_SIDE_SKIP_FILE;
 
 /**
  * A warm-up machine (src/warmup/): it runs the repository's test job, from the customer's own workflow file at one

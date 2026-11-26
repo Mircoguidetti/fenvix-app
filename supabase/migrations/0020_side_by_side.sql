@@ -98,6 +98,7 @@ create table if not exists public.gh_customer_jobs (
 );
 create index if not exists gh_customer_jobs_key on public.gh_customer_jobs (repository_id, head_sha, event, pr_number);
 create index if not exists gh_customer_jobs_completed on public.gh_customer_jobs (repository_id, completed_at);
+create index if not exists gh_customer_jobs_run on public.gh_customer_jobs (repository_id, run_id);
 
 alter table public.gh_customer_jobs enable row level security;
 revoke all on public.gh_customer_jobs from public, anon, authenticated;

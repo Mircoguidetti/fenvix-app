@@ -8,11 +8,11 @@ export interface SegmentOption<T extends string> {
 }
 
 /** A row of buttons of which one is chosen (aria-pressed), for filters and ranges. `label` names the group. */
-export function Segmented<T extends string>({ label, value, options, onChange, className }: { label: string; value: T; options: readonly SegmentOption<T>[]; onChange: (value: T) => void; className?: string }) {
+export function Segmented<T extends string>({ label, value, options, onChange, className, disabled }: { label: string; value: T; options: readonly SegmentOption<T>[]; onChange: (value: T) => void; className?: string; disabled?: boolean }) {
   return (
     <div className={`seg${className ? ` ${className}` : ""}`} role="group" aria-label={label}>
       {options.map((o) => (
-        <button key={o.value} type="button" aria-pressed={value === o.value} onClick={() => onChange(o.value)}>
+        <button key={o.value} type="button" aria-pressed={value === o.value} disabled={disabled} onClick={() => onChange(o.value)}>
           {o.label}
           {o.count !== undefined && <span className="seg-count">{o.count}</span>}
         </button>

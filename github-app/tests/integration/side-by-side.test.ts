@@ -167,9 +167,9 @@ describe("side by side: our job (AC 3, AC 6)", () => {
   const SHA = "5".repeat(40);
   let runSeq = 20_000;
   /** One of our jobs: a run of fenvix-side-by-side.yml, then its workflow_job events. */
-  const ourJob = async (id: number, o: { event?: string; start?: boolean } = {}) => {
+  const ourJob = async (id: number, o: { event?: string; start?: boolean; headRepoId?: number; branch?: string } = {}) => {
     const runId = ++runSeq;
-    h.gh.addRun("acme/shop", runId, { event: o.event ?? "push", headSha: SHA, headBranch: "main", message: "m", path: SIDE_BY_SIDE_PATH });
+    h.gh.addRun("acme/shop", runId, { event: o.event ?? "push", headSha: SHA, headBranch: o.branch ?? "main", message: "m", path: SIDE_BY_SIDE_PATH, ...(o.headRepoId ? { headRepoId: o.headRepoId } : {}) });
     await h.send("workflow_job", workflowJob("queued", { id, runId, sha: SHA, branch: "main", name: "fenvix side-by-side (does not gate)" }));
     return runId;
   };
@@ -234,6 +234,33 @@ describe("side by side: our job (AC 3, AC 6)", () => {
     assert.deepEqual(row, { kind: "side_by_side", status: "not_proven", not_proven_reason: "no summary from the runner", has_summary: false });
   });
 
+  // protects=review fixes: a push to the default branch writes the cache, a pull request only reads it; no machine for
+  // a fork pull request, for a repository not onboarded side by side (a hand-written file), and a failed lookup of the
+  // run is retried rather than guessed as an ordinary billable job; fails_when=any of those gets a machine or a write
+  // token; no_claim=GitHub's own fork handling.
+  it("cache access by trust; no machine for a fork, a repository not side by side, or an unknown run", async () => {
+    await admin.query("delete from gh_jobs where kind = 'side_by_side'");
+    await ourJob(7401);
+    assert.equal(fleet.launches.at(-1)!.cacheAccess, "write", "push to the default branch");
+    await ourJob(7402, { event: "pull_request", branch: "feature" });
+    assert.equal(fleet.launches.at(-1)!.cacheAccess, "read", "pull request");
+    const n = fleet.launches.length;
+    await ourJob(7403, { event: "pull_request", branch: "feature", headRepoId: 999_999 });
+    assert.equal(fleet.launches.length, n, "fork pull request: no machine");
+    await admin.query("update gh_repositories set onboarding_state = 'merged' where repository_id = $1", [REPOS.shop.id]);
+    await ourJob(7404);
+    await admin.query("update gh_repositories set onboarding_state = 'side_by_side_pr_open' where repository_id = $1", [REPOS.shop.id]);
+    assert.equal(fleet.launches.length, n, "not onboarded side by side: no machine");
+    // GitHub fails the run lookup: the delivery fails (retried later); nothing is launched or classified.
+    const runId = ++runSeq;
+    h.gh.addRun("acme/shop", runId, { event: "push", headSha: SHA, headBranch: "main", message: "m", path: SIDE_BY_SIDE_PATH });
+    h.gh.failNext.set(`GET /repos/acme/shop/actions/runs/${runId}`, 502);
+    await h.send("workflow_job", workflowJob("queued", { id: 7405, runId, sha: SHA, branch: "main", name: "fenvix side-by-side (does not gate)" }));
+    assert.equal(fleet.launches.length, n, "lookup failed: no machine");
+    assert.equal((await admin.query("select workflow_path from gh_jobs where job_id = 7405")).rows[0].workflow_path, null);
+    assert.equal(githubWrites(h).length, 0, "no check run for it either");
+  });
+
   // protects=the daily cap: the 10th job of 24 hours still gets a full machine, the 11th a skip machine (skip file,
   // its own ClientToken attempt, no capacity check); fails_when=the cap is off by one or the skip machine is full size;
   // no_claim=EC2's idempotency (unit tests of the launcher).
@@ -261,6 +288,21 @@ describe("side by side: our job (AC 3, AC 6)", () => {
     await ourJob(7202);
     await admin.query("update gh_installations set suspended_at = null where installation_id = $1", [INSTALLATION_ID]);
     assert.deepEqual(fleet.launches.filter((l) => l.jobId === 7202).map((l) => !!l.skip), [true]);
+  });
+
+  // protects=a job on a skip machine publishes as not proven "skip machine: no test ran", never passed;
+  // fails_when=it is stored passed; no_claim=-.
+  it("a skip machine's job: not proven, 'skip machine: no test ran'", async () => {
+    await admin.query("delete from gh_jobs where kind = 'side_by_side'");
+    fleet.full = true;
+    const runId = await ourJob(7501);
+    fleet.full = false;
+    await h.send("workflow_job", workflowJob("in_progress", { id: 7501, runId, sha: SHA, branch: "main", runner: "fenvix-s7501-1" }));
+    await h.send("workflow_job", workflowJob("completed", { id: 7501, runId, sha: SHA, branch: "main", runner: "fenvix-s7501-1" }));
+    await admin.query("update gh_jobs set completed_at = now() - interval '1 hour' where job_id = 7501");
+    await h.app.service.sweep();
+    const row = (await admin.query("select r.status, r.not_proven_reason, j.skip_machine from ci_runs r join gh_jobs j on j.ci_run_id = r.id where j.job_id = 7501")).rows[0];
+    assert.deepEqual(row, { status: "not_proven", not_proven_reason: "skip machine: no test ran", skip_machine: true });
   });
 
   // protects=no machine at all past the skip cap, without a placement, or unlinked: the job waits (GitHub cancels it);
@@ -349,5 +391,46 @@ describe("side by side: his test job, from webhooks and from his history (item 1
     await done(301003, 30011, "test");
     const rows = (await admin.query("select job_id, source, event, pr_number, steps is not null as steps from gh_customer_jobs where job_id > 301000 order by job_id")).rows;
     assert.deepEqual(rows, [{ job_id: 301001, source: "webhook", event: "pull_request", pr_number: 5, steps: true }]);
+  });
+});
+
+describe("side by side: turned off, and the pull request closed (state matrix)", () => {
+  const h = new Harness();
+  let admin: pg.Client;
+  after(async () => { await h.stop(); await admin.end(); });
+
+  // protects=SIDE_BY_SIDE_ENABLED=false opens no side-by-side pull request for an organization that chose it;
+  // fails_when=a PR is opened; no_claim=the Connect page hiding the choice (the API's sideBySideAvailable).
+  it("turned off: no pull request, the detail says why", async () => {
+    admin = await resetDb();
+    await h.start({ SIDE_BY_SIDE_ENABLED: "false" });
+    const org = await makeOrg(admin, "sbs-off-owner");
+    await admin.query("update workspaces set onboarding_kind = 'side_by_side' where id = $1", [org.workspaceId]);
+    h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });
+    h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": CI_YAML } });
+    await h.send("installation", installationCreated([REPOS.shop]));
+    await link(h, admin, org);
+    assert.equal(h.gh.repos.get("acme/shop")!.pulls.length, 0);
+    assert.deepEqual((await admin.query("select onboarding_state, onboarding_detail from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0],
+      { onboarding_state: "pending", onboarding_detail: "side-by-side runs are turned off: no pull request was opened" });
+  });
+
+  // protects=the side-by-side pull request closed without merging maps to state closed; fails_when=it stays open or
+  // becomes side_by_side; no_claim=-.
+  it("the side-by-side pull request closed without merging: state closed", async () => {
+    await h.stop();
+    admin = await resetDb().then(async (a) => { await admin.end(); return a; });
+    await h.start();
+    const org = await makeOrg(admin, "sbs-closed-owner");
+    await admin.query("update workspaces set onboarding_kind = 'side_by_side' where id = $1", [org.workspaceId]);
+    h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });
+    h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": CI_YAML } });
+    await h.send("installation", installationCreated([REPOS.shop]));
+    await link(h, admin, org);
+    const pr = h.gh.repos.get("acme/shop")!.pulls[0]!;
+    await h.send("pull_request", pullRequest("closed", { number: pr.number, headRef: "fenvix/side-by-side", headSha: pr.headSha, merged: false }));
+    const row = (await admin.query("select onboarding_state, onboarding_detail from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
+    assert.equal(row.onboarding_state, "closed");
+    assert.match(row.onboarding_detail, /side-by-side pull request #1 was closed without merging/);
   });
 });

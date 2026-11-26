@@ -92,7 +92,7 @@ export interface SideBySideSettings {
   vcpus: number;
 }
 
-/** c6i.2xlarge: 8 vCPU. Price ESTIMATED as 4 x c6i.large's $0.0912/h (docs/DEPLOY-AWS.md), US East (N. Virginia) on-demand Linux. */
+/** c6i.2xlarge: 8 vCPU, Linux on-demand $0.3648/h in eu-west-1 (the stack's region): AWS EC2 on-demand pricing page, read by the founder 2026-11-26. */
 export const DEFAULT_SIDE_BY_SIDE: SideBySideSettings = {
   enabled: true, branch: "fenvix/side-by-side", dailyCap: 10, skipDailyCap: 30, instanceType: "c6i.2xlarge", usdPerHour: 0.3648, vcpus: 8,
 };

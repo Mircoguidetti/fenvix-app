@@ -303,7 +303,7 @@ interface Store {
   onboardingKind?: "move" | "side_by_side";
 }
 
-const RATE: GitHubRate = { usdPerMinute: 0.008, runner: "GitHub-hosted Linux, 2 cores", source: "GitHub Actions pricing page, as quoted in PRODUCT.md (to verify)", checkedOn: "2026-11-16" };
+const RATE: GitHubRate = { usdPerMinute: 0.006, runner: "GitHub-hosted Linux, 2 cores", source: "GitHub Actions pricing (research 2026-11-23)", checkedOn: "2026-11-23" };
 
 /** Plans by run units (1 unit = 10 baseline minutes). The units each plan includes are not set yet. */
 const PLANS: Omit<Plan, "current">[] = [

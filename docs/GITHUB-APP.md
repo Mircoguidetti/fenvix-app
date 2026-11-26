@@ -196,7 +196,7 @@ the HTTP side checks it (`src/runners/credentials.ts`; review R-012 F1).
 | `SIDE_BY_SIDE_DAILY_CAP` | `10` | no | full side-by-side machines per repository per rolling 24 hours (re-runs count); past it, a skip machine |
 | `SIDE_BY_SIDE_SKIP_DAILY_CAP` | `30` | no | skip machines per repository per rolling 24 hours; past it, no machine (the job waits until GitHub cancels it) |
 | `SIDE_BY_SIDE_INSTANCE_TYPE` | `c6i.2xlarge` | no | the full side-by-side machine (an instance type override of the launch template; the worker's IAM allows it) |
-| `SIDE_BY_SIDE_USD_PER_HOUR` | `0.3648` | no | that machine's on-demand price, shown in the console (ESTIMATED: 4 × c6i.large eu-west-1 $0.0912/h; confirm in the AWS price list) |
+| `SIDE_BY_SIDE_USD_PER_HOUR` | `0.3648` | no | that machine's on-demand price, shown in the console (c6i.2xlarge Linux on-demand, eu-west-1: AWS EC2 on-demand pricing page, read by the founder 2026-11-26) |
 | `PORT`, `HOST`, `LOG_LEVEL`, `NODE_ENV`, `DB_POOL_MAX`, `GITHUB_TIMEOUT_MS` | `8790`, `0.0.0.0`, `info`, `development`, `10`, `15000` | no | |
 
 `NODE_ENV=production` refuses plain-http URLs. The service never logs a secret, the `Authorization` header or the

@@ -495,7 +495,10 @@ export function buildSideBySideWorkflow(sourceText: string, jobId: string, label
       if (WRITES_TO_GITHUB.test(run)) return refuse(`step "${label2}" may write to GitHub (git push, gh pr/issue/api/release or api.github.com)`);
     } else return refuse(`step "${label2}" has neither uses nor run`);
     const hisIf = pairOf(step, "if")?.value;
-    const cond = hisIf === undefined ? GATE_IF : `(${bareIf(scalarText(hisIf) ?? (isScalar(hisIf) ? hisIf.value : ""))}) && ${GATE_IF}`;
+    const stepIf = hisIf === undefined ? null : bareIf(scalarText(hisIf) ?? (isScalar(hisIf) ? hisIf.value : ""));
+    // Text mixed with ${{ }} is a string to GitHub (always true): the gate would vanish.
+    if (stepIf?.includes("${{")) return refuse(`step "${label2}" has an if: that mixes text and \${{ }} expressions`);
+    const cond = stepIf === null ? GATE_IF : `(${stepIf}) && ${GATE_IF}`;
     step.items = step.items.filter((p) => !["if", "continue-on-error"].includes(scalarText(p.key) ?? ""));
     step.items.push(new Pair(new Scalar("continue-on-error"), new Scalar(true)), new Pair(new Scalar("if"), new Scalar(cond)));
     if (i === testAt) testStepName = scalarText(pairOf(s, "name")?.value) ?? `Run ${(run ?? "").split("\n")[0]!.trim()}`;
@@ -503,7 +506,9 @@ export function buildSideBySideWorkflow(sourceText: string, jobId: string, label
   }
 
   const jobIf = pairOf(job, "if")?.value;
-  const jobCond = jobIf === undefined ? FORK_GUARD : `(${bareIf(scalarText(jobIf) ?? (isScalar(jobIf) ? jobIf.value : ""))}) && (${FORK_GUARD})`;
+  const jobIfText = jobIf === undefined ? null : bareIf(scalarText(jobIf) ?? (isScalar(jobIf) ? jobIf.value : ""));
+  if (jobIfText?.includes("${{")) return refuse("the job's if: mixes text and ${{ }} expressions");
+  const jobCond = jobIfText === null ? FORK_GUARD : `(${jobIfText}) && (${FORK_GUARD})`;
   const needsRef = (n: unknown) => !!n && JSON.stringify((n as { toJSON?: () => unknown }).toJSON?.() ?? n).includes("needs.");
   if ((jobIf !== undefined && needsRef(jobIf)) || needsRef(pairOf(job, "env")?.value) || kept.some(needsRef)) return refuse("a kept step or condition refers to needs., the output of another job");
 

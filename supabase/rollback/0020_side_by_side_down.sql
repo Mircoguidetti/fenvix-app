@@ -2,6 +2,11 @@
 -- supabase/migrations/): run it by hand, after the code that reads 0020 has been reverted, then delete 0020's row
 -- from fenvix_deploy.schema_migrations. Safe to run more than once.
 --   psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -1 -f supabase/rollback/0020_side_by_side_down.sql
+--
+-- BEFORE running it: list the repositories that run side by side (they keep .github/workflows/fenvix-side-by-side.yml
+-- until the customer deletes it, and the code before 0020 would bill their jobs and comment on their pull requests):
+--   select full_name, setup_pr_url from public.gh_repositories where onboarding_state in ('side_by_side_pr_open', 'side_by_side');
+-- and have each file deleted (or the App's fenvix label removed from it) before the older code serves webhooks.
 set local lock_timeout = '5s';
 set local statement_timeout = '60s';
 

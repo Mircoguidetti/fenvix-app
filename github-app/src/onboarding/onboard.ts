@@ -20,6 +20,8 @@ export interface OnboardingOptions {
   dashboardUrl: string;
   /** At most this many workflow files are read. */
   maxFiles?: number;
+  /** Side by side: SIDE_BY_SIDE_DAILY_CAP, stated in the pull request body. */
+  dailyCap?: number;
 }
 
 interface ContentFile { type: string; name: string; path: string; sha: string; content?: string; encoding?: string; size?: number }
@@ -159,7 +161,7 @@ export interface SideBySideResult extends OnboardingResult {
 }
 
 /** The side-by-side pull request's body: what he will see on GitHub, stated plainly; the file; how to remove it. */
-export function sideBySidePullRequestBody(o: { job: JobAnalysis; file: string; label: string; dashboardUrl: string }): string {
+export function sideBySidePullRequestBody(o: { job: JobAnalysis; file: string; dashboardUrl: string; dailyCap: number }): string {
   return [
     `This pull request adds **one new file**, \`${SIDE_BY_SIDE_PATH}\`. None of your files change, and fenvix writes nothing else to this repository, its pull requests or its checks for this job.`,
     "",
@@ -176,7 +178,7 @@ export function sideBySidePullRequestBody(o: { job: JobAnalysis; file: string; l
     "- Creating this branch and pull request runs your own push and pull_request workflows once (your minutes).",
     "- The file reads with `permissions: contents: read`, never pushes, and skips steps that write to GitHub. A kept step can still write through a token you pass in `env` to a script; and `contents: read` can break tests that read GitHub Packages.",
     "- Your code and the secrets the copied steps use reach fenvix machines.",
-    "- External side effects of your tests happen twice: shared test databases, rate-limited APIs. If your tests call a model API (OpenAI, Anthropic, ...), the fenvix run calls it too and doubles that cost for the runs fenvix makes (at most 10 a day).",
+    "- External side effects of your tests happen twice: shared test databases, rate-limited APIs. If your tests call a model API (OpenAI, Anthropic, ...), the fenvix run calls it too and doubles that cost for the runs fenvix makes (at most ${o.dailyCap} a day per repository).",
     "- Pull requests from forks are not run. Only the first matrix combination is run.",
     "",
     "### The file",
@@ -253,7 +255,7 @@ export async function onboardSideBySide(gh: GitHubHttp, fullName: string, o: Onb
     const pr = await gh.request<{ number: number; html_url: string }>("POST", `${base}/pulls`, {
       body: {
         title: "Run your tests side by side on fenvix (your workflow is unchanged)", head: o.branch, base: defaultBranch,
-        body: sideBySidePullRequestBody({ job, file: built.text, label: o.label, dashboardUrl: o.dashboardUrl }),
+        body: sideBySidePullRequestBody({ job, file: built.text, dashboardUrl: o.dashboardUrl, dailyCap: o.dailyCap ?? 10 }),
       },
     });
     return { state: "side_by_side_pr_open", detail: `added ${SIDE_BY_SIDE_PATH} for ${job.file}:${job.jobId}`, pr: { number: pr.data.number, url: pr.data.html_url, created: true }, sideBySide, ...found };

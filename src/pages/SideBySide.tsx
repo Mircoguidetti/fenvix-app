@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { client, type ProjectRow, type SideBySidePair, type SideBySideResult } from "../data";
 import { Card, Message } from "../components/PageHeader";
 import { ListSkeleton } from "../components/Skeleton";
@@ -30,6 +30,7 @@ function Event({ p }: { p: SideBySidePair }) {
  */
 export function SideBySideCards({ project }: { project: ProjectRow }) {
   const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [project.id]);
   const data = useAsync(() => client.getSideBySide(project.id, page), [project.id, page]);
   if (data.status === "loading") return <ListSkeleton rows={3} label="Loading side by side" />;
   if (data.status === "error") return <Message role="alert">{data.message}</Message>;

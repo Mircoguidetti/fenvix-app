@@ -420,7 +420,8 @@ export function ConnectPage() {
               <Segmented<OnboardingKind>
                 label="How fenvix runs your tests"
                 value={shownKind}
-                onChange={(v) => { if (org.canManage) void chooseKind(v); }}
+                disabled={!org.canManage || savingKind}
+                onChange={(v) => void chooseKind(v)}
                 options={[
                   { value: "move", label: "Move the test job to fenvix" },
                   { value: "side_by_side", label: "Run side by side (your workflow stays as it is)" },

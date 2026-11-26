@@ -28,6 +28,8 @@ export interface RunTarget {
   seenAt: Date;
   /** The job's duration in ms (GitHub's timings), once finished: no test lasts longer. Null or 0: no bound known. */
   maxTestMs?: number | null;
+  /** A side-by-side run: its defect bundles are not stored (they would show in the customer's defects, linked to no run page). */
+  noDefects?: boolean;
 }
 
 /** The job the chunks came from (gh_run_results' key). */
@@ -170,7 +172,7 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
   const cap = run.maxTestMs && run.maxTestMs > 0 ? Math.round(run.maxTestMs) : null;
 
   // Defects (the per-test outcomes point at them by fingerprint).
-  await upsertDefects(c, run.projectId, all<RunnerDefect>("defects").map((d) => defectRow(d, run.language)), { runId: run.id, seenAt: run.seenAt });
+  if (!run.noDefects) await upsertDefects(c, run.projectId, all<RunnerDefect>("defects").map((d) => defectRow(d, run.language)), { runId: run.id, seenAt: run.seenAt });
 
   // Receipts. reused_run_id: the project's run whose engine run id is the one the receipt reuses.
   const receipts = lastBy(all<RunnerReceipt>("receipts").map(receiptRow), (r) => r.test_id);
