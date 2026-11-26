@@ -415,6 +415,28 @@ jobs:
         run: npm test
 `, /has an if: that mixes text/);
   });
+
+  // protects=an if: that closes more parentheses than it opens could put || outside our gate; it is refused;
+  // fails_when=it is copied; no_claim=-.
+  it("an if: whose parentheses do not balance: refused", () => {
+    refused(`on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - if: always()) || (true
+        run: npm test
+`, /parentheses do not balance/);
+    const ok = buildSideBySideWorkflow(`on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - if: contains(github.ref, ')')
+        run: npm test
+`, "test", "fenvix");
+    assert.ok(!("refused" in ok), "a parenthesis inside a string literal is fine");
+  });
 });
 
 describe("our own file is never read as one of the customer's workflows", () => {

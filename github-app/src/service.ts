@@ -107,6 +107,10 @@ interface RepoRow {
 
 const sha256Hex = (v: string) => createHash("sha256").update(v).digest("hex");
 
+/** The pull request a run is for: only a pull_request run has one (a push run's list changes as PRs open and close). */
+const prOf = (run: { event?: string | null; pull_requests?: { number: number }[] | null }): number | null =>
+  run.event === "pull_request" ? run.pull_requests?.[0]?.number ?? null : null;
+
 /** The onboarding states of a repository that runs side by side. */
 const SIDE_BY_SIDE_STATES = ["side_by_side_pr_open", "side_by_side"];
 
@@ -481,8 +485,10 @@ export class GitHubService {
         : `the setup pull request #${pr.number} was closed without merging`;
       await this.db.q(
         `update gh_repositories set onboarding_state = $2, setup_pr_number = $3, setup_pr_url = $4, onboarding_detail = $5, updated_at = now()
-         where repository_id = $1 and (setup_pr_number is null or setup_pr_number = $3)`,
-        [repo.id, onboarding, pr.number, pr.html_url, detail]);
+         where repository_id = $1 and (setup_pr_number = $3 or (setup_pr_number is null and not $6::boolean))`,
+        // A side-by-side pull request counts only when it is the one fenvix opened (its number recorded at onboard):
+        // anyone can open a pull request from a branch with that name.
+        [repo.id, onboarding, pr.number, pr.html_url, detail, sideBySide]);
       const row = await this.repo(repo.id);
       if (row?.workspace_id && row.project_id) {
         await this.db.tx(row.workspace_id, (c) => c.query(
@@ -566,9 +572,11 @@ export class GitHubService {
     const [known] = await this.db.q<{ event: string | null; pr_number: number | null }>(
       "select event, pr_number from gh_customer_jobs where repository_id = $1 and run_id = $2 limit 1", [repo.repository_id, runId]);
     if (known) return { path: repo.onboarding_workflow_path ?? null, event: known.event, pr: known.pr_number };
-    const run = await this.workflowRun(this.gh.installation(repo.installation_id), repoPath(repo.full_name), runId);
-    if (!run) return null;
-    return { path: run.path ?? null, event: run.event ?? null, pr: run.pull_requests?.[0]?.number ?? null };
+    // A failed lookup throws (the delivery is retried); a run GitHub does not know is not his job.
+    const res = await this.gh.installation(repo.installation_id).request<WorkflowRunP>("GET", `${repoPath(repo.full_name)}/actions/runs/${runId}`, { allow: [404] });
+    if (res.status === 404) return null;
+    const run = res.data;
+    return { path: run.path ?? null, event: run.event ?? null, pr: prOf(run) };
   }
 
   private async storeCustomerJob(repositoryId: number, job: JobP & { steps?: unknown[] }, run: { event: string | null; pr: number | null }, suffix: string | null, source: "webhook" | "history"): Promise<void> {
@@ -631,7 +639,12 @@ export class GitHubService {
     type RunL = { id: number; event?: string; path?: string; pull_requests?: { number: number }[] };
     let last: number | null = skipTo;
     for (; page <= 3; page++) {
-      const list = await gh.request<{ workflow_runs?: RunL[] }>("GET", `${base}/actions/workflows/${encodeURIComponent(file)}/runs`, { query: { created: `>=${since}`, per_page: 100, page } });
+      const list = await gh.request<{ workflow_runs?: RunL[] }>("GET", `${base}/actions/workflows/${encodeURIComponent(file)}/runs`, { query: { created: `>=${since}`, per_page: 100, page }, allow: [404] });
+      if (list.status === 404) {
+        // The workflow file is gone (renamed or deleted): nothing more to read, never retried.
+        await this.db.q("update gh_repositories set history_cursor = $2::jsonb, history_next_at = null where repository_id = $1", [repositoryId, JSON.stringify({ done: true, since, missing: file })]);
+        return "done";
+      }
       const runs = list.data.workflow_runs ?? [];
       if (low(list)) return pause(last);
       let i = 0;
@@ -643,7 +656,7 @@ export class GitHubService {
           if (j.status !== "completed" || j.labels?.includes(this.s.runsOnLabel)) continue;
           const suffix = customerSuffix(j.name, repo.side_by_side_job_name);
           if (suffix === undefined) continue;
-          await this.storeCustomerJob(repositoryId, j, { event: run.event ?? null, pr: run.pull_requests?.[0]?.number ?? null }, suffix, "history");
+          await this.storeCustomerJob(repositoryId, j, { event: run.event ?? null, pr: prOf(run) }, suffix, "history");
         }
         last = run.id;
         if (low(jobs)) return pause(last);
@@ -679,7 +692,7 @@ export class GitHubService {
     if (!run?.path) return { kind: row.kind, run };
     const kind: JobKind = run.path === SIDE_BY_SIDE_PATH ? "side_by_side" : "ci_run";
     await this.db.q("update gh_jobs set workflow_path = $2, event = $3, pr_number = $4, kind = $5 where job_id = $1",
-      [jobId, run.path, run.event ?? null, run.pull_requests?.[0]?.number ?? null, kind]);
+      [jobId, run.path, run.event ?? null, prOf(run), kind]);
     return { kind, run };
   }
 
@@ -849,8 +862,9 @@ export class GitHubService {
     if (!inst?.workspace_id || inst.deleted_at) return none("the installation is not linked to an organization");
     // Only a repository fenvix onboarded side by side gets side-by-side machines: a file of that name added by hand to
     // another repository gets none (they would be free machines).
-    const state = (await this.repo(repo.id))?.onboarding_state ?? "";
-    if (!SIDE_BY_SIDE_STATES.includes(state)) return none(`the repository is not onboarded side by side (state ${state || "unknown"})`);
+    const current = await this.repo(repo.id);
+    const state = current?.onboarding_state ?? "";
+    if (!SIDE_BY_SIDE_STATES.includes(state) || !current?.side_by_side_job_name) return none(`the repository is not onboarded side by side (state ${state || "unknown"})`);
     const org = await this.db.tx(inst.workspace_id, (c) => this.orgContext(c));
     await this.db.q("update gh_jobs set region = $2, mode = 'shadow' where job_id = $1", [jobId, org.region]);
     if (this.launcher!.canPlace && !this.launcher!.canPlace(org.region)) return none(`no placement for the organization's region (${org.region})`);
@@ -872,6 +886,7 @@ export class GitHubService {
          where repository_id = $1 and kind = 'side_by_side' and launched_at > now() - interval '24 hours'`, [repo.id])).rows[0]!;
       let why: string | null = null;
       if (inst.suspended_at) why = "the installation is suspended";
+      else if (!this.sbs.enabled) why = "side-by-side runs are turned off";
       else if (counts.full >= this.sbs.dailyCap) why = `the daily cap of ${this.sbs.dailyCap} side-by-side runs is reached`;
       else if (fleetFull) why = "the fleet is full";
       if (why && counts.skip >= this.sbs.skipDailyCap) return { none: `${why}, and the daily cap of ${this.sbs.skipDailyCap} skip machines is reached` };
@@ -914,9 +929,17 @@ export class GitHubService {
         if (id) await gh.request("DELETE", `${base}/actions/runners/${id}`, { allow: [404, 422] }).catch(() => undefined);
         // A full fleet at launch (a race with another job): a skip machine instead, once.
         if (e instanceof RetryLater && !skipWhy) {
-          if (decision.skipsLeft <= 0) { await release(); return none("the fleet is full, and the daily cap of skip machines is reached"); }
+          // Counted again under the repository's lock: another job may have taken a skip slot meanwhile.
+          const ok = await this.db.tx(inst.workspace_id, async (c) => {
+            await c.query("select pg_advisory_xact_lock(hashtext('fenvix-sbs-cap:' || $1::text))", [repo.id]);
+            const skips = (await c.query<{ n: number }>(
+              `select count(*)::int as n from gh_jobs where repository_id = $1 and kind = 'side_by_side' and skip_machine and launched_at > now() - interval '24 hours'`, [repo.id])).rows[0]!.n;
+            if (skips >= this.sbs.skipDailyCap) return false;
+            await c.query("update gh_jobs set cache_access = 'read', skip_machine = true where job_id = $1", [jobId]);
+            return true;
+          });
+          if (!ok) { await release(); return none("the fleet is full, and the daily cap of skip machines is reached"); }
           skipWhy = "the fleet is full";
-          await this.db.q("update gh_jobs set cache_access = 'read', skip_machine = true where job_id = $1", [jobId]);
           return this.launchSkipAfterFull(jobId, installationId, repo, row, org.region, exp);
         }
         this.log.warn({ job: jobId, attempt, err: e instanceof Error ? e.message : String(e) }, "side-by-side machine did not start");

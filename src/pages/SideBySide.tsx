@@ -41,7 +41,7 @@ export function SideBySideCards({ project }: { project: ProjectRow }) {
     <div className="side-by-side">
       <Card id="today" title="Today" description={`Your own test job ${d.repository?.jobName ? `(${d.repository.jobName}) ` : ""}on ${t.runnerLabel ?? "its runner"}, the last 30 days.`}>
         <div className="kpis kpis-4">
-          <div className="kpi"><span className="kpi-label">Runs per day</span><span className="kpi-value">{t.runsPerDay ?? "—"}</span><span className="muted small">median of 30 days</span></div>
+          <div className="kpi"><span className="kpi-label">Runs per day</span><span className="kpi-value">{t.runsPerDay ?? "—"}</span><span className="muted small">average over 30 days</span></div>
           <div className="kpi"><span className="kpi-label">Median duration</span><span className="kpi-value">{dur(t.medianSeconds)}</span></div>
           <div className="kpi"><span className="kpi-label">Cost per run</span><span className="kpi-value">{usdRange(t.costPerRun)}</span><span className="muted small">{t.price}</span></div>
           <div className="kpi"><span className="kpi-label">Cost per month</span><span className="kpi-value">{usdRange(t.costPerMonth)}</span></div>

@@ -286,6 +286,18 @@ interface Val { js: unknown; node: unknown }
 
 const OUTER_EXPR = /^\s*\$\{\{([\s\S]*)\}\}\s*$/;
 /** An `if:` without its outer `${{ }}` (GitHub reads both forms the same). */
+/** Parentheses balanced outside string literals ('...'): a condition that closes more than it opens escapes ours. */
+function balanced(expr: string): boolean {
+  let depth = 0;
+  let quoted = false;
+  for (const ch of expr) {
+    if (ch === "'") quoted = !quoted;
+    else if (!quoted && ch === "(") depth++;
+    else if (!quoted && ch === ")" && --depth < 0) return false;
+  }
+  return depth === 0 && !quoted;
+}
+
 function bareIf(v: unknown): string {
   const s = typeof v === "string" ? v : String(v);
   const m = OUTER_EXPR.exec(s);
@@ -498,6 +510,7 @@ export function buildSideBySideWorkflow(sourceText: string, jobId: string, label
     const stepIf = hisIf === undefined ? null : bareIf(scalarText(hisIf) ?? (isScalar(hisIf) ? hisIf.value : ""));
     // Text mixed with ${{ }} is a string to GitHub (always true): the gate would vanish.
     if (stepIf?.includes("${{")) return refuse(`step "${label2}" has an if: that mixes text and \${{ }} expressions`);
+    if (stepIf !== null && !balanced(stepIf)) return refuse(`step "${label2}" has an if: whose parentheses do not balance`);
     const cond = stepIf === null ? GATE_IF : `(${stepIf}) && ${GATE_IF}`;
     step.items = step.items.filter((p) => !["if", "continue-on-error"].includes(scalarText(p.key) ?? ""));
     step.items.push(new Pair(new Scalar("continue-on-error"), new Scalar(true)), new Pair(new Scalar("if"), new Scalar(cond)));
@@ -508,6 +521,7 @@ export function buildSideBySideWorkflow(sourceText: string, jobId: string, label
   const jobIf = pairOf(job, "if")?.value;
   const jobIfText = jobIf === undefined ? null : bareIf(scalarText(jobIf) ?? (isScalar(jobIf) ? jobIf.value : ""));
   if (jobIfText?.includes("${{")) return refuse("the job's if: mixes text and ${{ }} expressions");
+  if (jobIfText !== null && !balanced(jobIfText)) return refuse("the job's if: has parentheses that do not balance");
   const jobCond = jobIfText === null ? FORK_GUARD : `(${jobIfText}) && (${FORK_GUARD})`;
   const needsRef = (n: unknown) => !!n && JSON.stringify((n as { toJSON?: () => unknown }).toJSON?.() ?? n).includes("needs.");
   if ((jobIf !== undefined && needsRef(jobIf)) || needsRef(pairOf(job, "env")?.value) || kept.some(needsRef)) return refuse("a kept step or condition refers to needs., the output of another job");

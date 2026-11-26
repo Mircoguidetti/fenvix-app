@@ -20,11 +20,13 @@ type Row = Record<string, any>;
 class Fleet implements RunnerLauncher {
   launches: RunnerLaunch[] = [];
   full = false;
+  /** The fleet fills between the capacity check and the launch: hasCapacity says yes, a full launch is refused. */
+  race = false;
   places = true;
   canPlace(_r: Region) { return this.places; }
   async hasCapacity() { return !this.full; }
   async launch(l: RunnerLaunch) {
-    if (this.full && !l.skipCapacityCheck) throw new RetryLater("full");
+    if ((this.full || this.race) && !l.skipCapacityCheck) throw new RetryLater("full");
     this.launches.push(l);
     return { instanceId: `i-${l.jobId}`, already: false };
   }
@@ -125,6 +127,10 @@ describe("side by side: the other kind and the other selection (AC 2)", () => {
     await link(h, admin, org);
     const pulls = h.gh.repos.get("acme/shop")!.pulls;
     assert.deepEqual(pulls.map((p) => p.head), ["fenvix/runs-on"]);
+    // protects=a pull request anyone opens from a branch named fenvix/side-by-side changes nothing: only the one
+    // fenvix opened counts; fails_when=the repository turns side_by_side_pr_open (free machines); no_claim=-.
+    await h.send("pull_request", pullRequest("opened", { number: 7, headRef: "fenvix/side-by-side", headSha: "7".repeat(40) }));
+    assert.equal((await admin.query("select onboarding_state from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].onboarding_state, "pr_open");
   });
 
   // protects="All repositories" never opens pull requests by itself, in either kind; fails_when=a PR is opened at the
@@ -290,6 +296,24 @@ describe("side by side: our job (AC 3, AC 6)", () => {
     assert.deepEqual(fleet.launches.filter((l) => l.jobId === 7202).map((l) => !!l.skip), [true]);
   });
 
+  // protects=the fleet filling between the check and the launch gives a skip machine (read cache), and turning
+  // side-by-side runs off sends merged files' jobs to skip machines (as documented); fails_when=the job gets no machine,
+  // a full machine, or a write token; no_claim=-.
+  it("a full fleet at launch, and side-by-side runs turned off: skip machines", async () => {
+    await admin.query("delete from gh_jobs where kind = 'side_by_side'");
+    fleet.race = true;
+    await ourJob(7701);
+    fleet.race = false;
+    const l = fleet.launches.at(-1)!;
+    assert.deepEqual({ job: l.jobId, skip: !!l.skip, cache: l.cacheAccess }, { job: 7701, skip: true, cache: "read" });
+    assert.deepEqual((await admin.query("select skip_machine, cache_access, launched_at is not null as launched from gh_jobs where job_id = 7701")).rows[0],
+      { skip_machine: true, cache_access: "read", launched: true });
+    const sbs = h.app.service.sbs as { enabled: boolean };
+    sbs.enabled = false;
+    try { await ourJob(7702); } finally { sbs.enabled = true; }
+    assert.deepEqual({ job: fleet.launches.at(-1)!.jobId, skip: !!fleet.launches.at(-1)!.skip }, { job: 7702, skip: true });
+  });
+
   // protects=the daily cap is decided atomically: two deliveries at once at count 9 give exactly one full machine;
   // fails_when=both get a full machine (the count read twice before either reserves); no_claim=SQS ordering.
   it("two concurrent deliveries at count 9: exactly one full machine", async () => {
@@ -404,12 +428,16 @@ describe("side by side: his test job, from webhooks and from his history (item 1
   it("webhooks: his completed test job is stored with event and PR; lint and another workflow's job are not", async () => {
     h.gh.addRun("acme/shop", 30010, { event: "pull_request", headSha: "f".repeat(40), headBranch: "feature", message: "m", path: CI, pullRequests: [5] });
     h.gh.addRun("acme/shop", 30011, { event: "push", headSha: "f".repeat(40), headBranch: "feature", message: "m", path: ".github/workflows/nightly.yml" });
+    // A push run lists the open pull requests of its branch: a push is keyed without them.
+    h.gh.addRun("acme/shop", 30012, { event: "push", headSha: "f".repeat(40), headBranch: "feature", message: "m", path: CI, pullRequests: [5] });
     const done = (id: number, runId: number, name: string) => h.send("workflow_job", workflowJob("completed", { id, runId, sha: "f".repeat(40), branch: "feature", labels: ["ubuntu-latest"], name, runner: "GitHub Actions 2" }));
     await done(301001, 30010, "test");
     await done(301002, 30010, "lint");
     await done(301003, 30011, "test");
+    await done(301004, 30012, "test");
     const rows = (await admin.query("select job_id, source, event, pr_number, steps is not null as steps from gh_customer_jobs where job_id > 301000 order by job_id")).rows;
-    assert.deepEqual(rows, [{ job_id: 301001, source: "webhook", event: "pull_request", pr_number: 5, steps: true }]);
+    assert.deepEqual(rows, [{ job_id: 301001, source: "webhook", event: "pull_request", pr_number: 5, steps: true },
+      { job_id: 301004, source: "webhook", event: "push", pr_number: null, steps: true }]);
   });
 });
 

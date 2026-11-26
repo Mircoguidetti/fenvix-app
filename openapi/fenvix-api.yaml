@@ -1388,7 +1388,7 @@ components:
               required: [runs, runsPerDay, medianSeconds, runnerLabel, price, costPerRun, costPerMonth, history, notes]
               properties:
                 runs: { type: integer }
-                runsPerDay: { type: [number, "null"], description: "Median of the last 30 days' daily counts." }
+                runsPerDay: { type: [number, "null"], description: "Mean runs per day over the last 30 days (null below 5 runs)." }
                 medianSeconds: { type: [integer, "null"] }
                 runnerLabel: { type: [string, "null"] }
                 price: { type: string, description: "The rate, its range, \"price unknown for <label>\" or $0 for a public repository on GitHub-hosted runners." }

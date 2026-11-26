@@ -57,8 +57,11 @@ describe("the stack, demo mode (an option)", async () => {
       assert.deepEqual(names, want(who), who);
       for (const x of st) for (const a of arr(x.Action)) assert.ok(a !== "*" && !a.endsWith(":*"), `${who}: ${a}`);
     }
-    assert.ok(!statementsOf(fnRole("worker")).some((x) => arr(x.Action).includes("sqs:SendMessage")), "the worker does not send");
-    assert.ok(!statementsOf(fnRole("sweep")).some((x) => json(x.Action).includes("sqs:") || json(x.Action).includes("s3:")), "the sweep touches neither queue nor bucket");
+    // Rule 3 (spec 20261126-side-by-side-runs item 21): the worker and the sweep now send one work kind,
+    // side_by_side_history, to the work queue. Before: neither sent. The sweep still touches no bucket.
+    assert.ok(statementsOf(fnRole("worker")).some((x) => arr(x.Action).includes("sqs:SendMessage")), "the worker sends side-by-side histories");
+    assert.ok(statementsOf(fnRole("sweep")).some((x) => arr(x.Action).includes("sqs:SendMessage")), "the sweep re-queues due histories");
+    assert.ok(!statementsOf(fnRole("sweep")).some((x) => json(x.Action).includes("s3:")), "the sweep touches no bucket");
     const httpS3 = statementsOf(fnRole("http")).filter((x) => json(x.Action).includes("s3:"));
     assert.deepEqual(httpS3.flatMap((x) => arr(x.Action)), ["s3:PutObject"]);
   });

@@ -1714,7 +1714,7 @@ export interface components {
             };
             today: null | {
                 runs: number;
-                /** @description Median of the last 30 days' daily counts. */
+                /** @description Mean runs per day over the last 30 days (null below 5 runs). */
                 runsPerDay: number | null;
                 medianSeconds: number | null;
                 runnerLabel: string | null;

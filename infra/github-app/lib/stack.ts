@@ -191,6 +191,8 @@ export class FenvixGitHubAppStack extends Stack {
       timeout: WORKER_TIMEOUT, memory: 512, reads: workerReads, extraEnv: { ...launchEnv, ...warmupEnv, ...sideBySideEnv, WORK_QUEUE_URL: queue.queueUrl },
       description: "fenvix GitHub App: runs queued webhooks and runner summaries",
     });
+    // The worker queues a side-by-side repository's history reading (work side_by_side_history).
+    queue.grantSendMessages(worker);
     worker.addToRolePolicy(new iam.PolicyStatement({ sid: "ReadAndDeleteOverflow", actions: ["s3:GetObject", "s3:DeleteObject"], resources: [overflow.arnForObjects("work/*")] }));
     worker.addEventSource(new SqsEventSource(queue, { batchSize: 5, reportBatchItemFailures: true, maxConcurrency: 2 }));
 
@@ -273,6 +275,8 @@ export class FenvixGitHubAppStack extends Stack {
       timeout: Duration.seconds(300), memory: 256, reads: readersOf(s.env, "sweep"), extraEnv: { WORK_QUEUE_URL: queue.queueUrl },
       description: "fenvix GitHub App: publishes completed jobs whose runner summary never came",
     });
+    // The sweep queues side-by-side histories whose time came (work side_by_side_history).
+    queue.grantSendMessages(sweep);
 
     // ---------------------------------------------------------------- the sweep's schedule
     const schedulerRole = new iam.Role(this, "SweepScheduleRole", { assumedBy: new iam.ServicePrincipal("scheduler.amazonaws.com", { conditions: { StringEquals: { "aws:SourceAccount": this.account } } }) });
