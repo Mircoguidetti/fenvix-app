@@ -1343,7 +1343,7 @@ function mockSideBySide(projectId: string, page: number): import("./types").Side
   ];
   return {
     available: true, repository: { fullName: "northwind/storefront", state: "side_by_side", jobName: "test", testStep: "Run npm test", matrixSuffix: null },
-    today: { runs: 214, runsPerDay: 7, medianSeconds: 908, runnerLabel: "ubicloud-standard-2", price: "$0.00125-0.002 per minute (Ubicloud x64, 2 vCPU)", costPerRun: { min: 0.01875, max: 0.03 }, costPerMonth: { min: 3.94, max: 6.3 }, history: "read", notes: ["GitHub plans include monthly minutes: the cost shown is before those.", "From your last 214 runs (30 days).", "Ubicloud includes 1,250 free minutes a month."] },
+    today: { runs: 214, runsPerDay: 7.1, medianSeconds: 908, runnerLabel: "ubicloud-standard-2", price: "$0.00125-0.002 per minute (Ubicloud x64, 2 vCPU)", costPerRun: { min: 0.01875, max: 0.03 }, costPerMonth: { min: 3.94, max: 6.3 }, history: "read", notes: ["GitHub plans include monthly minutes: the cost shown is before those.", "From your last 214 runs (30 days).", "Ubicloud includes 1,250 free minutes a month."] },
     header: { pairs: 2, same: 1, hisSeconds: 908.5, oursSeconds: 369, hisCost: 0.01875, oursMachineCost: 0.0374, oursVcpuMinutes: 49.2 },
     ours, items, total: items.length, page, pageSize: 50,
   };

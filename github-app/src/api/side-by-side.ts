@@ -10,6 +10,10 @@ import { type HisJob, jobCost, median, type OurJob, pairJobs, type Price, priceO
 
 const DAY = 86_400_000;
 const PAGE = 50;
+/** Below this many of his runs in 30 days, no daily rate (nor monthly cost) is shown. */
+const FEW = 5;
+/** How many of the newest pairs the header's medians are taken from (the last 20 comparable among them). */
+const HEADER_KEYS = 100;
 const date = (v: unknown): Date | null => (v instanceof Date ? v : v ? new Date(String(v)) : null);
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 const round = (n: number, d = 4) => Math.round(n * 10 ** d) / 10 ** d;
@@ -55,31 +59,51 @@ export const getSideBySide: Handler = async (ctx) => {
   const rates = new Map<string, Rate>((await t.q(
     `select l.label, r.key, r.usd_per_minute, r.usd_per_minute_max, r.runner from public.ci_runner_label_rates l join public.ci_reference_rates r on r.key = l.rate_key`))
     .map((r) => [String(r.label), { key: String(r.key), usdPerMinute: Number(r.usd_per_minute), usdPerMinuteMax: r.usd_per_minute_max === null ? null : Number(r.usd_per_minute_max), runner: String(r.runner) }]));
-  const his = (await t.q("select * from public.gh_customer_jobs where repository_id = $1 and completed_at > $2 order by completed_at desc limit 5000",
-    [repo.repository_id, new Date(ctx.now.getTime() - 90 * DAY)])).map(hisJob);
-  const mine = (await t.q(
-    `select j.*, r.status as run_status, r.tests_ran, r.would_skip_tests, r.would_save_ms from public.gh_jobs j left join public.ci_runs r on r.id = j.ci_run_id
-      where j.repository_id = $1 and j.kind = 'side_by_side' and coalesce(j.completed_at, j.created_at, j.updated_at) > $2 order by j.job_id desc limit 5000`,
-    [repo.repository_id, new Date(ctx.now.getTime() - 90 * DAY)])).map(ourJob);
   const suffix = (repo.side_by_side_matrix_suffix as string | null) ?? null;
+  const rid = repo.repository_id;
+  // The pairs' keys (commit, event, pull request), newest first, paginated in SQL: his completed jobs of the matrix
+  // suffix and our completed jobs. Only the jobs of the keys asked for are read.
+  const KEYS = `with k as (
+      select head_sha, coalesce(event, '') as ev, coalesce(pr_number, -1) as pr, max(completed_at) as at from public.gh_customer_jobs
+       where repository_id = $1 and matrix_suffix is not distinct from $2 and completed_at is not null group by 1, 2, 3
+      union all
+      select head_sha, coalesce(event, ''), coalesce(pr_number, -1), max(completed_at) from public.gh_jobs
+       where repository_id = $1 and kind = 'side_by_side' and status = 'completed' group by 1, 2, 3)
+    select head_sha, ev, pr, max(at) as at, count(*) over () as total from k group by 1, 2, 3 order by max(at) desc nulls last, 1 limit $3 offset $4`;
+  const HIS_COLS = "job_id, run_attempt, head_sha, event, pr_number, matrix_suffix, conclusion, started_at, completed_at, labels, steps";
+  const OUR_COLS = `j.job_id, j.run_attempt, j.head_sha, j.event, j.pr_number, j.status, j.conclusion, j.started_at, j.completed_at, j.skip_machine,
+    j.has_summary, j.checkout_sha, r.status as run_status, r.tests_ran, r.would_skip_tests, r.would_save_ms`;
+  const pairsOf = async (limit: number, offset: number) => {
+    const keys = await t.q<{ head_sha: string; ev: string; pr: number; total: string | number }>(KEYS, [rid, suffix, limit, offset]);
+    const total = keys.length ? Number(keys[0]!.total) : 0;
+    if (!keys.length) return { pairs: [], total };
+    const shas = [...new Set(keys.map((k) => k.head_sha))];
+    const wanted = new Set(keys.map((k) => `${k.head_sha}|${k.ev}|${k.pr}`));
+    const keyOf = (r: Row) => `${r.head_sha}|${r.event ?? ""}|${r.pr_number ?? -1}`;
+    const h = (await t.q(`select ${HIS_COLS} from public.gh_customer_jobs where repository_id = $1 and head_sha = any($2::text[]) and matrix_suffix is not distinct from $3`,
+      [rid, shas, suffix])).filter((r) => wanted.has(keyOf(r))).map(hisJob);
+    const o = (await t.q(`select ${OUR_COLS} from public.gh_jobs j left join public.ci_runs r on r.id = j.ci_run_id
+      where j.repository_id = $1 and j.kind = 'side_by_side' and j.head_sha = any($2::text[])`, [rid, shas])).filter((r) => wanted.has(keyOf(r))).map(ourJob);
+    return { pairs: pairJobs(h, o, { matrixSuffix: suffix, testStep: String(repo.side_by_side_test_step ?? ""), now: ctx.now }), total };
+  };
   const isPrivate = repo.private !== false;
   const priceOfJob = (h: HisJob): Price => priceOf(h.labels, isPrivate, rates);
 
   // ---------------------------------------------------------------- Today: his test job, the last 30 days
   const since = new Date(ctx.now.getTime() - 30 * DAY);
-  const recent = his.filter((h) => (h.matrixSuffix ?? null) === suffix && h.completedAt && h.completedAt >= since);
+  const recent = (await t.q(`select ${HIS_COLS} from public.gh_customer_jobs where repository_id = $1 and matrix_suffix is not distinct from $2 and completed_at >= $3`,
+    [rid, suffix, since])).map(hisJob);
   const finished = recent.filter((h) => h.conclusion === "success" || h.conclusion === "failure");
-  const perDay = new Map<string, number>();
-  for (const h of recent) { const k = h.completedAt!.toISOString().slice(0, 10); perDay.set(k, (perDay.get(k) ?? 0) + 1); }
-  const daily = Array.from({ length: 30 }, (_, i) => perDay.get(new Date(ctx.now.getTime() - i * DAY).toISOString().slice(0, 10)) ?? 0);
   const medSeconds = median(finished.map((h) => seconds(h.startedAt, h.completedAt) ?? 0));
   const labels = new Map<string, number>();
   for (const h of finished) { const p = priceOfJob(h); labels.set(p.label, (labels.get(p.label) ?? 0) + 1); }
   const label = [...labels.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   const price = label ? priceOfJob(finished.find((h) => priceOfJob(h).label === label)!) : null;
   const perRun = medSeconds !== null && price ? jobCost(medSeconds, price) : null;
-  const runsPerDay = recent.length ? median(daily) : null;
-  const notes = ["GitHub plans include monthly minutes: the cost shown is before those.", `From your last ${recent.length} runs (30 days).`];
+  // The mean over the 30 days of the window; below FEW runs no daily rate is given.
+  const runsPerDay = recent.length >= FEW ? Math.round((recent.length / 30) * 10) / 10 : null;
+  const notes = ["GitHub plans include monthly minutes: the cost shown is before those.",
+    recent.length >= FEW ? `From your last ${recent.length} runs (30 days).` : `Fewer than ${FEW} runs in 30 days: no daily rate or monthly cost yet.`];
   if (price?.kind === "rate" && price.rate.key.startsWith("ubicloud")) notes.push("Ubicloud includes 1,250 free minutes a month.");
   const today = {
     runs: recent.length, runsPerDay, medianSeconds: medSeconds === null ? null : Math.round(medSeconds), runnerLabel: label,
@@ -89,9 +113,8 @@ export const getSideBySide: Handler = async (ctx) => {
   };
 
   // ---------------------------------------------------------------- Side by side: the pairs
-  const pairs = pairJobs(his, mine, { matrixSuffix: suffix, testStep: String(repo.side_by_side_test_step ?? ""), now: ctx.now });
   const heldMinutes = (u: OurJob) => (seconds(u.startedAt, u.completedAt) ?? 0) / 60;
-  const view = pairs.map((p) => {
+  const view = (pairs: Awaited<ReturnType<typeof pairsOf>>["pairs"]) => pairs.map((p) => {
     const h = p.his;
     const u = p.ours as (OurJob & { checkoutSha: string | null }) | null;
     const hs = h ? seconds(h.startedAt, h.completedAt) : null;
@@ -107,7 +130,10 @@ export const getSideBySide: Handler = async (ctx) => {
       } : null,
     };
   });
-  const comparable = view.filter((v) => (v.result === "same" || v.result === "different") && v.his && v.ours).slice(0, 20);
+  const page1 = await pairsOf(PAGE, (page - 1) * PAGE);
+  const items = view(page1.pairs);
+  // The header: medians of the last 20 comparable pairs, among the newest HEADER_KEYS keys.
+  const comparable = view((await pairsOf(HEADER_KEYS, 0)).pairs).filter((v) => (v.result === "same" || v.result === "different") && v.his && v.ours).slice(0, 20);
   const med = (xs: (number | null | undefined)[]) => { const m = median(xs.filter((x): x is number => typeof x === "number")); return m === null ? null : round(m); };
   const header = {
     pairs: comparable.length,
@@ -119,6 +145,6 @@ export const getSideBySide: Handler = async (ctx) => {
   return {
     available: true,
     repository: { fullName: String(repo.full_name), state: String(repo.onboarding_state), jobName: (repo.side_by_side_job_name as string | null) ?? null, testStep: (repo.side_by_side_test_step as string | null) ?? null, matrixSuffix: suffix },
-    today, header, ours, items: view.slice((page - 1) * PAGE, page * PAGE), total: view.length, page, pageSize: PAGE,
+    today, header, ours, items, total: page1.total, page, pageSize: PAGE,
   };
 };

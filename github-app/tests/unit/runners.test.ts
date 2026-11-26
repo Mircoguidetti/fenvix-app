@@ -198,5 +198,7 @@ describe("side-by-side machines (spec 20261126-side-by-side-runs items 11, 12)",
     const ud = Buffer.from(run.input.UserData!, "base64").toString().split("\n");
     const at = ud.indexOf("install -m 0644 /dev/null /etc/fenvix/sbs-skip");
     assert.ok(at > 0 && at < ud.indexOf("umask 077"), "written before the root-only files, readable by the job");
+    // Its whole life is 10 minutes, whatever the job does (a workflow without the gate step).
+    assert.ok(ud.includes('shutdown -h +10 "fenvix skip machine: 10-minute limit"'), "the 10-minute power-off");
   });
 });

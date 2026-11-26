@@ -290,6 +290,25 @@ describe("side by side: our job (AC 3, AC 6)", () => {
     assert.deepEqual(fleet.launches.filter((l) => l.jobId === 7202).map((l) => !!l.skip), [true]);
   });
 
+  // protects=the daily cap is decided atomically: two deliveries at once at count 9 give exactly one full machine;
+  // fails_when=both get a full machine (the count read twice before either reserves); no_claim=SQS ordering.
+  it("two concurrent deliveries at count 9: exactly one full machine", async () => {
+    await admin.query("delete from gh_jobs where kind = 'side_by_side'");
+    await admin.query(`insert into gh_jobs (job_id, repository_id, installation_id, run_id, head_sha, status, kind, launched_at, skip_machine)
+      select 810000 + g, $1, $2, 1, $3, 'completed', 'side_by_side', now() - interval '1 hour', false from generate_series(1, 9) g`, [REPOS.shop.id, INSTALLATION_ID, SHA]);
+    const runA = ++runSeq; const runB = ++runSeq;
+    for (const r of [runA, runB]) h.gh.addRun("acme/shop", r, { event: "push", headSha: SHA, headBranch: "main", message: "m", path: SIDE_BY_SIDE_PATH });
+    const n = fleet.launches.length;
+    await Promise.all([
+      h.send("workflow_job", workflowJob("queued", { id: 7601, runId: runA, sha: SHA, branch: "main", name: "fenvix side-by-side (does not gate)" })),
+      h.send("workflow_job", workflowJob("queued", { id: 7602, runId: runB, sha: SHA, branch: "main", name: "fenvix side-by-side (does not gate)" })),
+    ]);
+    const mine = fleet.launches.slice(n);
+    assert.equal(mine.length, 2);
+    assert.deepEqual(mine.map((l) => !!l.skip).sort(), [false, true], "one full, one skip");
+    await admin.query("delete from gh_jobs where job_id > 800000");
+  });
+
   // protects=a job on a skip machine publishes as not proven "skip machine: no test ran", never passed;
   // fails_when=it is stored passed; no_claim=-.
   it("a skip machine's job: not proven, 'skip machine: no test ran'", async () => {

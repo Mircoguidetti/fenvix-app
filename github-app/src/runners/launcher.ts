@@ -47,6 +47,8 @@ export interface RunnerLaunch {
 
 /** The file a side-by-side skip machine writes; the job's gate step reads it (one constant, src/onboarding/workflow.ts). */
 export const SKIP_FILE = SIDE_BY_SIDE_SKIP_FILE;
+/** A skip machine's whole life: it powers off (and AWS terminates it) this many minutes after boot. */
+export const SKIP_MACHINE_MINUTES = 10;
 
 /**
  * A warm-up machine (src/warmup/): it runs the repository's test job, from the customer's own workflow file at one
@@ -141,7 +143,8 @@ export function jobUserData(l: RunnerLaunch, machineEnv: Record<string, string>)
   }
   lines.push("FENVIX_ENV");
   // A skip machine: the job runs, its gate step finds this file, and no kept step runs (readable by the job user).
-  if (l.skip) lines.push(`install -m 0644 /dev/null ${SKIP_FILE}`);
+  // Whatever the job does (a workflow without our gate step), the machine powers off 10 minutes after boot.
+  if (l.skip) lines.push(`install -m 0644 /dev/null ${SKIP_FILE}`, `shutdown -h +${SKIP_MACHINE_MINUTES} "fenvix skip machine: ${SKIP_MACHINE_MINUTES}-minute limit"`);
   lines.push("umask 077", `printf '%s' '${l.jitConfig}' >/etc/fenvix/jitconfig`);
   if (l.summaryToken) lines.push(`printf '%s' '${l.summaryToken}' >/etc/fenvix/summary-token`);
   if (l.cacheToken && env.FENVIX_CACHE_URL) lines.push(`printf '%s' '${l.cacheToken}' >/etc/fenvix/cache-token`);

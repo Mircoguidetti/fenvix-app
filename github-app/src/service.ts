@@ -524,10 +524,10 @@ export class GitHubService {
          updated_at = now()`,
       [job.id, repo.id, installationId, job.run_id, job.run_attempt ?? 1, job.workflow_name ?? "", job.name, job.head_sha, job.head_branch ?? null,
         job.labels, job.runner_name || null, status, job.conclusion ?? null, job.created_at ?? null, job.started_at ?? null, job.completed_at ?? null]);
-    const kind = await this.classifyJob(job.id, installationId, repo);
+    const { kind, run } = await this.classifyJob(job.id, installationId, repo);
     if (status === "queued" && p.action === "queued" && this.launcher) {
-      if (kind === "side_by_side") await this.launchSideBySide(job.id, installationId, repo);
-      else await this.launchRunner(job.id, installationId, repo);
+      if (kind === "side_by_side") await this.launchSideBySide(job.id, installationId, repo, run);
+      else await this.launchRunner(job.id, installationId, repo, run);
     }
     if (status === "in_progress") {
       await this.startRun(job.id);
@@ -667,20 +667,20 @@ export class GitHubService {
    * in gh_jobs.workflow_path with the run's event and pull request) is fenvix-side-by-side.yml; never from the
    * repository's state. Its labels include the fenvix label already (onWorkflowJob).
    */
-  private async classifyJob(jobId: number, installationId: number, repo: RepoFull): Promise<JobKind> {
-    const [row] = await this.db.q<{ kind: JobKind; workflow_path: string | null }>("select kind, workflow_path from gh_jobs where job_id = $1", [jobId]);
-    if (row?.workflow_path) return row.kind;
-    const [r] = await this.db.q<{ run_id: number }>("select run_id from gh_jobs where job_id = $1", [jobId]);
-    if (!r) return "ci_run";
+  private async classifyJob(jobId: number, installationId: number, repo: RepoFull): Promise<{ kind: JobKind; run?: WorkflowRunP | null }> {
+    const [row] = await this.db.q<{ kind: JobKind; workflow_path: string | null; run_id: number }>("select kind, workflow_path, run_id from gh_jobs where job_id = $1", [jobId]);
+    if (!row) return { kind: "ci_run" };
+    if (row.workflow_path) return { kind: row.kind };
     // A failed lookup throws (the delivery is retried) instead of guessing ci_run: a side-by-side job taken for an
     // ordinary one would get a check run, a comment and a billable machine. A run GitHub does not know: ci_run.
-    const res = await this.gh.installation(installationId).request<WorkflowRunP>("GET", `${repoPath(repo.full_name)}/actions/runs/${r.run_id}`, { allow: [404] });
+    // The run read here is handed to the launch (one GET per queued job, not two).
+    const res = await this.gh.installation(installationId).request<WorkflowRunP>("GET", `${repoPath(repo.full_name)}/actions/runs/${row.run_id}`, { allow: [404] });
     const run = res.status === 404 ? null : res.data;
-    if (!run?.path) return row?.kind ?? "ci_run";
+    if (!run?.path) return { kind: row.kind, run };
     const kind: JobKind = run.path === SIDE_BY_SIDE_PATH ? "side_by_side" : "ci_run";
     await this.db.q("update gh_jobs set workflow_path = $2, event = $3, pr_number = $4, kind = $5 where job_id = $1",
       [jobId, run.path, run.event ?? null, run.pull_requests?.[0]?.number ?? null, kind]);
-    return kind;
+    return { kind, run };
   }
 
   /**
@@ -751,7 +751,7 @@ export class GitHubService {
    * "Administration: Read and write"), then the machine. Only for installations linked to an organization, so a
    * stranger installing the App cannot start machines; only while the job is still queued.
    */
-  private async launchRunner(jobId: number, installationId: number, repo: RepoFull): Promise<void> {
+  private async launchRunner(jobId: number, installationId: number, repo: RepoFull, known?: WorkflowRunP | null): Promise<void> {
     const [row] = await this.db.q<{ status: string; run_id: number; run_attempt: number; head_sha: string }>("select status, run_id, run_attempt, head_sha from gh_jobs where job_id = $1", [jobId]);
     if (!row || row.status !== "queued") return;
     const [inst] = await this.db.q<{ workspace_id: string | null; suspended_at: Date | null; deleted_at: Date | null }>(
@@ -771,8 +771,7 @@ export class GitHubService {
     const gh = this.gh.installation(installationId);
     const base = repoPath(repo.full_name);
     // Cache writes only for trusted refs: a push, schedule or manual run on the default branch of this repository.
-    const run = await gh.request<{ event?: string; head_branch?: string | null; head_repository?: { id: number } | null }>(
-      "GET", `${base}/actions/runs/${row.run_id}`, { allow: [404] }).then((r) => (r.status === 404 ? null : r.data)).catch(() => null);
+    const run = known !== undefined ? known : await this.workflowRun(gh, base, row.run_id);
     const defaultBranch = repo.default_branch ?? (await this.repo(repo.id))?.default_branch ?? null;
     const trusted = !!run && ["push", "schedule", "workflow_dispatch", "merge_group"].includes(run.event ?? "")
       && !!defaultBranch && run.head_branch === defaultBranch && run.head_repository?.id === repo.id;
@@ -840,7 +839,7 @@ export class GitHubService {
    * until GitHub cancels it): installation unlinked or deleted, no placement for the organization's region, skip cap
    * reached, AWS errors after 3 tries. Never throws for the queue to retry: a side-by-side job never waits for a slot.
    */
-  private async launchSideBySide(jobId: number, installationId: number, repo: RepoFull): Promise<void> {
+  private async launchSideBySide(jobId: number, installationId: number, repo: RepoFull, known?: WorkflowRunP | null): Promise<void> {
     const [row] = await this.db.q<{ status: string; run_id: number; run_attempt: number; head_sha: string; launched_at: Date | null }>(
       "select status, run_id, run_attempt, head_sha, launched_at from gh_jobs where job_id = $1", [jobId]);
     if (!row || row.status !== "queued" || row.launched_at) return;
@@ -856,19 +855,33 @@ export class GitHubService {
     await this.db.q("update gh_jobs set region = $2, mode = 'shadow' where job_id = $1", [jobId, org.region]);
     if (this.launcher!.canPlace && !this.launcher!.canPlace(org.region)) return none(`no placement for the organization's region (${org.region})`);
     if (!this.s.summaryKey) throw new Error("no summary signing key (RUNNER_TOKEN): no machine is started without its own credential");
-    const counts = (await this.db.q<{ full: number; skip: number }>(
-      `select count(*) filter (where not skip_machine)::int as full, count(*) filter (where skip_machine)::int as skip from gh_jobs
-       where repository_id = $1 and kind = 'side_by_side' and launched_at > now() - interval '24 hours'`, [repo.id]))[0]!;
-    let skipWhy: string | null = null;
-    if (inst.suspended_at) skipWhy = "the installation is suspended";
-    else if (counts.full >= this.sbs.dailyCap) skipWhy = `the daily cap of ${this.sbs.dailyCap} side-by-side runs is reached`;
-    else if (this.launcher!.hasCapacity && !(await this.launcher!.hasCapacity(org.region))) skipWhy = "the fleet is full";
-    if (skipWhy && counts.skip >= this.sbs.skipDailyCap) return none(`${skipWhy}, and the daily cap of ${this.sbs.skipDailyCap} skip machines is reached`);
     const gh = this.gh.installation(installationId);
     const base = repoPath(repo.full_name);
-    const run = await this.workflowRun(gh, base, row.run_id);
+    const run = known !== undefined ? known : await this.workflowRun(gh, base, row.run_id);
     // A pull request from a fork never runs on our machines, whatever the workflow file of its merge commit says.
     if (run?.event === "pull_request" && run.head_repository && run.head_repository.id !== repo.id) return none("a pull request from a fork");
+    const fleetFull = !!this.launcher!.hasCapacity && !(await this.launcher!.hasCapacity(org.region));
+    // The daily caps, atomically: one decision at a time per repository (advisory lock), and the slot is reserved
+    // (launched_at, skip_machine) in the same transaction, so two deliveries at once cannot both take the last slot.
+    const decision = await this.db.tx(inst.workspace_id, async (c) => {
+      await c.query("select pg_advisory_xact_lock(hashtext('fenvix-sbs-cap:' || $1::text))", [repo.id]);
+      const mine = (await c.query<{ launched_at: Date | null }>("select launched_at from gh_jobs where job_id = $1 for update", [jobId])).rows[0];
+      if (!mine || mine.launched_at) return { taken: true as const };
+      const counts = (await c.query<{ full: number; skip: number }>(
+        `select count(*) filter (where not skip_machine)::int as full, count(*) filter (where skip_machine)::int as skip from gh_jobs
+         where repository_id = $1 and kind = 'side_by_side' and launched_at > now() - interval '24 hours'`, [repo.id])).rows[0]!;
+      let why: string | null = null;
+      if (inst.suspended_at) why = "the installation is suspended";
+      else if (counts.full >= this.sbs.dailyCap) why = `the daily cap of ${this.sbs.dailyCap} side-by-side runs is reached`;
+      else if (fleetFull) why = "the fleet is full";
+      if (why && counts.skip >= this.sbs.skipDailyCap) return { none: `${why}, and the daily cap of ${this.sbs.skipDailyCap} skip machines is reached` };
+      await c.query("update gh_jobs set launched_at = now(), skip_machine = $2 where job_id = $1", [jobId, !!why]);
+      return { skipWhy: why, skipsLeft: this.sbs.skipDailyCap - counts.skip - (why ? 1 : 0) };
+    });
+    if ("taken" in decision) return;
+    if ("none" in decision) return none(decision.none!);
+    let skipWhy = decision.skipWhy;
+    const release = () => this.db.q("update gh_jobs set launched_at = null where job_id = $1", [jobId]);
     const defaultBranch = repo.default_branch ?? (await this.repo(repo.id))?.default_branch ?? null;
     const trusted = !skipWhy && !!run && ["push", "schedule", "workflow_dispatch", "merge_group"].includes(run.event ?? "")
       && !!defaultBranch && run.head_branch === defaultBranch && run.head_repository?.id === repo.id;
@@ -893,7 +906,6 @@ export class GitHubService {
           jitConfig: jit.data.encoded_jit_config, cacheAccess, summaryToken, ...(cacheToken ? { cacheToken } : {}), region: org.region, mode: "shadow",
           ...(skipWhy ? { skip: { attempt: row.run_attempt }, skipCapacityCheck: true } : { instanceType: this.sbs.instanceType }),
         });
-        await this.db.q("update gh_jobs set launched_at = coalesce(launched_at, now()) where job_id = $1", [jobId]);
         if (res.already && jit.data.runner?.id) await gh.request("DELETE", `${base}/actions/runners/${jit.data.runner.id}`, { allow: [404, 422] }).catch(() => undefined);
         this.log.info({ job: jobId, repository: repo.full_name, runner: name, instance: res.instanceId, skip: skipWhy, region: org.region, cache: cacheAccess }, "side-by-side machine requested");
         return;
@@ -902,7 +914,7 @@ export class GitHubService {
         if (id) await gh.request("DELETE", `${base}/actions/runners/${id}`, { allow: [404, 422] }).catch(() => undefined);
         // A full fleet at launch (a race with another job): a skip machine instead, once.
         if (e instanceof RetryLater && !skipWhy) {
-          if (counts.skip >= this.sbs.skipDailyCap) return none("the fleet is full, and the daily cap of skip machines is reached");
+          if (decision.skipsLeft <= 0) { await release(); return none("the fleet is full, and the daily cap of skip machines is reached"); }
           skipWhy = "the fleet is full";
           await this.db.q("update gh_jobs set cache_access = 'read', skip_machine = true where job_id = $1", [jobId]);
           return this.launchSkipAfterFull(jobId, installationId, repo, row, org.region, exp);
@@ -910,6 +922,7 @@ export class GitHubService {
         this.log.warn({ job: jobId, attempt, err: e instanceof Error ? e.message : String(e) }, "side-by-side machine did not start");
       }
     }
+    await release();
     none("the machine did not start after 3 tries");
   }
 
@@ -929,9 +942,9 @@ export class GitHubService {
         jobId, runId: row.run_id, repositoryId: repo.id, repositoryFullName: repo.full_name, installationId, runnerName: name,
         jitConfig: jit.data.encoded_jit_config, cacheAccess: "read", summaryToken, region, mode: "shadow", skip: { attempt: row.run_attempt }, skipCapacityCheck: true,
       });
-      await this.db.q("update gh_jobs set launched_at = coalesce(launched_at, now()) where job_id = $1", [jobId]);
     } catch (e) {
       if (runnerId) await gh.request("DELETE", `${base}/actions/runners/${runnerId}`, { allow: [404, 422] }).catch(() => undefined);
+      await this.db.q("update gh_jobs set launched_at = null where job_id = $1", [jobId]);
       this.log.warn({ job: jobId, err: e instanceof Error ? e.message : String(e) }, "side-by-side job: no machine (its skip machine did not start)");
     }
   }

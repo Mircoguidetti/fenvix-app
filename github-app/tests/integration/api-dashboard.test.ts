@@ -729,7 +729,20 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       assert.deepEqual(p0.his.cost, { min: 0.09, max: 0.09 }, "15 minutes at 0.006");
       assert.equal(p0.ours.vcpuMinutes, 48, "8 vCPU for 6 minutes");
       assert.equal(sbs.body.today.runs, 1);
+      // Fewer than 5 runs in 30 days: no daily rate, no monthly cost, and the note says why.
+      assert.deepEqual({ perDay: sbs.body.today.runsPerDay, month: sbs.body.today.costPerMonth }, { perDay: null, month: null });
+      assert.ok(sbs.body.today.notes.includes("Fewer than 5 runs in 30 days: no daily rate or monthly cost yet."));
       assert.deepEqual(sbs.body.header.pairs, 1);
+      // 54 more of his runs on their own commits, over 27 days: 55 pairs, 50 on page 1 and 5 on page 2 (paginated in
+      // SQL); the daily rate is their mean, 55 / 30.
+      await admin.query(`insert into public.gh_customer_jobs (job_id, repository_id, run_id, head_sha, event, name, labels, conclusion, started_at, completed_at, source)
+        select $1::bigint + g, $2, g, lpad(to_hex(g), 40, 'b'), 'push', 'test', '{ubuntu-latest}', 'success', $3::timestamptz - make_interval(hours => g * 12),
+          $3::timestamptz - make_interval(hours => g * 12) + interval '10 minutes', 'history' from generate_series(1, 54) g`, [jobIds[0]! + 1000, B.repoIds.shop, at(0.5)]);
+      const p1 = await call(api, "getSideBySide", proj);
+      const p2 = await call(api, "getSideBySide", { ...proj, query: { page: 2 } });
+      assert.deepEqual({ total: p1.body.total, one: p1.body.items.length, two: p2.body.items.length, perDay: p1.body.today.runsPerDay },
+        { total: 55, one: 50, two: 5, perDay: 1.8 });
+      assert.equal(p1.body.items[0].headSha, S, "newest first");
       // Another organization: no project, and RLS keeps B's jobs out.
       assert.equal((await call(api, "getSideBySide", { token: ownerA.token, ws: ownerA.workspaceId, params: { projectId: B.projects.shop } })).status, 404);
       const c = new pg.Client({ connectionString: LOCAL!.apiDbUrl });
@@ -742,7 +755,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       } finally { await c.end(); }
     } finally {
       await admin.query("delete from public.gh_jobs where job_id = any($1::bigint[])", [jobIds]);
-      await admin.query("delete from public.gh_customer_jobs where job_id = any($1::bigint[])", [jobIds]);
+      await admin.query("delete from public.gh_customer_jobs where job_id = any($1::bigint[]) or (job_id > $2 and job_id <= $2 + 54)", [jobIds, jobIds[0]! + 1000]);
       await admin.query("delete from public.ci_runs where id = any($1::uuid[])", [ids]);
       await admin.query("update public.gh_repositories set onboarding_state = 'merged', side_by_side_test_step = null, side_by_side_job_name = null, history_cursor = null where repository_id = $1", [B.repoIds.shop]);
     }
