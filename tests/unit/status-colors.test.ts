@@ -316,3 +316,12 @@ test("the light frame (top bar, rails, selected item) keeps its text at 4.5:1 or
     assert.ok(c >= 4.5, `--${fg} ${T[fg]} on --${bg} ${T[bg]} is ${c.toFixed(2)}:1`);
   }
 });
+
+// protects=a member (the kind choice disabled) hovering the chosen kind still sees it chosen: the disabled hover reset
+// leaves the pressed button's fill alone; fails_when=the reset also matches [aria-pressed="true"] (its light label on a
+// transparent fill); no_claim=the rendered colours (scripts/checks.mjs).
+test("the disabled kind button's hover keeps the chosen one filled", () => {
+  const rules = [...CSS.matchAll(/([^{}]*:disabled:hover[^{}]*)\{([^}]*)\}/g)].filter((m) => m[1].includes(".connect-kind") && /background/.test(m[2]));
+  assert.ok(rules.length > 0, "the rule is there");
+  for (const m of rules) assert.match(m[1], /:not\(\[aria-pressed="true"\]\)/, m[1].trim());
+});
