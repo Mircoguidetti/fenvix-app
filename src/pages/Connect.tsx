@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Check, CircleCheck, ExternalLink, Lock, TriangleAlert } from "lucide-react";
-import { client, type GitHubRepository, type Installation, type SetupChange } from "../data";
+import { client, type GitHubRepository, type Installation, type OnboardingKind, type SetupChange } from "../data";
+import { Segmented } from "../components/Segmented";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { InstallationStatusPill, OnboardingPill } from "../components/StateBadge";
 import { useToast } from "../components/Toast";
@@ -192,6 +193,9 @@ export function ConnectPage() {
   const [params] = useSearchParams();
   const github = params.get("github");
   const connection = useAsync(() => client.getGitHubConnection(), []);
+  const kindState = useAsync(() => client.getOnboardingKind(), []);
+  const [kind, setKind] = useState<OnboardingKind | null>(null);
+  const [savingKind, setSavingKind] = useState(false);
   const repos = useAsync(() => client.listGitHubRepositories(), []);
   const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -280,6 +284,21 @@ export function ConnectPage() {
       window.removeEventListener("focus", back);
     };
   }, [chose]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const shownKind: OnboardingKind = kind ?? (kindState.status === "ready" ? kindState.data.kind : "move");
+  async function chooseKind(next: OnboardingKind) {
+    if (next === shownKind || savingKind) return;
+    setSavingKind(true);
+    try {
+      const saved = await client.setOnboardingKind(next);
+      setKind(saved.kind);
+      toast(saved.kind === "side_by_side" ? "New pull requests will add a side-by-side workflow; your workflow stays as it is." : "New pull requests will move the test job to fenvix.", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "The choice could not be saved.", "error");
+    } finally {
+      setSavingKind(false);
+    }
+  }
 
   async function install() {
     setInstalling(true);
@@ -395,6 +414,25 @@ export function ConnectPage() {
                 </li>
               ))}
             </ul>
+          )}
+          {kindState.status === "ready" && kindState.data.sideBySideAvailable && (
+            <div className="connect-kind">
+              <Segmented<OnboardingKind>
+                label="How fenvix runs your tests"
+                value={shownKind}
+                onChange={(v) => { if (org.canManage) void chooseKind(v); }}
+                options={[
+                  { value: "move", label: "Move the test job to fenvix" },
+                  { value: "side_by_side", label: "Run side by side (your workflow stays as it is)" },
+                ]}
+              />
+              <p className="muted small">
+                {shownKind === "side_by_side"
+                  ? "The pull request adds one new workflow file that runs a copy of your test job on fenvix. Your workflow is not changed and decides green or red alone; fenvix shows both side by side."
+                  : "The pull request changes one line in your test job: runs-on: fenvix."}
+                {!org.canManage && " Only an owner or admin can change this."}
+              </p>
+            </div>
           )}
           <div className="row-actions">
             <button type="button" className={installations.length ? "btn" : "btn btn-primary"} onClick={install} disabled={installing || !org.canManage || connection.status !== "ready"}>

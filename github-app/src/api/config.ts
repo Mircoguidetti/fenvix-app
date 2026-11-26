@@ -26,6 +26,8 @@ export interface ApiConfig {
   /** False while the GitHub App is not configured (GITHUB_APP_SLUG empty). */
   githubConfigured: boolean;
   webUrl: string;
+  /** SIDE_BY_SIDE_ENABLED (default true): the organization may choose side-by-side runs (Connect). */
+  sideBySideEnabled: boolean;
 }
 
 type Env = Record<string, string | undefined>;
@@ -89,5 +91,10 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     appSlug,
     githubConfigured: appSlug !== "",
     webUrl: url(env, "GITHUB_WEB_URL", "https://github.com", nodeEnv),
+    sideBySideEnabled: (() => {
+      const v = (env.SIDE_BY_SIDE_ENABLED ?? "true").trim().toLowerCase();
+      if (!["true", "false"].includes(v)) throw new Error("SIDE_BY_SIDE_ENABLED must be true or false");
+      return v === "true";
+    })(),
   };
 }

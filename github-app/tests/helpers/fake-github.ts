@@ -25,12 +25,22 @@ export interface FakeRepo {
   pulls: { number: number; title: string; body: string; head: string; base: string; state: string; headSha: string }[];
   checkRuns: Map<number, Json>;
   comments: Map<number, { id: number; issue: number; body: string; byApp: boolean }>;
-  runs: Map<number, { event: string; createdAt: string; headSha: string; headBranch: string; message: string; pullRequests: number[]; headRepoId?: number }>;
+  runs: Map<number, FakeRun>;
   /** Just-in-time runners created (generate-jitconfig). */
   jitRunners: { id: number; name: string; labels: string[]; runnerGroupId: number; config: string }[];
   /** Registration tokens handed out, and the self-hosted runners registered with them (the tests register them). */
   registrationTokens: string[];
   runners: { id: number; name: string; status: "online" | "offline"; busy: boolean }[];
+}
+
+/** A workflow run: its event, commit, workflow file (`path`) and, for GET /actions/runs/{id}/jobs, its jobs. */
+export interface FakeRun {
+  event: string; createdAt: string; headSha: string; headBranch: string; message: string; pullRequests: number[]; headRepoId?: number;
+  path?: string; jobs?: FakeJob[];
+}
+export interface FakeJob {
+  id: number; name: string; attempt?: number; labels?: string[]; conclusion: string | null; startedAt?: string; completedAt?: string;
+  steps?: { name: string; number: number; conclusion: string | null }[];
 }
 
 export interface FakeInstallation { id: number; account: { login: string; id: number; type: "User" | "Organization" }; repos: number[]; selection: "all" | "selected" }
@@ -57,6 +67,8 @@ export class FakeGitHub {
   readonly tokenScopes = new Map<string, { repositoryIds: number[] | null; permissions: Record<string, string> | null }>();
   private server!: Server;
   url = "";
+  /** X-RateLimit-Remaining on every answer (null: no header), or per request path. */
+  rateRemaining: number | null | ((path: string) => number | null) = null;
   /** Answers to force, e.g. a 500 on the next check run: method + path → status. */
   readonly failNext = new Map<string, number>();
 
@@ -94,7 +106,7 @@ export class FakeGitHub {
   }
 
   /** `headRepoId`: the repository the run's code comes from (another id: a pull request from a fork). */
-  addRun(fullName: string, runId: number, r: { event: string; headSha: string; headBranch: string; message: string; pullRequests?: number[]; createdAt?: string; headRepoId?: number }): void {
+  addRun(fullName: string, runId: number, r: { event: string; headSha: string; headBranch: string; message: string; pullRequests?: number[]; createdAt?: string; headRepoId?: number; path?: string; jobs?: FakeJob[] }): void {
     this.repos.get(fullName)!.runs.set(runId, { ...r, pullRequests: r.pullRequests ?? [], createdAt: r.createdAt ?? new Date().toISOString() });
   }
 
@@ -134,6 +146,8 @@ export class FakeGitHub {
     this.exchanges.push({ method, path, query, body, status, response, at: performance.now() });
     res.statusCode = status;
     res.setHeader("content-type", "application/json; charset=utf-8");
+    const rate = typeof this.rateRemaining === "function" ? this.rateRemaining(path) : this.rateRemaining;
+    if (rate !== null) res.setHeader("x-ratelimit-remaining", String(rate));
     res.end(status === 204 ? "" : JSON.stringify(response));
   }
 
@@ -306,7 +320,7 @@ export class FakeGitHub {
       const ex = exampleResponse("GET", "/repos/{owner}/{repo}/actions/runs/{run_id}", 200);
       const prTemplate = (ex.pull_requests as Json[])[0] ?? { url: "", id: 1, number: 1, head: { ref: "", sha: "", repo: { id: repo.id, url: "", name: repo.name } }, base: { ref: "", sha: "", repo: { id: repo.id, url: "", name: repo.name } } };
       return [200, {
-        ...ex, id: Number(m[1]), event: run.event, head_sha: run.headSha, head_branch: run.headBranch, created_at: run.createdAt,
+        ...ex, id: Number(m[1]), event: run.event, head_sha: run.headSha, head_branch: run.headBranch, created_at: run.createdAt, ...(run.path ? { path: run.path } : {}),
         repository: { ...(ex.repository as Json), id: repo.id }, head_repository: { ...(ex.head_repository as Json), id: run.headRepoId ?? repo.id },
         head_commit: { ...(ex.head_commit as Json), id: run.headSha, message: run.message },
         pull_requests: run.pullRequests.map((n) => {
@@ -314,6 +328,31 @@ export class FakeGitHub {
           return { ...prTemplate, number: n, head: { ...(prTemplate.head as Json), ref: pr?.head ?? run.headBranch, sha: run.headSha }, base: { ...(prTemplate.base as Json), ref: pr?.base ?? repo.defaultBranch } };
         }),
       }];
+    }
+    if (method === "GET" && (m = /^\/actions\/workflows\/([^/]+)\/runs$/.exec(rest))) {
+      const file = decodeURIComponent(m[1]!);
+      const all = [...repo.runs.entries()].filter(([, r]) => r.path?.split("/").pop() === file).sort((a, b) => b[0] - a[0]);
+      const per = Number(q.per_page ?? 30); const page = Number(q.page ?? 1);
+      const ex = exampleResponse("GET", "/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs", 200);
+      const tpl = (ex.workflow_runs as Json[])[0]!;
+      const items = all.slice((page - 1) * per, page * per).map(([id, r]) => ({
+        ...tpl, id, event: r.event, head_sha: r.headSha, head_branch: r.headBranch, path: r.path, created_at: r.createdAt,
+        pull_requests: r.pullRequests.map((n) => ({ ...((tpl.pull_requests as Json[] | undefined)?.[0] ?? { url: "", id: 1, head: { ref: "", sha: "", repo: { id: repo.id, url: "", name: repo.name } }, base: { ref: "", sha: "", repo: { id: repo.id, url: "", name: repo.name } } }), number: n })),
+      }));
+      return [200, { total_count: all.length, workflow_runs: items }];
+    }
+    if (method === "GET" && (m = /^\/actions\/runs\/(\d+)\/jobs$/.exec(rest))) {
+      const runId = Number(m[1]);
+      const run = repo.runs.get(runId);
+      if (!run) return this.notFound();
+      const ex = exampleResponse("GET", "/repos/{owner}/{repo}/actions/runs/{run_id}/jobs", 200);
+      const tpl = (ex.jobs as Json[])[0]!;
+      const jobs = (run.jobs ?? []).map((j) => ({
+        ...tpl, id: j.id, run_id: runId, run_attempt: j.attempt ?? 1, head_sha: run.headSha, name: j.name, labels: j.labels ?? ["ubuntu-latest"], status: "completed",
+        conclusion: j.conclusion, started_at: j.startedAt ?? "2026-11-18T10:00:00Z", completed_at: j.completedAt ?? "2026-11-18T10:15:00Z",
+        steps: (j.steps ?? []).map((st) => ({ name: st.name, number: st.number, status: "completed", conclusion: st.conclusion, started_at: "2026-11-18T10:00:00Z", completed_at: "2026-11-18T10:01:00Z" })),
+      }));
+      return [200, { total_count: jobs.length, jobs }];
     }
     if (method === "POST" && rest === "/actions/runners/registration-token") {
       const token = randomBytes(15).toString("hex").toUpperCase().slice(0, 29);

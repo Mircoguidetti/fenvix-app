@@ -173,6 +173,27 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Settings" } } } }
         default: { $ref: "#/components/responses/Error" }
+  /organization/onboarding-kind:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }]
+    get:
+      tags: [dashboard]
+      operationId: getOnboardingKind
+      description: How the organization's repositories are onboarded, and whether side-by-side runs are on (SIDE_BY_SIDE_ENABLED).
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingKindState" } } } }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      tags: [dashboard]
+      operationId: setOnboardingKind
+      x-fenvix-role: admin
+      description: |
+        move: the setup pull request changes the test job's runs-on to fenvix. side_by_side: a pull request adds one new
+        workflow file that runs a copy of the test job on fenvix; the customer's workflow is unchanged and decides alone.
+        Changes only the pull requests opened after it. 409 when side-by-side runs are turned off.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingKindChoice" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingKindChoice" } } } }
+        default: { $ref: "#/components/responses/Error" }
 
   # ------------------------------------------------------------------ overview, trial, projects, runs
   /overview:
@@ -1277,11 +1298,29 @@ components:
         installations: { type: array, items: { $ref: "#/components/schemas/Installation" } }
     OnboardingState:
       type: string
-      enum: [pending, pr_open, merged, closed, no_workflow, no_test_job, already_fenvix, unsupported, failed]
+      enum: [pending, pr_open, merged, closed, no_workflow, no_test_job, already_fenvix, unsupported, failed, side_by_side_pr_open, side_by_side]
       description: |
         pending: not tried yet; pr_open / merged / closed: the setup pull request; no_workflow: no workflow file;
         no_test_job: no job that runs tests; already_fenvix: already on runs-on fenvix; unsupported: a test runner fenvix
-        does not support; failed: the App could not open the pull request (onboardingDetail says why).
+        does not support, or a test job that cannot run side by side; failed: the App could not open the pull request
+        (onboardingDetail says why); side_by_side_pr_open / side_by_side: the side-by-side pull request is open / merged
+        (or its file is on the default branch).
+    OnboardingKind:
+      type: string
+      enum: [move, side_by_side]
+      description: "move: the test job's runs-on becomes fenvix. side_by_side: a new workflow file runs a copy of the test job on fenvix."
+    OnboardingKindChoice:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { $ref: "#/components/schemas/OnboardingKind" }
+    OnboardingKindState:
+      type: object
+      required: [kind, sideBySideAvailable]
+      properties:
+        kind: { $ref: "#/components/schemas/OnboardingKind" }
+        sideBySideAvailable: { type: boolean, description: "False while side-by-side runs are turned off (SIDE_BY_SIDE_ENABLED=false): the choice is hidden." }
     GitHubRepository:
       type: object
       required: [repositoryId, installationId, fullName, private, removed, language, testRunner, onboardingState, onboardingDetail, workflowPath, job, setupPullRequest, projectId, warmCache]

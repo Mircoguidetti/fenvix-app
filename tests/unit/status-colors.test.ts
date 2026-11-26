@@ -209,7 +209,7 @@ test("every coloured state also says it in words or with an icon", () => {
   const badge = src("components/StateBadge.tsx");
   for (const word of ["Passed", "Failed", "Running", "Cancelled", "Active", "Suspended", "Uninstalled"]) assert.ok(badge.includes(`"${word}"`), `no word "${word}" in the state pills`);
   // Every onboarding state of a repository has its words; the trial's gate and the audit's wrong skips too.
-  for (const state of ["pending", "pr_open", "merged", "closed", "no_workflow", "no_test_job", "already_fenvix", "unsupported", "failed"]) assert.match(badge, new RegExp(`\\b${state}: "[A-Z][^"]+"`), `no words for the onboarding state ${state}`);
+  for (const state of ["pending", "pr_open", "merged", "closed", "no_workflow", "no_test_job", "already_fenvix", "unsupported", "failed", "side_by_side_pr_open", "side_by_side"]) assert.match(badge, new RegExp(`\\b${state}: "[A-Z][^"]+"`), `no words for the onboarding state ${state}`);
   assert.match(src("components/Trial.tsx"), /tone="ok">\{`\$\{gatePercent\(trial\)\} gate met`\}/);
   assert.match(src("components/Trial.tsx"), /tone="warn">\{`Below the \$\{gatePercent\(trial\)\} gate`\}/);
   assert.match(src("pages/ProjectSections.tsx"), /wrongSkips === 0 \? <StatusPill tone="ok">\{`Expected/);
@@ -237,7 +237,8 @@ test("the states in the inventory are wired to the right classes in the componen
   assert.match(badge, /tone === "danger" \? "state state-danger"/);
   assert.match(badge, /status === "passed" \? "ok" : status === "failed" \? "danger" : status === "running" \|\| status === "not_proven" \? "warn" : "neutral"/);
   assert.match(badge, /tone=\{status === "active" \? "ok" : status === "suspended" \? "warn" : "neutral"\}/);
-  assert.match(badge, /state === "merged" \|\| state === "already_fenvix" \? "ok" : state === "pr_open" \? "warn" : state === "failed" \? "danger" : "neutral"/);
+  // Rule 3 (spec 20261126-side-by-side-runs): side_by_side is green like merged, side_by_side_pr_open amber like pr_open.
+  assert.match(badge, /state === "merged" \|\| state === "already_fenvix" \|\| state === "side_by_side" \? "ok" : state === "pr_open" \|\| state === "side_by_side_pr_open" \? "warn" : state === "failed" \? "danger" : "neutral"/);
   assert.match(src("pages/Project.tsx"), /<RunStatusPill status=\{r\.status\} count=\{r\.tests\.notProven\} \/>/);
   assert.match(src("pages/Project.tsx"), /className="fail-count"/);
   assert.match(src("components/ci.tsx"), /outcome === "failed"\) return <StatusPill tone="danger">/);

@@ -300,6 +300,7 @@ interface Store {
   live: Live | null;
   /** The account a new installation link would add (mock only). */
   nextAccount: string;
+  onboardingKind?: "move" | "side_by_side";
 }
 
 const RATE: GitHubRate = { usdPerMinute: 0.008, runner: "GitHub-hosted Linux, 2 cores", source: "GitHub Actions pricing page, as quoted in PRODUCT.md (to verify)", checkedOn: "2026-11-16" };
@@ -523,6 +524,8 @@ const DETAILS: Record<OnboardingState, string> = {
   already_fenvix: "The test job already uses runs-on: fenvix.",
   unsupported: "The tests run with RSpec (Ruby), which fenvix does not support yet.",
   failed: "GitHub refused to create the branch: the default branch's protection rules require signed commits.",
+  side_by_side_pr_open: "The side-by-side pull request adds .github/workflows/fenvix-side-by-side.yml; your workflow is unchanged. Merge it to run side by side.",
+  side_by_side: "The side-by-side workflow is merged: a copy of the test job runs on fenvix next to yours.",
 };
 
 interface OrgPlan {
@@ -1301,6 +1304,13 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     if (!["pending", "closed", "failed"].includes(repo.onboardingState)) throw mockError("conflict", 409, "This repository needs no setup pull request.");
     s.queued.set(repositoryId, 2);
     return wait(copy(repo));
+  },
+
+  getOnboardingKind: () => wait({ kind: store().onboardingKind ?? "move", sideBySideAvailable: true }),
+  async setOnboardingKind(kind) {
+    assertMockCanManage();
+    store().onboardingKind = kind;
+    return wait({ kind });
   },
 
   getSettings: () => wait({ ...store().settings, workspaceName: mockOrgName() ?? store().settings.workspaceName }),

@@ -70,7 +70,13 @@ export async function workerCore(env: Env, opts: { launches?: boolean } = {}): P
   const log = jsonLogger(cfg.logLevel);
   if (launches && !cfg.runnerTokens.length) throw new Error("RUNNER_TOKEN is required to start machines (each gets its own summary credential)");
   const core = buildCore(cfg, log, launches ? launcherFrom(env, log) : null);
-  return { ...core, log, blobs: overflowBlobs(env), close: () => core.db.close() };
+  const blobs = overflowBlobs(env);
+  // Side-by-side histories go through the queue (work kind side_by_side_history) when the function may send to it.
+  if (env.WORK_QUEUE_URL) {
+    const queue = new SqsWorkQueue({ queue: sqsPort(new SQSClient({}), env.WORK_QUEUE_URL), blobs });
+    core.service.enqueueHistory = (repositoryId) => queue.enqueue({ kind: "side_by_side_history", repositoryId });
+  }
+  return { ...core, log, blobs, close: () => core.db.close() };
 }
 
 /**

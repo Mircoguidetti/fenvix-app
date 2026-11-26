@@ -19,7 +19,11 @@ export interface RequestOptions {
   allow?: number[];
 }
 
-export interface Response<T> { status: number; data: T }
+export interface Response<T> {
+  status: number; data: T;
+  /** X-RateLimit-Remaining of the answer, when GitHub sent it. */
+  rateRemaining?: number;
+}
 
 const b64url = (b: Buffer | string) => Buffer.from(b).toString("base64url");
 
@@ -63,7 +67,8 @@ export class GitHubHttp {
     let data: unknown = null;
     if (text) { try { data = JSON.parse(text); } catch { data = text; } }
     if (!res.ok && !(o.allow ?? []).includes(res.status)) throw new GitHubError(res.status, method, path, data);
-    return { status: res.status, data: data as T };
+    const remaining = Number(res.headers.get("x-ratelimit-remaining") ?? NaN);
+    return { status: res.status, data: data as T, ...(Number.isFinite(remaining) ? { rateRemaining: remaining } : {}) };
   }
 }
 

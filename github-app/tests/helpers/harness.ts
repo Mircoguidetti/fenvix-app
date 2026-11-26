@@ -58,7 +58,11 @@ export async function resetDb(): Promise<pg.Client> {
       execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL(`../../../supabase/migrations/${m}.sql`, import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
     }
   }
-  await admin.query(`truncate gh_install_completions, ci_trial_accounts, gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_warmups, gh_repositories,
+  // A database prepared before migration 0020 (side-by-side runs): safe to repeat.
+  if (!(await admin.query("select to_regclass('public.gh_customer_jobs') as t")).rows[0].t) {
+    execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0020_side_by_side.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
+  }
+  await admin.query(`truncate gh_customer_jobs, gh_install_completions, ci_trial_accounts, gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_warmups, gh_repositories,
     gh_installations, ci_test_results, ci_skip_receipts, ci_audit_reruns, ci_defects, ci_explorations, ci_runs, ci_projects, ci_subscriptions cascade`);
   await admin.query("delete from auth.users where email like '%@gh.fenvix.invalid'");
   await admin.query("delete from public.workspaces w where not exists (select 1 from public.workspace_members m where m.workspace_id = w.id)");
@@ -237,6 +241,8 @@ export class Harness {
   gh!: FakeGitHub;
   cfg!: Config;
   private signKey!: CryptoKey;
+  /** The keys of the stand-in Supabase Auth: a dashboard API built in a test verifies sessions with them. */
+  sessions!: SessionVerifier;
   private n = 0;
 
   /** `queue`: where the app hands checked work (default: this process, as the node server does). */
@@ -247,6 +253,7 @@ export class Harness {
     const { privateKey: sk, publicKey: pk } = await generateKeyPair("ES256");
     this.signKey = sk;
     const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(pk)), kid: "k1", alg: "ES256" }] });
+    this.sessions = new SessionVerifier(SUPABASE, "", jwks);
     this.cfg = loadConfig({
       NODE_ENV: "test", GITHUB_APP_DATABASE_URL: appUrl(), GITHUB_APP_ID: String(APP_ID), GITHUB_APP_SLUG: "fenvix-test",
       GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(), GITHUB_WEBHOOK_SECRET: WEBHOOK_SECRET,

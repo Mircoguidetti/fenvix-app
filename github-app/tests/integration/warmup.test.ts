@@ -71,6 +71,9 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
 
   it("before the link: the setup pull request merged on a stranger's installation starts nothing", async () => {
     await h.send("installation", installationCreated([REPOS.shop]));
+    // Rule 3 (spec 20261126-side-by-side-runs item 6): installation.created no longer opens the pull request before the
+    // organization link; this scenario needs one merged before the link, so it is opened here (the onboard path itself).
+    await h.app.service.onboard(REPOS.shop.id);
     const pr = (await admin.query("select setup_pr_number from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].setup_pr_number as number;
     assert.ok(pr > 0, "the setup pull request was opened");
     await h.send("pull_request", pullRequest("closed", { number: pr, headRef: "fenvix/runs-on", headSha: "1".repeat(40), merged: true, mergeSha: shaN(1) }));
@@ -382,6 +385,9 @@ describe("review R-018 follow-ups: only the default branch's head runs; a reset 
     h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });
     h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": CI_YAML } });
     await h.send("installation", installationCreated([REPOS.shop]));
+    // Rule 3 (spec 20261126-side-by-side-runs item 6): installation.created no longer opens the pull request before the
+    // organization link; this scenario needs one merged before the link, so it is opened here (the onboard path itself).
+    await h.app.service.onboard(REPOS.shop.id);
     const pr = (await admin.query("select setup_pr_number from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].setup_pr_number as number;
     await h.send("pull_request", pullRequest("closed", { number: pr, headRef: "fenvix/runs-on", headSha: "1".repeat(40), merged: true, mergeSha: sha("a") }));
     await h.app.service.linkInstallation(INSTALLATION_ID, org.workspaceId, org.userId);
@@ -525,6 +531,9 @@ describe("linked through the dashboard (review R-016: /github/setup, then POST /
     h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });
     h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": CI_YAML } });
     await h.send("installation", installationCreated([REPOS.shop]));
+    // Rule 3 (spec 20261126-side-by-side-runs item 6): installation.created no longer opens the pull request before the
+    // organization link; this scenario needs one merged before the link, so it is opened here (the onboard path itself).
+    await h.app.service.onboard(REPOS.shop.id);
     const pr = (await admin.query("select setup_pr_number from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].setup_pr_number as number;
     await h.send("pull_request", pullRequest("closed", { number: pr, headRef: "fenvix/runs-on", headSha: "1".repeat(40), merged: true, mergeSha: "a".repeat(40) }));
   });

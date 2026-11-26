@@ -1822,3 +1822,8 @@ table.data.dbs thead th { font-size: 12px; }
 .cx-sub-back { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; min-height: 32px; margin: -4px 0 6px; padding: 0 10px 0 6px; border-radius: 8px; color: var(--muted); font-size: 13px; font-weight: 500; }
 .cx-sub-back:hover { background: var(--nav-hover); color: var(--text); }
 .cx-drawer .cx-drawer-back { color: var(--nav-text); }
+
+/* Connect: how fenvix runs the tests (move the job, or side by side). The labels are long: they wrap on narrow screens. */
+.connect-kind { display: grid; gap: 6px; margin: 4px 0 12px; }
+.connect-kind .seg { flex-wrap: wrap; }
+.connect-kind .seg button { white-space: normal; height: auto; min-height: 28px; text-align: left; }

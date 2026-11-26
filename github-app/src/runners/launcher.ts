@@ -1,4 +1,4 @@
-import { DescribeImagesCommand, DescribeInstancesCommand, EC2Client, RunInstancesCommand, TerminateInstancesCommand } from "@aws-sdk/client-ec2";
+import { DescribeImagesCommand, DescribeInstancesCommand, EC2Client, type _InstanceType, RunInstancesCommand, TerminateInstancesCommand } from "@aws-sdk/client-ec2";
 import { cacheOrgOf } from "./credentials.ts";
 
 /**
@@ -33,7 +33,19 @@ export interface RunnerLaunch {
   region?: Region;
   /** The organization's mode, given to the machine as FENVIX_MODE (default "enforce"). */
   mode?: RunMode;
+  /** An instance type over the launch template's (a side-by-side job's full machine: SIDE_BY_SIDE_INSTANCE_TYPE). */
+  instanceType?: string;
+  /**
+   * A side-by-side skip machine: the launch template's size, /etc/fenvix/sbs-skip written (the job's gate step then
+   * runs no kept step), its own ClientToken fenvix-skip-<jobId>-<attempt>, and no capacity check (skipCapacityCheck).
+   */
+  skip?: { attempt: number };
+  /** Starts the machine even when the region's fleet is at its limit (a skip machine runs about two minutes). */
+  skipCapacityCheck?: boolean;
 }
+
+/** The file a side-by-side skip machine writes; the job's gate step reads it (src/onboarding/workflow.ts). */
+export const SKIP_FILE = "/etc/fenvix/sbs-skip";
 
 /**
  * A warm-up machine (src/warmup/): it runs the repository's test job, from the customer's own workflow file at one
@@ -126,7 +138,10 @@ export function jobUserData(l: RunnerLaunch, machineEnv: Record<string, string>)
     if (!/^[A-Z][A-Z0-9_]*$/.test(k) || !SAFE.test(v)) throw new Error(`machine setting ${k} has characters the env file does not allow`);
     lines.push(`${k}=${v}`);
   }
-  lines.push("FENVIX_ENV", "umask 077", `printf '%s' '${l.jitConfig}' >/etc/fenvix/jitconfig`);
+  lines.push("FENVIX_ENV");
+  // A skip machine: the job runs, its gate step finds this file, and no kept step runs (readable by the job user).
+  if (l.skip) lines.push(`install -m 0644 /dev/null ${SKIP_FILE}`);
+  lines.push("umask 077", `printf '%s' '${l.jitConfig}' >/etc/fenvix/jitconfig`);
   if (l.summaryToken) lines.push(`printf '%s' '${l.summaryToken}' >/etc/fenvix/summary-token`);
   if (l.cacheToken && env.FENVIX_CACHE_URL) lines.push(`printf '%s' '${l.cacheToken}' >/etc/fenvix/cache-token`);
   lines.push("systemctl start --no-block fenvix-job.target");
@@ -339,21 +354,27 @@ export class Ec2Launcher implements RunnerLauncher {
   async launch(l: RunnerLaunch): Promise<{ instanceId: string | null; already: boolean }> {
     const region = l.region ?? "us";
     const p = this.placement(region);
-    const n = await this.running(region);
-    if (n >= this.o.maxRunning) throw new RetryLater(`${n} fenvix machines are running in ${region} (limit ${this.o.maxRunning}); job ${l.jobId} waits`);
+    if (!l.skipCapacityCheck) {
+      const n = await this.running(region);
+      if (n >= this.o.maxRunning) throw new RetryLater(`${n} fenvix machines are running in ${region} (limit ${this.o.maxRunning}); job ${l.jobId} waits`);
+    }
+    if (l.instanceType !== undefined && !/^[a-z][a-z0-9-]*\.[a-z0-9]+$/.test(l.instanceType)) throw new Error("the instance type is not an EC2 instance type");
     const imageId = await this.imageId(region);
     const tags = [
       ...Object.entries(this.o.tags ?? {}).map(([Key, Value]) => ({ Key, Value })),
       { Key: ROLE_TAG, Value: ROLE_VALUE }, { Key: "fenvix:job", Value: String(l.jobId) },
       { Key: "fenvix:repository", Value: l.repositoryFullName }, { Key: "fenvix:region", Value: region }, { Key: "Name", Value: l.runnerName },
+      ...(l.skip ? [{ Key: KIND_TAG, Value: "side-by-side-skip" }] : l.instanceType ? [{ Key: KIND_TAG, Value: "side-by-side" }] : []),
     ];
     try {
       const r = await p.ec2.send(new RunInstancesCommand({
         LaunchTemplate: { LaunchTemplateId: p.launchTemplateId, Version: "$Latest" },
         ImageId: imageId,
+        ...(l.instanceType && !l.skip ? { InstanceType: l.instanceType as _InstanceType } : {}),
         MinCount: 1, MaxCount: 1,
-        // One machine per job, even if the queue delivers the job twice: EC2 returns the first launch.
-        ClientToken: `fenvix-job-${l.jobId}`,
+        // One machine per job, even if the queue delivers the job twice: EC2 returns the first launch. A skip machine
+        // has a token of its own: a job that first got no full machine still gets its skip machine.
+        ClientToken: l.skip ? `fenvix-skip-${l.jobId}-${l.skip.attempt}` : `fenvix-job-${l.jobId}`,
         UserData: Buffer.from(jobUserData({ ...l, region }, { ...this.o.machineEnv, ...(p.machineEnv ?? {}) })).toString("base64"),
         TagSpecifications: [{ ResourceType: "instance", Tags: tags }, { ResourceType: "volume", Tags: tags }],
       }));

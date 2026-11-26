@@ -25,7 +25,7 @@ export const HANDLERS: Record<string, Handler> = {
   getOrganization: orgs.getOrganization, renameOrganization: orgs.renameOrganization, leaveOrganization: orgs.leaveOrganization,
   listMembers: orgs.listMembers, changeMemberRole: orgs.changeMemberRole, removeMember: orgs.removeMember,
   listInvitations: orgs.listInvitations, createInvitation: orgs.createInvitation, revokeInvitation: orgs.revokeInvitation,
-  acceptInvitation: orgs.acceptInvitation, getSettings: orgs.getSettings, saveSettings: orgs.saveSettings,
+  acceptInvitation: orgs.acceptInvitation, getSettings: orgs.getSettings, saveSettings: orgs.saveSettings, getOnboardingKind: orgs.getOnboardingKind, setOnboardingKind: orgs.setOnboardingKind,
   getOverview: data.getOverview, listProjects: data.listProjects, getProject: data.getProject, saveProjectSettings: data.saveProjectSettings,
   listRuns: data.listRuns, getSkipShareSeries: data.getSkipShareSeries, listExplorations: data.listExplorations, getAudit: data.getAudit,
   getSetupChange: data.getSetupChange, listActivity: data.listActivity, getRun: data.getRun, listTestResults: data.listTestResults,

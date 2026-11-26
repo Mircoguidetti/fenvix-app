@@ -170,3 +170,33 @@ describe("region placement (RUNNER_PLACEMENT)", () => {
     assert.deepEqual([await full.hasCapacity("us"), await full.hasCapacity("eu")], [false, true]);
   });
 });
+
+describe("side-by-side machines (spec 20261126-side-by-side-runs items 11, 12)", () => {
+  // protects=a side-by-side job's full machine is SIDE_BY_SIDE_INSTANCE_TYPE over the launch template, the usual token;
+  // fails_when=no InstanceType is sent, or it changes the token; no_claim=EC2 honouring the override.
+  it("full machine: the instance type override, the job's ClientToken, no skip file", async () => {
+    const ec2 = fakeEc2();
+    await new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE }).launch({ ...launch, mode: "shadow", instanceType: "c6i.2xlarge" });
+    const run = ec2.calls.find((c) => c instanceof RunInstancesCommand) as RunInstancesCommand;
+    assert.equal(run.input.InstanceType, "c6i.2xlarge");
+    assert.equal(run.input.ClientToken, "fenvix-job-601");
+    const ud = Buffer.from(run.input.UserData!, "base64").toString();
+    assert.match(ud, /^FENVIX_MODE=shadow$/m);
+    assert.doesNotMatch(ud, /sbs-skip/);
+  });
+
+  // protects=a skip machine: the template's size, the skip file (0644, readable by the job), its own ClientToken
+  // (distinct from the full launch's), no capacity check; fails_when=the file is missing or root-only, the token is the
+  // full launch's (EC2 would return the full machine), or a full fleet refuses it; no_claim=the gate step on GitHub.
+  it("skip machine: no instance type, the skip file, fenvix-skip-<job>-<attempt>, started on a full fleet", async () => {
+    const ec2 = fakeEc2({ running: 4 });
+    await new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE }).launch({ ...launch, mode: "shadow", instanceType: "c6i.2xlarge", skip: { attempt: 2 }, skipCapacityCheck: true });
+    assert.equal(ec2.calls.some((c) => c instanceof DescribeInstancesCommand), false, "no capacity check");
+    const run = ec2.calls.find((c) => c instanceof RunInstancesCommand) as RunInstancesCommand;
+    assert.equal(run.input.InstanceType, undefined);
+    assert.equal(run.input.ClientToken, "fenvix-skip-601-2");
+    const ud = Buffer.from(run.input.UserData!, "base64").toString().split("\n");
+    const at = ud.indexOf("install -m 0644 /dev/null /etc/fenvix/sbs-skip");
+    assert.ok(at > 0 && at < ud.indexOf("umask 077"), "written before the root-only files, readable by the job");
+  });
+});

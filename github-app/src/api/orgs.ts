@@ -250,3 +250,19 @@ export const saveSettings: Handler = async (ctx) => {
     [o.id, name, emailNotices, region]);
   return { workspaceName: name, emailNotices, region };
 };
+
+// ---------------------------------------------------------------- how repositories are onboarded
+
+export const getOnboardingKind: Handler = async (ctx) => {
+  const o = orgOf(ctx);
+  const r = await ctx.t.one<{ onboarding_kind: string }>("select onboarding_kind from public.workspaces where id = $1", [o.id]);
+  return { kind: r?.onboarding_kind === "side_by_side" ? "side_by_side" : "move", sideBySideAvailable: ctx.cfg.sideBySideEnabled };
+};
+
+export const setOnboardingKind: Handler = async (ctx) => {
+  const o = orgOf(ctx);
+  const kind = ctx.body.kind === "side_by_side" ? "side_by_side" : "move";
+  if (kind === "side_by_side" && !ctx.cfg.sideBySideEnabled) throw conflict("Side-by-side runs are turned off.");
+  await ctx.t.q("update public.workspaces set onboarding_kind = $2 where id = $1", [o.id, kind]);
+  return { kind };
+};

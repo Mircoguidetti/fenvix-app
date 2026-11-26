@@ -192,6 +192,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organization/onboarding-kind": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** @description How the organization's repositories are onboarded, and whether side-by-side runs are on (SIDE_BY_SIDE_ENABLED). */
+        get: operations["getOnboardingKind"];
+        /**
+         * @description move: the setup pull request changes the test job's runs-on to fenvix. side_by_side: a pull request adds one new
+         *     workflow file that runs a copy of the test job on fenvix; the customer's workflow is unchanged and decides alone.
+         *     Changes only the pull requests opened after it. 409 when side-by-side runs are turned off.
+         */
+        put: operations["setOnboardingKind"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/overview": {
         parameters: {
             query?: never;
@@ -1607,10 +1632,25 @@ export interface components {
         /**
          * @description pending: not tried yet; pr_open / merged / closed: the setup pull request; no_workflow: no workflow file;
          *     no_test_job: no job that runs tests; already_fenvix: already on runs-on fenvix; unsupported: a test runner fenvix
-         *     does not support; failed: the App could not open the pull request (onboardingDetail says why).
+         *     does not support, or a test job that cannot run side by side; failed: the App could not open the pull request
+         *     (onboardingDetail says why); side_by_side_pr_open / side_by_side: the side-by-side pull request is open / merged
+         *     (or its file is on the default branch).
          * @enum {string}
          */
-        OnboardingState: "pending" | "pr_open" | "merged" | "closed" | "no_workflow" | "no_test_job" | "already_fenvix" | "unsupported" | "failed";
+        OnboardingState: "pending" | "pr_open" | "merged" | "closed" | "no_workflow" | "no_test_job" | "already_fenvix" | "unsupported" | "failed" | "side_by_side_pr_open" | "side_by_side";
+        /**
+         * @description move: the test job's runs-on becomes fenvix. side_by_side: a new workflow file runs a copy of the test job on fenvix.
+         * @enum {string}
+         */
+        OnboardingKind: "move" | "side_by_side";
+        OnboardingKindChoice: {
+            kind: components["schemas"]["OnboardingKind"];
+        };
+        OnboardingKindState: {
+            kind: components["schemas"]["OnboardingKind"];
+            /** @description False while side-by-side runs are turned off (SIDE_BY_SIDE_ENABLED=false): the choice is hidden. */
+            sideBySideAvailable: boolean;
+        };
         GitHubRepository: {
             repositoryId: number;
             installationId: number;
@@ -2248,6 +2288,58 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Settings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOnboardingKind: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingKindState"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setOnboardingKind: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OnboardingKindChoice"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingKindChoice"];
                 };
             };
             default: components["responses"]["Error"];
