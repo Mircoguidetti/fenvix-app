@@ -10,7 +10,8 @@ import { parse } from "yaml";
 import type pg from "pg";
 import { SIDE_BY_SIDE_PATH } from "../../src/onboarding/workflow.ts";
 import { type Region, RetryLater, type RunnerLaunch, type RunnerLauncher } from "../../src/runners/launcher.ts";
-import { runWork } from "../../src/work.ts";
+import { makeWorkerHandler } from "../../src/lambda/handlers.ts";
+import { jsonLogger, runWork } from "../../src/work.ts";
 import { ACCOUNT, CI_YAML, Harness, INSTALLATION_ID, installationCreated, makeOrg, pullRequest, REPOS, resetDb, runnerCredential, workflowJob } from "../helpers/harness.ts";
 
 const SUMMARY = JSON.parse(readFileSync(new URL("../fixtures/runner/job3-warm-pass.summary.json", import.meta.url), "utf8")) as Record<string, unknown>;
@@ -19,16 +20,28 @@ type Row = Record<string, any>;
 /** Our fleet in memory: every launch recorded; `full` makes the region's fleet full, `places` its placement. */
 class Fleet implements RunnerLauncher {
   launches: RunnerLaunch[] = [];
+  /** Every call, launched or not. */
+  tries: RunnerLaunch[] = [];
+  capacityAsked: (string | undefined)[] = [];
   full = false;
   /** The fleet fills between the capacity check and the launch: hasCapacity says yes, a full launch is refused. */
   race = false;
   places = true;
+  /** The next this many launches fail (an AWS error, not a full fleet). */
+  failTimes = 0;
+  /** Skip launches fail. */
+  skipFails = false;
+  /** EC2 answers that the machine exists already (the same ClientToken). */
+  already = false;
   canPlace(_r: Region) { return this.places; }
-  async hasCapacity() { return !this.full; }
+  async hasCapacity(_r?: Region, instanceType?: string) { this.capacityAsked.push(instanceType); return !this.full; }
   async launch(l: RunnerLaunch) {
+    this.tries.push(l);
     if ((this.full || this.race) && !l.skipCapacityCheck) throw new RetryLater("full");
+    if (this.failTimes > 0) { this.failTimes--; throw new Error("InsufficientInstanceCapacity"); }
+    if (this.skipFails && l.skip) throw new Error("InsufficientInstanceCapacity");
     this.launches.push(l);
-    return { instanceId: `i-${l.jobId}`, already: false };
+    return { instanceId: `i-${l.jobId}`, already: this.already };
   }
 }
 
@@ -105,6 +118,22 @@ describe("side by side: the organization's choice, and the pull request after th
     assert.equal(shop.pulls.length, 1);
     assert.equal((await admin.query("select onboarding_state from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].onboarding_state, "side_by_side");
   });
+
+  // protects=onboard() again on a repository that runs side by side, when it now fails (his workflow file is gone),
+  // keeps the repository side by side with what it stored (the merged file still runs); fails_when=the state becomes
+  // no_workflow or failed (every side-by-side job would then get no machine); no_claim=-.
+  it("running side by side, onboard() again fails: the repository stays side_by_side", async () => {
+    const shop = h.gh.repos.get("acme/shop")!;
+    const ci = shop.branches.get("main")!.files.get(".github/workflows/ci.yml")!;
+    shop.branches.get("main")!.files.delete(".github/workflows/ci.yml");
+    try {
+      const res = await h.app.service.onboard(REPOS.shop.id);
+      assert.notEqual(res.state, "side_by_side");
+    } finally { shop.branches.get("main")!.files.set(".github/workflows/ci.yml", ci); }
+    const row = (await admin.query("select onboarding_state, side_by_side_job_name, onboarding_detail from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
+    assert.deepEqual({ s: row.onboarding_state, j: row.side_by_side_job_name }, { s: "side_by_side", j: "test" });
+    assert.match(row.onboarding_detail, /the merged side-by-side file keeps running/);
+  });
 });
 
 describe("side by side: the other kind and the other selection (AC 2)", () => {
@@ -173,9 +202,9 @@ describe("side by side: our job (AC 3, AC 6)", () => {
   const SHA = "5".repeat(40);
   let runSeq = 20_000;
   /** One of our jobs: a run of fenvix-side-by-side.yml, then its workflow_job events. */
-  const ourJob = async (id: number, o: { event?: string; start?: boolean; headRepoId?: number; branch?: string } = {}) => {
+  const ourJob = async (id: number, o: { event?: string; start?: boolean; headRepoId?: number | null; branch?: string } = {}) => {
     const runId = ++runSeq;
-    h.gh.addRun("acme/shop", runId, { event: o.event ?? "push", headSha: SHA, headBranch: o.branch ?? "main", message: "m", path: SIDE_BY_SIDE_PATH, ...(o.headRepoId ? { headRepoId: o.headRepoId } : {}) });
+    h.gh.addRun("acme/shop", runId, { event: o.event ?? "push", headSha: SHA, headBranch: o.branch ?? "main", message: "m", path: SIDE_BY_SIDE_PATH, ...(o.headRepoId !== undefined ? { headRepoId: o.headRepoId } : {}) });
     await h.send("workflow_job", workflowJob("queued", { id, runId, sha: SHA, branch: "main", name: "fenvix side-by-side (does not gate)" }));
     return runId;
   };
@@ -265,6 +294,103 @@ describe("side by side: our job (AC 3, AC 6)", () => {
     assert.equal(fleet.launches.length, n, "lookup failed: no machine");
     assert.equal((await admin.query("select workflow_path from gh_jobs where job_id = 7405")).rows[0].workflow_path, null);
     assert.equal(githubWrites(h).length, 0, "no check run for it either");
+  });
+
+  // protects=the server-side fork check fails closed: a pull request whose head repository GitHub no longer shows (a
+  // deleted fork), and a redelivery whose run lookup fails once the workflow file is known, get no machine (the
+  // delivery is retried); fails_when=either gets a machine (the job-level guard is in a file the fork controls);
+  // no_claim=GitHub's own fork handling.
+  it("the fork check fails closed: no head repository, or a failed run lookup: no machine", async () => {
+    await admin.query("delete from gh_jobs where kind = 'side_by_side'");
+    const n = fleet.launches.length;
+    await ourJob(7801, { event: "pull_request", branch: "feature", headRepoId: null });
+    assert.equal(fleet.launches.length, n, "a deleted fork: no machine");
+    // Classified (workflow file cached) while unlinked, then delivered again with a lookup that fails.
+    await admin.query("update gh_installations set workspace_id = null where installation_id = $1", [INSTALLATION_ID]);
+    const runId = await ourJob(7802);
+    await admin.query("update gh_installations set workspace_id = $2 where installation_id = $1", [INSTALLATION_ID, org.workspaceId]);
+    assert.equal((await admin.query("select workflow_path from gh_jobs where job_id = 7802")).rows[0].workflow_path, SIDE_BY_SIDE_PATH);
+    h.gh.failNext.set(`GET /repos/acme/shop/actions/runs/${runId}`, 502);
+    await h.send("workflow_job", workflowJob("queued", { id: 7802, runId, sha: SHA, branch: "main", name: "fenvix side-by-side (does not gate)" }));
+    assert.equal(fleet.launches.length, n, "lookup failed: no machine");
+    assert.equal((await admin.query("select launched_at from gh_jobs where job_id = 7802")).rows[0].launched_at, null);
+    // GitHub answers again: the redelivery gets its machine.
+    await h.send("workflow_job", workflowJob("queued", { id: 7802, runId, sha: SHA, branch: "main", name: "fenvix side-by-side (does not gate)" }));
+    assert.equal(fleet.launches.at(-1)!.jobId, 7802);
+  });
+
+  // protects=a full machine's hard lifetime is the repository's stored timeout (60 for CI_YAML) + 10, the capacity is
+  // asked for the side-by-side size, a retry after an AWS error gets a new ClientToken (retry 2), and three failures
+  // release the cap slot (the next job still gets a full machine); fails_when=no lifetime, the capacity asked for one
+  // slot, the retry reuses the token, or the slot stays taken; no_claim=EC2.
+  it("lifetime, capacity in slots, a retry's own token, three failures release the slot", async () => {
+    await admin.query("delete from gh_jobs where kind = 'side_by_side'");
+    assert.equal((await admin.query("select side_by_side_timeout_minutes from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].side_by_side_timeout_minutes, 60);
+    fleet.failTimes = 1;
+    await ourJob(7811);
+    const l = fleet.launches.at(-1)!;
+    assert.deepEqual({ job: l.jobId, retry: l.retry, life: l.lifetimeMinutes }, { job: 7811, retry: 2, life: 70 });
+    assert.equal(fleet.tries.filter((t) => t.jobId === 7811)[0]!.retry, 1);
+    assert.equal(fleet.capacityAsked.at(-1), "c6i.2xlarge");
+    fleet.failTimes = 3;
+    await ourJob(7812);
+    assert.equal((await admin.query("select launched_at from gh_jobs where job_id = 7812")).rows[0].launched_at, null, "the slot is released");
+    await admin.query(`insert into gh_jobs (job_id, repository_id, installation_id, run_id, head_sha, status, kind, launched_at, skip_machine)
+      select 820000 + g, $1, $2, 1, $3, 'completed', 'side_by_side', now() - interval '1 hour', false from generate_series(1, 8) g`, [REPOS.shop.id, INSTALLATION_ID, SHA]);
+    await ourJob(7813);
+    assert.deepEqual({ job: fleet.launches.at(-1)!.jobId, skip: !!fleet.launches.at(-1)!.skip }, { job: 7813, skip: false }, "the 10th slot is free again");
+    await admin.query("delete from gh_jobs where job_id > 820000");
+  });
+
+  // protects=the skip machine after a full fleet at launch: a machine EC2 already has (same token) deletes the unused
+  // runner; a skip launch that fails deletes its runner and releases the slot; fails_when=a runner is left registered
+  // or the job keeps launched_at; no_claim=-.
+  it("skip after a full fleet: an existing machine or a failed launch leaves no runner behind", async () => {
+    await admin.query("delete from gh_jobs where kind = 'side_by_side'");
+    const deletes = () => h.gh.exchanges.filter((x) => x.method === "DELETE" && /\/actions\/runners\//.test(x.path)).length;
+    let d = deletes();
+    fleet.race = true; fleet.already = true;
+    try { await ourJob(7821); } finally { fleet.race = false; fleet.already = false; }
+    assert.equal(deletes() - d, 2, "the refused full runner and the unused skip runner");
+    d = deletes();
+    fleet.race = true; fleet.skipFails = true;
+    try { await ourJob(7822); } finally { fleet.race = false; fleet.skipFails = false; }
+    assert.equal(deletes() - d, 2, "both runners deleted");
+    assert.equal((await admin.query("select launched_at from gh_jobs where job_id = 7822")).rows[0].launched_at, null);
+  });
+
+  // protects=a job whose every lookup failed (never classified) is classified when it is published: our job gets no
+  // check run and is never billed; a failed lookup then leaves it unpublished (retried); fails_when=it is published as
+  // an ordinary job; no_claim=-.
+  it("never classified before it completed: classified at publish", async () => {
+    const runId = ++runSeq;
+    h.gh.addRun("acme/shop", runId, { event: "push", headSha: SHA, headBranch: "main", message: "m", path: SIDE_BY_SIDE_PATH });
+    await admin.query(`insert into gh_jobs (job_id, repository_id, installation_id, run_id, head_sha, head_branch, status, conclusion, labels, completed_at, job_name, workflow_name)
+      values (7831, $1, $2, $3, $4, 'main', 'completed', 'cancelled', array['fenvix'], now() - interval '1 hour', 'fenvix side-by-side (does not gate)', 'fenvix side by side')`, [REPOS.shop.id, INSTALLATION_ID, runId, SHA]);
+    const before = h.gh.exchanges.length;
+    h.gh.failNext.set(`GET /repos/acme/shop/actions/runs/${runId}`, 502);
+    await h.app.service.sweep();
+    assert.equal((await admin.query("select published_at from gh_jobs where job_id = 7831")).rows[0].published_at, null, "not published on a failed lookup");
+    await h.app.service.sweep();
+    assert.deepEqual((await admin.query("select kind, published_at is not null as published from gh_jobs where job_id = 7831")).rows[0], { kind: "side_by_side", published: true });
+    assert.deepEqual(githubWrites(h).filter((x) => h.gh.exchanges.indexOf(x) >= before), []);
+    assert.equal((await admin.query("select billable from ci_usage_events where github_job_id = 7831")).rows[0]?.billable ?? false, false);
+  });
+
+  // protects=a side-by-side job that gets no machine (a fork, a cap) never counts as a customer job waiting, so it
+  // cannot hold back the region's warm-ups; an ordinary queued job still does; fails_when=the count includes it;
+  // no_claim=the warm-up policy itself (warmup.test.ts).
+  it("a side-by-side job left queued does not hold back warm-ups", async () => {
+    await admin.query("delete from gh_jobs where kind = 'side_by_side'");
+    await ourJob(7841, { event: "pull_request", branch: "feature", headRepoId: 999_999 });
+    assert.equal((await admin.query("select region, launched_at from gh_jobs where job_id = 7841")).rows[0].launched_at, null);
+    const region = (await admin.query("select region from gh_jobs where job_id = 7841")).rows[0].region ?? "us";
+    const base = await h.app.service.warmups.customerJobsWaiting(region, 3600);
+    await admin.query(`insert into gh_jobs (job_id, repository_id, installation_id, run_id, head_sha, status, kind, region, created_at)
+      values (7842, $1, $2, 1, $3, 'queued', 'ci_run', $4, now())`, [REPOS.shop.id, INSTALLATION_ID, SHA, region]);
+    assert.equal(await h.app.service.warmups.customerJobsWaiting(region, 3600), base + 1);
+    assert.equal(base, 0, "the side-by-side job is not counted");
+    await admin.query("delete from gh_jobs where job_id = 7842");
   });
 
   // protects=the daily cap: the 10th job of 24 hours still gets a full machine, the 11th a skip machine (skip file,
@@ -422,6 +548,40 @@ describe("side by side: his test job, from webhooks and from his history (item 1
     assert.deepEqual({ done: done.history_cursor.done, next: done.history_next_at }, { done: true, next: null });
   });
 
+  // protects=a history reading takes at most 30 s per message and stops with 30 s of the Lambda left (through the
+  // worker's handler too), keeping its place; a workflow file GitHub no longer has ends it for good; fails_when=it
+  // reads on past the budget, starts with too little time, loses its cursor, or retries a missing file;
+  // no_claim=Lambda's real clock.
+  it("history: 30 s per message at most, 30 s of the Lambda kept, a missing workflow file ends it", async () => {
+    const reset = async () => {
+      await admin.query("delete from gh_customer_jobs where source = 'history'");
+      await admin.query("update gh_repositories set history_cursor = null, history_next_at = null where repository_id = $1", [REPOS.shop.id]);
+    };
+    const cursor = async () => (await admin.query("select history_cursor, history_next_at from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
+    h.gh.rateRemaining = 5000;
+    await reset();
+    let t = Date.now();
+    assert.equal(await h.app.service.readHistory(REPOS.shop.id, { clock: () => (t += 20_000) }), "paused");
+    const one = (await admin.query("select job_id from gh_customer_jobs where source = 'history'")).rows;
+    assert.equal(one.length, 1, "one run read in the 30 s");
+    const c = await cursor();
+    assert.equal(c.history_cursor.lastRunId, Math.floor(one[0].job_id / 10));
+    assert.ok(new Date(c.history_next_at).getTime() <= Date.now() + 1000, "the sweep goes on at once");
+    await reset();
+    assert.equal(await h.app.service.readHistory(REPOS.shop.id, { deadline: Date.now() + 25_000 }), "paused");
+    assert.equal((await admin.query("select count(*)::int as n from gh_customer_jobs where source = 'history'")).rows[0].n, 0, "25 s left: nothing read");
+    await reset();
+    const handler = makeWorkerHandler(async () => ({ service: h.app.service, log: jsonLogger("error"), blobs: null }));
+    const out = await handler({ Records: [{ messageId: "m-1", body: JSON.stringify({ v: 1, work: { kind: "side_by_side_history", repositoryId: REPOS.shop.id } }) }] }, { getRemainingTimeInMillis: () => 20_000 });
+    assert.deepEqual(out.batchItemFailures, []);
+    assert.equal((await admin.query("select count(*)::int as n from gh_customer_jobs where source = 'history'")).rows[0].n, 0, "the handler passes the Lambda's deadline");
+    await reset();
+    h.gh.failNext.set("GET /repos/acme/shop/actions/workflows/ci.yml/runs", 404);
+    assert.equal(await h.app.service.readHistory(REPOS.shop.id), "done");
+    const gone = await cursor();
+    assert.deepEqual({ done: gone.history_cursor.done, missing: gone.history_cursor.missing, next: gone.history_next_at }, { done: true, missing: "ci.yml", next: null });
+  });
+
   // protects=a completed job of his test job (by name and workflow file) is stored with the run's event and pull
   // request; other jobs and other workflows are not; fails_when=lint is stored, another file's "test" is stored, or
   // the PR number is missing; no_claim=-.
@@ -479,5 +639,40 @@ describe("side by side: turned off, and the pull request closed (state matrix)",
     const row = (await admin.query("select onboarding_state, onboarding_detail from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
     assert.equal(row.onboarding_state, "closed");
     assert.match(row.onboarding_detail, /side-by-side pull request #1 was closed without merging/);
+    // protects=reopened, the repository runs side by side again and its history reading, stopped while it was closed,
+    // goes on; fails_when=the history stays partial for good; no_claim=-.
+    await admin.query("update gh_repositories set history_cursor = $2::jsonb, history_next_at = null where repository_id = $1", [REPOS.shop.id, JSON.stringify({ page: 1, lastRunId: null, since: "2026-10-27" })]);
+    await h.send("pull_request", pullRequest("reopened", { number: pr.number, headRef: "fenvix/side-by-side", headSha: pr.headSha }));
+    await h.app.service.idle();
+    const again = (await admin.query("select onboarding_state, history_cursor from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
+    assert.deepEqual({ s: again.onboarding_state, done: again.history_cursor?.done }, { s: "side_by_side_pr_open", done: true });
+  });
+});
+
+describe("side by side: a GitHub error never delays an ordinary job", () => {
+  const h = new Harness();
+  const fleet = new Fleet();
+  let admin: pg.Client;
+  before(async () => {
+    admin = await resetDb();
+    await h.start({}, { launcher: fleet });
+    const org = await makeOrg(admin, "sbs-move-5xx-owner");
+    h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });
+    h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": CI_YAML } });
+    await h.send("installation", installationCreated([REPOS.shop]));
+    await link(h, admin, org);
+  });
+  after(async () => { await h.stop(); await admin.end(); });
+
+  // protects=in a repository never set up side by side, a GitHub 5xx on the run lookup launches the job at once, as
+  // before side-by-side runs (only the side-by-side decision waits for GitHub); fails_when=the delivery fails and the
+  // job waits for the queue's retry; no_claim=-.
+  it("a move repository: the run lookup fails, the machine starts anyway", async () => {
+    const SHA = "6".repeat(40);
+    h.gh.addRun("acme/shop", 40001, { event: "push", headSha: SHA, headBranch: "main", message: "m", path: ".github/workflows/ci.yml" });
+    h.gh.failNext.set("GET /repos/acme/shop/actions/runs/40001", 502);
+    await h.send("workflow_job", workflowJob("queued", { id: 9101, runId: 40001, sha: SHA, branch: "main" }));
+    assert.equal(fleet.launches.at(-1)?.jobId, 9101);
+    assert.equal((await admin.query("select kind from gh_jobs where job_id = 9101")).rows[0].kind, "ci_run");
   });
 });

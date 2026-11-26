@@ -688,6 +688,14 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     const before = await counts();
     const kind = await call(api, "getOnboardingKind", base);
     assert.deepEqual(kind.body, { kind: "move", sideBySideAvailable: true });
+    // protects=with SIDE_BY_SIDE_ENABLED=false the API offers no side-by-side choice and refuses to store one (409),
+    // the stored kind unchanged; fails_when=it reads available, or stores side_by_side; no_claim=the Connect page.
+    const off = await startApi(undefined, { SIDE_BY_SIDE_ENABLED: "false" });
+    try {
+      assert.deepEqual((await call(off.api, "getOnboardingKind", base)).body, { kind: "move", sideBySideAvailable: false });
+      assert.equal((await call(off.api, "setOnboardingKind", { ...base, body: { kind: "side_by_side" } })).status, 409);
+      assert.equal((await call(api, "getOnboardingKind", base)).body.kind, "move");
+    } finally { await off.api.close(); }
     const S = sha();
     const ids: string[] = [];
     const jobIds = [githubId(), githubId()];

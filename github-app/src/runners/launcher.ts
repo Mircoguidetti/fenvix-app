@@ -1,5 +1,6 @@
 import { DescribeImagesCommand, DescribeInstancesCommand, EC2Client, type _InstanceType, RunInstancesCommand, TerminateInstancesCommand } from "@aws-sdk/client-ec2";
 import { cacheOrgOf } from "./credentials.ts";
+import { slotsOf } from "./sizes.ts";
 import { SIDE_BY_SIDE_SKIP_FILE } from "../onboarding/workflow.ts";
 
 /**
@@ -43,6 +44,13 @@ export interface RunnerLaunch {
   skip?: { attempt: number };
   /** Starts the machine even when the region's fleet is at its limit (a skip machine runs about two minutes). */
   skipCapacityCheck?: boolean;
+  /**
+   * The try within one delivery (1 = the first). A later try has a new just-in-time runner, so new user data: its own
+   * ClientToken fenvix-job-<jobId>-r<n>, so that EC2 starts a machine with the runner that exists.
+   */
+  retry?: number;
+  /** A hard lifetime: the machine powers off (and AWS terminates it) this many minutes after boot, whatever runs. */
+  lifetimeMinutes?: number;
 }
 
 /** The file a side-by-side skip machine writes; the job's gate step reads it (one constant, src/onboarding/workflow.ts). */
@@ -81,7 +89,8 @@ export interface WarmupLaunch {
 export interface RunnerLauncher {
   launch(l: RunnerLaunch): Promise<{ instanceId: string | null; already: boolean }>;
   /** False while the fleet (of that region) is at its limit: no just-in-time runner is registered for a job that gets no machine. */
-  hasCapacity?(region?: Region): Promise<boolean>;
+  /** Room for one more machine of this type (default: the launch template's) under the region's limit, in slots. */
+  hasCapacity?(region?: Region, instanceType?: string): Promise<boolean>;
   /** False when no machine can be placed in that region (no placement configured): the job gets no machine at all. */
   canPlace?(region: Region): boolean;
   /** Warm-ups: the region's machines (jobs and warm-ups) and its limit. Absent: no warm-ups. */
@@ -145,6 +154,11 @@ export function jobUserData(l: RunnerLaunch, machineEnv: Record<string, string>)
   // A skip machine: the job runs, its gate step finds this file, and no kept step runs (readable by the job user).
   // Whatever the job does (a workflow without our gate step), the machine powers off 10 minutes after boot.
   if (l.skip) lines.push(`install -m 0644 /dev/null ${SKIP_FILE}`, `shutdown -h +${SKIP_MACHINE_MINUTES} "fenvix skip machine: ${SKIP_MACHINE_MINUTES}-minute limit"`);
+  // A full side-by-side machine: the job's timeout (at most 60) plus 10 minutes, whatever an edited file asks for.
+  else if (l.lifetimeMinutes !== undefined) {
+    if (!Number.isInteger(l.lifetimeMinutes) || l.lifetimeMinutes < 1 || l.lifetimeMinutes > 24 * 60) throw new Error("the machine's lifetime must be 1 to 1440 minutes");
+    lines.push(`shutdown -h +${l.lifetimeMinutes} "fenvix side-by-side machine: ${l.lifetimeMinutes}-minute limit"`);
+  }
   lines.push("umask 077", `printf '%s' '${l.jitConfig}' >/etc/fenvix/jitconfig`);
   if (l.summaryToken) lines.push(`printf '%s' '${l.summaryToken}' >/etc/fenvix/summary-token`);
   if (l.cacheToken && env.FENVIX_CACHE_URL) lines.push(`printf '%s' '${l.cacheToken}' >/etc/fenvix/cache-token`);
@@ -295,15 +309,16 @@ export class Ec2Launcher implements RunnerLauncher {
     return id;
   }
 
+  /** The region's machines pending or running, in slots (sizes.ts: a c6i.2xlarge counts 4). */
   async running(region: Region = "us"): Promise<number> {
     const r = await this.placement(region).ec2.send(new DescribeInstancesCommand({
       Filters: [{ Name: `tag:${ROLE_TAG}`, Values: [ROLE_VALUE] }, { Name: "instance-state-name", Values: ["pending", "running"] }],
     }));
-    return (r.Reservations ?? []).reduce((n, x) => n + (x.Instances?.length ?? 0), 0);
+    return (r.Reservations ?? []).flatMap((x) => x.Instances ?? []).reduce((n, i) => n + slotsOf(i.InstanceType), 0);
   }
 
-  async hasCapacity(region: Region = "us"): Promise<boolean> {
-    return (await this.running(region)) < this.o.maxRunning;
+  async hasCapacity(region: Region = "us", instanceType?: string): Promise<boolean> {
+    return (await this.running(region)) + slotsOf(instanceType) <= this.o.maxRunning;
   }
 
   async slots(region: Region): Promise<{ running: number; warmups: number; max: number }> {
@@ -312,7 +327,7 @@ export class Ec2Launcher implements RunnerLauncher {
     }));
     const all = (r.Reservations ?? []).flatMap((x) => x.Instances ?? []);
     const warmups = all.filter((i) => (i.Tags ?? []).some((t) => t.Key === KIND_TAG && t.Value === "warmup")).length;
-    return { running: all.length, warmups, max: this.o.maxRunning };
+    return { running: all.reduce((n, i) => n + slotsOf(i.InstanceType), 0), warmups, max: this.o.maxRunning };
   }
 
   async launchWarmup(w: WarmupLaunch): Promise<{ instanceId: string | null; already: boolean }> {
@@ -360,7 +375,8 @@ export class Ec2Launcher implements RunnerLauncher {
     const p = this.placement(region);
     if (!l.skipCapacityCheck) {
       const n = await this.running(region);
-      if (n >= this.o.maxRunning) throw new RetryLater(`${n} fenvix machines are running in ${region} (limit ${this.o.maxRunning}); job ${l.jobId} waits`);
+      const need = slotsOf(l.skip ? undefined : l.instanceType);
+      if (n + need > this.o.maxRunning) throw new RetryLater(`${n} of ${this.o.maxRunning} slots are taken in ${region} (this machine needs ${need}); job ${l.jobId} waits`);
     }
     if (l.instanceType !== undefined && !/^[a-z][a-z0-9-]*\.[a-z0-9]+$/.test(l.instanceType)) throw new Error("the instance type is not an EC2 instance type");
     const imageId = await this.imageId(region);
@@ -378,7 +394,7 @@ export class Ec2Launcher implements RunnerLauncher {
         MinCount: 1, MaxCount: 1,
         // One machine per job, even if the queue delivers the job twice: EC2 returns the first launch. A skip machine
         // has a token of its own: a job that first got no full machine still gets its skip machine.
-        ClientToken: l.skip ? `fenvix-skip-${l.jobId}-${l.skip.attempt}` : `fenvix-job-${l.jobId}`,
+        ClientToken: l.skip ? `fenvix-skip-${l.jobId}-${l.skip.attempt}` : (l.retry ?? 1) > 1 ? `fenvix-job-${l.jobId}-r${l.retry}` : `fenvix-job-${l.jobId}`,
         UserData: Buffer.from(jobUserData({ ...l, region }, { ...this.o.machineEnv, ...(p.machineEnv ?? {}) })).toString("base64"),
         TagSpecifications: [{ ResourceType: "instance", Tags: tags }, { ResourceType: "volume", Tags: tags }],
       }));

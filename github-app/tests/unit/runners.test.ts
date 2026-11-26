@@ -12,7 +12,7 @@ const launch: RunnerLaunch = {
 const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://api.fenvix.dev/v1/runner/summaries" };
 
 /** An EC2 client in memory: images, running machines, the calls made. */
-function fakeEc2(o: { running?: number; images?: { ImageId: string; CreationDate: string }[]; runError?: string; instances?: { InstanceId: string; LaunchTime: Date }[] } = {}) {
+function fakeEc2(o: { running?: number; images?: { ImageId: string; CreationDate: string }[]; runError?: string; instances?: { InstanceId: string; LaunchTime: Date; InstanceType?: string }[] } = {}) {
   const calls: unknown[] = [];
   return {
     calls,
@@ -200,5 +200,43 @@ describe("side-by-side machines (spec 20261126-side-by-side-runs items 11, 12)",
     assert.ok(at > 0 && at < ud.indexOf("umask 077"), "written before the root-only files, readable by the job");
     // Its whole life is 10 minutes, whatever the job does (a workflow without the gate step).
     assert.ok(ud.includes('shutdown -h +10 "fenvix skip machine: 10-minute limit"'), "the 10-minute power-off");
+  });
+
+  // protects=a full side-by-side machine has a hard lifetime too (the job's timeout, at most 60, plus 10 minutes): an
+  // edited side-by-side file cannot keep an 8-vCPU machine for hours; fails_when=no power-off line, or another number;
+  // no_claim=that systemd honours shutdown -h.
+  it("full machine: powers off after its lifetime; a plain job gets no power-off line", async () => {
+    const ec2 = fakeEc2();
+    await new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 8, machineEnv: MACHINE }).launch({ ...launch, instanceType: "c6i.2xlarge", lifetimeMinutes: 70 });
+    const run = ec2.calls.find((c) => c instanceof RunInstancesCommand) as RunInstancesCommand;
+    assert.ok(Buffer.from(run.input.UserData!, "base64").toString().split("\n").includes('shutdown -h +70 "fenvix side-by-side machine: 70-minute limit"'));
+    assert.doesNotMatch(jobUserData(launch, MACHINE), /shutdown/);
+    assert.throws(() => jobUserData({ ...launch, lifetimeMinutes: 0 }, MACHINE), /lifetime/);
+  });
+
+  // protects=a retry inside one delivery (new runner, so new user data) gets its own ClientToken, so EC2 starts a
+  // machine with the runner that exists instead of answering "already" for a machine whose runner was deleted;
+  // fails_when=the retry reuses fenvix-job-<id>; no_claim=EC2's idempotency window.
+  it("a retry gets fenvix-job-<id>-r<n>; the first try keeps fenvix-job-<id>", async () => {
+    const ec2 = fakeEc2();
+    const l = new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 8, machineEnv: MACHINE });
+    await l.launch({ ...launch, retry: 1 });
+    await l.launch({ ...launch, retry: 3 });
+    assert.deepEqual(ec2.calls.filter((c) => c instanceof RunInstancesCommand).map((c) => (c as RunInstancesCommand).input.ClientToken), ["fenvix-job-601", "fenvix-job-601-r3"]);
+  });
+
+  // protects=the fleet limit counts c6i.large slots (2 vCPU each): an 8-vCPU machine is 4, so the AWS vCPU quota the
+  // limit was sized for holds; fails_when=a running c6i.2xlarge counts 1, or a 2xlarge launch is let through past the
+  // limit; no_claim=the account's real quota.
+  it("fleet limit in slots: a c6i.2xlarge counts 4", async () => {
+    const inst = (t: string, i: number) => ({ InstanceId: `i-${i}`, LaunchTime: new Date(), InstanceType: t });
+    const ec2 = fakeEc2({ instances: [inst("c6i.2xlarge", 1), inst("c6i.large", 2)] });
+    const l = new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 8, machineEnv: MACHINE });
+    assert.equal(await l.running(), 5);
+    assert.equal(await l.hasCapacity("us"), true, "a large fits (5 + 1)");
+    assert.equal(await l.hasCapacity("us", "c6i.2xlarge"), false, "a 2xlarge does not (5 + 4 > 8)");
+    await assert.rejects(l.launch({ ...launch, instanceType: "c6i.2xlarge" }), RetryLater);
+    await l.launch(launch);
+    assert.equal(ec2.calls.filter((c) => c instanceof RunInstancesCommand).length, 1);
   });
 });

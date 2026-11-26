@@ -58,7 +58,7 @@ alter table public.gh_jobs drop column if exists kind, drop column if exists wor
 drop index if exists public.gh_repositories_history_due;
 alter table public.gh_repositories drop column if exists awaiting_link, drop column if exists side_by_side_matrix,
   drop column if exists side_by_side_matrix_suffix, drop column if exists side_by_side_job_name, drop column if exists side_by_side_test_step,
-  drop column if exists history_cursor, drop column if exists history_next_at;
+  drop column if exists side_by_side_timeout_minutes, drop column if exists history_cursor, drop column if exists history_next_at;
 do $$
 begin
   if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'workspaces' and column_name = 'onboarding_kind') then

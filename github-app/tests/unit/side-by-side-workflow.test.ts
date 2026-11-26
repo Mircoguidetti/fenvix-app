@@ -108,6 +108,27 @@ jobs:
     assert.deepEqual({ name: out.jobName, suffix: out.matrixSuffix, step: out.testStepName }, { name: "Tests on node 18", suffix: null, step: "Unit tests" });
   });
 
+  // protects=our job's timeout is his, at most 60 minutes (the full machine powers off 10 minutes after that), and
+  // the stored timeoutMinutes is what the machine gets; fails_when=a 120-minute job is copied as 120 (GitHub would see
+  // the machine vanish), an expression is copied as is, or timeoutMinutes differs from the file; no_claim=-.
+  it("timeout: his, at most 60; an expression or a missing one gives 60", () => {
+    const at = (t: string) => build(`on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+${t}    steps:
+      - run: npm test
+`);
+    const long = at("    timeout-minutes: 120\n");
+    assert.deepEqual([long.j["timeout-minutes"], long.out.timeoutMinutes], [60, 60]);
+    const short = at("    timeout-minutes: 25\n");
+    assert.deepEqual([short.j["timeout-minutes"], short.out.timeoutMinutes], [25, 25]);
+    const expr = at("    timeout-minutes: ${{ fromJSON(vars.T) }}\n");
+    assert.deepEqual([expr.j["timeout-minutes"], expr.out.timeoutMinutes], [60, 60]);
+    const none = at("");
+    assert.deepEqual([none.j["timeout-minutes"], none.out.timeoutMinutes], [60, 60]);
+  });
+
   // protects=the one matrix combination GitHub runs first, after exclude and include; fails_when=another combination,
   // or include/exclude applied wrong; no_claim=matrices given by expressions (refused, below).
   it("matrix with include and exclude: the first effective combination only, as include of one", () => {

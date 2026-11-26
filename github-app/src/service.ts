@@ -2,7 +2,7 @@ import type { Client, Db } from "./db.ts";
 import { GitHubError, type GitHubApp, type GitHubHttp, repoPath } from "./github/client.ts";
 import { onboardRepository, onboardSideBySide, type OnboardingResult, type SideBySideResult } from "./onboarding/onboard.ts";
 import { DEFAULT_SIDE_BY_SIDE, type SideBySideSettings } from "./config.ts";
-import { SIDE_BY_SIDE_PATH } from "./onboarding/workflow.ts";
+import { SIDE_BY_SIDE_MAX_TIMEOUT, SIDE_BY_SIDE_PATH } from "./onboarding/workflow.ts";
 import { CHECK_NAME, COMMENT_MARKER, checkRunOutput, conclusionOf, prComment, type RenderContext } from "./results/render.ts";
 import { NOT_PROVEN_REASONS, parseSummary, proofRecord, type RunSummary } from "./results/summary.ts";
 import { runStatus } from "./results/status.ts";
@@ -101,7 +101,7 @@ interface RepoRow {
   project_id: string | null; onboarding_state: string; setup_pr_number: number | null; setup_pr_url: string | null;
   detected_language: string | null; detected_test_runner: string | null; removed_at?: Date | null;
   awaiting_link?: boolean; private?: boolean; onboarding_workflow_path?: string | null; onboarding_job?: string | null;
-  side_by_side_matrix_suffix?: string | null; side_by_side_job_name?: string | null; side_by_side_test_step?: string | null;
+  side_by_side_matrix_suffix?: string | null; side_by_side_job_name?: string | null; side_by_side_test_step?: string | null; side_by_side_timeout_minutes?: number | null;
   history_cursor?: unknown; history_next_at?: Date | null;
 }
 
@@ -113,6 +113,10 @@ const prOf = (run: { event?: string | null; pull_requests?: { number: number }[]
 
 /** The onboarding states of a repository that runs side by side. */
 const SIDE_BY_SIDE_STATES = ["side_by_side_pr_open", "side_by_side"];
+
+/** One side-by-side history message reads at most this long, and stops with this much of the Lambda left. */
+const HISTORY_BUDGET_MS = 30_000;
+const HISTORY_RESERVE_MS = 30_000;
 
 /**
  * His test job's matrix suffix: "" -> null for the job's resolved name itself, " (a, b)" for that name + " (" + matrix
@@ -334,10 +338,19 @@ export class GitHubService {
     const res: SideBySideResult = kind === "side_by_side"
       ? await onboardSideBySide(this.gh.installation(repo.installation_id), repo.full_name, { ...options, branch: this.sbs.branch, dailyCap: this.sbs.dailyCap })
       : await onboardRepository(this.gh.installation(repo.installation_id), repo.full_name, { ...options, branch: this.s.onboardingBranch });
+    // A repository that runs side by side (or has its side-by-side pull request open), onboarded again when that now
+    // fails (his workflow changed, GitHub erred): it stays as it is, with what it stored; the merged file still runs.
+    if (SIDE_BY_SIDE_STATES.includes(repo.onboarding_state) && !SIDE_BY_SIDE_STATES.includes(res.state)) {
+      const detail = `onboarding again: ${res.detail}; the merged side-by-side file keeps running`.slice(0, 1000);
+      await this.db.q("update gh_repositories set onboarding_detail = $2, awaiting_link = false, updated_at = now() where repository_id = $1", [repositoryId, detail]);
+      this.log.warn({ repository: repo.full_name, state: res.state, kept: repo.onboarding_state }, "onboarding again failed: the repository stays side by side");
+      return res;
+    }
     if (res.sideBySide) {
       await this.db.q(
-        "update gh_repositories set side_by_side_matrix = $2, side_by_side_matrix_suffix = $3, side_by_side_job_name = $4, side_by_side_test_step = $5 where repository_id = $1",
-        [repositoryId, res.sideBySide.matrix, res.sideBySide.matrixSuffix, res.sideBySide.jobName, res.sideBySide.testStepName]);
+        `update gh_repositories set side_by_side_matrix = $2, side_by_side_matrix_suffix = $3, side_by_side_job_name = $4, side_by_side_test_step = $5,
+           side_by_side_timeout_minutes = $6 where repository_id = $1`,
+        [repositoryId, res.sideBySide.matrix, res.sideBySide.matrixSuffix, res.sideBySide.jobName, res.sideBySide.testStepName, res.sideBySide.timeoutMinutes]);
     }
     // A pull request that is already open (or merged) keeps its state when the repository is added again.
     await this.db.q(
@@ -483,6 +496,7 @@ export class GitHubService {
         : state === "open" ? `the setup pull request #${pr.number} is open`
         : state === "merged" ? `the setup pull request #${pr.number} was merged: the test job runs on ${this.s.runsOnLabel}`
         : `the setup pull request #${pr.number} was closed without merging`;
+      const was = sideBySide ? (await this.repo(repo.id))?.onboarding_state : undefined;
       await this.db.q(
         `update gh_repositories set onboarding_state = $2, setup_pr_number = $3, setup_pr_url = $4, onboarding_detail = $5, updated_at = now()
          where repository_id = $1 and (setup_pr_number = $3 or (setup_pr_number is null and not $6::boolean))`,
@@ -494,6 +508,11 @@ export class GitHubService {
         await this.db.tx(row.workspace_id, (c) => c.query(
           `update ci_projects set setup_pr_number = $2, setup_pr_url = $3, setup_pr_state = $4 where id = $1`,
           [row.project_id, pr.number, pr.html_url, state]));
+      }
+      // Back to side by side (the pull request reopened): a history reading stopped while it was closed goes on.
+      if (sideBySide && row && SIDE_BY_SIDE_STATES.includes(row.onboarding_state) && !SIDE_BY_SIDE_STATES.includes(was ?? "")
+        && !(row.history_cursor as { done?: boolean } | null)?.done) {
+        await this.startHistory(repo.id, { resume: true });
       }
       // Merged: the test job is on fenvix from the merge commit on. Warm the cache at it before the first pull request.
       if (state === "merged" && row?.onboarding_state === "merged" && row.setup_pr_number === pr.number) {
@@ -595,8 +614,10 @@ export class GitHubService {
   }
 
   /** The repository entered side by side: its history (the last 30 days of his test job) is read from the start. */
-  private async startHistory(repositoryId: number): Promise<void> {
-    await this.db.q("update gh_repositories set history_cursor = null, history_next_at = null where repository_id = $1", [repositoryId]);
+  private async startHistory(repositoryId: number, o: { resume?: boolean } = {}): Promise<void> {
+    // From the start, or (resume) from where it stopped.
+    if (o.resume) await this.db.q("update gh_repositories set history_next_at = null where repository_id = $1", [repositoryId]);
+    else await this.db.q("update gh_repositories set history_cursor = null, history_next_at = null where repository_id = $1", [repositoryId]);
     if (this.enqueueHistory) {
       await this.enqueueHistory(repositoryId).catch((e: unknown) => this.log.warn({ repositoryId, err: e instanceof Error ? e.message : String(e) }, "history not queued (the sweep retries it)"));
       await this.db.q("update gh_repositories set history_next_at = now() + interval '1 hour' where repository_id = $1 and history_next_at is null", [repositoryId]);
@@ -610,9 +631,13 @@ export class GitHubService {
    * Work kind side_by_side_history: his test job's runs of the last 30 days (GET .../actions/workflows/{file}/runs,
    * at most 3 pages of 100, then each run's jobs), stored as source history. Below 100 requests left
    * (X-RateLimit-Remaining) it stops, stores where (page, last run id) and history_next_at = now() + 24 h; the sweep
-   * starts it again then. Done: history_cursor {done: true}.
+   * starts it again then. Done: history_cursor {done: true}. One message reads for at most 30 s, and stops with 30 s
+   * of the Lambda left (`deadline`, epoch ms): the worker takes several messages per batch, and a batch that runs past
+   * the Lambda's timeout comes back whole (the others' webhooks too). Past it, history_next_at = now(): the sweep goes on.
    */
-  async readHistory(repositoryId: number, now: () => Date = () => new Date()): Promise<"done" | "paused" | "skipped"> {
+  async readHistory(repositoryId: number, o: { now?: () => Date; clock?: () => number; deadline?: number } = {}): Promise<"done" | "paused" | "skipped"> {
+    const now = o.now ?? (() => new Date());
+    const clock = o.clock ?? Date.now;
     const repo = await this.repo(repositoryId);
     const stop = () => this.db.q("update gh_repositories set history_next_at = null where repository_id = $1", [repositoryId]);
     if (!repo || repo.removed_at || !SIDE_BY_SIDE_STATES.includes(repo.onboarding_state) || !repo.onboarding_workflow_path || !repo.side_by_side_job_name) {
@@ -621,8 +646,7 @@ export class GitHubService {
     }
     const prev = (repo.history_cursor ?? null) as { page?: number; lastRunId?: number | null; since?: string; done?: boolean } | null;
     if (prev?.done) { await stop(); return "done"; }
-    // A Lambda has minutes, not hours: past this budget the reading stops where it is and the sweep goes on with it.
-    const budgetEnds = Date.now() + 90_000;
+    const budgetEnds = Math.min(clock() + HISTORY_BUDGET_MS, o.deadline !== undefined ? o.deadline - HISTORY_RESERVE_MS : Infinity);
     const since = prev?.since ?? new Date(now().getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
     const gh = this.gh.installation(repo.installation_id);
     const base = repoPath(repo.full_name);
@@ -650,6 +674,10 @@ export class GitHubService {
       let i = 0;
       if (skipTo !== null) { const at = runs.findIndex((r) => r.id === skipTo); i = at >= 0 ? at + 1 : 0; skipTo = null; }
       for (; i < runs.length; i++) {
+        if (clock() > budgetEnds) {
+          await this.db.q("update gh_repositories set history_next_at = now() where repository_id = $1", [repositoryId]);
+          return "paused";
+        }
         const run = runs[i]!;
         const jobs = await gh.request<{ jobs?: (JobP & { steps?: unknown[] })[] }>("GET", `${base}/actions/runs/${run.id}/jobs`, { query: { filter: "all", per_page: 100 } });
         for (const j of jobs.data.jobs ?? []) {
@@ -662,10 +690,6 @@ export class GitHubService {
         if (low(jobs)) return pause(last);
         // Where it is, after every run: a reading cut short (timeout) goes on from here, not from the start.
         await this.db.q("update gh_repositories set history_cursor = $2::jsonb where repository_id = $1", [repositoryId, JSON.stringify({ page, lastRunId: last, since })]);
-        if (Date.now() > budgetEnds) {
-          await this.db.q("update gh_repositories set history_next_at = now() where repository_id = $1", [repositoryId]);
-          return "paused";
-        }
       }
       last = null;
       if (runs.length < 100) break;
@@ -686,8 +710,20 @@ export class GitHubService {
     if (row.workflow_path) return { kind: row.kind };
     // A failed lookup throws (the delivery is retried) instead of guessing ci_run: a side-by-side job taken for an
     // ordinary one would get a check run, a comment and a billable machine. A run GitHub does not know: ci_run.
+    // In a repository never set up side by side it cannot be one of ours (no machine would start for it): ci_run at
+    // once, so a GitHub error never delays an ordinary job (unclassified: the next event looks again).
     // The run read here is handed to the launch (one GET per queued job, not two).
-    const res = await this.gh.installation(installationId).request<WorkflowRunP>("GET", `${repoPath(repo.full_name)}/actions/runs/${row.run_id}`, { allow: [404] });
+    let res: { status: number; data: WorkflowRunP };
+    try {
+      res = await this.gh.installation(installationId).request<WorkflowRunP>("GET", `${repoPath(repo.full_name)}/actions/runs/${row.run_id}`, { allow: [404] });
+    } catch (e) {
+      const current = await this.repo(repo.id);
+      if (current && !current.side_by_side_job_name && !SIDE_BY_SIDE_STATES.includes(current.onboarding_state)) {
+        this.log.warn({ job: jobId, repository: repo.full_name, err: e instanceof Error ? e.message : String(e) }, "the run lookup failed: an ordinary job (the repository is not side by side)");
+        return { kind: "ci_run" };
+      }
+      throw e;
+    }
     const run = res.status === 404 ? null : res.data;
     if (!run?.path) return { kind: row.kind, run };
     const kind: JobKind = run.path === SIDE_BY_SIDE_PATH ? "side_by_side" : "ci_run";
@@ -871,10 +907,16 @@ export class GitHubService {
     if (!this.s.summaryKey) throw new Error("no summary signing key (RUNNER_TOKEN): no machine is started without its own credential");
     const gh = this.gh.installation(installationId);
     const base = repoPath(repo.full_name);
-    const run = known !== undefined ? known : await this.workflowRun(gh, base, row.run_id);
-    // A pull request from a fork never runs on our machines, whatever the workflow file of its merge commit says.
-    if (run?.event === "pull_request" && run.head_repository && run.head_repository.id !== repo.id) return none("a pull request from a fork");
-    const fleetFull = !!this.launcher!.hasCapacity && !(await this.launcher!.hasCapacity(org.region));
+    // The run, read again when the job was classified earlier: a failed lookup throws (the delivery is retried; no
+    // machine meanwhile), never "unknown, so allowed".
+    const run = known !== undefined ? known
+      : await gh.request<WorkflowRunP>("GET", `${base}/actions/runs/${row.run_id}`, { allow: [404] }).then((r) => (r.status === 404 ? null : r.data));
+    // Code from this repository only: a pull request from a fork never runs on our machines, whatever the workflow
+    // file of its merge commit says, and a run GitHub does not show, or shows without its head repository (a deleted
+    // fork), gets none either.
+    if (!run) return none("the workflow run is not known to GitHub");
+    if (run.head_repository?.id !== repo.id) return none(run.head_repository ? "a pull request from a fork" : "the run's head repository is not shown (a deleted fork)");
+    const fleetFull = !!this.launcher!.hasCapacity && !(await this.launcher!.hasCapacity(org.region, this.sbs.instanceType));
     // The daily caps, atomically: one decision at a time per repository (advisory lock), and the slot is reserved
     // (launched_at, skip_machine) in the same transaction, so two deliveries at once cannot both take the last slot.
     const decision = await this.db.tx(inst.workspace_id, async (c) => {
@@ -895,7 +937,9 @@ export class GitHubService {
     });
     if ("taken" in decision) return;
     if ("none" in decision) return none(decision.none!);
-    let skipWhy = decision.skipWhy;
+    const skipWhy = decision.skipWhy;
+    // The full machine's hard lifetime: our job's timeout (stored at onboarding, at most 60) plus 10 minutes.
+    const lifetimeMinutes = (current.side_by_side_timeout_minutes ?? SIDE_BY_SIDE_MAX_TIMEOUT) + 10;
     const release = () => this.db.q("update gh_jobs set launched_at = null where job_id = $1", [jobId]);
     const defaultBranch = repo.default_branch ?? (await this.repo(repo.id))?.default_branch ?? null;
     const trusted = !skipWhy && !!run && ["push", "schedule", "workflow_dispatch", "merge_group"].includes(run.event ?? "")
@@ -919,7 +963,7 @@ export class GitHubService {
         const res = await this.launcher!.launch({
           jobId, runId: row.run_id, repositoryId: repo.id, repositoryFullName: repo.full_name, installationId, runnerName: name,
           jitConfig: jit.data.encoded_jit_config, cacheAccess, summaryToken, ...(cacheToken ? { cacheToken } : {}), region: org.region, mode: "shadow",
-          ...(skipWhy ? { skip: { attempt: row.run_attempt }, skipCapacityCheck: true } : { instanceType: this.sbs.instanceType }),
+          ...(skipWhy ? { skip: { attempt: row.run_attempt }, skipCapacityCheck: true } : { instanceType: this.sbs.instanceType, retry: attempt, lifetimeMinutes }),
         });
         if (res.already && jit.data.runner?.id) await gh.request("DELETE", `${base}/actions/runners/${jit.data.runner.id}`, { allow: [404, 422] }).catch(() => undefined);
         this.log.info({ job: jobId, repository: repo.full_name, runner: name, instance: res.instanceId, skip: skipWhy, region: org.region, cache: cacheAccess }, "side-by-side machine requested");
@@ -939,7 +983,6 @@ export class GitHubService {
             return true;
           });
           if (!ok) { await release(); return none("the fleet is full, and the daily cap of skip machines is reached"); }
-          skipWhy = "the fleet is full";
           return this.launchSkipAfterFull(jobId, installationId, repo, row, org.region, exp);
         }
         this.log.warn({ job: jobId, attempt, err: e instanceof Error ? e.message : String(e) }, "side-by-side machine did not start");
@@ -961,10 +1004,13 @@ export class GitHubService {
       });
       runnerId = jit.data.runner?.id;
       const summaryToken = signSummaryCredential(this.s.summaryKey!, { runnerName: name, repositoryId: repo.id, runId: row.run_id, runAttempt: row.run_attempt, exp });
-      await this.launcher!.launch({
+      const res = await this.launcher!.launch({
         jobId, runId: row.run_id, repositoryId: repo.id, repositoryFullName: repo.full_name, installationId, runnerName: name,
         jitConfig: jit.data.encoded_jit_config, cacheAccess: "read", summaryToken, region, mode: "shadow", skip: { attempt: row.run_attempt }, skipCapacityCheck: true,
       });
+      // EC2 has this skip machine already (the same token): it runs with its own runner; this one is never used.
+      if (res.already && runnerId) await gh.request("DELETE", `${base}/actions/runners/${runnerId}`, { allow: [404, 422] }).catch(() => undefined);
+      this.log.info({ job: jobId, repository: repo.full_name, runner: name, instance: res.instanceId, already: res.already, skip: "the fleet is full", region }, "side-by-side machine requested");
     } catch (e) {
       if (runnerId) await gh.request("DELETE", `${base}/actions/runners/${runnerId}`, { allow: [404, 422] }).catch(() => undefined);
       await this.db.q("update gh_jobs set launched_at = null where job_id = $1", [jobId]);
@@ -1211,6 +1257,15 @@ export class GitHubService {
       : [];
     const ended = job.conclusion === "cancelled" || job.conclusion === "skipped";
     if (!sumRow && !force && !ended) return "waiting";
+    // Never classified (every lookup of its run failed) in a repository set up side by side: classified now, or not
+    // published (a failed lookup throws; the sweep tries again). An ordinary job's publication is never held back.
+    if (!job.workflow_path) {
+      const repoRow = await this.repo(job.repository_id);
+      if (repoRow?.side_by_side_job_name || SIDE_BY_SIDE_STATES.includes(repoRow?.onboarding_state ?? "")) {
+        const { kind } = await this.classifyJob(job.job_id, job.installation_id, { id: repoRow!.repository_id, full_name: repoRow!.full_name } as RepoFull);
+        job.kind = kind;
+      }
+    }
     const claimed = await this.db.q("update gh_jobs set published_at = now(), publish_attempts = publish_attempts + 1 where job_id = $1 and published_at is null returning job_id", [jobId]);
     if (!claimed.length) return "already";
     try {

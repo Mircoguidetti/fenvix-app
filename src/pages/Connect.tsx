@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Check, CircleCheck, ExternalLink, Lock, TriangleAlert } from "lucide-react";
 import { client, type GitHubRepository, type Installation, type OnboardingKind, type SetupChange } from "../data";
+import { isSetupMerged } from "../data/ci-rows";
 import { Segmented } from "../components/Segmented";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { InstallationStatusPill, OnboardingPill } from "../components/StateBadge";
@@ -329,7 +330,7 @@ export function ConnectPage() {
   const list = repos.status === "ready" ? repos.data : [];
   const live = list.filter((r) => !r.removed && installations.find((i) => i.installationId === r.installationId)?.status !== "deleted");
   const opened = live.some((r) => r.setupPullRequest);
-  const merged = live.some((r) => r.onboardingState === "merged" || r.onboardingState === "already_fenvix");
+  const merged = live.some((r) => isSetupMerged(r.onboardingState));
   const highlighted = github === "connected" ? Number(params.get("installation")) : null;
   const reason = params.get("reason") ?? "error";
   const dismiss = () => navigate("/projects/connect", { replace: true });

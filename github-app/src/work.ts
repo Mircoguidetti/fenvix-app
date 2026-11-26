@@ -51,8 +51,8 @@ export function describeWork(w: Work): string {
   }
 }
 
-/** Runs one piece of work. Throws if it failed (the queue then retries it). */
-export async function runWork(service: GitHubService, w: Work): Promise<void> {
+/** Runs one piece of work. Throws if it failed (the queue then retries it). `deadline`: when the Lambda ends (epoch ms). */
+export async function runWork(service: GitHubService, w: Work, o: { deadline?: number } = {}): Promise<void> {
   if (w.kind === "webhook") {
     await service.handle(w.event, w.delivery, w.payload);
     return;
@@ -84,7 +84,7 @@ export async function runWork(service: GitHubService, w: Work): Promise<void> {
     return;
   }
   if (w.kind === "side_by_side_history") {
-    await service.readHistory(w.repositoryId);
+    await service.readHistory(w.repositoryId, o.deadline !== undefined ? { deadline: o.deadline } : {});
     return;
   }
   throw new Error(`unknown work kind ${(w as { kind?: unknown }).kind}`);

@@ -163,7 +163,7 @@ export function workflowJob(action: "queued" | "in_progress" | "completed", j: {
   });
 }
 
-export function pullRequest(action: "opened" | "closed" | "synchronize", pr: { number: number; headRef: string; headSha: string; merged?: boolean; mergeSha?: string; mergedAt?: string; repo?: { id: number; name: string; full_name: string } }): Json {
+export function pullRequest(action: "opened" | "closed" | "synchronize" | "reopened", pr: { number: number; headRef: string; headSha: string; merged?: boolean; mergeSha?: string; mergedAt?: string; repo?: { id: number; name: string; full_name: string } }): Json {
   return hook("pull_request", action, (p) => {
     const r = pr.repo ?? REPOS.shop;
     p.repository = repository(p.repository as Json, r);

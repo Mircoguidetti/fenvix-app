@@ -34,6 +34,8 @@ alter table public.gh_repositories add column if not exists side_by_side_matrix_
 -- The resolved name of the customer's test job and its test step's name (to find his job and his failing step).
 alter table public.gh_repositories add column if not exists side_by_side_job_name text;
 alter table public.gh_repositories add column if not exists side_by_side_test_step text;
+-- Our job's timeout-minutes (his, at most 60): the full machine's hard lifetime is this plus 10 minutes.
+alter table public.gh_repositories add column if not exists side_by_side_timeout_minutes integer;
 -- Reading the customer's last 30 days of runs: where it stopped (rate limit) and when it goes on.
 alter table public.gh_repositories add column if not exists history_cursor jsonb;
 alter table public.gh_repositories add column if not exists history_next_at timestamptz;

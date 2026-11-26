@@ -35,7 +35,7 @@ export interface FakeRepo {
 
 /** A workflow run: its event, commit, workflow file (`path`) and, for GET /actions/runs/{id}/jobs, its jobs. */
 export interface FakeRun {
-  event: string; createdAt: string; headSha: string; headBranch: string; message: string; pullRequests: number[]; headRepoId?: number;
+  event: string; createdAt: string; headSha: string; headBranch: string; message: string; pullRequests: number[]; headRepoId?: number | null;
   path?: string; jobs?: FakeJob[];
 }
 export interface FakeJob {
@@ -105,8 +105,8 @@ export class FakeGitHub {
     return repo;
   }
 
-  /** `headRepoId`: the repository the run's code comes from (another id: a pull request from a fork). */
-  addRun(fullName: string, runId: number, r: { event: string; headSha: string; headBranch: string; message: string; pullRequests?: number[]; createdAt?: string; headRepoId?: number; path?: string; jobs?: FakeJob[] }): void {
+  /** `headRepoId`: the repository the run's code comes from (another id: a pull request from a fork; null: GitHub shows none, a deleted fork). */
+  addRun(fullName: string, runId: number, r: { event: string; headSha: string; headBranch: string; message: string; pullRequests?: number[]; createdAt?: string; headRepoId?: number | null; path?: string; jobs?: FakeJob[] }): void {
     this.repos.get(fullName)!.runs.set(runId, { ...r, pullRequests: r.pullRequests ?? [], createdAt: r.createdAt ?? new Date().toISOString() });
   }
 
@@ -321,7 +321,7 @@ export class FakeGitHub {
       const prTemplate = (ex.pull_requests as Json[])[0] ?? { url: "", id: 1, number: 1, head: { ref: "", sha: "", repo: { id: repo.id, url: "", name: repo.name } }, base: { ref: "", sha: "", repo: { id: repo.id, url: "", name: repo.name } } };
       return [200, {
         ...ex, id: Number(m[1]), event: run.event, head_sha: run.headSha, head_branch: run.headBranch, created_at: run.createdAt, ...(run.path ? { path: run.path } : {}),
-        repository: { ...(ex.repository as Json), id: repo.id }, head_repository: { ...(ex.head_repository as Json), id: run.headRepoId ?? repo.id },
+        repository: { ...(ex.repository as Json), id: repo.id }, head_repository: run.headRepoId === null ? null : { ...(ex.head_repository as Json), id: run.headRepoId ?? repo.id },
         head_commit: { ...(ex.head_commit as Json), id: run.headSha, message: run.message },
         pull_requests: run.pullRequests.map((n) => {
           const pr = repo.pulls.find((x) => x.number === n);

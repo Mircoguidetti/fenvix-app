@@ -279,7 +279,12 @@ export interface SideBySideFile {
   jobName: string;
   /** The name GitHub shows for the customer's test step: its `name:`, else "Run " + the first line of its run. */
   testStepName: string;
+  /** Our job's timeout-minutes: his (a number), at most SIDE_BY_SIDE_MAX_TIMEOUT; an expression or none: that maximum. */
+  timeoutMinutes: number;
 }
+
+/** Our job's longest timeout; the full machine powers off 10 minutes after it (launcher.ts lifetimeMinutes). */
+export const SIDE_BY_SIDE_MAX_TIMEOUT = 60;
 
 /** Where a value of the customer's file comes from, and its value. */
 interface Val { js: unknown; node: unknown }
@@ -539,8 +544,10 @@ export function buildSideBySideWorkflow(sourceText: string, jobId: string, label
   add(ourJob, "name", SIDE_BY_SIDE_JOB_NAME);
   add(ourJob, "runs-on", label);
   add(ourJob, "continue-on-error", true);
-  const timeout = pairOf(job, "timeout-minutes")?.value;
-  add(ourJob, "timeout-minutes", timeout !== undefined ? (timeout as Node).clone() : 60);
+  const his = pairOf(job, "timeout-minutes")?.value;
+  const hisMinutes = isScalar(his) && typeof his.value === "number" && Number.isFinite(his.value) && his.value > 0 ? Math.ceil(his.value) : null;
+  const timeoutMinutes = Math.min(hisMinutes ?? SIDE_BY_SIDE_MAX_TIMEOUT, SIDE_BY_SIDE_MAX_TIMEOUT);
+  add(ourJob, "timeout-minutes", timeoutMinutes);
   add(ourJob, "if", jobCond);
   for (const k of ["env", "defaults", "services"]) { const v = pairOf(job, k)?.value; if (v !== undefined) add(ourJob, k, (v as Node).clone()); }
   if (combination) {
@@ -568,5 +575,5 @@ export function buildSideBySideWorkflow(sourceText: string, jobId: string, label
   if (back.errors.length) throw new EditError("the side-by-side workflow does not parse");
   if (JSON.stringify(back.toJS()) !== JSON.stringify(out.toJS())) throw new EditError("the side-by-side workflow does not read back as built");
   const matrix = combination ? JSON.stringify(Object.fromEntries(combination.keys.map((k) => [k, combination!.values.get(k)!.js]))) : null;
-  return { text, matrix, matrixSuffix, jobName, testStepName };
+  return { text, matrix, matrixSuffix, jobName, testStepName, timeoutMinutes };
 }

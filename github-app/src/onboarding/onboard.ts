@@ -157,7 +157,7 @@ export async function onboardRepository(gh: GitHubHttp, fullName: string, o: Onb
 
 export interface SideBySideResult extends OnboardingResult {
   /** The combination, its name suffix, his job's resolved name and his test step's name (null when not built). */
-  sideBySide?: { matrix: string | null; matrixSuffix: string | null; jobName: string; testStepName: string };
+  sideBySide?: { matrix: string | null; matrixSuffix: string | null; jobName: string; testStepName: string; timeoutMinutes: number };
 }
 
 /** The side-by-side pull request's body: what he will see on GitHub, stated plainly; the file; how to remove it. */
@@ -226,7 +226,7 @@ export async function onboardSideBySide(gh: GitHubHttp, fullName: string, o: Onb
     const source = wf.files.find((f) => f.path === job.file)!;
     const built = buildSideBySideWorkflow(source.text, job.jobId, o.label);
     if ("refused" in built) return { state: "unsupported", detail: `side by side refused: ${job.file}:${built.refused}`.slice(0, 900), ...found };
-    const sideBySide = { matrix: built.matrix, matrixSuffix: built.matrixSuffix, jobName: built.jobName, testStepName: built.testStepName };
+    const sideBySide = { matrix: built.matrix, matrixSuffix: built.matrixSuffix, jobName: built.jobName, testStepName: built.testStepName, timeoutMinutes: built.timeoutMinutes };
     const present = await gh.request("GET", `${base}/contents/${contentPath(SIDE_BY_SIDE_PATH)}`, { query: { ref: defaultBranch }, allow: [404] });
     if (present.status !== 404) {
       return { state: "side_by_side", detail: `${SIDE_BY_SIDE_PATH} is on the default branch: ${job.file}:${job.jobId} runs side by side`, sideBySide, ...found };

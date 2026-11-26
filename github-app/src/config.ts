@@ -1,5 +1,6 @@
 import { createPrivateKey, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { vcpusOf } from "./runners/sizes.ts";
 import { DEFAULT_WARMUP, type WarmupSettings } from "./warmup/policy.ts";
 
 /**
@@ -109,9 +110,9 @@ export function sideBySideFromEnv(env: Env): SideBySideSettings {
   const priceRaw = (env.SIDE_BY_SIDE_USD_PER_HOUR ?? "").trim();
   const usdPerHour = priceRaw === "" ? d.usdPerHour : Number(priceRaw);
   if (!Number.isFinite(usdPerHour) || usdPerHour < 0) throw new Error("SIDE_BY_SIDE_USD_PER_HOUR must be a price in dollars per hour");
-  // vCPUs from the size name (c6i: large 2, xlarge 4, Nxlarge 4N); another family's size is read the same way.
-  const size = instanceType.split(".")[1]!;
-  const vcpus = size === "large" ? 2 : size === "xlarge" ? 4 : /^(\d+)xlarge$/.test(size) ? 4 * Number(/^(\d+)/.exec(size)![1]) : d.vcpus;
+  // vCPUs from the size name (medium 1, large 2, xlarge 4, Nxlarge 4N); a size not read that way is refused.
+  const vcpus = vcpusOf(instanceType);
+  if (vcpus === null) throw new Error("SIDE_BY_SIDE_INSTANCE_TYPE must have a size of medium, large, xlarge or Nxlarge (its vCPUs are read from it)");
   return {
     enabled: enabled === "true", branch: d.branch,
     dailyCap: int(env, "SIDE_BY_SIDE_DAILY_CAP", d.dailyCap, 0),
