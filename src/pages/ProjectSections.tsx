@@ -18,6 +18,7 @@ import { useAsync } from "../lib/useAsync";
 import { formatCount, formatDate, formatDateTime, formatDuration, formatMinutes, formatPercent, formatRelative, shortSha } from "../lib/format";
 import { finished as isFinished, MISS_LABELS, median, missSummary, NO_CAUSE_LABEL, notProvenCausesOf, parallelProofFrom, percentile, setupSnippet, timeToGreenPerCommit } from "../data/ci";
 import { languageLabel } from "./Projects";
+import { ComingSoon, PROJECT_SOON, type ProjectSoonKey } from "../components/ComingSoon";
 
 const DAY = 86_400_000;
 export const seconds = (s: number) => (s < 120 ? `${Math.round(s)} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, "0")} s`);
@@ -88,7 +89,7 @@ export function SkipWithProofPage() {
   const lowest = [...finished].sort((a, b) => a.skipShare - b.skipShare).slice(0, 5);
   return (
     <>
-      <PageHeader back={<Kicker>{p.fullName}</Kicker>} title="Skip with proof" description="A test is skipped only when everything it depends on is proven unchanged since a run where it passed: the code it runs, the files and environment variables it reads, the runtime and the configuration. Every skipped test has a receipt." />
+      <PageHeader back={<Kicker>{p.fullName}</Kicker>} title="Cache with proof" description="A test is skipped only when everything it depends on is proven unchanged since a run where it passed: the code it runs, the files and environment variables it reads, the runtime and the configuration. Every skipped test has a receipt." />
       <div className="kpis">
         <div className="kpi">
           <strong className="kpi-value">{p.medianSkipShare === null ? "–" : formatPercent(p.medianSkipShare)}</strong>
@@ -292,6 +293,7 @@ function AuditBlock({ a, projectId }: { a: AuditSummary; projectId: string }) {
 
 // ---------------------------------------------------------------- Nightly exploration
 
+// Kept for when nightly exploration ships (live list); unrouted until then: /projects/:id/nightly shows ProjectComingSoon.
 export function NightlyPage() {
   const { id, project } = useProjectPage();
   const nights = useAsync(() => client.listExplorations(id), [id]);
@@ -322,10 +324,7 @@ export function NightlyPage() {
       {plans.status === "ready" && addon && !hasAddon && (
         <p className="callout addon-note" role="note">
           <span>
-            <strong>Nightly exploration is a paid add-on</strong>, and this organization does not have it yet{addon.priceUsdMonth === null ? " (its price is not set yet)" : ""}.{" "}
-            <Link to="/billing" className="row-link">
-              See plans and add-ons
-            </Link>
+            <strong>Nightly exploration is a paid add-on</strong>, and this organization does not have it yet{addon.priceUsdMonth === null ? " (its price is not set yet)" : ""}.
           </span>
         </p>
       )}
@@ -699,4 +698,15 @@ export function ParallelWithProofPage() {
       </Card>
     </>
   );
+}
+
+/** A project section of the live list that is not built yet: the shared coming-soon page, named after the project. */
+export function ProjectComingSoon({ item }: { item: ProjectSoonKey }) {
+  const { project } = useProjectPage();
+  const { label, sentence } = PROJECT_SOON[item];
+  if (project.status === "loading") return <Message>Loading project</Message>;
+  if (project.status === "error") return <Message role="alert">{project.message}</Message>;
+  const p = project.data;
+  if (!p) return <Missing what="Project" />;
+  return <ComingSoon kicker={<Kicker>{p.fullName}</Kicker>} title={label} sentence={sentence} />;
 }

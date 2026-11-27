@@ -76,7 +76,6 @@ export function AccountMenu() {
     if (o.id === switcher?.id) return;
     org.switchTo(o.id);
     navigate("/overview");
-    toast(`Switched to ${o.name}`, "success");
   }
 
   async function leave() {
@@ -157,7 +156,6 @@ export function AccountMenu() {
               onClick={async () => {
                 setOpen(false);
                 await signOut();
-                toast("Signed out", "success");
               }}
             >
               <LogOut size={16} aria-hidden="true" />

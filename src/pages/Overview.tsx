@@ -5,11 +5,9 @@ import { CardSkeleton, KpiSkeleton, ListSkeleton } from "../components/Skeleton"
 import { AreaSeriesChart, HBars, Sparkline, TimeBarsChart } from "../components/charts";
 import { MinuteSum, SAVED_NOTE, SkipShare, shortTest } from "../components/ci";
 import { ActivityList } from "./ProjectSections";
-import { TRIAL_DESCRIPTION, TrialSummary } from "../components/Trial";
-import { UnitsLine } from "./Usage";
 import { useAsync } from "../lib/useAsync";
 import { useWorkspaceVersion } from "../lib/workspace";
-import { formatCount, formatMinutes, formatMoney, formatPercent, formatPrice, formatRelative } from "../lib/format";
+import { formatCount, formatMinutes, formatMoney, formatPercent, formatRelative } from "../lib/format";
 
 const monthName = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
 export const seconds = (s: number) => (s < 120 ? `${Math.round(s)} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, "0")} s`);
@@ -39,7 +37,7 @@ export function OverviewPage() {
         back={<Kicker>Overview</Kicker>}
         docTitle="Overview"
         title={settings.status === "ready" ? settings.data.workspaceName : "Overview"}
-        description="Your test runs on fenvix this month: how many, how much test time was skipped with proof, and how fast pull requests turn green."
+        description="Your test runs on fenvix this month: how many, how many were proven identical to the serial run, and how fast pull requests turn green."
         actions={
           <Link to="/projects/connect" className="btn">
             Connect a project
@@ -50,20 +48,6 @@ export function OverviewPage() {
       {data.status === "loading" && <KpiSkeleton count={6} label="Loading overview" />}
       {data.status === "loading" && <CardSkeleton body={240} />}
       {data.status === "error" && <Message role="alert">{data.message}</Message>}
-      {data.status === "ready" && data.data.trial && (
-        <Card
-          id="trial"
-          title={data.data.trial.status === "active" ? `Shadow trial: ${data.data.trial.daysLeft} ${data.data.trial.daysLeft === 1 ? "day" : "days"} left` : "Shadow trial: ended"}
-          description={TRIAL_DESCRIPTION}
-          actions={
-            <Link to="/billing" className="btn btn-sm">
-              Plans
-            </Link>
-          }
-        >
-          <TrialSummary trial={data.data.trial} />
-        </Card>
-      )}
       {data.status === "ready" && data.data.projects.length === 0 && (
         <div className="empty">
           <h2>Connect your first project</h2>
@@ -78,7 +62,6 @@ export function OverviewPage() {
         const month = monthName(o.month);
         const ttgBefore = o.timeToGreen.beforeMedianS;
         const ttgWith = o.timeToGreen.withMedianS;
-        const price = o.cost.plan?.priceUsdMonth ?? null;
         return (
           <>
             <div className="kpis kpis-7">
@@ -94,7 +77,7 @@ export function OverviewPage() {
               <Kpi label="Skipped with proof" value={o.skipShare.median === null ? "–" : formatPercent(o.skipShare.median)} sub="median, test time per run" spark={o.skipShare.perDay.map((p) => p.value)} />
               <Kpi label="Time to green" value={ttgWith === null ? "–" : seconds(ttgWith)} sub={ttgBefore === null ? "median, push to green" : `median · was ${seconds(ttgBefore)}`} />
               <Kpi label="On GitHub-hosted" value={formatMoney(o.cost.githubEquivalentUsd)} sub={`${formatMinutes(o.minutes.total)} at GitHub's rate`} />
-              <Kpi label="Open defects" value={formatCount(o.openDefects)} sub="flaky, now reproducible" />
+              <Kpi label="Open defects" value={formatCount(o.openDefects)} sub="each with a replay command" />
             </div>
 
             <div className="grid-2 even">
@@ -119,20 +102,13 @@ export function OverviewPage() {
                   Before: the median of each project's GitHub Actions history when it was connected. With fenvix: {formatCount(o.timeToGreen.commits)} commits this month.
                 </p>
               </Card>
-              <Card id="cost" title="Cost compared" description={`${formatCount(o.runs.thisMonth)} runs in ${month}, priced as GitHub-hosted runner minutes and as your plan, which counts run units (1 unit = 10 baseline minutes).`}>
+              <Card id="cost" title="Cost compared" description={`${formatCount(o.runs.thisMonth)} runs in ${month}, priced as GitHub-hosted runner minutes.`}>
                 <dl className="compare">
                   <div>
                     <dt>On GitHub-hosted runners</dt>
                     <dd className="compare-value">{formatMoney(o.cost.githubEquivalentUsd)}</dd>
                     <dd className="muted small">
                       at ${o.cost.rate.usdPerMinute} a minute ({o.cost.rate.runner})
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Your plan{o.cost.plan ? `: ${o.cost.plan.name}` : ""}</dt>
-                    <dd className="compare-value">{!o.cost.plan ? "No plan yet" : price === null ? "Price not set yet" : formatPrice(price)}</dd>
-                    <dd className="muted small">
-                      <UnitsLine used={o.units.used} included={o.units.included} />
                     </dd>
                   </div>
                 </dl>
@@ -186,7 +162,7 @@ export function OverviewPage() {
                   </table>
                 </div>
               </Card>
-              <Card id="defects" title="Latest defects" description="Flaky tests turned into reproducible defects." actions={<Link to="/defects" className="btn btn-sm">All defects</Link>}>
+              <Card id="defects" title="Latest defects" description="Order and timing bugs fenvix found, each reproducible." actions={<Link to="/defects" className="btn btn-sm">All defects</Link>}>
                 {o.recentDefects.length === 0 ? (
                   <p className="muted">No open defects.</p>
                 ) : (

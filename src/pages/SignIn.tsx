@@ -7,7 +7,8 @@ import { session, type AuthProvider } from "../session";
 import { useSession } from "../session/SessionProvider";
 import { applyTheme, storedTheme } from "../lib/theme";
 
-export function SignInPage() {
+/** The sign-in page; at /welcome (`welcome`) it opens with one welcome line above the choices. */
+export function SignInPage({ welcome = false }: { welcome?: boolean }) {
   const { setUser } = useSession();
   const [params, setParams] = useSearchParams();
   const [email, setEmail] = useState("");
@@ -31,7 +32,13 @@ export function SignInPage() {
       (e: unknown) => {
         if (!alive) return;
         setError(e instanceof Error ? e.message : "That sign-in link did not work.");
-        setParams({}, { replace: true });
+        setParams(
+          (p) => {
+            p.delete("token");
+            return p;
+          },
+          { replace: true },
+        );
       },
     );
     return () => {
@@ -76,7 +83,7 @@ export function SignInPage() {
             <br />
             One cause.
           </p>
-          <p className="signin-hero-lead">Sign in to see the test that breaks another, found in a suite of thousands, with the order that replays it.</p>
+          <p className="signin-hero-lead">Sign in to see your tests run in parallel, each result proven identical to the serial run.</p>
         </div>
       </section>
 
@@ -87,8 +94,9 @@ export function SignInPage() {
           </span>
         </div>
       <div className="signin-card">
+        {welcome && <p className="signin-welcome">Welcome to fenvix. Sign in to see your runs.</p>}
         <h1>Sign in</h1>
-        <p className="muted signin-lead">Welcome back. Pick how you want to sign in.</p>
+        <p className="muted signin-lead">Pick how you want to sign in.</p>
 
         <div className="signin-providers">
           <button type="button" className="btn btn-block btn-lg" onClick={() => provider("github")} disabled={busy}>

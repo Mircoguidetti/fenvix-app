@@ -6,9 +6,44 @@
     <meta name="color-scheme" content="light dark" />
     <title>FENVIX</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script>
+      // The theme picked in this browser, before the first paint (src/lib/theme.ts applies it again once the app runs).
+      try {
+        var t = localStorage.getItem("fenvix-theme");
+        if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
+    <style>
+      /* The loading screen (src/components/LoadingScreen.tsx renders the same markup): visible at first paint, before
+         any script runs, so a cold start never shows a blank page. */
+      :root { --boot-page: #f6f6f7; --boot-ink: #06080e; --boot-muted: #5f636b; --boot-track: #e5e6ea; }
+      :root[data-theme="dark"] { --boot-page: #06080e; --boot-ink: #f6f6f7; --boot-muted: #a9b2c6; --boot-track: #18243f; }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) { --boot-page: #06080e; --boot-ink: #f6f6f7; --boot-muted: #a9b2c6; --boot-track: #18243f; }
+      }
+      html { background: var(--boot-page); }
+      .boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 16px; background: var(--boot-page); color: var(--boot-ink); font: 500 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .boot-logo { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: 0.14em; font-size: 15px; }
+      .boot-bar { position: relative; width: 160px; height: 2px; border-radius: 2px; background: var(--boot-track); overflow: hidden; }
+      .boot-bar::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%; border-radius: 2px; background: var(--boot-ink); opacity: 0.55; }
+      @media (prefers-reduced-motion: no-preference) {
+        .boot-bar::after { animation: boot-slide 1.4s ease-in-out infinite; }
+        @keyframes boot-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+      }
+      .boot-note { margin: 0; min-height: 1.5em; color: var(--boot-muted); font-size: 13.5px; text-align: center; }
+      .boot:not([data-slow]) .boot-note { visibility: hidden; }
+      .boot.boot-inline { position: static; inset: auto; min-height: 50vh; background: transparent; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div class="boot" role="status" aria-live="polite" aria-label="Loading FENVIX" data-boot="static"><span class="boot-logo" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><defs><linearGradient id="boot-mark" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="currentColor" /><stop offset="0.45" stop-color="currentColor" /><stop offset="1" stop-color="currentColor" stop-opacity="0.3" /></linearGradient></defs><path fill-rule="evenodd" fill="url(#boot-mark)" d="M9.4 1.5h5.2a5.5 5.5 0 0 1 5.5 5.5v10a5.5 5.5 0 0 1-5.5 5.5H9.4a5.5 5.5 0 0 1-5.5-5.5V7a5.5 5.5 0 0 1 5.5-5.5zM8.6 2.3h4.2a3.6 3.6 0 0 1 3.6 3.6v12.2a3.6 3.6 0 0 1-3.6 3.6H8.6a3.6 3.6 0 0 1-3.6-3.6V5.9a3.6 3.6 0 0 1 3.6-3.6z" /></svg>FENVIX</span><span class="boot-bar" aria-hidden="true"></span><p class="boot-note">Waking up the service...</p></div></div>
+    <script>
+      // Still loading after 8 s (a cold API or database): say so.
+      setTimeout(function () {
+        var b = document.querySelector('.boot[data-boot="static"]');
+        if (b) b.setAttribute("data-slow", "");
+      }, 8000);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
