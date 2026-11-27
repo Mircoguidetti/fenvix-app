@@ -341,6 +341,57 @@ ${w}      - run: npm test
     refused(src("        with:\n          token: ${{ secrets.PAT }}\n"), /passes a token: to actions\/checkout/);
   });
 
+  // protects=with: keys are matched in any case, as GitHub reads them (Token:, Persist-Credentials:); fails_when=a
+  // mixed-case token is copied, or a mixed-case persist-credentials: true survives beside ours; no_claim=-.
+  it("checkout: with: keys in any case (Token:, Persist-Credentials:)", () => {
+    const src = (w: string) => `on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+${w}      - run: npm test
+`;
+    refused(src("          Token: ${{ secrets.PAT }}\n"), /passes a token: to actions\/checkout/);
+    refused(src("          TOKEN: ${{ secrets.PAT }}\n"), /passes a token: to actions\/checkout/);
+    const { j } = build(src("          Persist-Credentials: true\n          Fetch-Depth: 0\n"));
+    const co = (j.steps as Json[]).find((s) => String(s.uses).startsWith("actions/checkout"))!;
+    assert.deepEqual(co.with, { "Fetch-Depth": 0, "persist-credentials": false });
+  });
+
+  // protects=an ssh-key: input on checkout is refused (a deploy key would stay on our machine); fails_when=an ssh-key
+  // is copied, in any case; no_claim=-.
+  it("checkout: an ssh-key: input refused", () => {
+    for (const k of ["ssh-key", "SSH-Key"]) {
+      refused(`on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ${k}: \${{ secrets.DEPLOY_KEY }}
+      - run: npm test
+`, /passes an ssh-key: to actions\/checkout/);
+    }
+  });
+
+  // protects=jobs with service containers are refused (fenvix machines have no Docker, so the job would fail at
+  // "Initialize containers" and use a full machine); fails_when=services: is copied; no_claim=-.
+  it("services: refused", () => {
+    refused(`on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+    steps:
+      - run: npm test
+`, /jobs with service containers are not supported yet/);
+  });
+
   // protects=a kept step that writes to GitHub refuses the whole file; fails_when=git push before the test step is
   // copied; no_claim=a token passed to a script through env (accepted risk, the PR body says so).
   it("a run: git push step before the test step: refused", () => {

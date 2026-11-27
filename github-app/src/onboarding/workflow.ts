@@ -407,6 +407,8 @@ export function buildSideBySideWorkflow(sourceText: string, jobId: string, label
   for (const k of ["on", "env", "defaults"]) if (hasAnchors(pairOf(root, k)?.value)) return refuse(`the workflow's ${k} uses YAML anchors or aliases`);
   if (pairOf(job, "uses")) return refuse("the job calls a reusable workflow");
   if (pairOf(job, "container")) return refuse("the job runs in a container (container:)");
+  // fenvix machines have no Docker: the job would fail at "Initialize containers" (and use a full machine).
+  if (pairOf(job, "services")) return refuse("jobs with service containers are not supported yet (services:)");
   if (pairOf(job, "environment")) return refuse("the job uses a deployment environment (environment:)");
   const runsOn = pairOf(job, "runs-on")?.value;
   const runsOnValues = isSeq(runsOn) ? runsOn.items.map(scalarText) : [scalarText(runsOn)];
@@ -494,9 +496,12 @@ export function buildSideBySideWorkflow(sourceText: string, jobId: string, label
       const action = at > 0 ? uses.slice(0, at) : uses;
       const ref = at > 0 ? uses.slice(at + 1) : "";
       if (!ALLOWED_ACTIONS.has(action)) return refuse(`step "${label2}" uses ${uses}, which fenvix does not run side by side (allowed: checkout, setup-node, setup-python, setup-go, pnpm/action-setup, cache)`);
-      if (isMap(withNode) && pairOf(withNode, "token")) return refuse(`step "${label2}" passes a token: to ${action}`);
+      // GitHub reads input names in any case (Token: is token:), so every with: key is matched lower-cased.
+      const withKey = (k: string) => isMap(withNode) && withNode.items.some((p) => isPair(p) && scalarText(p.key)?.toLowerCase() === k);
+      if (withKey("token")) return refuse(`step "${label2}" passes a token: to ${action}`);
+      if (action === "actions/checkout" && withKey("ssh-key")) return refuse(`step "${label2}" passes an ssh-key: to ${action}`);
       const w = isMap(withNode) ? withNode : new YAMLMap();
-      const del = (k: string) => { w.items = w.items.filter((p) => scalarText(p.key) !== k); };
+      const del = (k: string) => { w.items = w.items.filter((p) => scalarText(p.key)?.toLowerCase() !== k); };
       const put = (k: string, v: unknown) => { del(k); w.items.push(new Pair(new Scalar(k), new Scalar(v))); };
       if (action === "actions/cache") {
         const major = /^v(\d+)(\.|$)/.exec(ref);
@@ -551,7 +556,7 @@ export function buildSideBySideWorkflow(sourceText: string, jobId: string, label
   const timeoutMinutes = Math.min(hisMinutes ?? SIDE_BY_SIDE_MAX_TIMEOUT, SIDE_BY_SIDE_MAX_TIMEOUT);
   add(ourJob, "timeout-minutes", timeoutMinutes);
   add(ourJob, "if", jobCond);
-  for (const k of ["env", "defaults", "services"]) { const v = pairOf(job, k)?.value; if (v !== undefined) add(ourJob, k, (v as Node).clone()); }
+  for (const k of ["env", "defaults"]) { const v = pairOf(job, k)?.value; if (v !== undefined) add(ourJob, k, (v as Node).clone()); }
   if (combination) {
     const one = new YAMLMap();
     for (const k of combination.keys) one.items.push(new Pair(new Scalar(k), (combination.values.get(k)!.node as Node).clone()));
