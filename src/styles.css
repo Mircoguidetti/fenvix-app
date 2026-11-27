@@ -1564,34 +1564,16 @@ input:focus-visible, textarea:focus-visible, .select-btn:focus-visible { border-
 .preview-facts svg { color: var(--muted); }
 .form-actions { background: var(--bg); border-top: 1px solid var(--border); }
 
-/* Sign-in, light: the landing's hero. White sky turning blue at the horizon, a band of small blue squares rising from
-   the bottom, a few squares lighting up (LandingSparks), and the landing's title type. Same values as fenvix-landing. */
+/* Sign-in, light: the landing's hero. White sky turning blue at the horizon, a static band of small blue squares
+   rising from the bottom, and the landing's title type. Same values as fenvix-landing. */
 .signin-hero { color: var(--text); background: radial-gradient(70% 46% at 50% 104%, rgba(13, 79, 163, 0.2), rgba(13, 79, 163, 0) 70%), linear-gradient(180deg, #ffffff 0%, #ffffff 40%, #f3f6fb 60%, #e5edf8 80%, #d8e4f4 100%); }
 .signin-hero::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: conic-gradient(from 270deg at 1.2px 1.2px, rgba(13, 79, 163, 0.42) 25%, rgba(13, 79, 163, 0) 0); background-size: 5px 5px; -webkit-mask-image: linear-gradient(to top, #fff 0%, rgba(255, 255, 255, 0.55) 22%, rgba(255, 255, 255, 0) 52%); mask-image: linear-gradient(to top, #fff 0%, rgba(255, 255, 255, 0.55) 22%, rgba(255, 255, 255, 0) 52%); }
-/* The sign-in drawing: a suite of tests as squares, a polluter linked to the test it breaks (components/PairHero.tsx). */
-.signin-pair { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 58%; display: block; pointer-events: none; }
-.pair-dot { fill: var(--chart); }
-.pair-link { fill: none; stroke: var(--chart); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 0.006 0.016; }
-.pair-node circle { fill: #ffffff; stroke: var(--chart); stroke-width: 1.5; }
-.pair-node-fails circle { stroke-width: 3; }
-.pair-node rect { fill: var(--chart); }
-.pair-name, .pair-note { paint-order: stroke; stroke: #ffffff; stroke-width: 5px; stroke-linejoin: round; } /* a white halo keeps the labels readable over the squares */
-.pair-name { font: 500 12.5px var(--mono); fill: var(--text); }
-.pair-note { font: 500 10.5px var(--mono); letter-spacing: 0.06em; fill: var(--muted); }
-@media (prefers-reduced-motion: no-preference) {
-  .pair-dot { animation: pair-twinkle 6s ease-in-out infinite; }
-  .pair-link { animation: pair-draw 1.6s ease-out 0.3s both; }
-  .pair-node-fails circle { animation: pair-pulse 2.4s ease-in-out 1.9s infinite; transform-box: fill-box; transform-origin: center; }
-}
-@keyframes pair-twinkle { 0%, 100% { fill-opacity: 1; } 50% { fill-opacity: 0.35; } }
-@keyframes pair-draw { from { opacity: 0; clip-path: inset(0 100% 0 0); } to { opacity: 1; clip-path: inset(0 0 0 0); } }
-@keyframes pair-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.18); } }
 .signin-hero .logo { color: var(--text); }
 .signin-hero-title { font-size: clamp(40px, 4.4vw, 64px); line-height: 1; letter-spacing: -0.045em; font-weight: 600; }
 .signin-hero-lead { color: #5f636b; font-size: clamp(16.5px, 1.3vw, 19px); line-height: 1.5; }
 .signin-card .btn-lg:not(.btn-primary) { border-color: var(--border); background: var(--bg); }
 
-/* The dark theme keeps its black hero with the moving drawing, and its dark code boxes. */
+/* The dark theme keeps its black hero and its dark code boxes. */
 :root[data-theme="dark"] .preview { background: var(--black); border-color: var(--border); }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .preview { background: var(--black); border-color: var(--border); }
