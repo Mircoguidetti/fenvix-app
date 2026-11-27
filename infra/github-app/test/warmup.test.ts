@@ -69,7 +69,7 @@ describe("warm-up runs (per-job mode): the warm-up scheduler function, its sched
   });
 
   it("settings: the reserve must stay below the fleet's limit; warmupEnabled is true or false", async () => {
-    await assert.rejects(settings({ runnerMode: "per-job", warmupReserve: "4" }), /warmupReserve/);
+    await assert.rejects(settings({ runnerMode: "per-job", runnerMaxRunning: "4", warmupReserve: "4" }), /warmupReserve/);
     await assert.rejects(settings({ runnerMode: "per-job", warmupEnabled: "yes" }), /warmupEnabled/);
     assert.equal((await settings({ runnerMode: "per-job", warmupEnabled: "false" })).warmupEnabled, false);
   });
