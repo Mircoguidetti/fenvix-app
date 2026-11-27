@@ -33,6 +33,11 @@ export interface DataClient {
   listProjects(): Promise<ProjectRow[]>;
   getProject(id: string): Promise<ProjectRow | null>;
   saveProjectSettings(id: string, settings: ProjectSettings): Promise<Project>;
+  /**
+   * Owner or admin: removes the project (its runs, defects and receipts) and marks its repository removed from fenvix.
+   * The repository stays in the GitHub App installation; restoreRepository adds it again.
+   */
+  removeProject(id: string): Promise<void>;
   /** Newest first. */
   listRuns(projectId: string, query?: RunQuery): Promise<Page<Run>>;
   /** Share of test time skipped with proof per day, median over that day's runs, for the last `days` days. */
@@ -83,6 +88,8 @@ export interface DataClient {
   completeGitHubInstall(completion: string): Promise<{ organizationId: string; installationId: number; account: string }>;
   /** Queues the setup pull request of a repository, by GitHub's repository id. The answer is the repository as it is now. */
   openSetupPullRequest(repositoryId: number): Promise<GitHubRepository>;
+  /** Owner or admin: adds a repository removed from fenvix again (its project comes back). The repository as it is now. */
+  restoreRepository(repositoryId: number): Promise<GitHubRepository>;
   /** How the organization's repositories are onboarded (move, or side by side), and whether side by side is on. */
   getOnboardingKind(): Promise<OnboardingKindState>;
   /** A side-by-side repository: its own test job's last 30 days ("Today") and its pairs with ours, 50 per page. */

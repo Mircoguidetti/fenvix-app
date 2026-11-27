@@ -201,6 +201,7 @@ export function mapGitHubRepository(r: Row): GitHubRepository {
   const runner = str(r.detected_test_runner);
   return {
     repositoryId: num(r.repository_id), installationId: num(r.installation_id), fullName: str(r.full_name), private: r.private !== false, removed: !!r.removed_at,
+    excludedAt: r.excluded_at ? iso(r.excluded_at) : null,
     language: lang === "python" || lang === "node" || lang === "go" ? lang : null,
     testRunner: runner === "pytest" || runner === "vitest" || runner === "jest" || runner === "go test" ? runner : null,
     onboardingState: state, onboardingDetail: str(r.onboarding_detail), workflowPath: r.onboarding_workflow_path ? str(r.onboarding_workflow_path) : null,

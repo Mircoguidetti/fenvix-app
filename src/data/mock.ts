@@ -825,12 +825,12 @@ function buildSample(plan: OrgPlan): Store {
   const linked = (days: number) => ago(days * DAY);
   const repos: GitHubRepository[] = [
     ...projects.map((p) => ({
-      repositoryId: p.repositoryId!, installationId: p.installationId, fullName: p.fullName, private: true, removed: false, language: p.language, testRunner: p.testRunner,
+      repositoryId: p.repositoryId!, installationId: p.installationId, fullName: p.fullName, private: true, removed: false, excludedAt: null, language: p.language, testRunner: p.testRunner,
       onboardingState: "merged" as const, onboardingDetail: DETAILS.merged, workflowPath: ".github/workflows/ci.yml", job: "test", setupPullRequest: p.setupPullRequest, projectId: p.id,
       warmCache: p.warmCache,
     })),
     ...plan.repos.map((x) => ({
-      repositoryId: repoId(x.name), installationId: x.installationId, fullName: x.name, private: x.isPrivate ?? true, removed: x.removed ?? false, language: x.language, testRunner: x.testRunner,
+      repositoryId: repoId(x.name), installationId: x.installationId, fullName: x.name, private: x.isPrivate ?? true, removed: x.removed ?? false, excludedAt: null, language: x.language, testRunner: x.testRunner,
       onboardingState: x.state, onboardingDetail: x.state === "pr_open" ? `Pull request #${x.pr} changes the test job to runs-on: fenvix. Merge it and the next test run goes to fenvix.` : x.detail,
       workflowPath: x.workflowPath ?? null, job: x.job ?? null,
       setupPullRequest: x.pr ? { number: x.pr, url: `https://github.com/${x.name}/pull/${x.pr}`, state: x.state === "closed" ? ("closed" as const) : ("open" as const) } : null, projectId: null,
@@ -883,7 +883,7 @@ function applyInstall(s: Store, a: AddedInstall) {
     { name: "api", language: "python" as const, testRunner: "pytest" as const },
     { name: "web", language: "node" as const, testRunner: "vitest" as const },
   ].map((x) => ({
-    repositoryId: repoId(`${a.account}/${x.name}`), installationId: a.installationId, fullName: `${a.account}/${x.name}`, private: true, removed: false, language: x.language, testRunner: x.testRunner,
+    repositoryId: repoId(`${a.account}/${x.name}`), installationId: a.installationId, fullName: `${a.account}/${x.name}`, private: true, removed: false, excludedAt: null, language: x.language, testRunner: x.testRunner,
     onboardingState: "pending", onboardingDetail: DETAILS.pending, workflowPath: ".github/workflows/ci.yml", job: "test", setupPullRequest: null, projectId: null, warmCache: COLD,
   }));
   s.repos.push(...repos);
@@ -1130,6 +1130,22 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     p.settings = { ...settings, testCommand: settings.testCommand.trim() };
     return wait(copy(p));
   },
+  async removeProject(id) {
+    assertMockCanManage();
+    const s = store();
+    const p = s.projects.find((x) => x.id === id);
+    if (!p) throw mockError("not_found", 404, "That project does not exist in this organization.");
+    // As api_remove_project: the repository is excluded first, then the project and its runs, defects and receipts go.
+    const at = NOW.toISOString();
+    for (const r of s.repos) if (r.projectId === id || (!r.projectId && r.fullName.toLowerCase() === p.fullName.toLowerCase())) Object.assign(r, { excludedAt: at, projectId: null });
+    s.projects = s.projects.filter((x) => x.id !== id);
+    const gone = new Set(s.runs.filter((r) => r.projectId === id).map((r) => r.id));
+    s.runs = s.runs.filter((r) => !gone.has(r.id));
+    for (const r of gone) s.detail.delete(r);
+    s.defects = s.defects.filter((d) => d.projectId !== id);
+    s.explorations = s.explorations.filter((e) => e.projectId !== id);
+    await wait(null);
+  },
   listRuns(projectId, q = {}) {
     if (olderApi() && q.status === "not_proven") return Promise.reject(mockError("validation_failed", 400, "status must be one of all, passed, failed.", "status"));
     const rows = filterRuns(projectId, q);
@@ -1299,10 +1315,20 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     const s = store();
     const repo = s.repos.find((x) => x.repositoryId === repositoryId && !x.removed);
     if (!repo) throw mockError("not_found", 404, "That repository is not given to the fenvix GitHub App.");
+    if (repo.excludedAt) throw mockError("conflict", 409, "This repository was removed from fenvix. Add it again first.");
     const inst = s.installations.find((i) => i.installationId === repo.installationId);
     if (inst && inst.status !== "active") throw mockError("conflict", 409, `The fenvix GitHub App is ${inst.status} on ${inst.account}: unsuspend it on GitHub first.`);
     if (!["pending", "closed", "failed"].includes(repo.onboardingState)) throw mockError("conflict", 409, "This repository needs no setup pull request.");
     s.queued.set(repositoryId, 2);
+    return wait(copy(repo));
+  },
+
+  async restoreRepository(repositoryId) {
+    assertMockCanManage();
+    const s = store();
+    const repo = s.repos.find((x) => x.repositoryId === repositoryId);
+    if (!repo) throw mockError("not_found", 404, "That repository is not in this organization's GitHub installations.");
+    repo.excludedAt = null;
     return wait(copy(repo));
   },
 

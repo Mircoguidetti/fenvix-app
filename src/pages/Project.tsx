@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
 import { client, type Defect, type ProjectRow, type ProjectSettings, type Run, type RunQuery } from "../data";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
@@ -13,6 +13,7 @@ import { Segmented } from "../components/Segmented";
 import { Switch } from "../components/Switch";
 import { useProjectTitle } from "../components/Shell";
 import { useToast } from "../components/Toast";
+import { TypedConfirmDialog } from "../components/TypedConfirmDialog";
 import { useAsync } from "../lib/useAsync";
 import { useOrg } from "../session/OrgProvider";
 import { formatCount, formatDate, formatDuration, formatMinutes, formatPercent, formatRelative, shortSha } from "../lib/format";
@@ -372,10 +373,89 @@ function SettingsTab({ project, onSaved }: { project: ProjectRow; onSaved: () =>
   );
 }
 
+/** Where the person manages which repositories the GitHub App can reach: their own account's page, or the organization's. */
+export function installationSettingsUrl(installationId: number, account: { login: string; type: string } | null): string {
+  return account && account.type !== "User"
+    ? `https://github.com/organizations/${encodeURIComponent(account.login)}/settings/installations/${installationId}`
+    : `https://github.com/settings/installations/${installationId}`;
+}
+
+/** Owner or admin: removes the project from fenvix. The typed repository name enables the button. */
+function RemoveProjectCard({ project }: { project: ProjectRow }) {
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const connection = useAsync(() => client.getGitHubConnection(), []);
+  const inst = connection.status === "ready" ? connection.data.installations.find((i) => i.installationId === project.installationId) : undefined;
+  const installUrl = installationSettingsUrl(project.installationId, inst ? { login: inst.account, type: inst.accountType } : null);
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    try {
+      await client.removeProject(project.id);
+      setOpen(false);
+      toast(`Removed ${project.fullName}`, "success");
+      navigate("/projects", { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove the project. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card id="remove-project" title="Remove project" description="Stop using fenvix for this repository and delete what fenvix stored about it.">
+      <div className="row-actions">
+        <button type="button" className="btn btn-danger" onClick={() => (setError(null), setOpen(true))}>
+          Remove project
+        </button>
+      </div>
+      <TypedConfirmDialog
+        open={open}
+        title={`Remove ${project.fullName}?`}
+        expected={project.fullName}
+        what="the repository name"
+        confirmLabel="Remove project"
+        busy={busy}
+        error={error}
+        onConfirm={remove}
+        onCancel={() => !busy && setOpen(false)}
+      >
+        <div>
+          <p className="label">What goes</p>
+          <ul className="consequences">
+            <li>The project and all its runs, defects and skip receipts. This cannot be undone.</li>
+            <li>fenvix stops running this repository's jobs.</li>
+          </ul>
+        </div>
+        <div>
+          <p className="label">What stays</p>
+          <ul className="consequences">
+            <li>
+              The repository stays in your GitHub App installation. To remove it there too, open{" "}
+              <a href={installUrl} target="_blank" rel="noreferrer" className="row-link">
+                the installation's settings on GitHub
+              </a>
+              .
+            </li>
+            <li>
+              Queued <code className="mono">runs-on: fenvix</code> jobs of this repository wait until GitHub cancels them: change the workflow back to your own runner.
+            </li>
+          </ul>
+        </div>
+      </TypedConfirmDialog>
+    </Card>
+  );
+}
+
 export function ProjectPage({ section = "runs" }: { section?: "runs" | "settings" }) {
   const { id = "" } = useParams();
   const [params] = useSearchParams();
   const project = useAsync(() => client.getProject(id), [id]);
+  const canManageOrg = useOrg().canManage;
   const p = project.status === "ready" ? project.data : null;
   useProjectTitle(p?.fullName, p ? { language: languageLabel(p.language), runner: p.testRunner, snippet: setupSnippet(p) } : undefined);
 
@@ -400,6 +480,7 @@ export function ProjectPage({ section = "runs" }: { section?: "runs" | "settings
         <PageHeader back={<Kicker>{p.fullName}</Kicker>} title="Settings" meta={<SetupStatePill state={p.setupState} />} description="How fenvix runs this project's tests, and the one line that moves its test job to fenvix." />
         <SettingsTab project={p} onSaved={project.reload} />
         <SetupTab project={p} />
+        {canManageOrg && <RemoveProjectCard project={p} />}
         <p className="muted small">
           Organization: <Link to="/settings" className="row-link">settings</Link> · <Link to="/settings/members" className="row-link">members</Link> · <Link to="/billing" className="row-link">plans and billing</Link>
         </p>

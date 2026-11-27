@@ -39,14 +39,14 @@ interface Row {
 }
 
 interface RepoCtx {
-  repository_id: number; installation_id: number; workspace_id: string | null; full_name: string; default_branch: string | null; removed_at: Date | null;
+  repository_id: number; installation_id: number; workspace_id: string | null; full_name: string; default_branch: string | null; removed_at: Date | null; excluded_at: Date | null;
   onboarding_state: string; onboarding_workflow_path: string | null; onboarding_job: string | null; project_id: string | null;
   cache_warm_sha: string | null; suspended_at: Date | null; deleted_at: Date | null; linked: boolean;
 }
 
 export type RequestResult = "created" | "exists" | "superseded" | "ignored";
 
-const REPO_CTX = `select r.repository_id, r.installation_id, r.workspace_id, r.full_name, r.default_branch, r.removed_at, r.onboarding_state,
+const REPO_CTX = `select r.repository_id, r.installation_id, r.workspace_id, r.full_name, r.default_branch, r.removed_at, r.excluded_at, r.onboarding_state,
     r.onboarding_workflow_path, r.onboarding_job, r.project_id, r.cache_warm_sha, i.suspended_at, i.deleted_at, i.workspace_id is not null as linked
   from gh_repositories r join gh_installations i on i.installation_id = r.installation_id where r.repository_id = $1`;
 
@@ -80,6 +80,7 @@ export class Warmups {
     if (!r.linked || !r.workspace_id) return "the installation is not linked to an organization";
     if (r.suspended_at || r.deleted_at) return "the installation is suspended or removed";
     if (r.removed_at) return "the repository was removed from the installation";
+    if (r.excluded_at) return "repository removed from fenvix by its organization";
     if (!ONBOARDED.has(r.onboarding_state)) return `the repository is not on fenvix yet (${r.onboarding_state})`;
     if (!r.onboarding_workflow_path || !r.onboarding_job) return "the test job is not known";
     if (!r.default_branch) return "the default branch is not known";

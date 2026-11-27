@@ -805,6 +805,10 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], .query input[aria-inv
 .dialog-danger .dialog-actions .btn-primary { background: var(--danger); border-color: var(--danger); color: var(--on-text); }
 .dialog-danger .dialog-actions .btn-primary:hover:not(:disabled) { background: var(--danger); box-shadow: inset 0 0 0 999px rgba(6, 8, 14, 0.12); } /* darker, never lighter: white text keeps 4.5:1 */
 .dialog-danger .dialog-actions .btn-primary:focus-visible { outline-color: var(--danger); }
+/* What a deleting action removes and what it keeps (remove a project, delete the account). */
+.consequences { margin: 6px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.consequences li { list-style: disc; }
+.dialog-body .label { color: var(--text); margin: 0; }
 
 /* Toasts sit on black: the same meanings in their dark-surface shades, always with an icon. */
 .toast-icon { flex: none; }

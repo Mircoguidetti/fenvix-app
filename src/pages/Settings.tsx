@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { client, type Region, type Settings } from "../data";
 import { orgs } from "../data/orgs-client";
 import { ROLE_NAMES, orgNameProblem } from "../data/orgs";
@@ -8,6 +8,7 @@ import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session/SessionProvider";
 import { useOrg } from "../session/OrgProvider";
 import { useToast } from "../components/Toast";
+import { TypedConfirmDialog } from "../components/TypedConfirmDialog";
 import { workspaceChanged } from "../lib/workspace";
 
 /** Rename the organization: owner and admin. The name is plain text, 2 to 64 characters. */
@@ -147,6 +148,75 @@ function RegionCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Se
   );
 }
 
+/**
+ * The owner only: deletes the organization and everything of it. The typed organization name enables the button.
+ * After it the console signs out (the person's sign-in may be gone) and lands on the sign-in page.
+ */
+function DeleteAccountCard() {
+  const org = useOrg();
+  const { signOut } = useSession();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const name = org.current?.name ?? "";
+  if (!org.current || org.role !== "owner") return null;
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    try {
+      await orgs.deleteOrganization();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete the account. Try again.");
+      setBusy(false);
+      return;
+    }
+    setOpen(false);
+    // The sign-in may already be gone with the account: signing out here only clears this browser.
+    await signOut().catch(() => undefined);
+    navigate("/", { replace: true });
+  }
+
+  return (
+    <Card id="delete-account" title="Delete account" description="Delete this organization and everything fenvix stores for it. Only an owner can do this.">
+      <div className="row-actions">
+        <button type="button" className="btn btn-danger" onClick={() => (setError(null), setOpen(true))}>
+          Delete account
+        </button>
+      </div>
+      <TypedConfirmDialog
+        open={open}
+        title={`Delete ${name}?`}
+        expected={name}
+        what="the organization name"
+        confirmLabel="Delete account"
+        busy={busy}
+        error={error}
+        onConfirm={remove}
+        onCancel={() => !busy && setOpen(false)}
+      >
+        <div>
+          <p className="label">What goes, for good</p>
+          <ul className="consequences">
+            <li>The organization {name}, every project, run, defect and skip receipt.</li>
+            <li>Every member's access, API key, invitation and usage record.</li>
+            <li>The fenvix GitHub App is uninstalled from every GitHub account this organization connected.</li>
+            <li>Your own sign-in, unless you belong to another organization.</li>
+          </ul>
+        </div>
+        <div>
+          <p className="label">What stays</p>
+          <ul className="consequences">
+            <li>Other members keep their sign-in and lose access to this organization.</li>
+            <li>Your repositories and workflows on GitHub are not changed.</li>
+          </ul>
+        </div>
+      </TypedConfirmDialog>
+    </Card>
+  );
+}
+
 export function SettingsPage() {
   const loaded = useAsync(() => client.getSettings(), []);
   const { user, signOut } = useSession();
@@ -248,6 +318,7 @@ export function SettingsPage() {
           </div>
         </Card>
       </div>
+      {org.status === "ready" && org.role === "owner" && <DeleteAccountCard />}
     </>
   );
 }

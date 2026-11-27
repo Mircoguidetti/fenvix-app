@@ -31,7 +31,11 @@ export type Work =
   /** A project page loaded with a default branch older than a few minutes: read it again from GitHub (by repository id). */
   | { kind: "refresh_default_branch"; repositoryId: number }
   /** A repository entered side by side (or its paused reading is due): his test job's last 30 days of runs. */
-  | { kind: "side_by_side_history"; repositoryId: number };
+  | { kind: "side_by_side_history"; repositoryId: number }
+  /** The dashboard API added a repository again (its organization had removed its project): the project comes back. */
+  | { kind: "sync_repository"; repositoryId: number }
+  /** The dashboard API deleted an organization: the App is uninstalled from each GitHub account it had connected. */
+  | { kind: "uninstall_installation"; installationId: number };
 
 export interface WorkQueue {
   /** Resolves once the work is accepted (queued durably, or started in this process). Rejects if it was not. */
@@ -48,6 +52,8 @@ export function describeWork(w: Work): string {
     case "installation_linked": return `installation_linked ${w.installationId}`;
     case "refresh_default_branch": return `refresh_default_branch ${w.repositoryId}`;
     case "side_by_side_history": return `side_by_side_history ${w.repositoryId}`;
+    case "sync_repository": return `sync_repository ${w.repositoryId}`;
+    case "uninstall_installation": return `uninstall_installation ${w.installationId}`;
   }
 }
 
@@ -87,6 +93,17 @@ export async function runWork(service: GitHubService, w: Work, o: { deadline?: n
     await service.readHistory(w.repositoryId, o.deadline !== undefined ? { deadline: o.deadline } : {});
     return;
   }
+  if (w.kind === "sync_repository") {
+    // Only a repository of a linked installation, not excluded, gets its project: a forged message changes nothing else.
+    await service.syncRepository(w.repositoryId);
+    return;
+  }
+  if (w.kind === "uninstall_installation") {
+    // Only an installation a deleted organization asked to uninstall (gh_installations.uninstall_requested_at) and no
+    // organization holds now: a forged message cannot remove a customer's App.
+    await service.uninstallInstallation(w.installationId);
+    return;
+  }
   throw new Error(`unknown work kind ${(w as { kind?: unknown }).kind}`);
 }
 
@@ -118,6 +135,8 @@ export function parseWork(v: unknown): Work {
   if (o?.kind === "installation_linked" && posInt(o.installationId)) return { kind: "installation_linked", installationId: o.installationId as number };
   if (o?.kind === "refresh_default_branch" && posInt(o.repositoryId)) return { kind: "refresh_default_branch", repositoryId: o.repositoryId as number };
   if (o?.kind === "side_by_side_history" && posInt(o.repositoryId)) return { kind: "side_by_side_history", repositoryId: o.repositoryId as number };
+  if (o?.kind === "sync_repository" && posInt(o.repositoryId)) return { kind: "sync_repository", repositoryId: o.repositoryId as number };
+  if (o?.kind === "uninstall_installation" && posInt(o.installationId)) return { kind: "uninstall_installation", installationId: o.installationId as number };
   throw new Error("not a work message");
 }
 

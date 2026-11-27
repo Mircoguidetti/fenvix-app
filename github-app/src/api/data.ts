@@ -152,6 +152,18 @@ export const saveProjectSettings: Handler = async (ctx) => {
   return project(ctx.t, ws, ctx.params.projectId);
 };
 
+/**
+ * Removes a project from fenvix (an owner or admin, x-fenvix-role: admin): api_remove_project marks its repository
+ * excluded, then deletes the project (its runs, defects and receipts go with it). The repository stays in the GitHub
+ * App installation; the App skips it until it is added again. 404 for an unknown project or another organization's.
+ */
+export const removeProject: Handler = async (ctx) => {
+  orgOf(ctx);
+  const r = await ctx.t.one<{ removed: boolean }>("select public.api_remove_project($1::uuid) as removed", [ctx.params.projectId]);
+  if (!r?.removed) throw notFound(NO_PROJECT);
+  return new Reply(204, null);
+};
+
 // ---------------------------------------------------------------- runs
 
 /** At most this many runs for `since` (the contract's bound). */

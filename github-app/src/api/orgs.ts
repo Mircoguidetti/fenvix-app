@@ -124,6 +124,25 @@ export const leaveOrganization: Handler = async (ctx) => {
   return new Reply(204, null);
 };
 
+/**
+ * Deletes the organization (the OWNER only: the contract's admin marker lets admins through, so this checks the owner
+ * role itself, and api_delete_organization checks it again). One transaction: the organization and everything of it
+ * (on delete cascade), and the caller's own login when they belong to no other organization. After the commit, one
+ * "uninstall_installation" per GitHub App installation the organization had connected.
+ */
+export const deleteOrganization: Handler = async (ctx) => {
+  const o = orgOf(ctx);
+  if (o.role !== "owner") throw forbidden("Only an owner can delete the organization.");
+  await lockOrg(ctx.t, o.id);
+  const r = await ctx.t.one<{ installation_ids: (number | string)[]; login_deleted: boolean }>("select * from public.api_delete_organization()");
+  if (!r) throw forbidden("Only an owner can delete the organization.");
+  for (const id of r.installation_ids ?? []) {
+    const installationId = Number(id);
+    ctx.afterCommit(() => ctx.queue.enqueue({ kind: "uninstall_installation", installationId }));
+  }
+  return new Reply(204, null);
+};
+
 // ---------------------------------------------------------------- members
 
 export const listMembers: Handler = async (ctx) => {

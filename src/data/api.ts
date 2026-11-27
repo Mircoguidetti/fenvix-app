@@ -105,6 +105,9 @@ export function createApiDataClient(cfg: ApiConfig): DataClient {
     listProjects: async () => (await call(api.GET("/projects", { params: { header: ws() } }))).items,
     getProject: (id) => orNull(api.GET("/projects/{projectId}", { params: { header: ws(), path: { projectId: id } } })),
     saveProjectSettings: (id, settings) => call(api.PUT("/projects/{projectId}/settings", { params: { header: ws(), path: { projectId: id } }, body: settings })),
+    async removeProject(id) {
+      await call(api.DELETE("/projects/{projectId}", { params: { header: ws(), path: { projectId: id } } }));
+    },
     listRuns: (projectId, q = {}) =>
       call(
         api.GET("/projects/{projectId}/runs", {
@@ -156,6 +159,7 @@ export function createApiDataClient(cfg: ApiConfig): DataClient {
     // the person that link was made for.
     completeGitHubInstall: (completion) => call(api.POST("/github/installations/complete", { body: { completion } })),
     openSetupPullRequest: (repositoryId) => call(api.POST("/github/repositories/{repositoryId}/setup-pull-request", { params: { header: ws(), path: { repositoryId } } })),
+    restoreRepository: (repositoryId) => call(api.POST("/github/repositories/{repositoryId}/restore", { params: { header: ws(), path: { repositoryId } } })),
     getSideBySide: (projectId, page = 1) => call(api.GET("/projects/{projectId}/side-by-side", { params: { header: ws(), path: { projectId }, query: { page } } })),
     getOnboardingKind: () => call(api.GET("/organization/onboarding-kind", { params: { header: ws() } })),
     setOnboardingKind: (kind) => call(api.PUT("/organization/onboarding-kind", { params: { header: ws() }, body: { kind } })),
@@ -178,6 +182,9 @@ export function createApiOrgsClient(cfg: ApiConfig): OrgsClient {
     listOrganizations: async () => (await call(api.GET("/organizations"))).items,
     createOrganization: async (name) => (await call(api.POST("/organizations", { body: { name } }))).organization,
     renameOrganization: (name) => call(api.PUT("/organization", { params: { header: ws() }, body: { name } })),
+    async deleteOrganization() {
+      await call(api.DELETE("/organization", { params: { header: ws() } }));
+    },
     async leaveOrganization() {
       await call(api.POST("/organization/leave", { params: { header: ws() } }));
     },
