@@ -118,12 +118,50 @@ pubblica per costruzione (finisce comunque nel browser di chiunque apra il sito)
 
 ---
 
+## Un account con GitHub e Google insieme
+
+**Il problema:** Supabase (il servizio che gestisce gli accessi) unisce da solo GitHub e Google nello stesso account
+**solo** se il secondo servizio gli dà un'email verificata che l'account ha già. Se GitHub gli dà un'altra email (per
+esempio l'email principale del profilo GitHub è diversa da quella Gmail), al primo accesso con Google nasce un secondo
+account, vuoto. È come avere due tessere con lo stesso nome ma numeri diversi.
+
+**La soluzione:** in **Settings → Sign-in methods** c'è **Connect GitHub** / **Connect Google**: collega il secondo
+servizio all'account in cui sei già entrato, qualunque email abbia. Dopo, entrare con l'uno o con l'altro apre lo
+stesso account.
+
+1. **Permetti il collegamento in Supabase (una volta).** <https://supabase.com/dashboard> → il progetto →
+   **Authentication** → **Sign In / Providers** → sezione **User Signups** → accendi **Allow manual linking** →
+   **Save changes**.
+
+2. **(Facoltativo) Guarda perché sono nati due account.** Supabase → **SQL Editor** → **New query** → incolla e
+   **Run** (legge soltanto, non cambia niente):
+
+   ```sql
+   select u.id, u.created_at, u.email, u.email_confirmed_at is not null as email_verificata,
+          i.provider, i.email as email_dal_servizio, i.identity_data ->> 'email_verified' as verificata_dal_servizio
+   from auth.users u left join auth.identities i on i.user_id = u.id
+   order by u.created_at, i.provider;
+   ```
+
+   Vedrai due righe con `id` diversi: guarda le colonne `email_dal_servizio` di `github` e di `google`.
+
+3. **Cancella l'account doppione.** È quello creato **dopo** (`created_at` più recente), di solito quello di Google.
+   Supabase → **Authentication** → **Users** → la riga di quell'utente → **⋯** → **Delete user** → conferma.
+   La sua organizzazione vuota resta nel database, non dà fastidio. (Se per errore hai collegato un progetto GitHub
+   all'account doppione, dimmelo prima di cancellarlo.)
+
+4. **Collega Google all'account giusto.** Apri <https://console.fenvix.dev> → entra **con GitHub** → **Settings** →
+   **Sign-in methods** → **Connect Google** → scegli il tuo account Google. Torni su Settings e vedi sia **GitHub** sia
+   **Google**. Da ora puoi entrare con tutti e due.
+
 ## Se qualcosa non va
 
 | Cosa vedi | Cosa fare |
 |---|---|
 | Sulla pagina di accesso: "This deployment is missing VITE_…" | Passo 3: manca quella variabile (o ha uno spazio di troppo). Correggila in **Settings → Environment Variables**, poi passo 8. |
 | Dopo l'accesso: "could not reach the server" | Stai usando un indirizzo `….vercel.app` invece di `https://console.fenvix.dev` (l'API accetta solo quello), oppure `VITE_API_URL` non è esattamente `https://api.fenvix.dev/v1`. |
+| **Connect Google/GitHub** dice "already signs in to a different FENVIX account" | Quel GitHub/Google è ancora l'account doppione: passo 3 di "Un account con GitHub e Google insieme", poi riprova. |
+| **Connect …** dice "Connecting another sign-in method is turned off" | Passo 1 di "Un account con GitHub e Google insieme" (Allow manual linking). |
 | Supabase dopo l'accesso dice che l'indirizzo di ritorno non è permesso | Passo 7: controlla `https://console.fenvix.dev/**` in **Redirect URLs**. |
 | Vercel resta su **Invalid Configuration** dopo un'ora | Passo 6: la nuvola deve essere **grigia** (DNS only) e il Target identico a quello di Vercel. Se Vercel parla di **CAA**: in Cloudflare → DNS, se esistono record di tipo `CAA` su `fenvix.dev`, aggiungine uno con **Tag** `Only allow specific hostnames` e **CA domain name** `letsencrypt.org`. |
 | Il build su Vercel fallisce | Apri il deploy → **Building** e manda il log al coordinatore. Non modificare il codice. |

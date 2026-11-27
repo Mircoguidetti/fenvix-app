@@ -9,6 +9,91 @@ import { useSession } from "../session/SessionProvider";
 import { useOrg } from "../session/OrgProvider";
 import { useToast } from "../components/Toast";
 import { workspaceChanged } from "../lib/workspace";
+import { session } from "../session";
+import { CONNECTABLE, METHOD_NAMES, connectProblem, type SignInMethod } from "../session/methods";
+import { clearRedirectError, lastRedirectError, lastRedirectErrorCode } from "../session/redirect";
+import type { AuthProvider } from "../session/client";
+
+/**
+ * The account's sign-in methods. Signing in with a provider that is not connected here makes a separate account
+ * (Supabase links on its own only when the provider reports a verified email this account already has), so the way to
+ * use GitHub and Google for one account is to connect the second one here, while signed in.
+ */
+function SignInMethodsCard() {
+  const methods = useAsync(() => session.listSignInMethods(), []);
+  const toast = useToast();
+  const [busy, setBusy] = useState<string | null>(null);
+  // Coming back from a provider that refused to connect (e.g. it already belongs to another account).
+  const [error, setError] = useState<string | null>(() => {
+    const failed = lastRedirectError();
+    return failed ? connectProblem(lastRedirectErrorCode(), failed) : null;
+  });
+  useEffect(() => clearRedirectError(), []);
+  const list: SignInMethod[] = methods.status === "ready" ? methods.data : [];
+  const missing = CONNECTABLE.filter((p) => !list.some((m) => m.kind === p));
+
+  async function connect(p: AuthProvider) {
+    setError(null);
+    setBusy(p);
+    try {
+      await session.connectProvider(p); // a real provider navigates away here
+      methods.setData(await session.listSignInMethods());
+      toast(`${METHOD_NAMES[p]} connected`, "success");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : connectProblem(null, null));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function disconnect(m: SignInMethod) {
+    setError(null);
+    setBusy(m.id);
+    try {
+      await session.disconnect(m.id);
+      methods.setData(await session.listSignInMethods());
+      toast(`${METHOD_NAMES[m.kind]} disconnected`, "success");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : connectProblem(null, null));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Card id="sign-in-methods" title="Sign-in methods" description="Connect GitHub and Google here so both open this account. Signing in with one that is not connected creates a separate account.">
+      {methods.status === "loading" && <Message>Loading sign-in methods</Message>}
+      {methods.status === "error" && <Message role="alert">{methods.message}</Message>}
+      {methods.status === "ready" && (
+        <ul className="stack plain-list" aria-label="Connected sign-in methods">
+          {list.map((m) => (
+            <li key={m.id} className="row-actions">
+              <span>
+                <strong>{METHOD_NAMES[m.kind]}</strong>
+                {m.email && <span className="muted"> · {m.email}</span>}
+              </span>
+              {list.length > 1 && (
+                <button type="button" className="btn" disabled={busy !== null} onClick={() => disconnect(m)} aria-label={`Disconnect ${METHOD_NAMES[m.kind]}`}>
+                  Disconnect
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {methods.status === "ready" && missing.length > 0 && (
+        <div className="row-actions">
+          {missing.map((p) => (
+            <button key={p} type="button" className="btn" disabled={busy !== null} onClick={() => connect(p)}>
+              Connect {METHOD_NAMES[p]}
+            </button>
+          ))}
+        </div>
+      )}
+      {error && <p className="error" role="alert">{error}</p>}
+    </Card>
+  );
+}
 
 /** Rename the organization: owner and admin. The name is plain text, 2 to 64 characters. */
 function OrganizationCard() {
@@ -247,6 +332,8 @@ export function SettingsPage() {
             <span className="muted small">Signing out affects this browser only.</span>
           </div>
         </Card>
+
+        <SignInMethodsCard />
       </div>
     </>
   );
