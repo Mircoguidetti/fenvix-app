@@ -5,7 +5,6 @@ import { Logo } from "../components/Logo";
 import { GitHubMark, GoogleMark } from "../components/marks";
 import { session, type AuthProvider } from "../session";
 import { useSession } from "../session/SessionProvider";
-import { PairHero } from "../components/PairHero";
 import { applyTheme, storedTheme } from "../lib/theme";
 
 export function SignInPage() {
@@ -68,7 +67,6 @@ export function SignInPage() {
   return (
     <main id="main" className="signin-page" tabIndex={-1}>
       <section className="signin-hero" aria-label="FENVIX">
-        <PairHero />
         <div className="signin-hero-logo">
           <Logo />
         </div>
