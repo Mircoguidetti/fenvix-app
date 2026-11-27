@@ -179,7 +179,8 @@ describe("F5: half-applied migrations other than 0017 (scratch Postgres)", () =>
   after(async () => { await server.query(`drop database if exists ${name} with (force)`).catch(() => undefined); await server.end(); });
 
   for (const [version, cut] of [["0013", "drop policy if exists ci_usage_events_github_app"], ["0015", "drop policy if exists workspace_invites_api_revoke"], ["0014", "drop policy if exists workspaces_github_app"],
-    ["0018", "alter table public.gh_repositories drop constraint if exists"], ["0019", "alter table public.ci_test_results drop constraint if exists ci_test_results_outcome_check"]]) {
+    ["0018", "alter table public.gh_repositories drop constraint if exists"], ["0019", "alter table public.ci_test_results drop constraint if exists ci_test_results_outcome_check"],
+    ["0020", "drop policy if exists ci_runner_label_rates_read"]]) {
     it(`${version} cut before its last statement: the deploy stops, nothing recorded`, async () => {
       await fresh();
       for (const m of files.filter((x) => x.version < version)) psqlFile(join(MIGRATIONS_DIR, m.name));

@@ -547,7 +547,7 @@ describe("the side-by-side pull request's body", () => {
   // text shows a placeholder or another number; no_claim=GitHub's rendering.
   it("states the daily cap it is given", async () => {
     const { sideBySidePullRequestBody } = await import("../../src/onboarding/onboard.ts");
-    const body = sideBySidePullRequestBody({ job: { jobId: "test", file: ".github/workflows/ci.yml" } as never, file: "x", dashboardUrl: "https://app.fenvix.dev", dailyCap: 7 });
+    const body = sideBySidePullRequestBody({ job: { jobId: "test", file: ".github/workflows/ci.yml" } as never, file: "x", dashboardUrl: "https://console.fenvix.dev", dailyCap: 7 });
     assert.match(body, /at most 7 a day per repository/);
     assert.doesNotMatch(body, /\$\{/);
   });
