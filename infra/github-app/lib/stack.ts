@@ -142,12 +142,19 @@ export class FenvixGitHubAppStack extends Stack {
 
     // The dashboard API: its own settings only (no App id, no OAuth client, no machine settings), its two parameters
     // (the fenvix_api database URL and the state signing key), and the work queue (the setup pull request is queued).
+    // Side-by-side runs (github-app/src/config.ts sideBySideFromEnv): the worker opens their pull requests and starts
+    // their machines; the dashboard API offers the choice (SIDE_BY_SIDE_ENABLED).
+    const sideBySideEnv: Record<string, string> = {
+      SIDE_BY_SIDE_ENABLED: String(s.sideBySideEnabled), SIDE_BY_SIDE_DAILY_CAP: String(s.sideBySideDailyCap),
+      SIDE_BY_SIDE_SKIP_DAILY_CAP: String(s.sideBySideSkipDailyCap), SIDE_BY_SIDE_INSTANCE_TYPE: s.sideBySideInstanceType,
+      SIDE_BY_SIDE_USD_PER_HOUR: s.sideBySideUsdPerHour,
+    };
     const dashboardApi = fn("DashboardApi", "api.ts", {
       timeout: Duration.seconds(29), memory: 512, reads: readersOf(s.env, "api"), short: "api",
       baseEnv: {
         NODE_ENV: "production", NODE_OPTIONS: "--enable-source-maps", LOG_LEVEL: "info", SSM_PREFIX: appPrefix(s.env),
         SUPABASE_URL: s.supabaseUrl, DASHBOARD_URL: s.dashboardUrl, GITHUB_APP_SLUG: s.githubAppSlug, DB_POOL_MAX: "1",
-        WORK_QUEUE_URL: queue.queueUrl, ...(s.apiCorsOrigins ? { API_CORS_ORIGINS: s.apiCorsOrigins } : {}),
+        WORK_QUEUE_URL: queue.queueUrl, ...(s.apiCorsOrigins ? { API_CORS_ORIGINS: s.apiCorsOrigins } : {}), ...sideBySideEnv,
       },
       description: "fenvix dashboard API (openapi/fenvix-api.yaml): /v1/* except /v1/runner/*",
     });
@@ -180,9 +187,12 @@ export class FenvixGitHubAppStack extends Stack {
     // The worker signs each machine's credentials (per-job only): the summary key and the cache signing key.
     const workerReads = readersOf(s.env, "worker").filter((p) => perJob || !/\/(runner-token|signing-key)$/.test(p));
     const worker = fn("Worker", "worker.ts", {
-      timeout: WORKER_TIMEOUT, memory: 512, reads: workerReads, extraEnv: { ...launchEnv, ...warmupEnv },
+      // WORK_QUEUE_URL: a side-by-side repository's history is queued as its own work (side_by_side_history).
+      timeout: WORKER_TIMEOUT, memory: 512, reads: workerReads, extraEnv: { ...launchEnv, ...warmupEnv, ...sideBySideEnv, WORK_QUEUE_URL: queue.queueUrl },
       description: "fenvix GitHub App: runs queued webhooks and runner summaries",
     });
+    // The worker queues a side-by-side repository's history reading (work side_by_side_history).
+    queue.grantSendMessages(worker);
     worker.addToRolePolicy(new iam.PolicyStatement({ sid: "ReadAndDeleteOverflow", actions: ["s3:GetObject", "s3:DeleteObject"], resources: [overflow.arnForObjects("work/*")] }));
     worker.addEventSource(new SqsEventSource(queue, { batchSize: 5, reportBatchItemFailures: true, maxConcurrency: 2 }));
 
@@ -190,7 +200,7 @@ export class FenvixGitHubAppStack extends Stack {
     // with its role (R-012 F7: the instance, its disk and its network interface must come from the launch template).
     const arn = (r: string) => `arn:${this.partition}:ec2:${this.region}:${this.account}:${r}`;
     const fromTemplate = { "ec2:LaunchTemplate": arn(`launch-template/${fleet.launchTemplate.ref}`) };
-    const mayLaunch = (f: lambda.IFunction, role: string) => {
+    const mayLaunch = (f: lambda.IFunction, role: string, types: string[] = [s.runnerInstanceType]) => {
       f.addToRolePolicy(new iam.PolicyStatement({
         sid: "RunJobMachines", actions: ["ec2:RunInstances"],
         resources: [arn(`launch-template/${fleet.launchTemplate.ref}`), arn(`subnet/${net.subnet.subnetId}`), arn(`security-group/${net.runnerSg.securityGroupId}`)],
@@ -205,7 +215,8 @@ export class FenvixGitHubAppStack extends Stack {
       }));
       f.addToRolePolicy(new iam.PolicyStatement({
         sid: "OnlyTaggedJobMachines", actions: ["ec2:RunInstances"], resources: [arn("instance/*")],
-        conditions: { StringEquals: { "aws:RequestTag/fenvix:role": role, "ec2:InstanceType": s.runnerInstanceType }, ArnEquals: fromTemplate },
+        // The launch template's type; for the worker also the side-by-side job's full machine (an instance type override).
+        conditions: { StringEquals: { "aws:RequestTag/fenvix:role": role, "ec2:InstanceType": types.length === 1 ? types[0]! : types }, ArnEquals: fromTemplate },
       }));
       f.addToRolePolicy(new iam.PolicyStatement({
         sid: "OnlyTaggedJobDisks", actions: ["ec2:RunInstances"], resources: [arn("volume/*")],
@@ -232,9 +243,15 @@ export class FenvixGitHubAppStack extends Stack {
     }));
     let warmup: lambda.IFunction | null = null;
     if (perJob) {
-      mayLaunch(worker, "runner-job");
-      // A customer job that finds the fleet full takes a warm-up's machine (preemption).
+      // The worker also starts side-by-side jobs' full machines (SIDE_BY_SIDE_INSTANCE_TYPE over the template's type).
+      mayLaunch(worker, "runner-job", [...new Set([s.runnerInstanceType, s.sideBySideInstanceType])]);
+      // A customer job that finds the fleet full takes a warm-up's machine (preemption), else a full side-by-side
+      // machine's (fenvix:kind=side-by-side; never a skip machine or a customer's job machine).
       mayTerminateWarmups(worker);
+      worker.addToRolePolicy(new iam.PolicyStatement({
+        sid: "TerminateOnlyFullSideBySideMachines", actions: ["ec2:TerminateInstances"], resources: [arn("instance/*")],
+        conditions: { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job", "aws:ResourceTag/fenvix:kind": "side-by-side" } },
+      }));
       warmup = fn("Warmup", "warmup.ts", {
         timeout: Duration.seconds(120), memory: 256, reads: readersOf(s.env, "warmup"), extraEnv: { ...launchEnv, ...warmupEnv },
         description: "fenvix GitHub App: warm-up runs of onboarded default branches (lowest priority; never billed)",
@@ -260,9 +277,11 @@ export class FenvixGitHubAppStack extends Stack {
     }
 
     const sweep = fn("Sweep", "sweep.ts", {
-      timeout: Duration.seconds(300), memory: 256, reads: readersOf(s.env, "sweep"),
+      timeout: Duration.seconds(300), memory: 256, reads: readersOf(s.env, "sweep"), extraEnv: { WORK_QUEUE_URL: queue.queueUrl },
       description: "fenvix GitHub App: publishes completed jobs whose runner summary never came",
     });
+    // The sweep queues side-by-side histories whose time came (work side_by_side_history).
+    queue.grantSendMessages(sweep);
 
     // ---------------------------------------------------------------- the sweep's schedule
     const schedulerRole = new iam.Role(this, "SweepScheduleRole", { assumedBy: new iam.ServicePrincipal("scheduler.amazonaws.com", { conditions: { StringEquals: { "aws:SourceAccount": this.account } } }) });

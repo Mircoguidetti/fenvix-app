@@ -97,6 +97,13 @@ describe("Lambda mode: webhook → 202 → SQS → worker", () => {
 
     await drain();
     assert.equal(sqs.messages.length, 0);
+    // Rule 3 (spec 20261126-side-by-side-runs item 6): no pull request before the organization link; one after the
+    // work installation_linked (the production path). Before: the pull request at installation.created.
+    assert.equal((await admin.query("select onboarding_state from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].onboarding_state, "pending");
+    assert.equal(h.gh.repos.get("acme/shop")!.pulls.length, 0, "no pull request before the link");
+    await admin.query("select public.gh_link_installation($1, $2, $3)", [INSTALLATION_ID, org.workspaceId, org.userId]);
+    await new SqsWorkQueue({ queue: sqs, blobs }).enqueue({ kind: "installation_linked", installationId: INSTALLATION_ID });
+    await drain();
     assert.equal((await admin.query("select onboarding_state from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].onboarding_state, "pr_open");
     assert.equal(h.gh.repos.get("acme/shop")!.pulls.length, 1);
     assert.equal((await admin.query("select processed_at is not null as done from gh_webhook_deliveries where delivery_id = 'q-inst-1'")).rows[0].done, true);

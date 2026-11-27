@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Check, CircleCheck, ExternalLink, Lock, TriangleAlert } from "lucide-react";
-import { client, type GitHubRepository, type Installation, type SetupChange } from "../data";
+import { client, type GitHubRepository, type Installation, type OnboardingKind, type SetupChange } from "../data";
+import { isSetupMerged } from "../data/ci-rows";
+import { Segmented } from "../components/Segmented";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
 import { InstallationStatusPill, OnboardingPill } from "../components/StateBadge";
 import { useToast } from "../components/Toast";
@@ -74,7 +76,7 @@ function runnerText(r: GitHubRepository): string {
   return `${r.language ? languageLabel(r.language) : "Language not detected"} · ${r.testRunner ?? "test runner not detected"}`;
 }
 
-function RepoRow({ repo, installation, queued, onOpen }: { repo: GitHubRepository; installation: Installation | undefined; queued: boolean; onOpen: (r: GitHubRepository) => void }) {
+function RepoRow({ repo, installation, queued, onOpen, kind }: { repo: GitHubRepository; installation: Installation | undefined; queued: boolean; onOpen: (r: GitHubRepository) => void; kind: OnboardingKind }) {
   const org = useOrg();
   const active = installation?.status === "active";
   const canOpen = CAN_OPEN.has(repo.onboardingState);
@@ -101,7 +103,9 @@ function RepoRow({ repo, installation, queued, onOpen }: { repo: GitHubRepositor
           <WarmCacheNote cache={repo.warmCache} now={client.now()} full />
         </p>
       )}
-      {canOpen && repo.workflowPath && repo.job && <SetupDiff change={{ path: repo.workflowPath, job: repo.job, before: "runs-on: ubuntu-latest", after: "runs-on: fenvix" }} />}
+      {canOpen && repo.workflowPath && repo.job && (kind === "side_by_side"
+        ? <p className="small muted">The pull request adds <span className="mono">.github/workflows/fenvix-side-by-side.yml</span>, a copy of job <strong>{repo.job}</strong> on fenvix; <span className="mono">{repo.workflowPath}</span> stays as it is.</p>
+        : <SetupDiff change={{ path: repo.workflowPath, job: repo.job, before: "runs-on: ubuntu-latest", after: "runs-on: fenvix" }} />)}
       {(repo.setupPullRequest || repo.projectId || (repo.workflowPath && !canOpen)) && (
         <p className="setup-done">
           {repo.setupPullRequest && (
@@ -137,7 +141,7 @@ function RepoRow({ repo, installation, queued, onOpen }: { repo: GitHubRepositor
   );
 }
 
-function InstallationBlock({ installation, repos, queued, onOpen, highlight }: { installation: Installation; repos: GitHubRepository[]; queued: Set<number>; onOpen: (r: GitHubRepository) => void; highlight: boolean }) {
+function InstallationBlock({ installation, repos, queued, onOpen, highlight, kind }: { installation: Installation; repos: GitHubRepository[]; queued: Set<number>; onOpen: (r: GitHubRepository) => void; highlight: boolean; kind: OnboardingKind }) {
   const mine = repos.filter((r) => r.installationId === installation.installationId && !r.removed);
   const headingId = `inst-${installation.installationId}`;
   return (
@@ -168,7 +172,7 @@ function InstallationBlock({ installation, repos, queued, onOpen, highlight }: {
       ) : (
         <ul className="setup-list">
           {mine.map((r) => (
-            <RepoRow key={r.repositoryId} repo={r} installation={installation} queued={queued.has(r.repositoryId)} onOpen={onOpen} />
+            <RepoRow key={r.repositoryId} repo={r} installation={installation} queued={queued.has(r.repositoryId)} onOpen={onOpen} kind={kind} />
           ))}
         </ul>
       )}
@@ -192,6 +196,9 @@ export function ConnectPage() {
   const [params] = useSearchParams();
   const github = params.get("github");
   const connection = useAsync(() => client.getGitHubConnection(), []);
+  const kindState = useAsync(() => client.getOnboardingKind(), []);
+  const [kind, setKind] = useState<OnboardingKind | null>(null);
+  const [savingKind, setSavingKind] = useState(false);
   const repos = useAsync(() => client.listGitHubRepositories(), []);
   const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -281,6 +288,21 @@ export function ConnectPage() {
     };
   }, [chose]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const shownKind: OnboardingKind = kind ?? (kindState.status === "ready" ? kindState.data.kind : "move");
+  async function chooseKind(next: OnboardingKind) {
+    if (next === shownKind || savingKind) return;
+    setSavingKind(true);
+    try {
+      const saved = await client.setOnboardingKind(next);
+      setKind(saved.kind);
+      toast(saved.kind === "side_by_side" ? "New pull requests will add a side-by-side workflow; your workflow stays as it is." : "New pull requests will move the test job to fenvix.", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "The choice could not be saved.", "error");
+    } finally {
+      setSavingKind(false);
+    }
+  }
+
   async function install() {
     setInstalling(true);
     setError(null);
@@ -310,7 +332,7 @@ export function ConnectPage() {
   const list = repos.status === "ready" ? repos.data : [];
   const live = list.filter((r) => !r.removed && installations.find((i) => i.installationId === r.installationId)?.status !== "deleted");
   const opened = live.some((r) => r.setupPullRequest);
-  const merged = live.some((r) => r.onboardingState === "merged" || r.onboardingState === "already_fenvix");
+  const merged = live.some((r) => isSetupMerged(r.onboardingState));
   const highlighted = github === "connected" ? Number(params.get("installation")) : null;
   const reason = params.get("reason") ?? "error";
   const dismiss = () => navigate("/projects/connect", { replace: true });
@@ -396,6 +418,26 @@ export function ConnectPage() {
               ))}
             </ul>
           )}
+          {kindState.status === "ready" && kindState.data.sideBySideAvailable && (
+            <div className="connect-kind">
+              <Segmented<OnboardingKind>
+                label="How fenvix runs your tests"
+                value={shownKind}
+                disabled={!org.canManage || savingKind}
+                onChange={(v) => void chooseKind(v)}
+                options={[
+                  { value: "move", label: "Move the test job to fenvix" },
+                  { value: "side_by_side", label: "Run side by side (your workflow stays as it is)" },
+                ]}
+              />
+              <p className="muted small">
+                {shownKind === "side_by_side"
+                  ? "The pull request adds one new workflow file that runs a copy of your test job on fenvix. Your workflow is not changed and decides green or red alone; fenvix shows both side by side."
+                  : "The pull request changes one line in your test job: runs-on: fenvix."}
+                {!org.canManage && " Only an owner or admin can change this."}
+              </p>
+            </div>
+          )}
           <div className="row-actions">
             <button type="button" className={installations.length ? "btn" : "btn btn-primary"} onClick={install} disabled={installing || !org.canManage || connection.status !== "ready"}>
               {installations.length ? "Add another GitHub account" : "Install the GitHub App"}
@@ -417,7 +459,7 @@ export function ConnectPage() {
           {repos.status === "loading" && <Message>Loading repositories</Message>}
           {repos.status === "error" && <Message role="alert">{repos.message}</Message>}
           {connection.status === "ready" && repos.status === "ready" && installations.length === 0 && <p className="muted small">No installation yet: install the app first.</p>}
-          {connection.status === "ready" && repos.status === "ready" && installations.map((i) => <InstallationBlock key={i.installationId} installation={i} repos={list} queued={queued} onOpen={open} highlight={i.installationId === highlighted} />)}
+          {connection.status === "ready" && repos.status === "ready" && installations.map((i) => <InstallationBlock key={i.installationId} installation={i} repos={list} queued={queued} onOpen={open} highlight={i.installationId === highlighted} kind={shownKind} />)}
         </Step>
         <Step n={3} done={merged} title="Merge it on GitHub">
           <p className="muted">After the merge, the next test run goes to fenvix and the repository becomes a project, with its runs, defects and minutes saved. fenvix also runs the test job once on the default branch, at no charge, so your first pull request finds the cache warm.</p>

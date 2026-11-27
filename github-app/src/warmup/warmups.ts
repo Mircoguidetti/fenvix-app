@@ -349,6 +349,18 @@ export class Warmups {
    * The fleet of `region` is full and a customer's job waits: the newest warm-up on a machine there gives its machine
    * back (terminated now) and goes back to pending (it runs again later). True if a machine was freed.
    */
+  /**
+   * Customer jobs of the region waiting for a machine (queued, none launched, created in the window): warm-ups wait
+   * for them. A side-by-side job is not one: it never waits for a slot (it gets a skip machine or none), and one left
+   * queued (a fork's pull request, a cap) would otherwise hold back every warm-up of the region.
+   */
+  async customerJobsWaiting(region: Region, windowSeconds: number): Promise<number> {
+    const [r] = await this.db.q<{ n: number }>(
+      `select count(*)::int as n from gh_jobs where status = 'queued' and launched_at is null and region = $1 and kind <> 'side_by_side'
+         and coalesce(created_at, updated_at) > now() - make_interval(secs => $2::int)`, [region, windowSeconds]);
+    return r!.n;
+  }
+
   async preemptOne(region: Region): Promise<boolean> {
     if (!this.launcher?.terminateWarmup) return false;
     const [row] = await this.db.q<Row>(
@@ -460,15 +472,13 @@ export class Warmups {
       slot = { running: s.running, max: s.max };
       slots.set(region, slot);
     }
-    const [counts] = await this.db.q<{ waiting: number; org_active: number; repo_24h: number; oldest: Date | null }>(
-      `select (select count(*)::int from gh_jobs where status = 'queued' and launched_at is null and region = $1
-                 and coalesce(created_at, updated_at) > now() - make_interval(secs => $2::int)) as waiting,
-              (select count(*)::int from gh_warmups where workspace_id = $3 and status in ('dispatched', 'running')) as org_active,
-              (select count(*)::int from gh_warmups where repository_id = $4 and dispatched_at > now() - interval '24 hours') as repo_24h,
-              (select min(dispatched_at) from gh_warmups where repository_id = $4 and dispatched_at > now() - interval '24 hours') as oldest`,
-      [region, this.w.waitingJobWindowSeconds, ws, row.repository_id]);
+    const [counts] = await this.db.q<{ org_active: number; repo_24h: number; oldest: Date | null }>(
+      `select (select count(*)::int from gh_warmups where workspace_id = $1 and status in ('dispatched', 'running')) as org_active,
+              (select count(*)::int from gh_warmups where repository_id = $2 and dispatched_at > now() - interval '24 hours') as repo_24h,
+              (select min(dispatched_at) from gh_warmups where repository_id = $2 and dispatched_at > now() - interval '24 hours') as oldest`,
+      [ws, row.repository_id]);
     const d = decide(this.w, region, {
-      canPlace, customerJobsWaiting: counts!.waiting, running: slot?.running ?? 0, max: slot?.max ?? 0,
+      canPlace, customerJobsWaiting: await this.customerJobsWaiting(region, this.w.waitingJobWindowSeconds), running: slot?.running ?? 0, max: slot?.max ?? 0,
       orgActive: counts!.org_active, repoLast24h: counts!.repo_24h, oldestLast24h: counts!.oldest,
     });
     if (!d.dispatch) return wait(d.detail, d.retryAt);

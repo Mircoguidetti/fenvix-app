@@ -129,6 +129,17 @@ export interface Settings {
    */
   runnerInstanceType: string;
   runnerVolumeGb: number;
+  /**
+   * Side-by-side runs (github-app SIDE_BY_SIDE_*): on (the choice in Connect, the side-by-side pull request), the
+   * full machines per repository per rolling 24 hours, the skip machines per repository per rolling 24 hours, the full
+   * machine's instance type (8 vCPU) and its on-demand price per hour (shown in the console; c6i.2xlarge eu-west-1 $0.3648/h, AWS
+   * EC2 on-demand pricing page, read by the founder 2026-11-26).
+   */
+  sideBySideEnabled: boolean;
+  sideBySideDailyCap: number;
+  sideBySideSkipDailyCap: number;
+  sideBySideInstanceType: string;
+  sideBySideUsdPerHour: string;
   /** Commit of Mircoguidetti/fenvix-engine-cli whose runner/bootstrap.sh the machine runs. */
   engineCliCommit: string;
 }
@@ -150,6 +161,8 @@ const ENV: Record<keyof Settings, string> = {
   warmupOrgConcurrency: "FENVIX_WARMUP_ORG_CONCURRENCY", warmupReserve: "FENVIX_WARMUP_RESERVE", warmupGraceSeconds: "FENVIX_WARMUP_GRACE_SECONDS", cacheInstanceType: "FENVIX_CACHE_INSTANCE_TYPE", cachePrivateIp: "FENVIX_CACHE_PRIVATE_IP",
   cacheVolumeGb: "FENVIX_CACHE_VOLUME_GB", cacheAmiId: "FENVIX_CACHE_AMI_ID",
   cacheSigningPublicKey: "FENVIX_CACHE_SIGNING_PUBLIC_KEY",
+  sideBySideEnabled: "FENVIX_SIDE_BY_SIDE_ENABLED", sideBySideDailyCap: "FENVIX_SIDE_BY_SIDE_DAILY_CAP", sideBySideSkipDailyCap: "FENVIX_SIDE_BY_SIDE_SKIP_DAILY_CAP",
+  sideBySideInstanceType: "FENVIX_SIDE_BY_SIDE_INSTANCE_TYPE", sideBySideUsdPerHour: "FENVIX_SIDE_BY_SIDE_USD_PER_HOUR",
 };
 
 /** CloudWatch Logs accepts only these retention periods (days). */
@@ -199,6 +212,9 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
     cacheAmiId: get("cacheAmiId"), cacheSigningPublicKey: get("cacheSigningPublicKey").replace(/\s+/g, ""),
     demoRepository: get("demoRepository"), demoMaxHours: int("demoMaxHours", 1, 72), runnerInstanceType: need("runnerInstanceType"),
     runnerVolumeGb: int("runnerVolumeGb", 20, 500), engineCliCommit: need("engineCliCommit"),
+    sideBySideEnabled: (get("sideBySideEnabled") || "true") === "true", sideBySideDailyCap: int("sideBySideDailyCap", 0, 100),
+    sideBySideSkipDailyCap: int("sideBySideSkipDailyCap", 0, 500), sideBySideInstanceType: need("sideBySideInstanceType"),
+    sideBySideUsdPerHour: need("sideBySideUsdPerHour"),
   };
   if (!/^\d{12}$/.test(s.account)) throw new Error('Setting "account" must be a 12-digit AWS account id');
   if (!/^[a-z]{2}-[a-z]+-\d$/.test(s.region)) throw new Error('Setting "region" is not an AWS region');
@@ -265,5 +281,8 @@ export function readSettings(ctx: Ctx, env: Record<string, string | undefined> =
   }
   if (!/^t3\.(medium|large|xlarge)$|^(c6i|m6i)\.(large|xlarge)$/.test(s.runnerInstanceType)) throw new Error('Setting "runnerInstanceType" must be an x86_64 type like c6i.large');
   if (!/^[0-9a-f]{40}$/.test(s.engineCliCommit)) throw new Error('Setting "engineCliCommit" must be a full 40-character commit SHA');
+  if (!["true", "false"].includes(get("sideBySideEnabled") || "true")) throw new Error('Setting "sideBySideEnabled" must be true or false');
+  if (!/^(c6i|m6i)\.(large|xlarge|2xlarge|4xlarge)$/.test(s.sideBySideInstanceType)) throw new Error('Setting "sideBySideInstanceType" must be an x86_64 type like c6i.2xlarge');
+  if (!/^\d+(\.\d+)?$/.test(s.sideBySideUsdPerHour)) throw new Error('Setting "sideBySideUsdPerHour" must be a price in dollars per hour, like 0.3648');
   return s;
 }

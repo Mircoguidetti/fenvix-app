@@ -57,8 +57,11 @@ describe("the stack, demo mode (an option)", async () => {
       assert.deepEqual(names, want(who), who);
       for (const x of st) for (const a of arr(x.Action)) assert.ok(a !== "*" && !a.endsWith(":*"), `${who}: ${a}`);
     }
-    assert.ok(!statementsOf(fnRole("worker")).some((x) => arr(x.Action).includes("sqs:SendMessage")), "the worker does not send");
-    assert.ok(!statementsOf(fnRole("sweep")).some((x) => json(x.Action).includes("sqs:") || json(x.Action).includes("s3:")), "the sweep touches neither queue nor bucket");
+    // Rule 3 (spec 20261126-side-by-side-runs item 21): the worker and the sweep now send one work kind,
+    // side_by_side_history, to the work queue. Before: neither sent. The sweep still touches no bucket.
+    assert.ok(statementsOf(fnRole("worker")).some((x) => arr(x.Action).includes("sqs:SendMessage")), "the worker sends side-by-side histories");
+    assert.ok(statementsOf(fnRole("sweep")).some((x) => arr(x.Action).includes("sqs:SendMessage")), "the sweep re-queues due histories");
+    assert.ok(!statementsOf(fnRole("sweep")).some((x) => json(x.Action).includes("s3:")), "the sweep touches no bucket");
     const httpS3 = statementsOf(fnRole("http")).filter((x) => json(x.Action).includes("s3:"));
     assert.deepEqual(httpS3.flatMap((x) => arr(x.Action)), ["s3:PutObject"]);
   });
@@ -153,7 +156,9 @@ describe("the stack, demo mode (an option)", async () => {
 
   it("the dashboard API function: its own settings, its two parameters, may only send to the work queue", () => {
     const vars = (fns.find(([, f]) => f.Properties.FunctionName === "fenvix-prod-github-app-api")![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
-    assert.deepEqual(Object.keys(vars).sort(), ["DASHBOARD_URL", "DB_POOL_MAX", "GITHUB_APP_SLUG", "LOG_LEVEL", "NODE_ENV", "NODE_OPTIONS", "SSM_PREFIX", "SUPABASE_URL", "WORK_QUEUE_URL"]);
+    // Rule 3 (spec 20261126-side-by-side-runs item 15): the five SIDE_BY_SIDE_* settings (plain values) are added.
+    assert.deepEqual(Object.keys(vars).sort(), ["DASHBOARD_URL", "DB_POOL_MAX", "GITHUB_APP_SLUG", "LOG_LEVEL", "NODE_ENV", "NODE_OPTIONS", "SIDE_BY_SIDE_DAILY_CAP", "SIDE_BY_SIDE_ENABLED",
+      "SIDE_BY_SIDE_INSTANCE_TYPE", "SIDE_BY_SIDE_SKIP_DAILY_CAP", "SIDE_BY_SIDE_USD_PER_HOUR", "SSM_PREFIX", "SUPABASE_URL", "WORK_QUEUE_URL"]);
     assert.equal(vars.DASHBOARD_URL, "https://console.fenvix.dev");
     assert.equal(vars.DB_POOL_MAX, "1");
     const st = statementsOf(fnRole("api"));

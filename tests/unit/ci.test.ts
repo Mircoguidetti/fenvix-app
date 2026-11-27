@@ -6,7 +6,7 @@ import {
   MINUTES_PER_UNIT, TRIAL_GATE, auditFrom, billedUnits, billingFrom, daysBetween, minuteBreakdown, roundToSum, runMinutes, familiesOf, familyKeyOf, median, medianTimeToGreen, overviewFrom, projectRow,
   replayCommand, setupChange, setupSnippet, suggestPlan, trialFrom, usageCsv, usageFrom, type UsageEvent,
 } from "../../src/data/ci.ts";
-import { fileOfTest, friendlyError, mapAuditRerun, mapDefect, mapGitHubRepository, mapInstallation, mapPlan, mapProgress, mapProject, mapReceipt, mapRun, mapTestResult, mapUsageEvent } from "../../src/data/ci-rows.ts";
+import { fileOfTest, friendlyError, isSetupMerged, mapAuditRerun, mapDefect, mapGitHubRepository, mapInstallation, mapPlan, mapProgress, mapProject, mapReceipt, mapRun, mapTestResult, mapUsageEvent } from "../../src/data/ci-rows.ts";
 import type { AuditRerun, Defect, GitHubRate, Plan, Project, Run } from "../../src/data/types.ts";
 
 const RATE: GitHubRate = { usdPerMinute: 0.008, runner: "GitHub-hosted Linux, 2 cores", source: "test", checkedOn: "2026-11-16" };
@@ -333,4 +333,10 @@ test("errors read as sentences", () => {
   assert.match(friendlyError({ message: "TypeError: Failed to fetch" }), /Could not reach the server/);
   assert.match(friendlyError({ message: "JWT expired" }), /session has ended/);
   assert.match(friendlyError({ code: "42501", message: "permission denied for table ci_runs" }), /read only/);
+});
+
+// protects=the Connect page's step 3 ("Merge it on GitHub") is done for a merged side-by-side pull request too, as the
+// setup pull request reads merged there; fails_when=side_by_side is not merged; no_claim=-.
+test("setup merged: merged, already on fenvix, side by side; nothing else", () => {
+  assert.deepEqual(["merged", "already_fenvix", "side_by_side", "side_by_side_pr_open", "pr_open", "closed", "pending"].map(isSetupMerged), [true, true, true, false, false, false, false]);
 });

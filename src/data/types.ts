@@ -19,6 +19,11 @@ export type SetupState = S["SetupState"];
 export type TestOutcome = S["TestOutcome"];
 export type MissKind = S["MissKind"];
 export type Region = S["Region"];
+export type OnboardingKind = S["OnboardingKind"];
+export type OnboardingKindState = S["OnboardingKindState"];
+export type SideBySide = S["SideBySide"];
+export type SideBySidePair = S["SideBySidePair"];
+export type SideBySideResult = S["SideBySideResult"];
 
 export type SetupPullRequest = S["SetupPullRequest"];
 /** "Before fenvix": measured from the repository's GitHub Actions history when it was connected. */

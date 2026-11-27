@@ -37,7 +37,13 @@ async function project(t: Tx, ws: string, id: string): Promise<Project> {
   return mapProject(r);
 }
 
-const runs = async (t: Tx, sql: string, params: unknown[]): Promise<Run[]> => (await t.q(`select * from public.ci_runs where ${sql}`, params)).map(mapRun);
+/**
+ * Every reader of runs reads the organization's own runs (kind ci_run) only: a side-by-side run (kind side_by_side)
+ * is never in the trial, the runs list, the overview, usage, search or activity; the console reads those through
+ * getSideBySide.
+ */
+const OWN = "kind = 'ci_run'";
+const runs = async (t: Tx, sql: string, params: unknown[]): Promise<Run[]> => (await t.q(`select * from public.ci_runs where ${OWN} and ${sql}`, params)).map(mapRun);
 
 async function defects(t: Tx, ws: string, where: string, params: unknown[], all: Project[], limit?: number) {
   const byId = new Map(all.map((p) => [p.id, p]));
@@ -47,7 +53,7 @@ async function defects(t: Tx, ws: string, where: string, params: unknown[], all:
 }
 
 const events = async (t: Tx, ws: string, from: Date, to: Date) =>
-  (await t.q("select project_id, occurred_at, billable, baseline_minutes from public.ci_usage_events where workspace_id = $1 and occurred_at >= $2 and occurred_at < $3",
+  (await t.q("select project_id, occurred_at, billable, baseline_minutes from public.ci_usage_events where workspace_id = $1 and kind <> 'side_by_side' and occurred_at >= $2 and occurred_at < $3",
     [ws, from, to])).map(mapUsageEvent);
 
 interface Sub { plan_id: string; nightly_exploration_addon: boolean; trial_started_at: Date | null; trial_ends_at: Date | null }
@@ -94,7 +100,7 @@ async function rowRuns(t: Tx, ws: string, now: Date, projectId?: string): Promis
   const only = projectId ? " and project_id = $3" : "";
   const params = projectId ? [ws, monthStart(now), projectId] : [ws, monthStart(now)];
   const month = await runs(t, `workspace_id = $1 and started_at >= $2${only}`, params);
-  const latest = await t.q(`select distinct on (project_id) * from public.ci_runs where workspace_id = $1 and started_at < $2${only} order by project_id, started_at desc`, params);
+  const latest = await t.q(`select distinct on (project_id) * from public.ci_runs where ${OWN} and workspace_id = $1 and started_at < $2${only} order by project_id, started_at desc`, params);
   return [...month, ...latest.map(mapRun)];
 }
 
@@ -155,7 +161,7 @@ export const listRuns: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const p = await project(ctx.t, ws, ctx.params.projectId);
   const q = ctx.query as { scope: "all" | "pr" | "default"; status: "all" | "passed" | "failed" | "not_proven"; since?: string; page: number; pageSize: number };
-  const where = ["workspace_id = $1", "project_id = $2"];
+  const where = [OWN, "workspace_id = $1", "project_id = $2"];
   const params: unknown[] = [ws, p.id];
   if (q.scope === "pr") where.push("pull_request is not null");
   if (q.scope === "default") { params.push(p.defaultBranch); where.push(`branch = $${params.length}`); }
@@ -178,7 +184,7 @@ export const getSkipShareSeries: Handler = async (ctx) => {
   const days = ctx.query.days as number;
   const from = dayStart(new Date(ctx.now.getTime() - (days - 1) * DAY));
   const rows = await ctx.t.q<{ started_at: Date; skip_share: number }>(
-    "select started_at, skip_share from public.ci_runs where workspace_id = $1 and project_id = $2 and started_at >= $3 and status in ('passed', 'failed', 'not_proven')", [ws, p.id, from]);
+    "select started_at, skip_share from public.ci_runs where kind = 'ci_run' and workspace_id = $1 and project_id = $2 and started_at >= $3 and status in ('passed', 'failed', 'not_proven')", [ws, p.id, from]);
   const byDay = new Map<string, number[]>();
   for (const r of rows) {
     const k = dayStart(r.started_at).toISOString();
@@ -208,7 +214,7 @@ export const getAudit: Handler = async (ctx) => {
   const audited = await runs(ctx.t, "workspace_id = $1 and project_id = $2 and started_at >= $3 and started_at < $4 and audit_rerun > 0", [ws, p.id, from, to]);
   // The latest 50 and every untrusted key of the window: all auditFrom lists.
   const sql = (extra: string) => `select a.*, r.number as run_number from public.ci_audit_reruns a join public.ci_runs r on r.id = a.run_id
-    where a.workspace_id = $1 and r.project_id = $2 and a.at >= $3 and a.at < $4 ${extra}`;
+    where r.kind = 'ci_run' and a.workspace_id = $1 and r.project_id = $2 and a.at >= $3 and a.at < $4 ${extra}`;
   const latest = await ctx.t.q(sql("order by a.at desc, a.test_id limit 50"), [ws, p.id, from, to]);
   const untrusted = await ctx.t.q(sql("and a.untrusted order by a.at desc limit 1000"), [ws, p.id, from, to]);
   const seen = new Set<string>();
@@ -260,7 +266,7 @@ export function etagMatches(header: string | string[] | undefined, etag: string)
 }
 
 async function runRow(t: Tx, ws: string, id: string): Promise<Row> {
-  const r = await t.one("select r.*, r.updated_at::text as etag_updated, r.progress_at::text as etag_progress from public.ci_runs r where r.workspace_id = $1 and r.id = $2", [ws, id]);
+  const r = await t.one("select r.*, r.updated_at::text as etag_updated, r.progress_at::text as etag_progress from public.ci_runs r where r.kind = 'ci_run' and r.workspace_id = $1 and r.id = $2", [ws, id]);
   if (!r) throw notFound(NO_RUN);
   return r;
 }
@@ -368,7 +374,7 @@ export const getDefect: Handler = async (ctx) => {
 export const listUsageMonths: Handler = async (ctx) => {
   const { id: ws } = orgOf(ctx);
   const rows = await ctx.t.q<{ m: string }>(
-    `select to_char(started_at at time zone 'UTC', 'YYYY-MM') as m from public.ci_runs where workspace_id = $1
+    `select to_char(started_at at time zone 'UTC', 'YYYY-MM') as m from public.ci_runs where kind = 'ci_run' and workspace_id = $1
      union select to_char(month, 'YYYY-MM') from public.ci_usage_events where workspace_id = $1 and billable`, [ws]);
   return { items: [...new Set([monthOf(ctx.now), ...rows.map((r) => r.m)])].sort().reverse() };
 };

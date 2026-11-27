@@ -192,6 +192,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organization/onboarding-kind": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** @description How the organization's repositories are onboarded, and whether side-by-side runs are on (SIDE_BY_SIDE_ENABLED). */
+        get: operations["getOnboardingKind"];
+        /**
+         * @description move: the setup pull request changes the test job's runs-on to fenvix. side_by_side: a pull request adds one new
+         *     workflow file that runs a copy of the test job on fenvix; the customer's workflow is unchanged and decides alone.
+         *     Changes only the pull requests opened after it. 409 when side-by-side runs are turned off.
+         */
+        put: operations["setOnboardingKind"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/overview": {
         parameters: {
             query?: never;
@@ -265,6 +290,32 @@ export interface paths {
         };
         get?: never;
         put: operations["saveProjectSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{projectId}/side-by-side": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * @description A repository that runs side by side: "Today" (its own test job's last 30 days: runs per day, time, runner and
+         *     cost) and the pairs of its test job with ours, newest first, 50 per page, each with the comparison result.
+         *     available false (and no items) for a repository that does not run side by side.
+         */
+        get: operations["getSideBySide"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1607,10 +1658,107 @@ export interface components {
         /**
          * @description pending: not tried yet; pr_open / merged / closed: the setup pull request; no_workflow: no workflow file;
          *     no_test_job: no job that runs tests; already_fenvix: already on runs-on fenvix; unsupported: a test runner fenvix
-         *     does not support; failed: the App could not open the pull request (onboardingDetail says why).
+         *     does not support, or a test job that cannot run side by side; failed: the App could not open the pull request
+         *     (onboardingDetail says why); side_by_side_pr_open / side_by_side: the side-by-side pull request is open / merged
+         *     (or its file is on the default branch).
          * @enum {string}
          */
-        OnboardingState: "pending" | "pr_open" | "merged" | "closed" | "no_workflow" | "no_test_job" | "already_fenvix" | "unsupported" | "failed";
+        OnboardingState: "pending" | "pr_open" | "merged" | "closed" | "no_workflow" | "no_test_job" | "already_fenvix" | "unsupported" | "failed" | "side_by_side_pr_open" | "side_by_side";
+        CostRange: {
+            min: number;
+            max: number;
+        };
+        /** @enum {string} */
+        SideBySideResult: "same" | "different" | "not_comparable" | "not_proven" | "waiting";
+        SideBySidePair: {
+            headSha: string;
+            event: string | null;
+            prNumber: number | null;
+            result: components["schemas"]["SideBySideResult"];
+            detail: string;
+            notes: string[];
+            his: null | {
+                jobId: number;
+                attempt: number;
+                conclusion: string | null;
+                /** Format: date-time */
+                completedAt: string | null;
+                seconds: number | null;
+                price: string;
+                cost: components["schemas"]["CostRange"] | null;
+            };
+            ours: null | {
+                jobId: number;
+                attempt: number;
+                /** Format: date-time */
+                completedAt: string | null;
+                seconds: number;
+                vcpuMinutes: number;
+                machineCost: number;
+                testsRan: number;
+                wouldSkipTests: number;
+                wouldSaveMs: number;
+                skipMachine: boolean;
+                /** @description The commit our runner checked out (for a pull request, the merge commit). */
+                checkoutSha: string | null;
+            };
+        };
+        SideBySide: {
+            available: boolean;
+            repository: null | {
+                fullName: string;
+                state: components["schemas"]["OnboardingState"];
+                jobName: string | null;
+                testStep: string | null;
+                matrixSuffix: string | null;
+            };
+            today: null | {
+                runs: number;
+                /** @description Mean runs per day over the last 30 days (null below 5 runs). */
+                runsPerDay: number | null;
+                medianSeconds: number | null;
+                runnerLabel: string | null;
+                /** @description The rate, its range, "price unknown for <label>" or $0 for a public repository on GitHub-hosted runners. */
+                price: string;
+                costPerRun: components["schemas"]["CostRange"] | null;
+                costPerMonth: components["schemas"]["CostRange"] | null;
+                /** @enum {string} */
+                history: "read" | "reading";
+                notes: string[];
+            };
+            header: null | {
+                pairs: number;
+                same: number;
+                hisSeconds: number | null;
+                oursSeconds: number | null;
+                hisCost: number | null;
+                oursMachineCost: number | null;
+                oursVcpuMinutes: number | null;
+            };
+            ours: {
+                instanceType: string;
+                vcpus: number;
+                /** @description SIDE_BY_SIDE_USD_PER_HOUR: our machine's on-demand price. */
+                usdPerHour: number;
+            };
+            items: components["schemas"]["SideBySidePair"][];
+            total: number;
+            page: number;
+            pageSize: number;
+        };
+        /**
+         * @description move: the test job's runs-on becomes fenvix. side_by_side: a new workflow file runs a copy of the test job on fenvix.
+         * @enum {string}
+         */
+        OnboardingKind: "move" | "side_by_side";
+        OnboardingKindChoice: {
+            kind: components["schemas"]["OnboardingKind"];
+        };
+        OnboardingKindState: {
+            kind: components["schemas"]["OnboardingKind"];
+            /** @description False while side-by-side runs are turned off (SIDE_BY_SIDE_ENABLED=false): the choice is hidden. */
+            sideBySideAvailable: boolean;
+        };
         GitHubRepository: {
             repositoryId: number;
             installationId: number;
@@ -2253,6 +2401,58 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getOnboardingKind: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingKindState"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setOnboardingKind: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OnboardingKindChoice"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingKindChoice"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getOverview: {
         parameters: {
             query?: never;
@@ -2354,6 +2554,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Project"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSideBySide: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+            };
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SideBySide"];
                 };
             };
             default: components["responses"]["Error"];

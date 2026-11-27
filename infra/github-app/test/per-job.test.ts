@@ -66,7 +66,9 @@ describe("the stack, per-job mode", async () => {
     const run = st.filter((x) => arr(x.Action).includes("ec2:RunInstances"));
     assert.equal(run.length, 5);
     const tagged = run.find((x) => x.Sid === "OnlyTaggedJobMachines")!;
-    assert.deepEqual(tagged.Condition!.StringEquals, { "aws:RequestTag/fenvix:role": "runner-job", "ec2:InstanceType": "c6i.large" });
+    // Rule 3 (spec 20261126-side-by-side-runs item 12): the worker may also start the side-by-side job's full machine
+    // (an instance type override of the template). Before: c6i.large only. The warm-up and demo functions keep c6i.large.
+    assert.deepEqual(tagged.Condition!.StringEquals, { "aws:RequestTag/fenvix:role": "runner-job", "ec2:InstanceType": ["c6i.large", "c6i.2xlarge"] });
     // Instance, disk and network interface: only through our launch template (R-012 F7).
     for (const sid of ["OnlyTaggedJobMachines", "OnlyTaggedJobDisks", "NetworkInterfaceFromTemplate"]) {
       assert.match(json(run.find((x) => x.Sid === sid)!.Condition!.ArnEquals), /"ec2:LaunchTemplate":.*launch-template\//, sid);
@@ -76,10 +78,13 @@ describe("the stack, per-job mode", async () => {
     assert.deepEqual(st.find((x) => x.Sid === "TagAtLaunchOnly")!.Condition, { StringEquals: { "ec2:CreateAction": "RunInstances" } });
     const pass = st.find((x) => arr(x.Action).includes("iam:PassRole"))!;
     assert.match(json(pass.Resource), /FleetJobRole/);
-    // It terminates warm-up machines only (a customer job takes a warm-up's machine), never a customer's job machine.
+    // It terminates warm-up machines and full side-by-side machines only (a paying job takes their slots), never a
+    // customer's job machine or a skip machine. Rule 3: the side-by-side statement is new (spec 20261126-side-by-side-runs).
     const term = st.filter((x) => arr(x.Action).includes("ec2:TerminateInstances"));
-    assert.equal(term.length, 1);
-    assert.deepEqual(term[0]!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job", "aws:ResourceTag/fenvix:kind": "warmup" } });
+    assert.deepEqual(term.map((x) => x.Condition).sort((a, b) => json(a).localeCompare(json(b))), [
+      { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job", "aws:ResourceTag/fenvix:kind": "side-by-side" } },
+      { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job", "aws:ResourceTag/fenvix:kind": "warmup" } },
+    ]);
   });
 
   it("the reaper may only terminate job machines; it runs every 10 minutes; the limit is runnerMaxHours", () => {

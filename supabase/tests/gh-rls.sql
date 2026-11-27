@@ -121,7 +121,9 @@ begin
   assert (select count(*) from public.gh_repositories) = 1, 'the member does not see exactly their repository';
   assert (select count(*) from public.ci_usage_events) = 1, 'the member does not see exactly their usage event';
   assert (select count(*) from public.ci_usage_events where workspace_id is null) = 0, 'the member sees an unlinked usage event';
-  foreach t in array array['gh_pull_requests', 'gh_pushes', 'gh_jobs', 'gh_run_summaries', 'gh_webhook_deliveries']
+  -- 0020: gh_jobs is readable through fenvix_api for its side-by-side rows only; job 5001 (an ordinary job of W) stays hidden.
+  assert (select count(*) from public.gh_jobs) = 0, 'a member reads an ordinary App job';
+  foreach t in array array['gh_pull_requests', 'gh_pushes', 'gh_run_summaries', 'gh_webhook_deliveries']
   loop
     begin
       execute format('select count(*) from public.%I', t) into n;

@@ -1822,3 +1822,18 @@ table.data.dbs thead th { font-size: 12px; }
 .cx-sub-back { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; min-height: 32px; margin: -4px 0 6px; padding: 0 10px 0 6px; border-radius: 8px; color: var(--muted); font-size: 13px; font-weight: 500; }
 .cx-sub-back:hover { background: var(--nav-hover); color: var(--text); }
 .cx-drawer .cx-drawer-back { color: var(--nav-text); }
+
+/* Connect: how fenvix runs the tests (move the job, or side by side). The labels are long: they wrap on narrow screens. */
+.connect-kind { display: grid; gap: 6px; margin: 4px 0 12px; }
+.connect-kind .seg { flex-wrap: wrap; }
+.connect-kind .seg button { white-space: normal; height: auto; min-height: 28px; padding: 5px 11px; text-align: left; justify-content: flex-start; }
+.connect-kind .seg button:disabled { cursor: not-allowed; opacity: 0.7; }
+.connect-kind .seg button:disabled:hover:not([aria-pressed="true"]) { background: transparent; }
+
+/* Project page: side-by-side runs ("Today", "Side by side"). */
+.side-by-side { display: grid; gap: 16px; margin-bottom: 16px; }
+.sbs-notes { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 2px; }
+.side-by-side .kpi-value { white-space: normal; overflow-wrap: anywhere; }
+.side-by-side .kpis .kpi-value { font-size: clamp(17px, 2.2vw, 24px); }
+.sbs-table .name-cell > .state { align-self: flex-start; }
+@media (max-width: 640px) { .connect-kind .seg button { min-height: var(--touch); } }

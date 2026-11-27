@@ -156,6 +156,9 @@ export function createApiDataClient(cfg: ApiConfig): DataClient {
     // the person that link was made for.
     completeGitHubInstall: (completion) => call(api.POST("/github/installations/complete", { body: { completion } })),
     openSetupPullRequest: (repositoryId) => call(api.POST("/github/repositories/{repositoryId}/setup-pull-request", { params: { header: ws(), path: { repositoryId } } })),
+    getSideBySide: (projectId, page = 1) => call(api.GET("/projects/{projectId}/side-by-side", { params: { header: ws(), path: { projectId }, query: { page } } })),
+    getOnboardingKind: () => call(api.GET("/organization/onboarding-kind", { params: { header: ws() } })),
+    setOnboardingKind: (kind) => call(api.PUT("/organization/onboarding-kind", { params: { header: ws() }, body: { kind } })),
 
     getSettings: () => call(api.GET("/settings", { params: { header: ws() } })),
     saveSettings: (next) => call(api.PUT("/settings", { params: { header: ws() }, body: next })),

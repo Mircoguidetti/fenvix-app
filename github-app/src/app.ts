@@ -40,6 +40,7 @@ export function buildCore(cfg: Config, log: Logger, launcher: RunnerLauncher | n
     runsOnLabel: cfg.runsOnLabel, onboardingBranch: cfg.onboardingBranch, onboardAllRepositories: cfg.onboardAllRepositories,
     dashboardUrl: cfg.dashboardUrl, webUrl: cfg.webUrl, summaryWaitSeconds: cfg.summaryWaitSeconds,
     ...(cfg.runnerTokens[0] ? { summaryKey: cfg.runnerTokens[0] } : {}), cacheSigningKey: cfg.cacheSigningKey, warmup: cfg.warmup,
+    sideBySide: cfg.sideBySide,
   }, log, launcher);
   return { service, db, gh };
 }
@@ -71,6 +72,7 @@ export async function buildApp(deps: Deps): Promise<App> {
   });
   const { service, db, gh } = buildCore(cfg, fastify.log, deps.launcher ?? null);
   const queue = deps.queue ?? new InProcessQueue(service);
+  service.enqueueHistory ??= (repositoryId) => queue.enqueue({ kind: "side_by_side_history", repositoryId });
 
   // The raw bytes are kept: the webhook signature is computed over them, not over re-serialised JSON.
   fastify.addContentTypeParser("application/json", { parseAs: "buffer" }, (req, body, done) => {

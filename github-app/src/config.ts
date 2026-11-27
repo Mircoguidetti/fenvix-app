@@ -1,5 +1,6 @@
 import { createPrivateKey, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { vcpusOf } from "./runners/sizes.ts";
 import { DEFAULT_WARMUP, type WarmupSettings } from "./warmup/policy.ts";
 
 /**
@@ -71,6 +72,53 @@ export interface Config {
   /** How often the node server's warm-up scheduler runs (0: never; on AWS the warm-up Lambda's schedule runs it). */
   warmupTickSeconds: number;
   githubTimeoutMs: number;
+  /** Side-by-side runs (SIDE_BY_SIDE_*): the organization's other way of onboarding (docs/data-contract.md). */
+  sideBySide: SideBySideSettings;
+}
+
+export interface SideBySideSettings {
+  /** SIDE_BY_SIDE_ENABLED (default true). Off: no side-by-side pull request is opened; merged files still get skip machines. */
+  enabled: boolean;
+  /** The branch of the side-by-side pull request (never the move branch). */
+  branch: string;
+  /** SIDE_BY_SIDE_DAILY_CAP: full machines per repository per rolling 24 hours (re-run attempts count, skip machines do not). */
+  dailyCap: number;
+  /** SIDE_BY_SIDE_SKIP_DAILY_CAP: skip machines per repository per rolling 24 hours. */
+  skipDailyCap: number;
+  /** SIDE_BY_SIDE_INSTANCE_TYPE: the full machine's EC2 instance type (default c6i.2xlarge, 8 vCPU). */
+  instanceType: string;
+  /** SIDE_BY_SIDE_USD_PER_HOUR: that machine's on-demand price, shown in the console. */
+  usdPerHour: number;
+  /** vCPUs of that machine (8 for c6i.2xlarge), for the console's vCPU-minutes. */
+  vcpus: number;
+}
+
+/** c6i.2xlarge: 8 vCPU, Linux on-demand $0.3648/h in eu-west-1 (the stack's region): AWS EC2 on-demand pricing page, read by the founder 2026-11-26. */
+export const DEFAULT_SIDE_BY_SIDE: SideBySideSettings = {
+  enabled: true, branch: "fenvix/side-by-side", dailyCap: 10, skipDailyCap: 30, instanceType: "c6i.2xlarge", usdPerHour: 0.3648, vcpus: 8,
+};
+
+const INSTANCE_TYPE = /^[a-z][a-z0-9-]*\.[a-z0-9]+$/;
+
+/** SIDE_BY_SIDE_ENABLED, SIDE_BY_SIDE_DAILY_CAP, SIDE_BY_SIDE_SKIP_DAILY_CAP, SIDE_BY_SIDE_INSTANCE_TYPE, SIDE_BY_SIDE_USD_PER_HOUR. */
+export function sideBySideFromEnv(env: Env): SideBySideSettings {
+  const d = DEFAULT_SIDE_BY_SIDE;
+  const enabled = (env.SIDE_BY_SIDE_ENABLED ?? "true").trim().toLowerCase();
+  if (!["true", "false"].includes(enabled)) throw new Error("SIDE_BY_SIDE_ENABLED must be true or false");
+  const instanceType = (env.SIDE_BY_SIDE_INSTANCE_TYPE ?? d.instanceType).trim();
+  if (!INSTANCE_TYPE.test(instanceType)) throw new Error("SIDE_BY_SIDE_INSTANCE_TYPE must be an EC2 instance type (e.g. c6i.2xlarge)");
+  const priceRaw = (env.SIDE_BY_SIDE_USD_PER_HOUR ?? "").trim();
+  const usdPerHour = priceRaw === "" ? d.usdPerHour : Number(priceRaw);
+  if (!Number.isFinite(usdPerHour) || usdPerHour < 0) throw new Error("SIDE_BY_SIDE_USD_PER_HOUR must be a price in dollars per hour");
+  // vCPUs from the size name (medium 1, large 2, xlarge 4, Nxlarge 4N); a size not read that way is refused.
+  const vcpus = vcpusOf(instanceType);
+  if (vcpus === null) throw new Error("SIDE_BY_SIDE_INSTANCE_TYPE must have a size of medium, large, xlarge or Nxlarge (its vCPUs are read from it)");
+  return {
+    enabled: enabled === "true", branch: d.branch,
+    dailyCap: int(env, "SIDE_BY_SIDE_DAILY_CAP", d.dailyCap, 0),
+    skipDailyCap: int(env, "SIDE_BY_SIDE_SKIP_DAILY_CAP", d.skipDailyCap, 0),
+    instanceType, usdPerHour, vcpus,
+  };
 }
 
 type Env = Record<string, string | undefined>;
@@ -213,5 +261,6 @@ export function loadConfig(env: Env = process.env, opts: { surface?: "all" | "wo
     warmup: warmupFromEnv(env),
     warmupTickSeconds: int(env, "WARMUP_TICK_SECONDS", 60, 0),
     githubTimeoutMs: int(env, "GITHUB_TIMEOUT_MS", 15_000, 100),
+    sideBySide: sideBySideFromEnv(env),
   };
 }

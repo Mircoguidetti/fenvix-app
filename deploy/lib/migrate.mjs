@@ -99,6 +99,12 @@ export const PROBES = {
     last: `exists (select 1 from pg_constraint where conname = 'ci_test_results_outcome_check'
                     and conrelid = to_regclass('public.ci_test_results') and pg_get_constraintdef(oid) like '%''not_proven''%')`,
   },
+  // 0020 (side-by-side runs) adds workspaces.onboarding_kind first and the read policy of ci_runner_label_rates last
+  // (only its rate rows and the schema reload come after it, in the same file).
+  "0020": {
+    first: `exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'workspaces' and column_name = 'onboarding_kind')`,
+    last: pol("ci_runner_label_rates", "ci_runner_label_rates_read"),
+  },
 };
 /** The first migration with a probe: a database without it is either empty or not one of ours. */
 const FIRST_PROBED = "0011";

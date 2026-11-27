@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { readSettings } from "../lib/settings.ts";
-import { cdkContext, PER_JOB, SAMPLE, settings, synth } from "./helpers.ts";
+import { cdkContext, PER_JOB, resources, SAMPLE, settings, synth } from "./helpers.ts";
 
 type Stmt = { Sid: string; Effect: string; Action: string | string[]; Resource: string | string[]; Condition?: unknown };
 const policy = (f: string) => JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url), "utf8")) as { Statement: Stmt[] };
@@ -198,5 +198,32 @@ describe("scripts/scram-verifier.mjs (DEPLOY-AWS.md step 8: the DB password neve
     assert.equal(scramVerifier("same", salt), scramVerifier("same", salt), "deterministic for a given salt");
     assert.notEqual(scramVerifier("same"), scramVerifier("same"), "a fresh salt each time");
     assert.throws(() => scramVerifier("pässword"), /ASCII/);
+  });
+});
+
+describe("side-by-side runs: the five SIDE_BY_SIDE_* settings (spec 20261126-side-by-side-runs item 15)", async () => {
+  const { template: t } = await synth({ runnerMode: "per-job" });
+  const fns = resources(t, "AWS::Lambda::Function");
+  const env = (n: string) => (fns.find(([, r]: [string, { Properties: Record<string, unknown> }]) => (r.Properties.FunctionName as string).endsWith(`-${n}`))![1].Properties.Environment as { Variables: Record<string, unknown> }).Variables;
+
+  // protects=the worker (pull requests, machines) gets the five settings from cdk.json, and the queue for histories;
+  // fails_when=a setting is missing or not the stack's value; no_claim=the price (set from AWS's price list by a person).
+  it("the worker gets SIDE_BY_SIDE_* from the stack's settings and WORK_QUEUE_URL; the sweep the queue too", () => {
+    const e = env("worker");
+    assert.deepEqual({ en: e.SIDE_BY_SIDE_ENABLED, cap: e.SIDE_BY_SIDE_DAILY_CAP, skip: e.SIDE_BY_SIDE_SKIP_DAILY_CAP, type: e.SIDE_BY_SIDE_INSTANCE_TYPE, usd: e.SIDE_BY_SIDE_USD_PER_HOUR },
+      { en: "true", cap: "10", skip: "30", type: "c6i.2xlarge", usd: "0.3648" });
+    assert.ok(e.WORK_QUEUE_URL, "worker: the queue");
+    assert.ok(env("sweep").WORK_QUEUE_URL, "sweep: the queue");
+    // The dashboard API: the choice in Connect and our machine's price in the console.
+    assert.deepEqual({ en: env("api").SIDE_BY_SIDE_ENABLED, type: env("api").SIDE_BY_SIDE_INSTANCE_TYPE, usd: env("api").SIDE_BY_SIDE_USD_PER_HOUR }, { en: "true", type: "c6i.2xlarge", usd: "0.3648" });
+  });
+
+  // protects=the settings are checked (a typo fails the synth, not a customer's job); fails_when=a bad value passes;
+  // no_claim=-.
+  it("a bad instance type, price or switch fails", async () => {
+    await assert.rejects(settings({ sideBySideInstanceType: "p5.48xlarge" }), /sideBySideInstanceType/);
+    await assert.rejects(settings({ sideBySideUsdPerHour: "cheap" }), /sideBySideUsdPerHour/);
+    await assert.rejects(settings({ sideBySideEnabled: "yes" }), /sideBySideEnabled/);
+    assert.equal((await settings({ sideBySideEnabled: "false" })).sideBySideEnabled, false);
   });
 });

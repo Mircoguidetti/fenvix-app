@@ -17,6 +17,7 @@ import { ApiDb } from "./db.ts";
 import { ADMINS_ONLY, ApiError, forbidden, NO_ORGANIZATION, notFound, unauthenticated } from "./errors.ts";
 import * as github from "./github.ts";
 import * as orgs from "./orgs.ts";
+import * as sideBySide from "./side-by-side.ts";
 import { dashboardOperations, type Operation } from "./spec.ts";
 
 /** Every dashboard operation of the contract, by operationId. */
@@ -25,7 +26,7 @@ export const HANDLERS: Record<string, Handler> = {
   getOrganization: orgs.getOrganization, renameOrganization: orgs.renameOrganization, leaveOrganization: orgs.leaveOrganization,
   listMembers: orgs.listMembers, changeMemberRole: orgs.changeMemberRole, removeMember: orgs.removeMember,
   listInvitations: orgs.listInvitations, createInvitation: orgs.createInvitation, revokeInvitation: orgs.revokeInvitation,
-  acceptInvitation: orgs.acceptInvitation, getSettings: orgs.getSettings, saveSettings: orgs.saveSettings,
+  acceptInvitation: orgs.acceptInvitation, getSettings: orgs.getSettings, saveSettings: orgs.saveSettings, getOnboardingKind: orgs.getOnboardingKind, setOnboardingKind: orgs.setOnboardingKind, getSideBySide: sideBySide.getSideBySide,
   getOverview: data.getOverview, listProjects: data.listProjects, getProject: data.getProject, saveProjectSettings: data.saveProjectSettings,
   listRuns: data.listRuns, getSkipShareSeries: data.getSkipShareSeries, listExplorations: data.listExplorations, getAudit: data.getAudit,
   getSetupChange: data.getSetupChange, listActivity: data.listActivity, getRun: data.getRun, listTestResults: data.listTestResults,

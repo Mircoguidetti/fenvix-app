@@ -28,6 +28,8 @@ export interface RunTarget {
   seenAt: Date;
   /** The job's duration in ms (GitHub's timings), once finished: no test lasts longer. Null or 0: no bound known. */
   maxTestMs?: number | null;
+  /** A side-by-side run: its defect bundles are not stored (they would show in the customer's defects, linked to no run page). */
+  noDefects?: boolean;
 }
 
 /** The job the chunks came from (gh_run_results' key). */
@@ -170,7 +172,7 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
   const cap = run.maxTestMs && run.maxTestMs > 0 ? Math.round(run.maxTestMs) : null;
 
   // Defects (the per-test outcomes point at them by fingerprint).
-  await upsertDefects(c, run.projectId, all<RunnerDefect>("defects").map((d) => defectRow(d, run.language)), { runId: run.id, seenAt: run.seenAt });
+  if (!run.noDefects) await upsertDefects(c, run.projectId, all<RunnerDefect>("defects").map((d) => defectRow(d, run.language)), { runId: run.id, seenAt: run.seenAt });
 
   // Receipts. reused_run_id: the project's run whose engine run id is the one the receipt reuses.
   const receipts = lastBy(all<RunnerReceipt>("receipts").map(receiptRow), (r) => r.test_id);
@@ -179,7 +181,7 @@ export async function applyChunks(c: Client, run: RunTarget, job: JobKey, chunks
       `insert into ci_skip_receipts (workspace_id, run_id, test_id, cache_key, reused_run_id, reused_engine_run_id, fingerprint, reused_duration_ms,
          code, modules, files_read, env_read, runtime, config, changed_files_proven)
        select public.cp_workspace(), $1, x.test_id, x.cache_key,
-         (select r.id from ci_runs r where r.project_id = $2 and r.engine_run_id = x.reused_engine_run_id and r.id <> $1 order by r.number desc limit 1),
+         (select r.id from ci_runs r where r.kind = 'ci_run' and r.project_id = $2 and r.engine_run_id = x.reused_engine_run_id and r.id <> $1 order by r.number desc limit 1),
          x.reused_engine_run_id, x.fingerprint, x.reused_duration_ms, x.code, x.modules, x.files_read, x.env_read, x.runtime, x.config, x.changed_files_proven
        from jsonb_to_recordset($3::jsonb) as x(test_id text, cache_key text, reused_engine_run_id text, fingerprint text, reused_duration_ms bigint,
          code jsonb, modules jsonb, files_read jsonb, env_read jsonb, runtime jsonb, config jsonb, changed_files_proven int)

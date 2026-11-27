@@ -740,6 +740,49 @@ An organization's region (`us` | `eu`) decides where its jobs' machines run (`RU
 one AWS region and launch template per region). The App records the region on the job (`gh_jobs.region`) and the run
 (`ci_runs.region`), and passes it to the machine (`FENVIX_REGION`). A region with no placement gets no machine.
 
+### Side-by-side runs (migration 0020)
+
+An organization chooses how its repositories are onboarded (`workspaces.onboarding_kind`, `GET`/`PUT
+/v1/organization/onboarding-kind`, owner or admin): `move` (the setup pull request changes the test job's `runs-on`)
+or `side_by_side`. Not to be confused with the trial's `FENVIX_MODE=shadow`: side-by-side jobs always run in shadow.
+
+- **The pull request.** Repositories chosen one by one get their pull request once the installation is linked
+  (before: `gh_repositories.awaiting_link`, detail "waiting for the organization link"). A side-by-side pull request
+  comes from branch `fenvix/side-by-side` and adds one file, `.github/workflows/fenvix-side-by-side.yml`, built from
+  the customer's test job (`buildSideBySideWorkflow`: his push / pull_request / workflow_dispatch triggers, one job on
+  the fenvix label that never gates, his steps up to his test step behind a gate step, no cache save, no write to
+  GitHub, no fork pull request; refused with a reason otherwise). States `side_by_side_pr_open`, then `side_by_side`.
+- **Our job** (`gh_jobs.kind = 'side_by_side'`: the fenvix label and the workflow run's `path` is that file): no check
+  run, no comment; `FENVIX_MODE=shadow`; the machine `SIDE_BY_SIDE_INSTANCE_TYPE`; at most `SIDE_BY_SIDE_DAILY_CAP`
+  full machines per repository per rolling 24 hours, else a skip machine (`gh_jobs.skip_machine`; the machine writes
+  `/etc/fenvix/sbs-skip`, the gate step reads it and no kept step runs), at most `SIDE_BY_SIDE_SKIP_DAILY_CAP` a day.
+  Hard lifetimes: a skip machine powers off 10 minutes after boot; a full machine at our job's `timeout-minutes`
+  (his, at most 60: `gh_repositories.side_by_side_timeout_minutes`) plus 10 minutes, whatever the file says later.
+  A full machine counts 4 slots of the fleet limit (one slot = a c6i.large, 2 vCPU) and starts only while its slots
+  plus the warm-up reserve (`WARMUP_RESERVE`, default 1) are free, else the job gets a skip machine: with
+  `RUNNER_MAX_RUNNING` 4 that is never, so full side-by-side machines need a higher limit. A paying job that finds the
+  fleet full stops a warm-up first, else the newest full side-by-side machine (`gh_jobs.sbs_stopped_at`; the pair
+  reads "not comparable: stopped for a customer job"). Skip machines take no slot; at most 4 run at once per region,
+  above that the job gets no machine (it waits; his workflow is not affected). A machine only for code of the
+  repository itself: a run GitHub does not show, a fork's pull request or a run without its head repository gets
+  none; a failed lookup of the run is retried, never guessed. A repository being moved (setup pull request open or
+  merged) is not onboarded side by side; one that runs side by side is not moved until its side-by-side file is gone
+  from the default branch.
+  Its run row is `ci_runs.kind = 'side_by_side'` (without a summary: `not_proven`, never passed); every reader of runs
+  reads `kind = 'ci_run'` only. Its usage event is `kind = 'side_by_side'`, `billable = false`, `reason =
+  'side-by-side'`. `gh_jobs.has_summary` and `gh_jobs.checkout_sha` (summary.json `commit`) are recorded at publish.
+- **His job** (`gh_customer_jobs`, from completed `workflow_job` webhooks and from his last 30 days of runs, work
+  `side_by_side_history`): the test job's resolved name (`gh_repositories.side_by_side_job_name`), or that name plus
+  ` (` matrix values `)`; its steps, conclusion and timings; event and pull request from the workflow run.
+- **Pairs and result** (`GET /v1/projects/{projectId}/side-by-side`): by head SHA, event and pull request, his job of
+  the repository's matrix suffix with ours, the latest completed attempt of each; the comparison rule (first match):
+  his job cancelled / timed out / skipped / waiting or missing → not comparable; ours on a skip machine, cancelled,
+  timed out or without summary → not comparable; the engine NOT PROVEN → not proven; his failure at another step than
+  his test step → not comparable; then same or different. A side missing 6 hours after the other is "not seen".
+- **Prices** of his runner: `ci_runner_label_rates` (label → `ci_reference_rates`, which gains `usd_per_minute_max`
+  for a range); minutes billed per job rounded up; a public repository on GitHub-hosted runners costs $0; an unknown
+  label says "price unknown for <label>". `github-linux-2core` is 0.006 a minute since 0020 (it was 0.008).
+
 ## How records reach the dashboard
 
 The runner sends the records above to the App; the App writes Postgres as the restricted role `fenvix_github_app`,
@@ -750,6 +793,10 @@ database directly.
 
 ## Changes
 
+- 2026-11-26 (migration 0020): **side-by-side runs** (section above): the organization's onboarding kind, the pull
+  request after the link, `gh_customer_jobs`, the job and run kind `side_by_side` (never billed, never in the runs
+  readers), runner label prices, `GET /v1/projects/{projectId}/side-by-side`. The GitHub-hosted reference rate is now
+  0.006 a minute (it was 0.008): "On GitHub-hosted" amounts are 25% lower from then on.
 - 2026-11-23 (console proof review, two rounds): N fails closed (the rule above: a malformed proof, contradictory or
   failed verify, a missing exit code, a proof that does not cover `ranExecuted`); an unreadable stored summary is
   `not_proven`, never the job's conclusion; per-test `not_proven` rows raise the run and re-publish its check run; new

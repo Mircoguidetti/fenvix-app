@@ -7,6 +7,8 @@ import { invoke, type HttpApiEvent, type HttpApiResult } from "./apigw.ts";
 /** The parts of an SQS event the worker reads. */
 export interface SqsEvent { Records: { messageId: string; body: string; attributes?: { ApproximateReceiveCount?: string } }[] }
 export interface SqsBatchResponse { batchItemFailures: { itemIdentifier: string }[] }
+/** The part of the Lambda context the worker reads: the time left, so long work stops before the timeout. */
+export interface LambdaContextLike { getRemainingTimeInMillis(): number }
 
 type WorkerCore = Pick<Core, "service"> & { log: Logger; blobs: BlobPort | null };
 
@@ -26,15 +28,17 @@ export function makeHttpHandler(getApp: () => Promise<Pick<App, "fastify">>) {
  * visibility timeout; after maxReceiveCount tries it goes to the dead-letter queue.
  */
 export function makeWorkerHandler(getCore: () => Promise<WorkerCore>) {
-  return async (event: SqsEvent): Promise<SqsBatchResponse> => {
+  return async (event: SqsEvent, context?: LambdaContextLike): Promise<SqsBatchResponse> => {
     const { service, log, blobs } = await getCore();
+    // When this invocation ends: the batch's messages share it (each long one stops with time to spare).
+    const deadline = context ? Date.now() + context.getRemainingTimeInMillis() : undefined;
     const batchItemFailures: { itemIdentifier: string }[] = [];
     for (const r of event.Records) {
       let what = "unreadable message";
       try {
         const { work, s3Key } = await readMessage(r.body, blobs);
         what = describeWork(work);
-        await runWork(service, work);
+        await runWork(service, work, deadline !== undefined ? { deadline } : {});
         if (s3Key && blobs) await blobs.delete(s3Key).catch((e: unknown) => log.warn({ key: s3Key, err: e instanceof Error ? e.message : String(e) }, "could not delete the overflow object"));
         log.info({ work: what, messageId: r.messageId }, "work done");
       } catch (e) {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type pg from "pg";
-import { CI_YAML, Harness, installationCreated, REPOS, resetDb, WEB_YAML, ACCOUNT, INSTALLATION_ID, pullRequest, hook, repoLite, push } from "../helpers/harness.ts";
+import { CI_YAML, Harness, installationCreated, makeOrg, REPOS, resetDb, WEB_YAML, ACCOUNT, INSTALLATION_ID, pullRequest, hook, repoLite, push } from "../helpers/harness.ts";
 
 describe("webhooks and onboarding", () => {
   const h = new Harness();
@@ -32,7 +32,9 @@ describe("webhooks and onboarding", () => {
     assert.equal((await h.send("star", { action: "created" })).statusCode, 202);
   });
 
-  it("installation.created: stores the installation and opens one onboarding pull request per chosen repository", async () => {
+  // Rule 3 (spec 20261126-side-by-side-runs item 6): the pull request now comes after the organization link (the kind
+  // of pull request is the organization's setting, unknown before it). Before: one pull request at installation.created.
+  it("installation.created: stores the installation; no pull request before the link, then one onboarding pull request per chosen repository", async () => {
     const res = await h.send("installation", installationCreated([REPOS.shop, REPOS.web, REPOS.docs]), { delivery: "inst-created-1" });
     assert.equal(res.statusCode, 202);
     const inst = (await admin.query("select * from gh_installations")).rows;
@@ -40,6 +42,11 @@ describe("webhooks and onboarding", () => {
     assert.equal(inst[0].account_login, "acme");
     assert.equal(inst[0].workspace_id, null);
     assert.equal(inst[0].permissions.workflows, "write");
+    const before = (await admin.query("select onboarding_state, awaiting_link, onboarding_detail from gh_repositories order by repository_id")).rows;
+    assert.deepEqual(before.map((r) => [r.onboarding_state, r.awaiting_link, r.onboarding_detail]), Array(3).fill(["pending", true, "waiting for the organization link"]));
+    assert.equal(h.gh.repos.get("acme/shop")!.pulls.length, 0, "no pull request before the link");
+    const org = await makeOrg(admin, "webhooks-owner");
+    await h.app.service.linkInstallation(INSTALLATION_ID, org.workspaceId, org.userId);
 
     const repos = Object.fromEntries((await admin.query("select * from gh_repositories order by repository_id")).rows.map((r) => [r.full_name, r]));
     assert.equal(repos["acme/shop"].onboarding_state, "pr_open");
@@ -49,6 +56,7 @@ describe("webhooks and onboarding", () => {
     assert.equal(repos["acme/web"].onboarding_state, "pr_open");
     assert.equal(repos["acme/web"].detected_test_runner, "vitest");
     assert.equal(repos["acme/docs"].onboarding_state, "no_workflow");
+    assert.equal(repos["acme/shop"].awaiting_link, false);
 
     const shop = h.gh.repos.get("acme/shop")!;
     assert.equal(shop.pulls.length, 1);

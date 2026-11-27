@@ -173,6 +173,27 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Settings" } } } }
         default: { $ref: "#/components/responses/Error" }
+  /organization/onboarding-kind:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }]
+    get:
+      tags: [dashboard]
+      operationId: getOnboardingKind
+      description: How the organization's repositories are onboarded, and whether side-by-side runs are on (SIDE_BY_SIDE_ENABLED).
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingKindState" } } } }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      tags: [dashboard]
+      operationId: setOnboardingKind
+      x-fenvix-role: admin
+      description: |
+        move: the setup pull request changes the test job's runs-on to fenvix. side_by_side: a pull request adds one new
+        workflow file that runs a copy of the test job on fenvix; the customer's workflow is unchanged and decides alone.
+        Changes only the pull requests opened after it. 409 when side-by-side runs are turned off.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingKindChoice" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingKindChoice" } } } }
+        default: { $ref: "#/components/responses/Error" }
 
   # ------------------------------------------------------------------ overview, trial, projects, runs
   /overview:
@@ -210,6 +231,19 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectSettings" } } } }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /projects/{projectId}/side-by-side:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/ProjectId" }]
+    get:
+      tags: [dashboard]
+      operationId: getSideBySide
+      description: |
+        A repository that runs side by side: "Today" (its own test job's last 30 days: runs per day, time, runner and
+        cost) and the pairs of its test job with ours, newest first, 50 per page, each with the comparison result.
+        available false (and no items) for a repository that does not run side by side.
+      parameters: [{ $ref: "#/components/parameters/Page" }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/SideBySide" } } } }
         default: { $ref: "#/components/responses/Error" }
   /projects/{projectId}/runs:
     parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/ProjectId" }]
@@ -1277,11 +1311,132 @@ components:
         installations: { type: array, items: { $ref: "#/components/schemas/Installation" } }
     OnboardingState:
       type: string
-      enum: [pending, pr_open, merged, closed, no_workflow, no_test_job, already_fenvix, unsupported, failed]
+      enum: [pending, pr_open, merged, closed, no_workflow, no_test_job, already_fenvix, unsupported, failed, side_by_side_pr_open, side_by_side]
       description: |
         pending: not tried yet; pr_open / merged / closed: the setup pull request; no_workflow: no workflow file;
         no_test_job: no job that runs tests; already_fenvix: already on runs-on fenvix; unsupported: a test runner fenvix
-        does not support; failed: the App could not open the pull request (onboardingDetail says why).
+        does not support, or a test job that cannot run side by side; failed: the App could not open the pull request
+        (onboardingDetail says why); side_by_side_pr_open / side_by_side: the side-by-side pull request is open / merged
+        (or its file is on the default branch).
+    CostRange:
+      type: object
+      required: [min, max]
+      properties: { min: { type: number }, max: { type: number } }
+    SideBySideResult:
+      type: string
+      enum: [same, different, not_comparable, not_proven, waiting]
+    SideBySidePair:
+      type: object
+      required: [headSha, event, prNumber, result, detail, notes, his, ours]
+      properties:
+        headSha: { type: string }
+        event: { type: [string, "null"] }
+        prNumber: { type: [integer, "null"] }
+        result: { $ref: "#/components/schemas/SideBySideResult" }
+        detail: { type: string }
+        notes: { type: array, items: { type: string } }
+        his:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [jobId, attempt, conclusion, completedAt, seconds, price, cost]
+              properties:
+                jobId: { type: integer }
+                attempt: { type: integer }
+                conclusion: { type: [string, "null"] }
+                completedAt: { type: [string, "null"], format: date-time }
+                seconds: { type: [integer, "null"] }
+                price: { type: string }
+                cost: { oneOf: [{ $ref: "#/components/schemas/CostRange" }, { type: "null" }] }
+        ours:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [jobId, attempt, completedAt, seconds, vcpuMinutes, machineCost, testsRan, wouldSkipTests, wouldSaveMs, skipMachine, checkoutSha]
+              properties:
+                jobId: { type: integer }
+                attempt: { type: integer }
+                completedAt: { type: [string, "null"], format: date-time }
+                seconds: { type: integer }
+                vcpuMinutes: { type: number }
+                machineCost: { type: number }
+                testsRan: { type: integer }
+                wouldSkipTests: { type: integer }
+                wouldSaveMs: { type: number }
+                skipMachine: { type: boolean }
+                checkoutSha: { type: [string, "null"], description: "The commit our runner checked out (for a pull request, the merge commit)." }
+    SideBySide:
+      type: object
+      required: [available, repository, today, header, ours, items, total, page, pageSize]
+      properties:
+        available: { type: boolean }
+        repository:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [fullName, state, jobName, testStep, matrixSuffix]
+              properties:
+                fullName: { type: string }
+                state: { $ref: "#/components/schemas/OnboardingState" }
+                jobName: { type: [string, "null"] }
+                testStep: { type: [string, "null"] }
+                matrixSuffix: { type: [string, "null"] }
+        today:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [runs, runsPerDay, medianSeconds, runnerLabel, price, costPerRun, costPerMonth, history, notes]
+              properties:
+                runs: { type: integer }
+                runsPerDay: { type: [number, "null"], description: "Mean runs per day over the last 30 days (null below 5 runs)." }
+                medianSeconds: { type: [integer, "null"] }
+                runnerLabel: { type: [string, "null"] }
+                price: { type: string, description: "The rate, its range, \"price unknown for <label>\" or $0 for a public repository on GitHub-hosted runners." }
+                costPerRun: { oneOf: [{ $ref: "#/components/schemas/CostRange" }, { type: "null" }] }
+                costPerMonth: { oneOf: [{ $ref: "#/components/schemas/CostRange" }, { type: "null" }] }
+                history: { type: string, enum: [read, reading] }
+                notes: { type: array, items: { type: string } }
+        header:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [pairs, same, hisSeconds, oursSeconds, hisCost, oursMachineCost, oursVcpuMinutes]
+              description: Medians of the last 20 comparable pairs.
+              properties:
+                pairs: { type: integer }
+                same: { type: integer }
+                hisSeconds: { type: [number, "null"] }
+                oursSeconds: { type: [number, "null"] }
+                hisCost: { type: [number, "null"] }
+                oursMachineCost: { type: [number, "null"] }
+                oursVcpuMinutes: { type: [number, "null"] }
+        ours:
+          type: object
+          required: [instanceType, vcpus, usdPerHour]
+          properties:
+            instanceType: { type: string }
+            vcpus: { type: integer }
+            usdPerHour: { type: number, description: "SIDE_BY_SIDE_USD_PER_HOUR: our machine's on-demand price." }
+        items: { type: array, items: { $ref: "#/components/schemas/SideBySidePair" } }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+    OnboardingKind:
+      type: string
+      enum: [move, side_by_side]
+      description: "move: the test job's runs-on becomes fenvix. side_by_side: a new workflow file runs a copy of the test job on fenvix."
+    OnboardingKindChoice:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { $ref: "#/components/schemas/OnboardingKind" }
+    OnboardingKindState:
+      type: object
+      required: [kind, sideBySideAvailable]
+      properties:
+        kind: { $ref: "#/components/schemas/OnboardingKind" }
+        sideBySideAvailable: { type: boolean, description: "False while side-by-side runs are turned off (SIDE_BY_SIDE_ENABLED=false): the choice is hidden." }
     GitHubRepository:
       type: object
       required: [repositoryId, installationId, fullName, private, removed, language, testRunner, onboardingState, onboardingDetail, workflowPath, job, setupPullRequest, projectId, warmCache]

@@ -29,7 +29,9 @@ export type Work =
   /** The dashboard API linked an installation (POST /v1/github/installations/complete): its repositories get projects. */
   | { kind: "installation_linked"; installationId: number }
   /** A project page loaded with a default branch older than a few minutes: read it again from GitHub (by repository id). */
-  | { kind: "refresh_default_branch"; repositoryId: number };
+  | { kind: "refresh_default_branch"; repositoryId: number }
+  /** A repository entered side by side (or its paused reading is due): his test job's last 30 days of runs. */
+  | { kind: "side_by_side_history"; repositoryId: number };
 
 export interface WorkQueue {
   /** Resolves once the work is accepted (queued durably, or started in this process). Rejects if it was not. */
@@ -45,11 +47,12 @@ export function describeWork(w: Work): string {
     case "onboard": return `onboard ${w.repositoryId}`;
     case "installation_linked": return `installation_linked ${w.installationId}`;
     case "refresh_default_branch": return `refresh_default_branch ${w.repositoryId}`;
+    case "side_by_side_history": return `side_by_side_history ${w.repositoryId}`;
   }
 }
 
-/** Runs one piece of work. Throws if it failed (the queue then retries it). */
-export async function runWork(service: GitHubService, w: Work): Promise<void> {
+/** Runs one piece of work. Throws if it failed (the queue then retries it). `deadline`: when the Lambda ends (epoch ms). */
+export async function runWork(service: GitHubService, w: Work, o: { deadline?: number } = {}): Promise<void> {
   if (w.kind === "webhook") {
     await service.handle(w.event, w.delivery, w.payload);
     return;
@@ -78,6 +81,10 @@ export async function runWork(service: GitHubService, w: Work): Promise<void> {
   }
   if (w.kind === "refresh_default_branch") {
     await service.refreshDefaultBranch(w.repositoryId);
+    return;
+  }
+  if (w.kind === "side_by_side_history") {
+    await service.readHistory(w.repositoryId, o.deadline !== undefined ? { deadline: o.deadline } : {});
     return;
   }
   throw new Error(`unknown work kind ${(w as { kind?: unknown }).kind}`);
@@ -110,13 +117,17 @@ export function parseWork(v: unknown): Work {
   if (o?.kind === "onboard" && posInt(o.repositoryId)) return { kind: "onboard", repositoryId: o.repositoryId as number };
   if (o?.kind === "installation_linked" && posInt(o.installationId)) return { kind: "installation_linked", installationId: o.installationId as number };
   if (o?.kind === "refresh_default_branch" && posInt(o.repositoryId)) return { kind: "refresh_default_branch", repositoryId: o.repositoryId as number };
+  if (o?.kind === "side_by_side_history" && posInt(o.repositoryId)) return { kind: "side_by_side_history", repositoryId: o.repositoryId as number };
   throw new Error("not a work message");
 }
 
 /** Node server mode: the work runs in this process after the response; `service.idle()` waits for it. */
 export class InProcessQueue implements WorkQueue {
   private readonly service: GitHubService;
-  constructor(service: GitHubService) { this.service = service; }
+  constructor(service: GitHubService) {
+    this.service = service;
+    service.enqueueHistory ??= (repositoryId) => this.enqueue({ kind: "side_by_side_history", repositoryId });
+  }
   async enqueue(work: Work): Promise<void> {
     this.service.background(describeWork(work), () => runWork(this.service, work));
   }

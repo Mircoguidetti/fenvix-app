@@ -19,6 +19,7 @@ import { formatCount, formatDate, formatDuration, formatMinutes, formatPercent, 
 import { finished as isFinished, median, runMinutes, setupSnippet, timeToGreenPerCommit, timeToGreenPerDay } from "../data/ci";
 import { SetupStatePill, languageLabel } from "./Projects";
 import { SetupDiff } from "./Connect";
+import { SideBySideCards } from "./SideBySide";
 import { seconds } from "./Overview";
 
 const PAGE_SIZE = 25;
@@ -111,6 +112,7 @@ function RunsTab({ project }: { project: ProjectRow }) {
 
   return (
     <>
+      <SideBySideCards project={project} />
       <LatestRun project={project} runs={recent.status === "ready" ? recent.data : null} openDefects={defects.status === "ready" ? defects.data : null} />
       <div className="grid-2">
         <Card id="ttg-per-run" title="Time to green, per day" description="Median per day of the time from push to green.">

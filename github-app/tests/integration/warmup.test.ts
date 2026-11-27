@@ -10,6 +10,11 @@ import {
   RUNNER_TOKEN, runnerCredential, workflowJob,
 } from "../helpers/harness.ts";
 
+// The pushes below were written for a run on 2026-11-23 (17:00 UTC): their times are kept as they were, shifted by how
+// much later this run is, so each push stands where it stood then against the real clock (warm-up grace periods and
+// the 24-hour cap read the real clock). Without the shift these tests fail once the written times are in the past.
+const SHIFT = Math.max(0, Math.floor(Date.now() / 1000) - 1_795_453_200);
+const shifted = (pushedAt: number) => pushedAt + SHIFT;
 const SUMMARY = JSON.parse(readFileSync(new URL("../fixtures/runner/job3-warm-pass.summary.json", import.meta.url), "utf8")) as Record<string, unknown>;
 
 /** Our fleet in memory: customer jobs and warm-ups share the region's limit; warm-ups can be terminated. */
@@ -71,6 +76,9 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
 
   it("before the link: the setup pull request merged on a stranger's installation starts nothing", async () => {
     await h.send("installation", installationCreated([REPOS.shop]));
+    // Rule 3 (spec 20261126-side-by-side-runs item 6): installation.created no longer opens the pull request before the
+    // organization link; this scenario needs one merged before the link, so it is opened here (the onboard path itself).
+    await h.app.service.onboard(REPOS.shop.id);
     const pr = (await admin.query("select setup_pr_number from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].setup_pr_number as number;
     assert.ok(pr > 0, "the setup pull request was opened");
     await h.send("pull_request", pullRequest("closed", { number: pr, headRef: "fenvix/runs-on", headSha: "1".repeat(40), merged: true, mergeSha: shaN(1) }));
@@ -153,19 +161,19 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
   });
 
   it("a push to the default branch waits out the grace period; a newer push supersedes it; an older one never replaces it", async () => {
-    await pushTo(shaN(10), 1_795_500_000);
+    await pushTo(shaN(10), shifted(1_795_500_000));
     const w10 = await one(shaN(10));
     assert.deepEqual({ status: w10.status, trigger: w10.trigger }, { status: "pending", trigger: "push" });
     assert.ok((w10.not_before as Date).getTime() > Date.now() + 170_000, "three minutes for the customer's own push run");
     assert.equal((await h.app.service.warmups.tick()).dispatched, 0);
     // A push to another branch: no warm-up.
-    await h.send("push", push(shaN(11), "refs/heads/feature", 1_795_500_100));
+    await h.send("push", push(shaN(11), "refs/heads/feature", shifted(1_795_500_100)));
     assert.equal(await one(shaN(11)), undefined);
-    await pushTo(shaN(12), 1_795_500_200);
+    await pushTo(shaN(12), shifted(1_795_500_200));
     assert.equal((await one(shaN(10))).status, "superseded");
     assert.match(String((await one(shaN(10))).detail), /superseded by a newer commit on main \(cccccc/);
     // Delivered late: an older commit than the one in flight is stored superseded at once.
-    await pushTo(shaN(9), 1_795_499_000);
+    await pushTo(shaN(9), shifted(1_795_499_000));
     assert.equal((await one(shaN(9))).status, "superseded");
     assert.equal((await one(shaN(12))).status, "pending");
   });
@@ -178,7 +186,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     assert.equal(l.warmupId, w12.id);
     await report(l.summaryToken, { warmupId: l.warmupId, event: "started" });
     await admin.query("update gh_warmups set dispatched_at = now() - interval '5 minutes' where id = $1", [w12.id]);
-    await pushTo(shaN(13), 1_795_500_300);
+    await pushTo(shaN(13), shifted(1_795_500_300));
     assert.equal((await one(shaN(12))).status, "superseded");
     assert.ok((await one(shaN(12))).terminate_requested_at);
     const t = await h.app.service.warmups.tick();
@@ -207,7 +215,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     assert.deepEqual(repo, { cache_warm_sha: shaN(13), cache_warm_source: "run" });
 
     // Next commit: covered by a run that is cancelled before its tests: the warm-up runs after all.
-    await pushTo(shaN(14), 1_795_500_400);
+    await pushTo(shaN(14), shifted(1_795_500_400));
     h.gh.addRun("acme/shop", 7002, { event: "push", headSha: shaN(14), headBranch: "main", message: "main" });
     await h.send("workflow_job", workflowJob("queued", { id: 802, runId: 7002, sha: shaN(14), branch: "main" }));
     assert.equal((await one(shaN(14))).status, "covered");
@@ -269,7 +277,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     // Its default branch on GitHub is at the commit warmed below (a machine starts only for the branch's head).
     const web = h.gh.repos.get("acme/web")!;
     web.branches.set("main", { ...web.branches.get("main")!, sha: "d".repeat(40) });
-    await pushTo(shaN(20), 1_795_500_500);
+    await pushTo(shaN(20), shifted(1_795_500_500));
     assert.equal(await h.app.service.warmups.request({ repositoryId: REPOS.web.id, sha: "d".repeat(40), trigger: "push", grace: false }), "created");
     await due();
     assert.equal((await h.app.service.warmups.tick()).dispatched, 1, "only one of the two");
@@ -301,7 +309,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
          values ($1, $2, $3, 'refs/heads/main', 'push', 'superseded', now() - interval '2 days', now() - make_interval(hours => $4), now())`,
         [REPOS.shop.id, INSTALLATION_ID, shaN(100 + i), 23 - i]);
     }
-    await pushTo(shaN(21), 1_795_500_550);
+    await pushTo(shaN(21), shifted(1_795_500_550));
     await due();
     assert.equal((await h.app.service.warmups.tick()).dispatched, 0);
     const w = await one(shaN(21));
@@ -317,7 +325,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     await admin.query("update gh_warmups set dispatched_at = dispatched_at - interval '2 days' where dispatched_at is not null");
     for (const id of [...fleet.live.keys()]) fleet.done(id);
     await admin.query("update workspaces set region = 'eu' where id = $1", [org.workspaceId]);
-    await pushTo(shaN(30), 1_795_500_600);
+    await pushTo(shaN(30), shifted(1_795_500_600));
     await due();
     assert.equal((await h.app.service.warmups.tick()).dispatched, 0);
     assert.match(String((await one(shaN(30))).detail), /\(eu\) yet: a warm-up never runs in another region/);
@@ -345,7 +353,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
 
   it("suspended or uninstalled: warm-ups in flight are cancelled and their machines terminated", async () => {
     await admin.query("update workspaces set region = 'us' where id = $1", [org.workspaceId]);
-    await pushTo(shaN(40), 1_795_500_700);
+    await pushTo(shaN(40), shifted(1_795_500_700));
     await due();
     await h.app.service.warmups.tick();
     const w40 = await one(shaN(40));
@@ -356,7 +364,7 @@ describe("warm cache at install: warm-up runs of the default branch", () => {
     await h.app.service.warmups.tick();
     assert.ok(fleet.terminated.includes(Number(w40.id)));
     // While suspended, a push asks for nothing.
-    await pushTo(shaN(41), 1_795_500_800);
+    await pushTo(shaN(41), shifted(1_795_500_800));
     assert.equal(await one(shaN(41)), undefined);
     assert.deepEqual(h.gh.validateAll().map((x) => `${x.method} ${x.path}: ${JSON.stringify(x.problems)}`), [], "every GitHub call matches GitHub's REST description");
   });
@@ -382,6 +390,9 @@ describe("review R-018 follow-ups: only the default branch's head runs; a reset 
     h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });
     h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": CI_YAML } });
     await h.send("installation", installationCreated([REPOS.shop]));
+    // Rule 3 (spec 20261126-side-by-side-runs item 6): installation.created no longer opens the pull request before the
+    // organization link; this scenario needs one merged before the link, so it is opened here (the onboard path itself).
+    await h.app.service.onboard(REPOS.shop.id);
     const pr = (await admin.query("select setup_pr_number from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].setup_pr_number as number;
     await h.send("pull_request", pullRequest("closed", { number: pr, headRef: "fenvix/runs-on", headSha: "1".repeat(40), merged: true, mergeSha: sha("a") }));
     await h.app.service.linkInstallation(INSTALLATION_ID, org.workspaceId, org.userId);
@@ -424,15 +435,15 @@ describe("review R-018 follow-ups: only the default branch's head runs; a reset 
 
   it("a commit superseded before its machine is warmed again when the branch is pushed back to it later; a replay of the old push changes nothing", async () => {
     const x = sha("f"); const y = sha("9");
-    await pushTo(x, 1_795_800_000);
-    await pushTo(y, 1_795_800_060);
+    await pushTo(x, shifted(1_795_800_000));
+    await pushTo(y, shifted(1_795_800_060));
     assert.equal((await one(x))?.status, "superseded");
     // A replay of x's original push (same push time): nothing.
-    await pushTo(x, 1_795_800_000);
+    await pushTo(x, shifted(1_795_800_000));
     assert.equal((await one(x))?.status, "superseded");
     assert.equal((await one(y))?.status, "pending");
     // The maintainers reset main back to x (pushed again, later): y's warm-up ends, x's is pending again.
-    await pushTo(x, 1_795_800_120);
+    await pushTo(x, shifted(1_795_800_120));
     assert.equal((await one(y))?.status, "superseded");
     assert.equal((await one(x))?.status, "pending");
     await due();
@@ -445,7 +456,7 @@ describe("review R-018 follow-ups: only the default branch's head runs; a reset 
   it("merge R-016b: a covering run that cancels itself without results is billed (GitHub's data); its re-armed warm-up runs and is never billed", async () => {
     await admin.query("update gh_warmups set status = 'cancelled', finished_at = now() where status in ('pending', 'dispatched', 'running')");
     const c = sha("7");
-    await pushTo(c, 1_795_800_200);
+    await pushTo(c, shifted(1_795_800_200));
     h.gh.addRun("acme/shop", 9201, { event: "push", headSha: c, headBranch: "main", message: "main" });
     await h.send("workflow_job", workflowJob("queued", { id: 9201, runId: 9201, sha: c, branch: "main" }));
     assert.equal((await one(c))?.status, "covered");
@@ -525,6 +536,9 @@ describe("linked through the dashboard (review R-016: /github/setup, then POST /
     h.gh.addInstallation({ id: INSTALLATION_ID, account: ACCOUNT, repos: [REPOS.shop.id], selection: "selected" });
     h.gh.addRepo({ id: REPOS.shop.id, fullName: REPOS.shop.full_name, ownerId: ACCOUNT.id, files: { ".github/workflows/ci.yml": CI_YAML } });
     await h.send("installation", installationCreated([REPOS.shop]));
+    // Rule 3 (spec 20261126-side-by-side-runs item 6): installation.created no longer opens the pull request before the
+    // organization link; this scenario needs one merged before the link, so it is opened here (the onboard path itself).
+    await h.app.service.onboard(REPOS.shop.id);
     const pr = (await admin.query("select setup_pr_number from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].setup_pr_number as number;
     await h.send("pull_request", pullRequest("closed", { number: pr, headRef: "fenvix/runs-on", headSha: "1".repeat(40), merged: true, mergeSha: "a".repeat(40) }));
   });

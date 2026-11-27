@@ -77,10 +77,10 @@ export class RecordingQueue {
   }
 }
 
-export async function startApi(queue = new RecordingQueue()): Promise<{ api: Api; queue: RecordingQueue }> {
+export async function startApi(queue = new RecordingQueue(), env: Record<string, string> = {}): Promise<{ api: Api; queue: RecordingQueue }> {
   const cfg = loadApiConfig({
     NODE_ENV: "test", API_DATABASE_URL: LOCAL!.apiDbUrl, SUPABASE_URL: LOCAL!.supabaseUrl, STATE_SIGNING_KEY: STATE_KEY,
-    DASHBOARD_URL: DASHBOARD, GITHUB_APP_SLUG: "fenvix-test", DB_POOL_MAX: "4", LOG_LEVEL: "silent",
+    DASHBOARD_URL: DASHBOARD, GITHUB_APP_SLUG: "fenvix-test", DB_POOL_MAX: "4", LOG_LEVEL: "silent", ...env,
   });
   return { api: buildApi({ cfg, queue, logger: false, now: () => NOW }), queue };
 }

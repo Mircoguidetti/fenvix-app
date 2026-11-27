@@ -75,6 +75,10 @@ begin
   insert into public.ci_projects (workspace_id, full_name, language, test_runner, installation_id) values (r.xw, 'outsider/secret', 'python', 'pytest', 32) returning id into v_xp;
   update api_ids set p = v_p, xp = v_xp;
   insert into public.gh_repositories (repository_id, installation_id, full_name, project_id) values (3101, 31, 'northwind/app', v_p), (3201, 32, 'outsider/secret', v_xp);
+  -- 0020: an ordinary and a side-by-side job of W, a side-by-side job of XW (the API reads W's side-by-side one only).
+  insert into public.gh_jobs (job_id, repository_id, installation_id, run_id, head_sha, status, kind) values
+    (310101, 3101, 31, 1, repeat('a', 40), 'completed', 'ci_run'), (310102, 3101, 31, 1, repeat('a', 40), 'completed', 'side_by_side'),
+    (320101, 3201, 32, 1, repeat('b', 40), 'completed', 'side_by_side');
   insert into public.ci_runs (project_id, number, commit_sha, branch, trigger, status, pushed_at, started_at, tests_total, tests_ran, tests_skipped)
     values (v_p, 1, repeat('a', 40), 'main', 'push', 'passed', now(), now(), 2, 1, 1) returning id into run;
   insert into public.ci_runs (project_id, number, commit_sha, branch, trigger, status, pushed_at, started_at, tests_total, tests_ran, tests_skipped)
@@ -162,7 +166,11 @@ begin
   assert (select count(*) from public.api_members()) = 3, 'api_members() does not list W''s members';
   assert (select email from public.api_me()) = 'api.member@fenvix.invalid', 'api_me() is not the member';
   assert (select count(*) from public.workspace_invites) = 0, 'a member reads the invitations';
-  foreach t in array array['gh_jobs', 'gh_pull_requests', 'gh_pushes', 'gh_run_summaries', 'gh_webhook_deliveries', 'gh_run_results']
+  -- 0020: gh_jobs is readable, its side-by-side rows of the organization only (the console's pairs, side-by-side-check
+  -- and api-dashboard.test.ts cover the rows); none of its ordinary jobs.
+  assert (select count(*) from public.gh_jobs where kind <> 'side_by_side') = 0, 'the API reads ordinary App jobs';
+  assert (select array_agg(job_id) from public.gh_jobs) = array[310102::bigint], 'the API does not read exactly W''s side-by-side job';
+  foreach t in array array['gh_pull_requests', 'gh_pushes', 'gh_run_summaries', 'gh_webhook_deliveries', 'gh_run_results']
   loop
     begin
       execute format('select count(*) from public.%I', t) into n;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DescribeImagesCommand, DescribeInstancesCommand, RunInstancesCommand, TerminateInstancesCommand } from "@aws-sdk/client-ec2";
 import { launcherFrom, machineEnv } from "../../src/lambda/runtime.ts";
-import { Ec2Launcher, jobUserData, NoPlacement, placementsFromEnv, reap, RetryLater, type RunnerLaunch } from "../../src/runners/launcher.ts";
+import { Ec2Launcher, jobUserData, KIND_TAG, NoPlacement, placementsFromEnv, reap, RetryLater, type RunnerLaunch, SKIP_MACHINES_MAX_RUNNING, SkipCeiling } from "../../src/runners/launcher.ts";
 import { jsonLogger } from "../../src/work.ts";
 
 const launch: RunnerLaunch = {
@@ -12,7 +12,7 @@ const launch: RunnerLaunch = {
 const MACHINE = { AWS_DEFAULT_REGION: "eu-west-1", FENVIX_SUMMARIES_URL: "https://api.fenvix.dev/v1/runner/summaries" };
 
 /** An EC2 client in memory: images, running machines, the calls made. */
-function fakeEc2(o: { running?: number; images?: { ImageId: string; CreationDate: string }[]; runError?: string; instances?: { InstanceId: string; LaunchTime: Date }[] } = {}) {
+function fakeEc2(o: { running?: number; images?: { ImageId: string; CreationDate: string }[]; runError?: string; instances?: { InstanceId: string; LaunchTime: Date; InstanceType?: string; Tags?: { Key: string; Value: string }[] }[] } = {}) {
   const calls: unknown[] = [];
   return {
     calls,
@@ -168,5 +168,119 @@ describe("region placement (RUNNER_PLACEMENT)", () => {
     // Capacity is counted per region.
     const full = new Ec2Launcher({ placements: { us: { ec2: fakeEc2({ running: 2 }), launchTemplateId: "lt-0us" }, eu: { ec2: fakeEc2({ running: 0 }), launchTemplateId: "lt-0eu" } }, maxRunning: 2, machineEnv: MACHINE });
     assert.deepEqual([await full.hasCapacity("us"), await full.hasCapacity("eu")], [false, true]);
+  });
+});
+
+describe("side-by-side machines (spec 20261126-side-by-side-runs items 11, 12)", () => {
+  // protects=a side-by-side job's full machine is SIDE_BY_SIDE_INSTANCE_TYPE over the launch template, the usual token;
+  // fails_when=no InstanceType is sent, or it changes the token; no_claim=EC2 honouring the override.
+  it("full machine: the instance type override, the job's ClientToken, no skip file", async () => {
+    const ec2 = fakeEc2();
+    await new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE }).launch({ ...launch, mode: "shadow", instanceType: "c6i.2xlarge" });
+    const run = ec2.calls.find((c) => c instanceof RunInstancesCommand) as RunInstancesCommand;
+    assert.equal(run.input.InstanceType, "c6i.2xlarge");
+    assert.equal(run.input.ClientToken, "fenvix-job-601");
+    const ud = Buffer.from(run.input.UserData!, "base64").toString();
+    assert.match(ud, /^FENVIX_MODE=shadow$/m);
+    assert.doesNotMatch(ud, /sbs-skip/);
+  });
+
+  // protects=a skip machine: the template's size, the skip file (0644, readable by the job), its own ClientToken
+  // (distinct from the full launch's), no capacity check; fails_when=the file is missing or root-only, the token is the
+  // full launch's (EC2 would return the full machine), or a full fleet refuses it; no_claim=the gate step on GitHub.
+  it("skip machine: no instance type, the skip file, fenvix-skip-<job>-<attempt>, started on a full fleet", async () => {
+    const ec2 = fakeEc2({ running: 4 });
+    await new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE }).launch({ ...launch, mode: "shadow", instanceType: "c6i.2xlarge", skip: { attempt: 2 }, skipCapacityCheck: true });
+    // Rule 3: it now lists the region's machines (for the skip machines' own ceiling), and still starts on a full fleet.
+    assert.equal(ec2.calls.filter((c) => c instanceof RunInstancesCommand).length, 1, "started on a full fleet");
+    const run = ec2.calls.find((c) => c instanceof RunInstancesCommand) as RunInstancesCommand;
+    assert.equal(run.input.InstanceType, undefined);
+    assert.equal(run.input.ClientToken, "fenvix-skip-601-2");
+    const ud = Buffer.from(run.input.UserData!, "base64").toString().split("\n");
+    const at = ud.indexOf("install -m 0644 /dev/null /etc/fenvix/sbs-skip");
+    assert.ok(at > 0 && at < ud.indexOf("umask 077"), "written before the root-only files, readable by the job");
+    // Its whole life is 10 minutes, whatever the job does (a workflow without the gate step).
+    assert.ok(ud.includes('shutdown -h +10 "fenvix skip machine: 10-minute limit"'), "the 10-minute power-off");
+  });
+
+  // protects=a full side-by-side machine has a hard lifetime too (the job's timeout, at most 60, plus 10 minutes): an
+  // edited side-by-side file cannot keep an 8-vCPU machine for hours; fails_when=no power-off line, or another number;
+  // no_claim=that systemd honours shutdown -h.
+  it("full machine: powers off after its lifetime; a plain job gets no power-off line", async () => {
+    const ec2 = fakeEc2();
+    await new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 8, machineEnv: MACHINE }).launch({ ...launch, instanceType: "c6i.2xlarge", lifetimeMinutes: 70 });
+    const run = ec2.calls.find((c) => c instanceof RunInstancesCommand) as RunInstancesCommand;
+    assert.ok(Buffer.from(run.input.UserData!, "base64").toString().split("\n").includes('shutdown -h +70 "fenvix side-by-side machine: 70-minute limit"'));
+    assert.doesNotMatch(jobUserData(launch, MACHINE), /shutdown/);
+    assert.throws(() => jobUserData({ ...launch, lifetimeMinutes: 0 }, MACHINE), /lifetime/);
+  });
+
+  // protects=a retry inside one delivery (new runner, so new user data) gets its own ClientToken, so EC2 starts a
+  // machine with the runner that exists instead of answering "already" for a machine whose runner was deleted;
+  // fails_when=the retry reuses fenvix-job-<id>; no_claim=EC2's idempotency window.
+  it("a retry gets fenvix-job-<id>-r<n>; the first try keeps fenvix-job-<id>", async () => {
+    const ec2 = fakeEc2();
+    const l = new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 8, machineEnv: MACHINE });
+    await l.launch({ ...launch, retry: 1 });
+    await l.launch({ ...launch, retry: 3 });
+    assert.deepEqual(ec2.calls.filter((c) => c instanceof RunInstancesCommand).map((c) => (c as RunInstancesCommand).input.ClientToken), ["fenvix-job-601", "fenvix-job-601-r3"]);
+  });
+
+  // protects=the fleet limit counts c6i.large slots (2 vCPU each): an 8-vCPU machine is 4, so the AWS vCPU quota the
+  // limit was sized for holds; fails_when=a running c6i.2xlarge counts 1, or a 2xlarge launch is let through past the
+  // limit; no_claim=the account's real quota.
+  it("fleet limit in slots: a c6i.2xlarge counts 4", async () => {
+    const inst = (t: string, i: number) => ({ InstanceId: `i-${i}`, LaunchTime: new Date(), InstanceType: t });
+    const ec2 = fakeEc2({ instances: [inst("c6i.2xlarge", 1), inst("c6i.large", 2)] });
+    const l = new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 8, machineEnv: MACHINE });
+    assert.equal(await l.running(), 5);
+    assert.equal(await l.hasCapacity("us"), true, "a large fits (5 + 1)");
+    assert.equal(await l.hasCapacity("us", "c6i.2xlarge"), false, "a 2xlarge does not (5 + 4 > 8)");
+    await assert.rejects(l.launch({ ...launch, instanceType: "c6i.2xlarge" }), RetryLater);
+    await l.launch(launch);
+    assert.equal(ec2.calls.filter((c) => c instanceof RunInstancesCommand).length, 1);
+  });
+
+  // protects=skip machines take no slot of the fleet limit (a paying job never waits for one) and at most
+  // SKIP_MACHINES_MAX_RUNNING (4) run at once in a region; above it, no machine; fails_when=a skip machine counts as a
+  // slot, or a fifth one starts; no_claim=EC2.
+  it("skip machines: no fleet slot; at most 4 at once in a region", async () => {
+    const skip = (i: number) => ({ InstanceId: `s-${i}`, LaunchTime: new Date(), InstanceType: "c6i.large", Tags: [{ Key: KIND_TAG, Value: "side-by-side-skip" }] });
+    const job = (i: number) => ({ InstanceId: `j-${i}`, LaunchTime: new Date(), InstanceType: "c6i.large" });
+    assert.equal(SKIP_MACHINES_MAX_RUNNING, 4);
+    const three = fakeEc2({ instances: [skip(1), skip(2), skip(3), job(1), job(2), job(3)] });
+    const l3 = new Ec2Launcher({ ec2: three, launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE });
+    assert.equal(await l3.running(), 3, "the three skip machines take no slot");
+    assert.equal(await l3.hasCapacity(), true);
+    await l3.launch({ ...launch, skip: { attempt: 1 }, skipCapacityCheck: true });
+    await l3.launch(launch);
+    assert.equal(three.calls.filter((c) => c instanceof RunInstancesCommand).length, 2, "a skip machine (the 4th) and a paying job");
+    const four = fakeEc2({ instances: [skip(1), skip(2), skip(3), skip(4)] });
+    const l4 = new Ec2Launcher({ ec2: four, launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE });
+    await assert.rejects(l4.launch({ ...launch, skip: { attempt: 1 }, skipCapacityCheck: true }), SkipCeiling);
+    assert.equal(four.calls.filter((c) => c instanceof RunInstancesCommand).length, 0, "no fifth skip machine");
+    assert.equal(await l4.hasCapacity(), true, "the fleet is empty for paying jobs");
+  });
+
+  // protects=a full side-by-side machine starts only with its slots plus the warm-up reserve free (customers' slots
+  // stay free), and a paying job can stop the newest full side-by-side machine like a warm-up; fails_when=the reserve
+  // is ignored, a skip or ordinary machine is stopped, or no job id comes back; no_claim=EC2.
+  it("full side-by-side machines: 4 slots plus the reserve; a paying job can stop one", async () => {
+    const empty = new Ec2Launcher({ ec2: fakeEc2({ instances: [] }), launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE });
+    assert.equal(await empty.hasCapacity("us", "c6i.2xlarge", 1), false, "4 + 1 > 4");
+    assert.equal(await new Ec2Launcher({ ec2: fakeEc2({ instances: [] }), launchTemplateId: "lt-123", maxRunning: 5, machineEnv: MACHINE }).hasCapacity("us", "c6i.2xlarge", 1), true);
+    const tag = (k: string, v: string) => ({ Key: k, Value: v });
+    const at = (m: number) => new Date(Date.UTC(2026, 10, 26, 10, m));
+    const ec2 = fakeEc2({ instances: [
+      { InstanceId: "i-old", LaunchTime: at(1), InstanceType: "c6i.2xlarge", Tags: [tag(KIND_TAG, "side-by-side"), tag("fenvix:job", "71")] },
+      { InstanceId: "i-new", LaunchTime: at(5), InstanceType: "c6i.2xlarge", Tags: [tag(KIND_TAG, "side-by-side"), tag("fenvix:job", "72")] },
+      { InstanceId: "i-skip", LaunchTime: at(9), InstanceType: "c6i.large", Tags: [tag(KIND_TAG, "side-by-side-skip"), tag("fenvix:job", "73")] },
+      { InstanceId: "i-job", LaunchTime: at(9), InstanceType: "c6i.large", Tags: [tag("fenvix:job", "74")] },
+    ] });
+    const l = new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 8, machineEnv: MACHINE });
+    assert.deepEqual(await l.preemptSideBySide("us"), { jobId: 72, instanceIds: ["i-new"] });
+    const term = ec2.calls.filter((c) => c instanceof TerminateInstancesCommand) as TerminateInstancesCommand[];
+    assert.deepEqual(term.map((c) => c.input.InstanceIds), [["i-new"]]);
+    assert.equal(await new Ec2Launcher({ ec2: fakeEc2({ instances: [] }), launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE }).preemptSideBySide("us"), null);
   });
 });

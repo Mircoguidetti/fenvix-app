@@ -186,12 +186,17 @@ export function mapInstallation(r: Row): Installation {
   };
 }
 
-const ONBOARDING = new Set(["pending", "pr_open", "merged", "closed", "no_workflow", "no_test_job", "already_fenvix", "unsupported", "failed"]);
+const ONBOARDING = new Set(["pending", "pr_open", "merged", "closed", "no_workflow", "no_test_job", "already_fenvix", "unsupported", "failed", "side_by_side_pr_open", "side_by_side"]);
 
-/** gh_repositories: the 9 onboarding states as they are, the setup pull request when there is one. */
+/** The setup pull request is merged (or none was needed): moved to fenvix, already on it, or running side by side. */
+export function isSetupMerged(state: string): boolean {
+  return state === "merged" || state === "already_fenvix" || state === "side_by_side";
+}
+
+/** gh_repositories: the 11 onboarding states as they are, the setup pull request when there is one (side_by_side: merged). */
 export function mapGitHubRepository(r: Row): GitHubRepository {
   const state = (ONBOARDING.has(str(r.onboarding_state)) ? str(r.onboarding_state) : "pending") as OnboardingState;
-  const prState = state === "merged" ? "merged" : state === "closed" ? "closed" : "open";
+  const prState = state === "merged" || state === "side_by_side" ? "merged" : state === "closed" ? "closed" : "open";
   const lang = str(r.detected_language);
   const runner = str(r.detected_test_runner);
   return {

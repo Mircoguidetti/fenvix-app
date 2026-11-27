@@ -47,11 +47,13 @@ export const ONBOARDING_LABELS: Record<OnboardingState, string> = {
   already_fenvix: "Already on fenvix",
   unsupported: "Test runner not supported",
   failed: "Could not open the pull request",
+  side_by_side_pr_open: "Side-by-side pull request open",
+  side_by_side: "Runs side by side",
 };
 
 /** Green once the test job runs on fenvix, amber while a pull request waits, red when the App failed, grey otherwise. */
 export function OnboardingPill({ state }: { state: OnboardingState }) {
-  const tone: Tone = state === "merged" || state === "already_fenvix" ? "ok" : state === "pr_open" ? "warn" : state === "failed" ? "danger" : "neutral";
+  const tone: Tone = state === "merged" || state === "already_fenvix" || state === "side_by_side" ? "ok" : state === "pr_open" || state === "side_by_side_pr_open" ? "warn" : state === "failed" ? "danger" : "neutral";
   return <StatusPill tone={tone}>{ONBOARDING_LABELS[state]}</StatusPill>;
 }
 
