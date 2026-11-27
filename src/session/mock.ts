@@ -2,7 +2,9 @@ import type { SessionClient, SessionUser } from "./client";
 
 const KEY = "fenvix-session";
 const PENDING = "fenvix-pending-email";
-const wait = <T,>(value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(value), 120));
+// A check can make the mock answer slowly, as a cold API does (window.__fenvixMockDelayMs; scripts/cleanup-checks.mjs).
+const delayMs = () => (globalThis as { __fenvixMockDelayMs?: number }).__fenvixMockDelayMs ?? 120;
+const wait = <T,>(value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(value), delayMs()));
 
 const OWNER: SessionUser = { id: "usr_1", name: "Elena Marsh", email: "elena.marsh@northwind.cloud" };
 

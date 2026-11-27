@@ -78,20 +78,29 @@ function SignedOut() {
 }
 
 /**
- * Signed in: a visit to /welcome, or the first screen after signing in, goes to the `next` the welcome URL carried
- * (kept in sessionStorage across the GitHub or Google round-trip), only when it is a same-site path; otherwise to "/".
+ * Signed in at /welcome (just signed in there, or a visit): go to its `next` (or the one kept in sessionStorage)
+ * when it is a same-site path, otherwise to "/".
+ */
+function WelcomeSignedIn() {
+  const { search } = useLocation();
+  const to = safeNext(new URLSearchParams(search).get("next") ?? storedNext(), window.location.origin);
+  useEffect(forgetNext, []);
+  return <Navigate to={to} replace />;
+}
+
+/**
+ * The first screen after a sign-in that left the site (GitHub or Google come back to the site root): go to the `next`
+ * kept in sessionStorage, when it is a same-site path. Runs once per signed-in person.
  */
 function SignedInReturn() {
   const { pathname, search } = useLocation();
   const navigate = useNavigate();
-  const onWelcome = pathname === "/welcome";
   const [stored] = useState(storedNext);
-  const fromUrl = onWelcome ? new URLSearchParams(search).get("next") : null;
-  const raw = fromUrl ?? stored;
-  const to = raw || onWelcome ? safeNext(raw, window.location.origin) : null;
   useEffect(() => {
     forgetNext();
-    if (to !== null && to !== `${pathname}${search}`) navigate(to, { replace: true });
+    if (!stored) return;
+    const to = safeNext(stored, window.location.origin);
+    if (to !== `${pathname}${search}`) navigate(to, { replace: true });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return null;
 }
@@ -101,16 +110,13 @@ function Routed() {
   const { pathname } = useLocation();
   if (status === "loading") return <LoadingScreen />;
   if (!user) return <SignedOut />;
+  if (pathname === "/welcome") return <WelcomeSignedIn />;
   return (
     <>
       <SignedInReturn key={user.id} />
-      {pathname === "/welcome" ? (
-        <LoadingScreen />
-      ) : (
-        <OrgProvider key={user.id}>
-          <Gated />
-        </OrgProvider>
-      )}
+      <OrgProvider key={user.id}>
+        <Gated />
+      </OrgProvider>
     </>
   );
 }
