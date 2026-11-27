@@ -1573,7 +1573,7 @@ input:focus-visible, textarea:focus-visible, .select-btn:focus-visible { border-
 .signin-hero-lead { color: #5f636b; font-size: clamp(16.5px, 1.3vw, 19px); line-height: 1.5; }
 .signin-card .btn-lg:not(.btn-primary) { border-color: var(--border); background: var(--bg); }
 
-/* The dark theme keeps its black hero and its dark code boxes. */
+/* The dark theme keeps its dark code boxes. */
 :root[data-theme="dark"] .preview { background: var(--black); border-color: var(--border); }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .preview { background: var(--black); border-color: var(--border); }
