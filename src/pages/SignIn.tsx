@@ -79,9 +79,9 @@ export function SignInPage({ welcome = false }: { welcome?: boolean }) {
         </div>
         <div className="signin-hero-copy">
           <p className="signin-hero-title">
-            Two tests.
+            Parallel,
             <br />
-            One cause.
+            with proof.
           </p>
           <p className="signin-hero-lead">Sign in to see your tests run in parallel, each result proven identical to the serial run.</p>
         </div>

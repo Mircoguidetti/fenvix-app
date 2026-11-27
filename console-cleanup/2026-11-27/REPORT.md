@@ -9,6 +9,8 @@ DONE
 
 ## Changes to tests, check scripts, CI, timeouts, thresholds (Rule 4)
 
+- **Sign-in title (coordinator, approved 27 Nov):** "Two tests. One cause." is now "Parallel, with proof." (`src/pages/SignIn.tsx`). No test referenced the old text.
+
 - **Added item (coordinator, founder bug report 27 Nov): `github-app/src/app.ts` `/github/setup`.** `setup_action=update` with no `state` now redirects 303 to `/projects/connect?github=updated` before `verifyState`. It links nothing and consumes nothing; a present but bad state still gives `expired`. New integration test in `github-app/tests/integration/link.test.ts`. Connect handles `?github=updated` by reading the list again, with no error and no toast. These are the only `github-app/` files touched, as the coordinator allowed.
 - `scripts/cleanup-checks.mjs`: new check "connect: back from GitHub's installation settings (?github=updated)…". Reason: the added item.
 
@@ -108,5 +110,5 @@ DONE
 - **Why "Signed out" showed twice**: the Settings account card's "Sign out" button stayed enabled while `session.signOut()` waited on Supabase, and each click awaited and then toasted. Reproduced on the origin/main build: the cleanup check double-clicked it and saw "Signed out" twice. Now no toast is shown, the button is disabled while signing out, and the provider dedupes the same text.
 - **Email link in a new tab**: the API-mode email link opens in a new tab with empty sessionStorage, so it loses `next` and lands on `/`. Accepted by the spec.
 - **Accepted, not changed**: a `next` stored at sign-out can outlive it in a shared tab. It is always a same-site path, and the server authorises every request.
-- **Open for the coordinator**: the sign-in hero title "Two tests. One cause." was not in the approved wording rows and is unchanged. It reads as the old flaky-test promise next to the new lead line.
+- Sign-in hero title: changed to "Parallel, with proof." after the coordinator's approval (see the first section).
 - `/review` (gstack): specialists Testing, Security and Maintainability, plus the adversarial pass. 0 critical open, 7 fixed in one cycle, 2 accepted (above). Gate edits: 4 listed, 3 read, 0 findings (product-code try/catch blocks, no relaxed tests).
