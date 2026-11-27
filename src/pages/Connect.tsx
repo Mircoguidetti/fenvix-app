@@ -290,6 +290,14 @@ export function ConnectPage() {
     }
   }
 
+  // Back from GitHub's own settings of an installation ("Choose more repositories" in this tab): read the list again,
+  // quietly (no toast: fenvix created or changed nothing), and take the flag out of the address.
+  useEffect(() => {
+    if (github !== "updated") return;
+    void refresh();
+    navigate("/projects/connect", { replace: true });
+  }, [github]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // The GitHub page opens in another tab. When this tab is looked at again, the repositories chosen there are listed here.
   useEffect(() => {
     if (!chose) return;

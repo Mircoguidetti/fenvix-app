@@ -257,6 +257,18 @@ const TESTS = {
     await ctx.close();
   },
 
+  async "connect: back from GitHub's installation settings (?github=updated): no error, no toast, the list is read again"(page) {
+    await signIn(page, "projects/connect");
+    await watchToasts(page);
+    await go(page, "projects/connect?github=updated");
+    await page.waitForURL((u) => u.pathname === "/projects/connect" && !u.searchParams.get("github"));
+    await page.locator(".steps .repo-row").first().waitFor();
+    await page.waitForTimeout(400);
+    assert(!(await page.getByRole("alert").count()), `an error shows: ${await page.getByRole("alert").first().innerText().catch(() => "")}`);
+    assert(!(await page.getByText(/install link expired/i).count()), "the expired message shows");
+    assert((await toasts(page)).length === 0, "a toast shows");
+  },
+
   async "coming soon: every live-list item has a nav entry that opens its page"(page, vp) {
     await signIn(page, "projects/prj_homehub");
     const items = [

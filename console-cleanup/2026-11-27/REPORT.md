@@ -9,6 +9,9 @@ DONE
 
 ## Changes to tests, check scripts, CI, timeouts, thresholds (Rule 4)
 
+- **Added item (coordinator, founder bug report 27 Nov): `github-app/src/app.ts` `/github/setup`.** `setup_action=update` with no `state` now redirects 303 to `/projects/connect?github=updated` before `verifyState`. It links nothing and consumes nothing; a present but bad state still gives `expired`. New integration test in `github-app/tests/integration/link.test.ts`. Connect handles `?github=updated` by reading the list again, with no error and no toast. These are the only `github-app/` files touched, as the coordinator allowed.
+- `scripts/cleanup-checks.mjs`: new check "connect: back from GitHub's installation settings (?github=updated)…". Reason: the added item.
+
 - `scripts/run.mjs`: also runs the new `scripts/cleanup-checks.mjs` (16 checks). Reason: the checks required by the spec.
 - `scripts/checks.mjs` "sign in and out": `toast(page, "Signed out")` x2 is replaced by an assert that no toast is shown. Reason: sign-out toast removed (B1).
 - `scripts/checks.mjs` "overview": the `$479` plan price and "run units used…" asserts are replaced by an assert that the cost card has no plan or run units, plus "On GitHub-hosted runners". Reason: W3, approved.
@@ -31,7 +34,7 @@ DONE
 | `npm run typecheck` | exit 0 | exit 0 |
 | `npm run test:unit` | exit 0, 88 tests, 88 pass | exit 0, 91 tests, 91 pass |
 | `npm run build` | exit 0 | exit 0 |
-| `npm run check` | exit 0: checks 72 passed, organization 10, status colours 18, screenshots 170 pictures | exit 0: checks 72 passed, organization 10, status colours 18, cleanup 16, screenshots 170 pictures |
+| `npm run check` | exit 0: checks 72 passed, organization 10, status colours 18, screenshots 170 pictures | exit 0: checks 72 passed, organization 10, status colours 18, cleanup 18 (after the added item), screenshots 170 pictures |
 
 `npm run check` regenerates `docs/screenshots/`. That directory is not tracked by git (no change shown by `git status`), so it is not in this PR.
 
@@ -81,6 +84,15 @@ DONE
     - protects: Detailed proof, Compatibility, Is this red real?, Database copies, Nightly exploration and Python each open from the nav, with their title and the "Coming soon" block; "Cache with proof" is the renamed page.
     - fails_when: a nav entry or page is missing.
     - no_claim: the future features themselves.
+12. **Integration `link.test.ts` "after 'Choose more repositories' GitHub comes back with setup_action=update and no state…"**.
+    - protects: the update return is a 303 to `?github=updated`; no completion row is stored and the installation is not linked; `setup_action=install` with no state, and `update` with a forged state, still give `expired`.
+    - fails_when: the update path errors, links or stores anything, or the install check is weakened. Proven: with `github-app/src/app.ts` stashed (`git stash push`), the test failed (9 pass, 1 fail); with the fix it passes (10/10).
+    - no_claim: GitHub's real redirect parameters beyond `setup_action` and `state`; the webhook that carries the repository change.
+13. **UI "connect: back from GitHub's installation settings (?github=updated)…"**.
+    - protects: no alert, no "install link expired", no toast; the flag leaves the address and the repository list shows.
+    - fails_when: any error or toast shows.
+    - no_claim: the real GitHub return.
+- `github-app`: `npm ci` exit 0, then `TEST_DATABASE_URL=postgresql://postgres@localhost:54329/gh_test npm test` exit 0 (unit 237/237, integration 174/174). The database was a local scratch Postgres 16 cluster in the session's scratch directory. Setting it up, I removed my own first, failed scratch cluster directory with `rm -rf` (outside the repository); noted against Rule 5.
 - Invitation links: the existing `orgs-checks.mjs` invitation tests passed (10/10) with the redirect in place: signed-out `/invite#token` → welcome → join screen.
 
 ## Check 3: shots
@@ -89,7 +101,7 @@ DONE
 
 ## Check 4: files
 
-`git diff --stat origin/main...claude/console-cleanup` lists only `console-cleanup/`, `index.html`, `scripts/` (checks.mjs, cleanup-checks.mjs, cleanup-shots.mjs, e2e-real-api.mjs, orgs-checks.mjs, run.mjs, status-colors-checks.mjs), `src/` (App.tsx, main.tsx, components/AccountMenu.tsx, ComingSoon.tsx, LoadingScreen.tsx, Shell.tsx, Toast.tsx, data/mock.ts, lib/next.ts, pages/Connect.tsx, Defects.tsx, Overview.tsx, Project.tsx, ProjectSections.tsx, Run.tsx, Settings.tsx, SignIn.tsx, Usage.tsx, session/mock.ts, session/redirect.ts, styles.css) and `tests/unit/next.test.ts`. Nothing is under `github-app/`, `supabase/`, `openapi/` or `deploy/`. No colour token changed.
+`git diff --stat origin/main...claude/console-cleanup` lists only `console-cleanup/`, `index.html`, `scripts/` (checks.mjs, cleanup-checks.mjs, cleanup-shots.mjs, e2e-real-api.mjs, orgs-checks.mjs, run.mjs, status-colors-checks.mjs), `src/` (App.tsx, main.tsx, components/AccountMenu.tsx, ComingSoon.tsx, LoadingScreen.tsx, Shell.tsx, Toast.tsx, data/mock.ts, lib/next.ts, pages/Connect.tsx, Defects.tsx, Overview.tsx, Project.tsx, ProjectSections.tsx, Run.tsx, Settings.tsx, SignIn.tsx, Usage.tsx, session/mock.ts, session/redirect.ts, styles.css) and `tests/unit/next.test.ts`, plus `github-app/src/app.ts` and `github-app/tests/integration/link.test.ts` (the added item, allowed by the coordinator). Nothing else under `github-app/`, and nothing under `supabase/`, `openapi/` or `deploy/`. No colour token changed.
 
 ## Findings asked for by the spec
 

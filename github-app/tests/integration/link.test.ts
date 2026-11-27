@@ -49,6 +49,22 @@ describe("connecting an installation to an organization", () => {
     assert.equal((await admin.query("select workspace_id from gh_installations")).rows[0].workspace_id, null);
   });
 
+  it("after 'Choose more repositories' GitHub comes back with setup_action=update and no state: updated, nothing linked", async () => {
+    const completions = async () => (await admin.query("select count(*)::int as n from gh_install_completions")).rows[0].n;
+    const before = await completions();
+    let r = await setup({ installation_id: String(INSTALLATION_ID), setup_action: "update" });
+    assert.equal(r.statusCode, 303);
+    assert.equal(where(r).pathname, "/projects/connect");
+    assert.deepEqual(Object.fromEntries(where(r).searchParams), { github: "updated" });
+    assert.equal(await completions(), before, "an update stored a completion");
+    assert.equal((await admin.query("select workspace_id from gh_installations")).rows[0].workspace_id, null, "an update linked the installation");
+    // The install path keeps its check: no state on an install, or a bad state on an update, is still "expired".
+    r = await setup({ installation_id: String(INSTALLATION_ID), setup_action: "install" });
+    assert.equal(where(r).searchParams.get("reason"), "expired");
+    r = await setup({ installation_id: String(INSTALLATION_ID), setup_action: "update", state: "forged.state" });
+    assert.equal(where(r).searchParams.get("reason"), "expired");
+  });
+
   it("a GitHub user who sees the installation but does not administer its account cannot link it (review R-016 F1)", async () => {
     const state = signState(h.cfg.stateSigningKey, { workspaceId: org.workspaceId, userId: org.userId });
     // A member (not an admin) of the acme organization on GitHub.
