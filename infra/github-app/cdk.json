@@ -40,7 +40,7 @@
     "runnerMode": "per-job",
     "demoRepository": "",
     "demoMaxHours": "12",
-    "runnerMaxRunning": "4",
+    "runnerMaxRunning": "8",
     "runnerMaxHours": "6",
     "runnerIdleMinutes": "20",
     "warmupEnabled": "true",

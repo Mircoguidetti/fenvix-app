@@ -31,7 +31,7 @@ describe("the stack, per-job mode", async () => {
   it("the worker launches: per-job settings, the launch template, the machines' plain settings (no secret)", () => {
     const e = fnEnv("worker");
     assert.equal(e.RUNNER_MODE, "per-job");
-    assert.equal(e.RUNNER_MAX_RUNNING, "4");
+    assert.equal(e.RUNNER_MAX_RUNNING, "8");
     assert.match(json(e.RUNNER_LAUNCH_TEMPLATE_ID), /FleetLaunchTemplate/);
     // The worker appends the job's installation (gh-<id>) and signs that job's cache token.
     assert.equal(e.FENVIX_MACHINE_FENVIX_CACHE_URL, "http://10.42.0.10:8787");

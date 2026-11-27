@@ -759,8 +759,9 @@ or `side_by_side`. Not to be confused with the trial's `FENVIX_MODE=shadow`: sid
   Hard lifetimes: a skip machine powers off 10 minutes after boot; a full machine at our job's `timeout-minutes`
   (his, at most 60: `gh_repositories.side_by_side_timeout_minutes`) plus 10 minutes, whatever the file says later.
   A full machine counts 4 slots of the fleet limit (one slot = a c6i.large, 2 vCPU) and starts only while its slots
-  plus the warm-up reserve (`WARMUP_RESERVE`, default 1) are free, else the job gets a skip machine: with
-  `RUNNER_MAX_RUNNING` 4 that is never, so full side-by-side machines need a higher limit. A paying job that finds the
+  plus the warm-up reserve (`WARMUP_RESERVE`, default 1) are free, else the job gets a skip machine:
+  `RUNNER_MAX_RUNNING` is 8 (16 vCPU of c6i.large slots), so one full side-by-side machine fits beside 3 other slots
+  and the reserve. A paying job that finds the
   fleet full stops a warm-up first, else the newest full side-by-side machine (`gh_jobs.sbs_stopped_at`; the pair
   reads "not comparable: stopped for a customer job"). Skip machines take no slot; at most 4 run at once per region,
   above that the job gets no machine (it waits; his workflow is not affected). A machine only for code of the

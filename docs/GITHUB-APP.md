@@ -195,7 +195,7 @@ the HTTP side checks it (`src/runners/credentials.ts`; review R-012 F1).
 | `SIDE_BY_SIDE_ENABLED` | `true` | no | side-by-side runs: the choice in Connect and the side-by-side pull request (`docs/data-contract.md` "Side-by-side runs"); off, merged files still get skip machines |
 | `SIDE_BY_SIDE_DAILY_CAP` | `10` | no | full side-by-side machines per repository per rolling 24 hours (re-runs count); past it, a skip machine |
 | `SIDE_BY_SIDE_SKIP_DAILY_CAP` | `30` | no | skip machines per repository per rolling 24 hours; past it, no machine (the job waits until GitHub cancels it) |
-| `SIDE_BY_SIDE_INSTANCE_TYPE` | `c6i.2xlarge` | no | the full side-by-side machine (an instance type override of the launch template; the worker's IAM allows it). Its size must read as medium, large, xlarge or Nxlarge. It takes vCPUs / 2 slots of `RUNNER_MAX_RUNNING` (a c6i.2xlarge: 4; with the default of 4 it starts only on an empty fleet, else a skip machine) |
+| `SIDE_BY_SIDE_INSTANCE_TYPE` | `c6i.2xlarge` | no | the full side-by-side machine (an instance type override of the launch template; the worker's IAM allows it). Its size must read as medium, large, xlarge or Nxlarge. It takes vCPUs / 2 slots of `RUNNER_MAX_RUNNING` (a c6i.2xlarge: 4; production runs with 8, so it starts while 4 slots plus the warm-up reserve are free, else a skip machine) |
 | `SIDE_BY_SIDE_USD_PER_HOUR` | `0.3648` | no | that machine's on-demand price, shown in the console (c6i.2xlarge Linux on-demand, eu-west-1: AWS EC2 on-demand pricing page, read by the founder 2026-11-26) |
 | `PORT`, `HOST`, `LOG_LEVEL`, `NODE_ENV`, `DB_POOL_MAX`, `GITHUB_TIMEOUT_MS` | `8790`, `0.0.0.0`, `info`, `development`, `10`, `15000` | no | |
 
