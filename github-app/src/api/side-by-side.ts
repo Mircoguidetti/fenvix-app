@@ -6,7 +6,7 @@
 import { type Handler, orgOf } from "./context.ts";
 import type { Row } from "./db.ts";
 import { notFound } from "./errors.ts";
-import { type HisJob, jobCost, median, type OurJob, pairJobs, type Price, priceOf, priceText, type Rate, seconds } from "../sidebyside/compare.ts";
+import { type HisJob, jobCost, median, ourCost, type OurJob, pairJobs, type Price, priceOf, priceText, type Rate, seconds } from "../sidebyside/compare.ts";
 
 const DAY = 86_400_000;
 const PAGE = 50;
@@ -124,8 +124,8 @@ export const getSideBySide: Handler = async (ctx) => {
       notes: p.result === "different" ? NOTES_DIFFERENT : [],
       his: h ? { jobId: h.jobId, attempt: h.runAttempt, conclusion: h.conclusion, completedAt: iso(h.completedAt), seconds: hs === null ? null : Math.round(hs), price: priceText(hp!), cost: range(hs === null ? null : jobCost(hs, hp!)) } : null,
       ours: u ? {
-        jobId: u.jobId, attempt: u.runAttempt, completedAt: iso(u.completedAt), seconds: Math.round(heldMinutes(u) * 60), vcpuMinutes: round(ours.vcpus * heldMinutes(u), 2),
-        machineCost: round(heldMinutes(u) * ours.usdPerHour / 60), testsRan: u.testsRan, wouldSkipTests: u.wouldSkipTests, wouldSaveMs: u.wouldSaveMs,
+        jobId: u.jobId, attempt: u.runAttempt, completedAt: iso(u.completedAt), seconds: Math.round(heldMinutes(u) * 60), vcpuMinutes: ourCost(heldMinutes(u), u.skipMachine, ours).vcpuMinutes,
+        machineCost: round(ourCost(heldMinutes(u), u.skipMachine, ours).machineCost), testsRan: u.testsRan, wouldSkipTests: u.wouldSkipTests, wouldSaveMs: u.wouldSaveMs,
         skipMachine: u.skipMachine, checkoutSha: u.checkoutSha,
       } : null,
     };

@@ -321,6 +321,26 @@ jobs:
 });
 
 describe("buildSideBySideWorkflow: refusals (no pull request; the detail says why)", () => {
+  // protects=a copied checkout never leaves a credential on our machine (persist-credentials: false, whatever he set)
+  // and never takes a token: input; fails_when=persist-credentials is missing or true, or a token is copied;
+  // no_claim=what actions/checkout does with it.
+  it("checkout: persist-credentials false; a token: input refused", () => {
+    const src = (w: string) => `on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+${w}      - run: npm test
+`;
+    const { j } = build(src("        with:\n          persist-credentials: true\n          fetch-depth: 0\n"));
+    const co = (j.steps as Json[]).find((s) => String(s.uses).startsWith("actions/checkout"))!;
+    assert.deepEqual(co.with, { "fetch-depth": 0, "persist-credentials": false });
+    const bare = build(src("")).j;
+    assert.deepEqual((bare.steps as Json[]).find((s) => String(s.uses).startsWith("actions/checkout"))!.with, { "persist-credentials": false });
+    refused(src("        with:\n          token: ${{ secrets.PAT }}\n"), /passes a token: to actions\/checkout/);
+  });
+
   // protects=a kept step that writes to GitHub refuses the whole file; fails_when=git push before the test step is
   // copied; no_claim=a token passed to a script through env (accepted risk, the PR body says so).
   it("a run: git push step before the test step: refused", () => {

@@ -245,8 +245,13 @@ export class FenvixGitHubAppStack extends Stack {
     if (perJob) {
       // The worker also starts side-by-side jobs' full machines (SIDE_BY_SIDE_INSTANCE_TYPE over the template's type).
       mayLaunch(worker, "runner-job", [...new Set([s.runnerInstanceType, s.sideBySideInstanceType])]);
-      // A customer job that finds the fleet full takes a warm-up's machine (preemption).
+      // A customer job that finds the fleet full takes a warm-up's machine (preemption), else a full side-by-side
+      // machine's (fenvix:kind=side-by-side; never a skip machine or a customer's job machine).
       mayTerminateWarmups(worker);
+      worker.addToRolePolicy(new iam.PolicyStatement({
+        sid: "TerminateOnlyFullSideBySideMachines", actions: ["ec2:TerminateInstances"], resources: [arn("instance/*")],
+        conditions: { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job", "aws:ResourceTag/fenvix:kind": "side-by-side" } },
+      }));
       warmup = fn("Warmup", "warmup.ts", {
         timeout: Duration.seconds(120), memory: 256, reads: readersOf(s.env, "warmup"), extraEnv: { ...launchEnv, ...warmupEnv },
         description: "fenvix GitHub App: warm-up runs of onboarded default branches (lowest priority; never billed)",

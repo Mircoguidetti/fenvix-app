@@ -69,6 +69,20 @@ export interface OurJob {
 
 export type Result = "same" | "different" | "not_comparable" | "not_proven" | "waiting";
 
+/** Our machine: its type, vCPUs and on-demand price (SIDE_BY_SIDE_*). */
+export interface OurMachine { instanceType: string; vcpus: number; usdPerHour: number }
+
+/** A skip machine is the launch template's c6i.large (2 vCPU), priced at the full machine's price per vCPU (c6i prices scale with the size). */
+const SKIP_VCPUS = 2;
+
+/** Our job's vCPU-minutes and machine cost for its held minutes, on a full machine or on a skip machine. */
+export function ourCost(heldMinutes: number, skipMachine: boolean, full: OurMachine): { vcpuMinutes: number; machineCost: number } {
+  const vcpus = skipMachine ? SKIP_VCPUS : full.vcpus;
+  const usdPerHour = full.usdPerHour * vcpus / full.vcpus;
+  const r = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d;
+  return { vcpuMinutes: r(vcpus * heldMinutes, 2), machineCost: r(heldMinutes * usdPerHour / 60, 6) };
+}
+
 export interface Pair {
   key: { headSha: string; event: string | null; prNumber: number | null };
   his: HisJob | null;

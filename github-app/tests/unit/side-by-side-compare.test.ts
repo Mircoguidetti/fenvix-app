@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { billedMinutes, compare, type HisJob, jobCost, type OurJob, pairJobs, priceOf, priceText, type Rate } from "../../src/sidebyside/compare.ts";
+import { billedMinutes, compare, ourCost, type HisJob, jobCost, type OurJob, pairJobs, priceOf, priceText, type Rate } from "../../src/sidebyside/compare.ts";
 
 const SHA = "a".repeat(40);
 const T0 = new Date("2026-11-26T10:00:00Z");
@@ -140,4 +140,12 @@ describe("prices of his runner (AC 9)", () => {
     assert.equal(billedMinutes(60), 1);
     assert.deepEqual(jobCost(61, priceOf(["ubuntu-latest"], true, rates)), { min: 0.012, max: 0.012 });
   });
+});
+
+// protects=our job's machine cost: a full machine at SIDE_BY_SIDE_USD_PER_HOUR and its vCPUs, a skip machine as a
+// c6i.large (2 vCPU, the same price per vCPU); fails_when=a skip machine is priced as the full one; no_claim=AWS's bill.
+it("our cost: a full machine, or a skip machine priced as a c6i.large", () => {
+  const full = { instanceType: "c6i.2xlarge", vcpus: 8, usdPerHour: 0.3648 };
+  assert.deepEqual(ourCost(10, false, full), { vcpuMinutes: 80, machineCost: 0.0608 });
+  assert.deepEqual(ourCost(10, true, full), { vcpuMinutes: 20, machineCost: 0.0152 });
 });

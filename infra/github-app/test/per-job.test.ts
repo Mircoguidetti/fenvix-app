@@ -78,10 +78,13 @@ describe("the stack, per-job mode", async () => {
     assert.deepEqual(st.find((x) => x.Sid === "TagAtLaunchOnly")!.Condition, { StringEquals: { "ec2:CreateAction": "RunInstances" } });
     const pass = st.find((x) => arr(x.Action).includes("iam:PassRole"))!;
     assert.match(json(pass.Resource), /FleetJobRole/);
-    // It terminates warm-up machines only (a customer job takes a warm-up's machine), never a customer's job machine.
+    // It terminates warm-up machines and full side-by-side machines only (a paying job takes their slots), never a
+    // customer's job machine or a skip machine. Rule 3: the side-by-side statement is new (spec 20261126-side-by-side-runs).
     const term = st.filter((x) => arr(x.Action).includes("ec2:TerminateInstances"));
-    assert.equal(term.length, 1);
-    assert.deepEqual(term[0]!.Condition, { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job", "aws:ResourceTag/fenvix:kind": "warmup" } });
+    assert.deepEqual(term.map((x) => x.Condition).sort((a, b) => json(a).localeCompare(json(b))), [
+      { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job", "aws:ResourceTag/fenvix:kind": "side-by-side" } },
+      { StringEquals: { "aws:ResourceTag/fenvix:role": "runner-job", "aws:ResourceTag/fenvix:kind": "warmup" } },
+    ]);
   });
 
   it("the reaper may only terminate job machines; it runs every 10 minutes; the limit is runnerMaxHours", () => {

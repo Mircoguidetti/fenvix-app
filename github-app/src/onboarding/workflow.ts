@@ -494,7 +494,7 @@ export function buildSideBySideWorkflow(sourceText: string, jobId: string, label
       const action = at > 0 ? uses.slice(0, at) : uses;
       const ref = at > 0 ? uses.slice(at + 1) : "";
       if (!ALLOWED_ACTIONS.has(action)) return refuse(`step "${label2}" uses ${uses}, which fenvix does not run side by side (allowed: checkout, setup-node, setup-python, setup-go, pnpm/action-setup, cache)`);
-      if (isMap(withNode) && action !== "actions/checkout" && pairOf(withNode, "token")) return refuse(`step "${label2}" passes a token: to ${action}`);
+      if (isMap(withNode) && pairOf(withNode, "token")) return refuse(`step "${label2}" passes a token: to ${action}`);
       const w = isMap(withNode) ? withNode : new YAMLMap();
       const del = (k: string) => { w.items = w.items.filter((p) => scalarText(p.key) !== k); };
       const put = (k: string, v: unknown) => { del(k); w.items.push(new Pair(new Scalar(k), new Scalar(v))); };
@@ -507,6 +507,8 @@ export function buildSideBySideWorkflow(sourceText: string, jobId: string, label
       if (action === "actions/setup-node") { del("cache"); del("cache-dependency-path"); put("package-manager-cache", false); }
       if (action === "actions/setup-python") { del("cache"); del("cache-dependency-path"); }
       if (action === "actions/setup-go") put("cache", false);
+      // No credential stays in .git/config on our machine (a later step could push with it).
+      if (action === "actions/checkout") put("persist-credentials", false);
       if (w.items.length && !isMap(withNode)) step.items.push(new Pair(new Scalar("with"), w));
     } else if (run) {
       if (WRITES_TO_GITHUB.test(run)) return refuse(`step "${label2}" may write to GitHub (git push, gh pr/issue/api/release or api.github.com)`);
