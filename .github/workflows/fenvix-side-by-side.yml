@@ -1,0 +1,97 @@
+# fenvix side-by-side: runs a copy of your test job on fenvix, next to your own workflow, which stays as it is and
+# decides green or red alone. This workflow never gates: every step continues on error, nothing is pushed, nothing
+# is saved to your Actions cache. Built from test. To stop it, delete this file.
+
+name: fenvix side-by-side
+on:
+  pull_request:
+permissions:
+  contents: read
+env:
+  NODE_VERSION: "22"
+concurrency:
+  group: fenvix-side-by-side-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  fenvix-side-by-side:
+    name: fenvix side-by-side (does not gate)
+    runs-on: fenvix
+    continue-on-error: true
+    timeout-minutes: 60
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - id: fenvix_gate
+        shell: bash
+        working-directory: /tmp
+        continue-on-error: true
+        run: if [ -f /etc/fenvix/sbs-skip ]; then echo run=false >> "$GITHUB_OUTPUT"; else echo run=true >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+        continue-on-error: true
+        if: steps.fenvix_gate.outputs.run == 'true'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+        continue-on-error: true
+        if: steps.fenvix_gate.outputs.run == 'true'
+      - name: Install
+        run: |
+          npm ci --no-audit --no-fund
+          (cd github-app && npm ci --no-audit --no-fund)
+          (cd infra/github-app && npm ci --no-audit --no-fund)
+          (cd deploy && npm ci --no-audit --no-fund)
+        continue-on-error: true
+        if: steps.fenvix_gate.outputs.run == 'true'
+      - name: Lint this workflow (actionlint)
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+        continue-on-error: true
+        if: steps.fenvix_gate.outputs.run == 'true'
+      - name: The one-click AWS template matches the policy files
+        run: node infra/bootstrap/build.mjs --check
+        continue-on-error: true
+        if: steps.fenvix_gate.outputs.run == 'true'
+      # cfn-lint pinned: its IAM action list checks the one-click template's policies, and its CloudFormation
+      # resource-provider schemas are where infra/github-app/test/cfn-handler-permissions.json comes from.
+      - name: cfn-lint (the one-click template; the handler permissions the infrastructure tests check against)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/cfn-lint"
+          "$RUNNER_TEMP/cfn-lint/bin/pip" install --quiet --disable-pip-version-check cfn-lint==1.60.1
+          "$RUNNER_TEMP/cfn-lint/bin/python" -I infra/bootstrap/lint.py
+          "$RUNNER_TEMP/cfn-lint/bin/python" -I infra/github-app/scripts/cfn-handler-permissions.py --check
+        continue-on-error: true
+        if: steps.fenvix_gate.outputs.run == 'true'
+      - name: Databases for the tests (scratch Postgres 16, local Supabase)
+        run: |
+          docker run -d --name scratch-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:54329:5432 postgres:16
+          for _ in $(seq 1 60); do psql postgresql://postgres@localhost:54329/postgres -Atc "select 1" >/dev/null 2>&1 && break; sleep 1; done
+          psql postgresql://postgres@localhost:54329/postgres -qc "create database gh_test" -qc "create database rls_scratch"
+          bash scripts/local-supabase/up.sh
+        continue-on-error: true
+        if: steps.fenvix_gate.outputs.run == 'true'
+      - name: GitHub App and dashboard API (typecheck, unit, integration)
+        working-directory: github-app
+        run: npm test
+        continue-on-error: true
+        if: steps.fenvix_gate.outputs.run == 'true'
+      - name: Row level security
+        run: TEST_DATABASE_URL=postgresql://postgres@localhost:54329/rls_scratch npm run test:rls
+        continue-on-error: true
+        if: steps.fenvix_gate.outputs.run == 'true'
+      - name: Infrastructure (CDK synth, cdk-nag, policies)
+        working-directory: infra/github-app
+        run: npm test
+        continue-on-error: true
+        if: steps.fenvix_gate.outputs.run == 'true'
+      - name: Deploy steps (migrations, secrets, DNS)
+        working-directory: deploy
+        run: npm test
+        continue-on-error: true
+        if: steps.fenvix_gate.outputs.run == 'true'
+      - name: Dashboard (contract check, typecheck, build, unit)
+        run: |
+          npm run api:lint
+          npm run build
+          npm run test:unit
+        continue-on-error: true
+        if: steps.fenvix_gate.outputs.run == 'true'
