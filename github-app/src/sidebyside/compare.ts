@@ -60,6 +60,8 @@ export interface OurJob {
   jobId: number; runAttempt: number; headSha: string; event: string | null; prNumber: number | null;
   status: string; conclusion: string | null; startedAt: Date | null; completedAt: Date | null;
   skipMachine: boolean; hasSummary: boolean | null;
+  /** Its full machine was stopped so that a paying job got the slots (gh_jobs.sbs_stopped_at). */
+  stoppedForCustomer?: boolean;
   /** ci_runs.status: passed / failed / not_proven / cancelled / running, or null without a row. */
   runStatus: string | null;
   testsRan: number; wouldSkipTests: number; wouldSaveMs: number;
@@ -96,6 +98,7 @@ export function compare(his: HisJob | null, ours: OurJob | null, testStep: strin
   if (HIS_ENDED.includes(his.conclusion ?? "")) return nc(`your job: ${his.conclusion}`);
   if (!ours) return o.oursMissing === "waiting" ? { result: "waiting", detail: "waiting for our job" } : nc("our job not seen (daily cap, trigger filters, or no machine)");
   if (ours.skipMachine) return nc("our job ran on a skip machine (no test ran)");
+  if (ours.stoppedForCustomer) return nc("stopped for a customer job");
   if (ours.conclusion === "cancelled" || ours.runStatus === "cancelled") return nc("our job was cancelled");
   if (ours.conclusion === "timed_out") return nc("our job timed out");
   if (!ours.hasSummary) return nc("no summary from the runner");

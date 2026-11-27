@@ -118,6 +118,9 @@ const SIDE_BY_SIDE_STATES = ["side_by_side_pr_open", "side_by_side"];
 const HISTORY_BUDGET_MS = 30_000;
 const HISTORY_RESERVE_MS = 30_000;
 
+/** A repository being moved to fenvix (runs-on): its setup pull request open, or merged. */
+const MOVE_STATES = ["pr_open", "merged"];
+
 /** The onboarding results that mean "it did not work" (nothing opened, nothing found). */
 const ONBOARDING_FAILURES = ["failed", "no_workflow", "no_test_job", "unsupported"];
 
@@ -343,6 +346,24 @@ export class GitHubService {
     }
     // A repository that runs side by side is not moved: its runs-on pull request would run beside the merged
     // side-by-side file, and fenvix would not track it. The customer removes the side-by-side file first.
+    // Merged side by side, and the customer removed the file from the default branch since: no longer side by side,
+    // the move goes ahead.
+    if (kind === "move" && repo.onboarding_state === "side_by_side") {
+      const file = await this.gh.installation(repo.installation_id).request("GET", `${repoPath(repo.full_name)}/contents/${SIDE_BY_SIDE_PATH}`, { allow: [404] });
+      if (file.status === 404) {
+        await this.db.q(`update gh_repositories set onboarding_state = 'pending', ${FORGET_SIDE_BY_SIDE}, updated_at = now() where repository_id = $1`, [repositoryId]);
+        this.log.info({ repository: repo.full_name }, "onboarding: the side-by-side file is gone, the repository is moved");
+        repo.onboarding_state = "pending";
+      }
+    }
+    // Being moved (its runs-on pull request open, or merged): not onboarded side by side too; that pull request's merge
+    // would then be lost and his job would run on fenvix beside our copy.
+    if (kind === "side_by_side" && MOVE_STATES.includes(repo.onboarding_state)) {
+      const detail = "this repository is being moved to fenvix (its setup pull request is open or merged): it is not run side by side as well";
+      await this.db.q("update gh_repositories set onboarding_detail = $2, awaiting_link = false, updated_at = now() where repository_id = $1", [repositoryId, detail]);
+      this.log.warn({ repository: repo.full_name, state: repo.onboarding_state }, "onboarding: side by side refused for a repository being moved");
+      return { state: "failed", detail, defaultBranch: repo.default_branch, language: null, testRunner: null };
+    }
     if (kind === "move" && SIDE_BY_SIDE_STATES.includes(repo.onboarding_state)) {
       const detail = `this repository runs side by side: to move its test job to fenvix, remove the side-by-side file first (delete ${SIDE_BY_SIDE_PATH}, or close its pull request)`;
       await this.db.q("update gh_repositories set onboarding_detail = $2, awaiting_link = false, updated_at = now() where repository_id = $1", [repositoryId, detail]);
@@ -520,7 +541,8 @@ export class GitHubService {
         // anyone can open a pull request from a branch with that name.
         [repo.id, onboarding, pr.number, pr.html_url, detail, sideBySide]);
       const row = await this.repo(repo.id);
-      if (row?.workspace_id && row.project_id) {
+      // The project's setup pull request is the move one only (a pull request from the side-by-side branch never sets it).
+      if (!sideBySide && row?.workspace_id && row.project_id) {
         await this.db.tx(row.workspace_id, (c) => c.query(
           `update ci_projects set setup_pr_number = $2, setup_pr_url = $3, setup_pr_state = $4 where id = $1`,
           [row.project_id, pr.number, pr.html_url, state]));
@@ -856,7 +878,21 @@ export class GitHubService {
         this.log.warn({ job: jobId, err: e instanceof Error ? e.message : String(e) }, "no warm-up could be preempted");
         return false;
       });
-      if (!freed || !(await this.launcher!.hasCapacity(org.region))) throw new RetryLater(`the fleet is full; job ${jobId} waits`);
+      // No warm-up to give back: a full side-by-side machine does (paying jobs first); its job reads "stopped for a
+      // customer job".
+      let room = freed && (await this.launcher!.hasCapacity(org.region));
+      if (!room && this.launcher!.preemptSideBySide) {
+        const stopped = await this.launcher!.preemptSideBySide(org.region).catch((e: unknown) => {
+          this.log.warn({ job: jobId, err: e instanceof Error ? e.message : String(e) }, "no side-by-side machine could be stopped");
+          return null;
+        });
+        if (stopped) {
+          await this.db.q("update gh_jobs set sbs_stopped_at = coalesce(sbs_stopped_at, now()) where job_id = $1 and kind = 'side_by_side'", [stopped.jobId]);
+          this.log.warn({ job: jobId, stopped: stopped.jobId, instances: stopped.instanceIds }, "a side-by-side machine was stopped for a customer job");
+          room = await this.launcher!.hasCapacity(org.region);
+        }
+      }
+      if (!room) throw new RetryLater(`the fleet is full; job ${jobId} waits`);
     }
     // A retry after a partial failure finds the first name taken (409): a fresh one; EC2 still starts one machine.
     type Jit = { encoded_jit_config: string; runner?: { id?: number } };
@@ -937,7 +973,8 @@ export class GitHubService {
     // fork), gets none either.
     if (!run) return none("the workflow run is not known to GitHub");
     if (run.head_repository?.id !== repo.id) return none(run.head_repository ? "a pull request from a fork" : "the run's head repository is not shown (a deleted fork)");
-    const fleetFull = !!this.launcher!.hasCapacity && !(await this.launcher!.hasCapacity(org.region, this.sbs.instanceType));
+    // A full machine leaves the warm-up reserve free for customers' jobs (it takes 4 slots of the fleet limit).
+    const fleetFull = !!this.launcher!.hasCapacity && !(await this.launcher!.hasCapacity(org.region, this.sbs.instanceType, (this.s.warmup ?? DEFAULT_WARMUP).reserve));
     // The daily caps, atomically: one decision at a time per repository (advisory lock), and the slot is reserved
     // (launched_at, skip_machine) in the same transaction, so two deliveries at once cannot both take the last slot.
     const decision = await this.db.tx(inst.workspace_id, async (c) => {

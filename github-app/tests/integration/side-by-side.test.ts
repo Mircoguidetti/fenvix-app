@@ -36,7 +36,16 @@ class Fleet implements RunnerLauncher {
   /** The region's skip machines are at their ceiling (4 running). */
   skipCeiling = false;
   canPlace(_r: Region) { return this.places; }
-  async hasCapacity(_r?: Region, instanceType?: string) { this.capacityAsked.push(instanceType); return !this.full; }
+  reserveAsked: (number | undefined)[] = [];
+  /** Running full side-by-side machines (job ids) a paying job may stop; stopping one frees the fleet. */
+  sbsRunning: number[] = [];
+  async hasCapacity(_r?: Region, instanceType?: string, reserve?: number) { this.capacityAsked.push(instanceType); this.reserveAsked.push(reserve); return !this.full; }
+  async preemptSideBySide(_r: Region) {
+    const jobId = this.sbsRunning.pop();
+    if (jobId === undefined) return null;
+    this.full = false;
+    return { jobId, instanceIds: [`i-${jobId}`] };
+  }
   async launch(l: RunnerLaunch) {
     this.tries.push(l);
     if ((this.full || this.race) && !l.skipCapacityCheck) throw new RetryLater("full");
@@ -154,6 +163,22 @@ describe("side by side: the organization's choice, and the pull request after th
     assert.equal(row.onboarding_state, "side_by_side");
     assert.match(row.onboarding_detail, /remove the side-by-side file first/);
   });
+
+  // protects=once the customer removed the side-by-side file from the default branch, a move onboarding goes ahead:
+  // side by side is forgotten and the runs-on pull request is opened; fails_when=it is still refused, or side-by-side
+  // values stay; no_claim=-.
+  it("kind move after the side-by-side file was removed: the move goes ahead", async () => {
+    const shop = h.gh.repos.get("acme/shop")!;
+    shop.branches.get("main")!.files.delete(SIDE_BY_SIDE_PATH);
+    await admin.query("update workspaces set onboarding_kind = 'move' where id = $1", [org.workspaceId]);
+    try {
+      const res = await h.app.service.onboard(REPOS.shop.id);
+      assert.equal(res.state, "pr_open");
+    } finally { await admin.query("update workspaces set onboarding_kind = 'side_by_side' where id = $1", [org.workspaceId]); }
+    assert.ok(shop.pulls.some((p) => p.head === "fenvix/runs-on" && p.state === "open"), "the runs-on pull request");
+    const row = (await admin.query("select onboarding_state, side_by_side_job_name from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
+    assert.deepEqual(row, { onboarding_state: "pr_open", side_by_side_job_name: null });
+  });
 });
 
 describe("side by side: the other kind and the other selection (AC 2)", () => {
@@ -178,8 +203,22 @@ describe("side by side: the other kind and the other selection (AC 2)", () => {
     assert.deepEqual(pulls.map((p) => p.head), ["fenvix/runs-on"]);
     // protects=a pull request anyone opens from a branch named fenvix/side-by-side changes nothing: only the one
     // fenvix opened counts; fails_when=the repository turns side_by_side_pr_open (free machines); no_claim=-.
+    const projBefore = (await admin.query("select p.setup_pr_number, p.id is not null as has_project from ci_projects p join gh_repositories r on r.project_id = p.id where r.repository_id = $1", [REPOS.shop.id])).rows[0];
     await h.send("pull_request", pullRequest("opened", { number: 7, headRef: "fenvix/side-by-side", headSha: "7".repeat(40) }));
     assert.equal((await admin.query("select onboarding_state from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0].onboarding_state, "pr_open");
+    // protects=the project's setup pull request is not changed by a pull request from the side-by-side branch either;
+    // fails_when=its number becomes 7; no_claim=-.
+    const projAfter = (await admin.query("select p.setup_pr_number, p.id is not null as has_project from ci_projects p join gh_repositories r on r.project_id = p.id where r.repository_id = $1", [REPOS.shop.id])).rows[0];
+    assert.ok(projBefore?.has_project, "the repository has a project");
+    assert.deepEqual(projAfter, projBefore);
+    // protects=while its move pull request is open (or merged), a repository is not onboarded side by side (the move
+    // merge would then be lost); fails_when=a side-by-side pull request is opened or the state changes; no_claim=-.
+    await admin.query("update workspaces set onboarding_kind = 'side_by_side' where id = $1", [org.workspaceId]);
+    await h.app.service.onboard(REPOS.shop.id);
+    assert.deepEqual(h.gh.repos.get("acme/shop")!.pulls.map((p) => p.head), ["fenvix/runs-on"]);
+    const moved = (await admin.query("select onboarding_state, onboarding_detail from gh_repositories where repository_id = $1", [REPOS.shop.id])).rows[0];
+    assert.equal(moved.onboarding_state, "pr_open");
+    assert.match(moved.onboarding_detail, /is being moved to fenvix/);
   });
 
   // protects="All repositories" never opens pull requests by itself, in either kind; fails_when=a PR is opened at the
@@ -352,6 +391,7 @@ describe("side by side: our job (AC 3, AC 6)", () => {
     assert.deepEqual({ job: l.jobId, retry: l.retry, life: l.lifetimeMinutes }, { job: 7811, retry: 2, life: 70 });
     assert.equal(fleet.tries.filter((t) => t.jobId === 7811)[0]!.retry, 1);
     assert.equal(fleet.capacityAsked.at(-1), "c6i.2xlarge");
+    assert.equal(fleet.reserveAsked.at(-1), 1, "the warm-up reserve stays free for customers");
     fleet.failTimes = 3;
     await ourJob(7812);
     assert.equal((await admin.query("select launched_at from gh_jobs where job_id = 7812")).rows[0].launched_at, null, "the slot is released");
@@ -709,5 +749,19 @@ describe("side by side: a GitHub error never delays an ordinary job", () => {
     await h.send("workflow_job", workflowJob("queued", { id: 9101, runId: 40001, sha: SHA, branch: "main" }));
     assert.equal(fleet.launches.at(-1)?.jobId, 9101);
     assert.equal((await admin.query("select kind from gh_jobs where job_id = 9101")).rows[0].kind, "ci_run");
+  });
+
+  // protects=paying jobs come first: with the fleet full and no warm-up to stop, a paying job stops a running full
+  // side-by-side machine (its job then reads "stopped for a customer job") and gets its machine at once;
+  // fails_when=the paying job waits (RetryLater) or the side-by-side job is not marked; no_claim=EC2.
+  it("the fleet full of a side-by-side machine: the paying job stops it", async () => {
+    const SHA = "8".repeat(40);
+    await admin.query(`insert into gh_jobs (job_id, repository_id, installation_id, run_id, head_sha, status, kind, launched_at, region)
+      values (9201, $1, $2, 1, $3, 'in_progress', 'side_by_side', now(), 'us')`, [REPOS.shop.id, INSTALLATION_ID, SHA]);
+    fleet.full = true; fleet.sbsRunning = [9201];
+    h.gh.addRun("acme/shop", 40002, { event: "push", headSha: SHA, headBranch: "main", message: "m", path: ".github/workflows/ci.yml" });
+    try { await h.send("workflow_job", workflowJob("queued", { id: 9102, runId: 40002, sha: SHA, branch: "main" })); } finally { fleet.full = false; }
+    assert.equal(fleet.launches.at(-1)?.jobId, 9102, "the paying job got its machine");
+    assert.equal((await admin.query("select sbs_stopped_at is not null as stopped from gh_jobs where job_id = 9201")).rows[0].stopped, true);
   });
 });

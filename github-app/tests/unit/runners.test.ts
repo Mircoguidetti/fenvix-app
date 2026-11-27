@@ -261,4 +261,26 @@ describe("side-by-side machines (spec 20261126-side-by-side-runs items 11, 12)",
     assert.equal(four.calls.filter((c) => c instanceof RunInstancesCommand).length, 0, "no fifth skip machine");
     assert.equal(await l4.hasCapacity(), true, "the fleet is empty for paying jobs");
   });
+
+  // protects=a full side-by-side machine starts only with its slots plus the warm-up reserve free (customers' slots
+  // stay free), and a paying job can stop the newest full side-by-side machine like a warm-up; fails_when=the reserve
+  // is ignored, a skip or ordinary machine is stopped, or no job id comes back; no_claim=EC2.
+  it("full side-by-side machines: 4 slots plus the reserve; a paying job can stop one", async () => {
+    const empty = new Ec2Launcher({ ec2: fakeEc2({ instances: [] }), launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE });
+    assert.equal(await empty.hasCapacity("us", "c6i.2xlarge", 1), false, "4 + 1 > 4");
+    assert.equal(await new Ec2Launcher({ ec2: fakeEc2({ instances: [] }), launchTemplateId: "lt-123", maxRunning: 5, machineEnv: MACHINE }).hasCapacity("us", "c6i.2xlarge", 1), true);
+    const tag = (k: string, v: string) => ({ Key: k, Value: v });
+    const at = (m: number) => new Date(Date.UTC(2026, 10, 26, 10, m));
+    const ec2 = fakeEc2({ instances: [
+      { InstanceId: "i-old", LaunchTime: at(1), InstanceType: "c6i.2xlarge", Tags: [tag(KIND_TAG, "side-by-side"), tag("fenvix:job", "71")] },
+      { InstanceId: "i-new", LaunchTime: at(5), InstanceType: "c6i.2xlarge", Tags: [tag(KIND_TAG, "side-by-side"), tag("fenvix:job", "72")] },
+      { InstanceId: "i-skip", LaunchTime: at(9), InstanceType: "c6i.large", Tags: [tag(KIND_TAG, "side-by-side-skip"), tag("fenvix:job", "73")] },
+      { InstanceId: "i-job", LaunchTime: at(9), InstanceType: "c6i.large", Tags: [tag("fenvix:job", "74")] },
+    ] });
+    const l = new Ec2Launcher({ ec2, launchTemplateId: "lt-123", maxRunning: 8, machineEnv: MACHINE });
+    assert.deepEqual(await l.preemptSideBySide("us"), { jobId: 72, instanceIds: ["i-new"] });
+    const term = ec2.calls.filter((c) => c instanceof TerminateInstancesCommand) as TerminateInstancesCommand[];
+    assert.deepEqual(term.map((c) => c.input.InstanceIds), [["i-new"]]);
+    assert.equal(await new Ec2Launcher({ ec2: fakeEc2({ instances: [] }), launchTemplateId: "lt-123", maxRunning: 4, machineEnv: MACHINE }).preemptSideBySide("us"), null);
+  });
 });

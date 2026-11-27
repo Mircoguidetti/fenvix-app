@@ -758,11 +758,16 @@ or `side_by_side`. Not to be confused with the trial's `FENVIX_MODE=shadow`: sid
   `/etc/fenvix/sbs-skip`, the gate step reads it and no kept step runs), at most `SIDE_BY_SIDE_SKIP_DAILY_CAP` a day.
   Hard lifetimes: a skip machine powers off 10 minutes after boot; a full machine at our job's `timeout-minutes`
   (his, at most 60: `gh_repositories.side_by_side_timeout_minutes`) plus 10 minutes, whatever the file says later.
-  A full machine counts 4 slots of the fleet limit (one slot = a c6i.large, 2 vCPU): with `RUNNER_MAX_RUNNING` 4 it
-  needs an empty fleet, else the job gets a skip machine. Skip machines take no slot; at most 4 run at once per region,
+  A full machine counts 4 slots of the fleet limit (one slot = a c6i.large, 2 vCPU) and starts only while its slots
+  plus the warm-up reserve (`WARMUP_RESERVE`, default 1) are free, else the job gets a skip machine: with
+  `RUNNER_MAX_RUNNING` 4 that is never, so full side-by-side machines need a higher limit. A paying job that finds the
+  fleet full stops a warm-up first, else the newest full side-by-side machine (`gh_jobs.sbs_stopped_at`; the pair
+  reads "not comparable: stopped for a customer job"). Skip machines take no slot; at most 4 run at once per region,
   above that the job gets no machine (it waits; his workflow is not affected). A machine only for code of the
   repository itself: a run GitHub does not show, a fork's pull request or a run without its head repository gets
-  none; a failed lookup of the run is retried, never guessed.
+  none; a failed lookup of the run is retried, never guessed. A repository being moved (setup pull request open or
+  merged) is not onboarded side by side; one that runs side by side is not moved until its side-by-side file is gone
+  from the default branch.
   Its run row is `ci_runs.kind = 'side_by_side'` (without a summary: `not_proven`, never passed); every reader of runs
   reads `kind = 'ci_run'` only. Its usage event is `kind = 'side_by_side'`, `billable = false`, `reason =
   'side-by-side'`. `gh_jobs.has_summary` and `gh_jobs.checkout_sha` (summary.json `commit`) are recorded at publish.

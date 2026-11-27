@@ -32,7 +32,7 @@ function ourJob(r: Row): OurJob & { checkoutSha: string | null } {
   return {
     jobId: Number(r.job_id), runAttempt: Number(r.run_attempt), headSha: String(r.head_sha), event: (r.event as string | null) ?? null,
     prNumber: r.pr_number === null || r.pr_number === undefined ? null : Number(r.pr_number), status: String(r.status), conclusion: (r.conclusion as string | null) ?? null,
-    startedAt: date(r.started_at), completedAt: date(r.completed_at), skipMachine: r.skip_machine === true, hasSummary: (r.has_summary as boolean | null) ?? null,
+    startedAt: date(r.started_at), completedAt: date(r.completed_at), skipMachine: r.skip_machine === true, stoppedForCustomer: r.sbs_stopped_at !== null && r.sbs_stopped_at !== undefined, hasSummary: (r.has_summary as boolean | null) ?? null,
     runStatus: (r.run_status as string | null) ?? null, testsRan: Number(r.tests_ran ?? 0), wouldSkipTests: Number(r.would_skip_tests ?? 0), wouldSaveMs: Number(r.would_save_ms ?? 0),
     checkoutSha: (r.checkout_sha as string | null) ?? null,
   };
@@ -71,7 +71,7 @@ export const getSideBySide: Handler = async (ctx) => {
        where repository_id = $1 and kind = 'side_by_side' and status = 'completed' group by 1, 2, 3)
     select head_sha, ev, pr, max(at) as at, count(*) over () as total from k group by 1, 2, 3 order by max(at) desc nulls last, 1 limit $3 offset $4`;
   const HIS_COLS = "job_id, run_attempt, head_sha, event, pr_number, matrix_suffix, conclusion, started_at, completed_at, labels, steps";
-  const OUR_COLS = `j.job_id, j.run_attempt, j.head_sha, j.event, j.pr_number, j.status, j.conclusion, j.started_at, j.completed_at, j.skip_machine,
+  const OUR_COLS = `j.job_id, j.run_attempt, j.head_sha, j.event, j.pr_number, j.status, j.conclusion, j.started_at, j.completed_at, j.skip_machine, j.sbs_stopped_at,
     j.has_summary, j.checkout_sha, r.status as run_status, r.tests_ran, r.would_skip_tests, r.would_save_ms`;
   const pairsOf = async (limit: number, offset: number) => {
     const keys = await t.q<{ head_sha: string; ev: string; pr: number; total: string | number }>(KEYS, [rid, suffix, limit, offset]);

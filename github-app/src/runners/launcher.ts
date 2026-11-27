@@ -89,8 +89,16 @@ export interface WarmupLaunch {
 export interface RunnerLauncher {
   launch(l: RunnerLaunch): Promise<{ instanceId: string | null; already: boolean }>;
   /** False while the fleet (of that region) is at its limit: no just-in-time runner is registered for a job that gets no machine. */
-  /** Room for one more machine of this type (default: the launch template's) under the region's limit, in slots. */
-  hasCapacity?(region?: Region, instanceType?: string): Promise<boolean>;
+  /**
+   * Room for one more machine of this type (default: the launch template's) under the region's limit, in slots, with
+   * `reserve` slots left free after it (a full side-by-side machine leaves the warm-up reserve to customers' jobs).
+   */
+  hasCapacity?(region?: Region, instanceType?: string, reserve?: number): Promise<boolean>;
+  /**
+   * Stops the region's newest full side-by-side machine (a paying job needs its slots, like a warm-up preemption).
+   * Returns its job, or null when none runs.
+   */
+  preemptSideBySide?(region: Region): Promise<{ jobId: number; instanceIds: string[] } | null>;
   /** False when no machine can be placed in that region (no placement configured): the job gets no machine at all. */
   canPlace?(region: Region): boolean;
   /** Warm-ups: the region's machines (jobs and warm-ups) and its limit. Absent: no warm-ups. */
@@ -330,8 +338,20 @@ export class Ec2Launcher implements RunnerLauncher {
     return (await this.instances(region)).filter((i) => !isSkip(i)).reduce((n, i) => n + slotsOf(i.InstanceType), 0);
   }
 
-  async hasCapacity(region: Region = "us", instanceType?: string): Promise<boolean> {
-    return (await this.running(region)) + slotsOf(instanceType) <= this.o.maxRunning;
+  async hasCapacity(region: Region = "us", instanceType?: string, reserve = 0): Promise<boolean> {
+    return (await this.running(region)) + slotsOf(instanceType) + reserve <= this.o.maxRunning;
+  }
+
+  async preemptSideBySide(region: Region): Promise<{ jobId: number; instanceIds: string[] } | null> {
+    const full = (await this.instances(region))
+      .filter((i) => (i.Tags ?? []).some((t) => t.Key === KIND_TAG && t.Value === "side-by-side"))
+      .sort((a, b) => (b.LaunchTime?.getTime() ?? 0) - (a.LaunchTime?.getTime() ?? 0));
+    const newest = full[0];
+    const jobId = Number((newest?.Tags ?? []).find((t) => t.Key === "fenvix:job")?.Value);
+    if (!newest?.InstanceId || !Number.isSafeInteger(jobId)) return null;
+    await this.placement(region).ec2.send(new TerminateInstancesCommand({ InstanceIds: [newest.InstanceId] }));
+    this.o.log?.info({ job: jobId, instance: newest.InstanceId, region }, "side-by-side machine stopped for a customer job");
+    return { jobId, instanceIds: [newest.InstanceId] };
   }
 
   async slots(region: Region): Promise<{ running: number; warmups: number; max: number }> {

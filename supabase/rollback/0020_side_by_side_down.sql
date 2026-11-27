@@ -61,7 +61,8 @@ alter table public.ci_runs drop column if exists kind;
 drop index if exists public.gh_jobs_side_by_side;
 alter table public.gh_jobs drop constraint if exists gh_jobs_kind_check;
 alter table public.gh_jobs drop column if exists kind, drop column if exists workflow_path, drop column if exists event,
-  drop column if exists pr_number, drop column if exists skip_machine, drop column if exists has_summary, drop column if exists checkout_sha;
+  drop column if exists pr_number, drop column if exists skip_machine, drop column if exists has_summary, drop column if exists checkout_sha,
+  drop column if exists sbs_stopped_at;
 drop index if exists public.gh_repositories_history_due;
 alter table public.gh_repositories drop column if exists awaiting_link, drop column if exists side_by_side_matrix,
   drop column if exists side_by_side_matrix_suffix, drop column if exists side_by_side_job_name, drop column if exists side_by_side_test_step,

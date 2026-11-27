@@ -26,6 +26,7 @@ describe("the comparison rule: one fixture per row, first matching row wins (AC 
   const rows: [string, HisJob | null, OurJob | null, string, RegExp][] = [
     ["1 his cancelled", his({ conclusion: "cancelled" }), ours(), "not_comparable", /your job: cancelled/],
     ["2 ours on a skip machine", his(), ours({ skipMachine: true, hasSummary: false, runStatus: "not_proven" }), "not_comparable", /skip machine/],
+    ["2b ours stopped for a customer job", his(), ours({ stoppedForCustomer: true, hasSummary: false, conclusion: "failure" }), "not_comparable", /stopped for a customer job/],
     ["3 engine NOT PROVEN", his(), ours({ runStatus: "not_proven" }), "not_proven", /NOT PROVEN/],
     ["4 his failure at another step", his(failedAt("Install dependencies")), ours({ runStatus: "failed" }), "not_comparable", /failed at step Install dependencies/],
     ["5 success / all passed", his(), ours(), "same", /both passed/],

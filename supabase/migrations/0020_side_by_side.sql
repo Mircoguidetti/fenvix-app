@@ -62,6 +62,8 @@ alter table public.gh_jobs add column if not exists skip_machine boolean not nul
 alter table public.gh_jobs add column if not exists has_summary boolean;
 -- The commit the runner checked out (summary.json `commit`): for a pull request, the merge commit both workflows test.
 alter table public.gh_jobs add column if not exists checkout_sha text;
+-- A full side-by-side machine stopped so that a paying job gets its slots (customers' jobs first).
+alter table public.gh_jobs add column if not exists sbs_stopped_at timestamptz;
 create index if not exists gh_jobs_side_by_side on public.gh_jobs (repository_id, launched_at) where kind = 'side_by_side';
 
 alter table public.ci_runs add column if not exists kind text not null default 'ci_run';
