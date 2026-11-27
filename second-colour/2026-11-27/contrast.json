@@ -1,0 +1,1420 @@
+{
+  "reference": {
+    "tokens": {
+      "l": {
+        "nav-active": "#e6eef9",
+        "ink-2": "#6f9bd8",
+        "ink-3": "#c9d8ef",
+        "stack-1": "#3f72bd",
+        "stack-2": "#7199d3",
+        "stack-3": "#a3bfe5",
+        "stack-4": "#cfdcf0",
+        "signin-1": "#f3f6fb",
+        "signin-2": "#e5edf8",
+        "signin-3": "#d8e4f4"
+      },
+      "d": {
+        "chart": "#b6c6ed",
+        "nav-tone": "#6e91e6",
+        "ink-2": "#4262ae",
+        "silver-1": "#4560a1",
+        "silver-3": "#819bda",
+        "stack-0": "#dae1f1",
+        "stack-1": "#a6b7dd",
+        "stack-2": "#728dca",
+        "stack-3": "#4364b1",
+        "stack-4": "#30477e",
+        "nav-label": "#8898bf"
+      }
+    },
+    "checks": [
+      {
+        "label": "Light: selected item text (cobalt) on --nav-active",
+        "kind": "text",
+        "fg": "#0d4fa3",
+        "bg": "#e6eef9",
+        "ratio": 6.74,
+        "pass": true
+      },
+      {
+        "label": "Light: tab / segment text (ink) on --nav-active",
+        "kind": "text",
+        "fg": "#06080e",
+        "bg": "#e6eef9",
+        "ratio": 17.13,
+        "pass": true
+      },
+      {
+        "label": "Light: --ink-2 dashed line, hover border, on card",
+        "kind": "ui",
+        "fg": "#6f9bd8",
+        "bg": "#ffffff",
+        "ratio": 2.85,
+        "pass": false
+      },
+      {
+        "label": "Light: --ink-2 on page",
+        "kind": "ui",
+        "fg": "#6f9bd8",
+        "bg": "#f6f6f7",
+        "ratio": 2.64,
+        "pass": false
+      },
+      {
+        "label": "Light: bar fill (cobalt) on --ink-3 track",
+        "kind": "ui",
+        "fg": "#0d4fa3",
+        "bg": "#c9d8ef",
+        "ratio": 5.46,
+        "pass": true
+      },
+      {
+        "label": "Light: --stack-1 bar segment on card",
+        "kind": "ui",
+        "fg": "#3f72bd",
+        "bg": "#ffffff",
+        "ratio": 4.82,
+        "pass": true
+      },
+      {
+        "label": "Light: --stack-2 bar segment on card",
+        "kind": "ui",
+        "fg": "#7199d3",
+        "bg": "#ffffff",
+        "ratio": 2.92,
+        "pass": false
+      },
+      {
+        "label": "Light: --stack-3 bar segment on card",
+        "kind": "ui",
+        "fg": "#a3bfe5",
+        "bg": "#ffffff",
+        "ratio": 1.88,
+        "pass": false
+      },
+      {
+        "label": "Light: --stack-4 bar segment on card",
+        "kind": "ui",
+        "fg": "#cfdcf0",
+        "bg": "#ffffff",
+        "ratio": 1.39,
+        "pass": false
+      },
+      {
+        "label": "Light: sign-in title (ink) on darkest gradient stop",
+        "kind": "text",
+        "fg": "#06080e",
+        "bg": "#d8e4f4",
+        "ratio": 15.56,
+        "pass": true
+      },
+      {
+        "label": "Light: sign-in lead (#5f636b) on darkest gradient stop",
+        "kind": "text",
+        "fg": "#5f636b",
+        "bg": "#d8e4f4",
+        "ratio": 4.69,
+        "pass": true
+      },
+      {
+        "label": "Dark: --chart line and bars on card",
+        "kind": "ui",
+        "fg": "#b6c6ed",
+        "bg": "#0d1321",
+        "ratio": 10.85,
+        "pass": true
+      },
+      {
+        "label": "Dark: --chart on surface",
+        "kind": "ui",
+        "fg": "#b6c6ed",
+        "bg": "#10182b",
+        "ratio": 10.35,
+        "pass": true
+      },
+      {
+        "label": "Dark: menu text on --nav-hover (rail)",
+        "kind": "text",
+        "fg": "#f6f6f7",
+        "bg": "#101624",
+        "ratio": 16.73,
+        "pass": true
+      },
+      {
+        "label": "Dark: menu text on --nav-active (rail)",
+        "kind": "text",
+        "fg": "#f6f6f7",
+        "bg": "#1b2339",
+        "ratio": 14.44,
+        "pass": true
+      },
+      {
+        "label": "Dark: menu text on --nav-active (second bar)",
+        "kind": "text",
+        "fg": "#f6f6f7",
+        "bg": "#202c48",
+        "ratio": 12.83,
+        "pass": true
+      },
+      {
+        "label": "Dark: --ink-2 dashed line on card",
+        "kind": "ui",
+        "fg": "#4262ae",
+        "bg": "#0d1321",
+        "ratio": 3.17,
+        "pass": true
+      },
+      {
+        "label": "Dark: --silver-3 current-plan border on card",
+        "kind": "ui",
+        "fg": "#819bda",
+        "bg": "#0d1321",
+        "ratio": 6.74,
+        "pass": true
+      },
+      {
+        "label": "Dark: --stack-0 bar segment on card",
+        "kind": "ui",
+        "fg": "#dae1f1",
+        "bg": "#0d1321",
+        "ratio": 14.15,
+        "pass": true
+      },
+      {
+        "label": "Dark: --stack-1 bar segment on card",
+        "kind": "ui",
+        "fg": "#a6b7dd",
+        "bg": "#0d1321",
+        "ratio": 9.22,
+        "pass": true
+      },
+      {
+        "label": "Dark: --stack-2 bar segment on card",
+        "kind": "ui",
+        "fg": "#728dca",
+        "bg": "#0d1321",
+        "ratio": 5.63,
+        "pass": true
+      },
+      {
+        "label": "Dark: --stack-3 bar segment on card",
+        "kind": "ui",
+        "fg": "#4364b1",
+        "bg": "#0d1321",
+        "ratio": 3.26,
+        "pass": true
+      },
+      {
+        "label": "Dark: --stack-4 bar segment on card",
+        "kind": "ui",
+        "fg": "#30477e",
+        "bg": "#0d1321",
+        "ratio": 2.06,
+        "pass": false
+      },
+      {
+        "label": "Dark: --nav-label text on rail",
+        "kind": "text",
+        "fg": "#8898bf",
+        "bg": "#06080e",
+        "ratio": 6.95,
+        "pass": true
+      },
+      {
+        "label": "Dark: --nav-label text on second bar",
+        "kind": "text",
+        "fg": "#8898bf",
+        "bg": "#0d1321",
+        "ratio": 6.44,
+        "pass": true
+      }
+    ]
+  },
+  "directions": [
+    {
+      "letter": "A",
+      "name": "slate",
+      "title": "Slate",
+      "hue": 255,
+      "chroma": 0.04,
+      "intent": "The same blue family, with most of the colour taken out: a grey-blue that sits back and lets the cobalt be the only real blue.",
+      "tokens": {
+        "l": {
+          "nav-active": "#e8f2ff",
+          "ink-2": "#7b8ca3",
+          "ink-3": "#d1d9e5",
+          "stack-1": "#58697f",
+          "stack-2": "#687990",
+          "stack-3": "#77889f",
+          "stack-4": "#8495ad",
+          "signin-1": "#f7faff",
+          "signin-2": "#edf4ff",
+          "signin-3": "#e2eefe"
+        },
+        "d": {
+          "chart": "#b6c5d8",
+          "nav-tone": "#72849a",
+          "ink-2": "#5a6b81",
+          "silver-1": "#495a6f",
+          "silver-3": "#8394ac",
+          "stack-0": "#d7e1ed",
+          "stack-1": "#acbbcf",
+          "stack-2": "#8597ae",
+          "stack-3": "#687a90",
+          "stack-4": "#536479",
+          "nav-label": "#8994a1"
+        }
+      },
+      "checks": [
+        {
+          "label": "Light: selected item text (cobalt) on --nav-active",
+          "kind": "text",
+          "fg": "#0d4fa3",
+          "bg": "#e8f2ff",
+          "ratio": 6.97,
+          "pass": true
+        },
+        {
+          "label": "Light: tab / segment text (ink) on --nav-active",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#e8f2ff",
+          "ratio": 17.71,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 dashed line, hover border, on card",
+          "kind": "ui",
+          "fg": "#7b8ca3",
+          "bg": "#ffffff",
+          "ratio": 3.43,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 on page",
+          "kind": "ui",
+          "fg": "#7b8ca3",
+          "bg": "#f6f6f7",
+          "ratio": 3.18,
+          "pass": true
+        },
+        {
+          "label": "Light: bar fill (cobalt) on --ink-3 track",
+          "kind": "ui",
+          "fg": "#0d4fa3",
+          "bg": "#d1d9e5",
+          "ratio": 5.54,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-1 bar segment on card",
+          "kind": "ui",
+          "fg": "#58697f",
+          "bg": "#ffffff",
+          "ratio": 5.61,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-2 bar segment on card",
+          "kind": "ui",
+          "fg": "#687990",
+          "bg": "#ffffff",
+          "ratio": 4.44,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-3 bar segment on card",
+          "kind": "ui",
+          "fg": "#77889f",
+          "bg": "#ffffff",
+          "ratio": 3.62,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-4 bar segment on card",
+          "kind": "ui",
+          "fg": "#8495ad",
+          "bg": "#ffffff",
+          "ratio": 3.05,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in title (ink) on darkest gradient stop",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#e2eefe",
+          "ratio": 17.06,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in lead (#5f636b) on darkest gradient stop",
+          "kind": "text",
+          "fg": "#5f636b",
+          "bg": "#e2eefe",
+          "ratio": 5.14,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart line and bars on card",
+          "kind": "ui",
+          "fg": "#b6c5d8",
+          "bg": "#0d1321",
+          "ratio": 10.57,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on surface",
+          "kind": "ui",
+          "fg": "#b6c5d8",
+          "bg": "#10182b",
+          "ratio": 10.08,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-hover (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#11141c",
+          "ratio": 17.05,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#1c212a",
+          "ratio": 14.95,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (second bar)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#212a39",
+          "ratio": 13.36,
+          "pass": true
+        },
+        {
+          "label": "Dark: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#5a6b81",
+          "bg": "#0d1321",
+          "ratio": 3.4,
+          "pass": true
+        },
+        {
+          "label": "Dark: --silver-3 current-plan border on card",
+          "kind": "ui",
+          "fg": "#8394ac",
+          "bg": "#0d1321",
+          "ratio": 6,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-0 bar segment on card",
+          "kind": "ui",
+          "fg": "#d7e1ed",
+          "bg": "#0d1321",
+          "ratio": 14.03,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-1 bar segment on card",
+          "kind": "ui",
+          "fg": "#acbbcf",
+          "bg": "#0d1321",
+          "ratio": 9.51,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-2 bar segment on card",
+          "kind": "ui",
+          "fg": "#8597ae",
+          "bg": "#0d1321",
+          "ratio": 6.21,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-3 bar segment on card",
+          "kind": "ui",
+          "fg": "#687a90",
+          "bg": "#0d1321",
+          "ratio": 4.22,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-4 bar segment on card",
+          "kind": "ui",
+          "fg": "#536479",
+          "bg": "#0d1321",
+          "ratio": 3.06,
+          "pass": true
+        },
+        {
+          "label": "Dark: --nav-label text on rail",
+          "kind": "text",
+          "fg": "#8994a1",
+          "bg": "#06080e",
+          "ratio": 6.5,
+          "pass": true
+        },
+        {
+          "label": "Dark: --nav-label text on second bar",
+          "kind": "text",
+          "fg": "#8994a1",
+          "bg": "#0d1321",
+          "ratio": 6.02,
+          "pass": true
+        }
+      ]
+    },
+    {
+      "letter": "B",
+      "name": "glacier",
+      "title": "Glacier",
+      "hue": 232,
+      "chroma": 0.07,
+      "intent": "A cooler, clearer blue leaning towards cyan: still blue, but cleaner and more technical than today's periwinkle.",
+      "tokens": {
+        "l": {
+          "nav-active": "#e1f4fe",
+          "ink-2": "#5c92ad",
+          "ink-3": "#c4dcea",
+          "stack-1": "#396d88",
+          "stack-2": "#4a7e99",
+          "stack-3": "#598da9",
+          "stack-4": "#659ab6",
+          "signin-1": "#f4fbff",
+          "signin-2": "#e9f6fe",
+          "signin-3": "#daf0fd"
+        },
+        "d": {
+          "chart": "#9ec9e1",
+          "nav-tone": "#5489a4",
+          "ink-2": "#3b708a",
+          "silver-1": "#285e77",
+          "silver-3": "#649ab5",
+          "stack-0": "#c9e4f2",
+          "stack-1": "#95c0d7",
+          "stack-2": "#679cb8",
+          "stack-3": "#4a7f99",
+          "stack-4": "#346883",
+          "nav-label": "#7997a7"
+        }
+      },
+      "checks": [
+        {
+          "label": "Light: selected item text (cobalt) on --nav-active",
+          "kind": "text",
+          "fg": "#0d4fa3",
+          "bg": "#e1f4fe",
+          "ratio": 6.97,
+          "pass": true
+        },
+        {
+          "label": "Light: tab / segment text (ink) on --nav-active",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#e1f4fe",
+          "ratio": 17.71,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 dashed line, hover border, on card",
+          "kind": "ui",
+          "fg": "#5c92ad",
+          "bg": "#ffffff",
+          "ratio": 3.4,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 on page",
+          "kind": "ui",
+          "fg": "#5c92ad",
+          "bg": "#f6f6f7",
+          "ratio": 3.15,
+          "pass": true
+        },
+        {
+          "label": "Light: bar fill (cobalt) on --ink-3 track",
+          "kind": "ui",
+          "fg": "#0d4fa3",
+          "bg": "#c4dcea",
+          "ratio": 5.54,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-1 bar segment on card",
+          "kind": "ui",
+          "fg": "#396d88",
+          "bg": "#ffffff",
+          "ratio": 5.65,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-2 bar segment on card",
+          "kind": "ui",
+          "fg": "#4a7e99",
+          "bg": "#ffffff",
+          "ratio": 4.43,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-3 bar segment on card",
+          "kind": "ui",
+          "fg": "#598da9",
+          "bg": "#ffffff",
+          "ratio": 3.62,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-4 bar segment on card",
+          "kind": "ui",
+          "fg": "#659ab6",
+          "bg": "#ffffff",
+          "ratio": 3.07,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in title (ink) on darkest gradient stop",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#daf0fd",
+          "ratio": 17.03,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in lead (#5f636b) on darkest gradient stop",
+          "kind": "text",
+          "fg": "#5f636b",
+          "bg": "#daf0fd",
+          "ratio": 5.13,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart line and bars on card",
+          "kind": "ui",
+          "fg": "#9ec9e1",
+          "bg": "#0d1321",
+          "ratio": 10.51,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on surface",
+          "kind": "ui",
+          "fg": "#9ec9e1",
+          "bg": "#10182b",
+          "ratio": 10.02,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-hover (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#0e151d",
+          "ratio": 17,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#16222c",
+          "ratio": 14.96,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (second bar)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#1b2b3b",
+          "ratio": 13.36,
+          "pass": true
+        },
+        {
+          "label": "Dark: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#3b708a",
+          "bg": "#0d1321",
+          "ratio": 3.42,
+          "pass": true
+        },
+        {
+          "label": "Dark: --silver-3 current-plan border on card",
+          "kind": "ui",
+          "fg": "#649ab5",
+          "bg": "#0d1321",
+          "ratio": 6.03,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-0 bar segment on card",
+          "kind": "ui",
+          "fg": "#c9e4f2",
+          "bg": "#0d1321",
+          "ratio": 14.01,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-1 bar segment on card",
+          "kind": "ui",
+          "fg": "#95c0d7",
+          "bg": "#0d1321",
+          "ratio": 9.54,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-2 bar segment on card",
+          "kind": "ui",
+          "fg": "#679cb8",
+          "bg": "#0d1321",
+          "ratio": 6.2,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-3 bar segment on card",
+          "kind": "ui",
+          "fg": "#4a7f99",
+          "bg": "#0d1321",
+          "ratio": 4.23,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-4 bar segment on card",
+          "kind": "ui",
+          "fg": "#346883",
+          "bg": "#0d1321",
+          "ratio": 3.05,
+          "pass": true
+        },
+        {
+          "label": "Dark: --nav-label text on rail",
+          "kind": "text",
+          "fg": "#7997a7",
+          "bg": "#06080e",
+          "ratio": 6.48,
+          "pass": true
+        },
+        {
+          "label": "Dark: --nav-label text on second bar",
+          "kind": "text",
+          "fg": "#7997a7",
+          "bg": "#0d1321",
+          "ratio": 6,
+          "pass": true
+        }
+      ]
+    },
+    {
+      "letter": "C",
+      "name": "iris",
+      "title": "Iris",
+      "hue": 290,
+      "chroma": 0.11,
+      "intent": "A muted violet: a real second colour, not blue, that stays cool and calm next to the ink and the cobalt.",
+      "tokens": {
+        "l": {
+          "nav-active": "#f1effe",
+          "ink-2": "#8d81cc",
+          "ink-3": "#d8d4f9",
+          "stack-1": "#6a5da5",
+          "stack-2": "#7a6eb7",
+          "stack-3": "#897dc8",
+          "stack-4": "#958ad5",
+          "signin-1": "#faf9ff",
+          "signin-2": "#f4f2ff",
+          "signin-3": "#edebfe"
+        },
+        "d": {
+          "chart": "#c3bcfa",
+          "nav-tone": "#8479c2",
+          "ink-2": "#6c60a7",
+          "silver-1": "#5a4e93",
+          "silver-3": "#9589d4",
+          "stack-0": "#e0ddfe",
+          "stack-1": "#bab3f1",
+          "stack-2": "#978cd7",
+          "stack-3": "#7a6fb7",
+          "stack-4": "#65599f",
+          "nav-label": "#938eba"
+        }
+      },
+      "checks": [
+        {
+          "label": "Light: selected item text (cobalt) on --nav-active",
+          "kind": "text",
+          "fg": "#0d4fa3",
+          "bg": "#f1effe",
+          "ratio": 6.95,
+          "pass": true
+        },
+        {
+          "label": "Light: tab / segment text (ink) on --nav-active",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#f1effe",
+          "ratio": 17.66,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 dashed line, hover border, on card",
+          "kind": "ui",
+          "fg": "#8d81cc",
+          "bg": "#ffffff",
+          "ratio": 3.42,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 on page",
+          "kind": "ui",
+          "fg": "#8d81cc",
+          "bg": "#f6f6f7",
+          "ratio": 3.16,
+          "pass": true
+        },
+        {
+          "label": "Light: bar fill (cobalt) on --ink-3 track",
+          "kind": "ui",
+          "fg": "#0d4fa3",
+          "bg": "#d8d4f9",
+          "ratio": 5.52,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-1 bar segment on card",
+          "kind": "ui",
+          "fg": "#6a5da5",
+          "bg": "#ffffff",
+          "ratio": 5.64,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-2 bar segment on card",
+          "kind": "ui",
+          "fg": "#7a6eb7",
+          "bg": "#ffffff",
+          "ratio": 4.43,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-3 bar segment on card",
+          "kind": "ui",
+          "fg": "#897dc8",
+          "bg": "#ffffff",
+          "ratio": 3.6,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-4 bar segment on card",
+          "kind": "ui",
+          "fg": "#958ad5",
+          "bg": "#ffffff",
+          "ratio": 3.05,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in title (ink) on darkest gradient stop",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#edebfe",
+          "ratio": 17.08,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in lead (#5f636b) on darkest gradient stop",
+          "kind": "text",
+          "fg": "#5f636b",
+          "bg": "#edebfe",
+          "ratio": 5.14,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart line and bars on card",
+          "kind": "ui",
+          "fg": "#c3bcfa",
+          "bg": "#0d1321",
+          "ratio": 10.51,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on surface",
+          "kind": "ui",
+          "fg": "#c3bcfa",
+          "bg": "#10182b",
+          "ratio": 10.02,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-hover (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#131320",
+          "ratio": 17.03,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#1f1f32",
+          "ratio": 14.95,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (second bar)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#252741",
+          "ratio": 13.45,
+          "pass": true
+        },
+        {
+          "label": "Dark: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#6c60a7",
+          "bg": "#0d1321",
+          "ratio": 3.42,
+          "pass": true
+        },
+        {
+          "label": "Dark: --silver-3 current-plan border on card",
+          "kind": "ui",
+          "fg": "#9589d4",
+          "bg": "#0d1321",
+          "ratio": 6.01,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-0 bar segment on card",
+          "kind": "ui",
+          "fg": "#e0ddfe",
+          "bg": "#0d1321",
+          "ratio": 14.08,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-1 bar segment on card",
+          "kind": "ui",
+          "fg": "#bab3f1",
+          "bg": "#0d1321",
+          "ratio": 9.54,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-2 bar segment on card",
+          "kind": "ui",
+          "fg": "#978cd7",
+          "bg": "#0d1321",
+          "ratio": 6.23,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-3 bar segment on card",
+          "kind": "ui",
+          "fg": "#7a6fb7",
+          "bg": "#0d1321",
+          "ratio": 4.23,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-4 bar segment on card",
+          "kind": "ui",
+          "fg": "#65599f",
+          "bg": "#0d1321",
+          "ratio": 3.08,
+          "pass": true
+        },
+        {
+          "label": "Dark: --nav-label text on rail",
+          "kind": "text",
+          "fg": "#938eba",
+          "bg": "#06080e",
+          "ratio": 6.5,
+          "pass": true
+        },
+        {
+          "label": "Dark: --nav-label text on second bar",
+          "kind": "text",
+          "fg": "#938eba",
+          "bg": "#0d1321",
+          "ratio": 6.02,
+          "pass": true
+        }
+      ]
+    },
+    {
+      "letter": "D",
+      "name": "stone",
+      "title": "Stone",
+      "hue": 75,
+      "chroma": 0.022,
+      "intent": "A warm, sandy grey: the cool ink and cobalt set against a quiet paper warmth, like a printed page.",
+      "tokens": {
+        "l": {
+          "nav-active": "#f8f0e4",
+          "ink-2": "#938a7d",
+          "ink-3": "#dcd8d1",
+          "stack-1": "#70665a",
+          "stack-2": "#80776b",
+          "stack-3": "#8f8579",
+          "stack-4": "#9c9286",
+          "signin-1": "#fef9f3",
+          "signin-2": "#fbf3e8",
+          "signin-3": "#f6ebde"
+        },
+        "d": {
+          "chart": "#cac2b7",
+          "nav-tone": "#8a8174",
+          "ink-2": "#72685c",
+          "silver-1": "#5f574b",
+          "silver-3": "#9b9285",
+          "stack-0": "#e5dfd8",
+          "stack-1": "#c1b9ae",
+          "stack-2": "#9e9487",
+          "stack-3": "#80776a",
+          "stack-4": "#6a6155",
+          "nav-label": "#97928a"
+        }
+      },
+      "checks": [
+        {
+          "label": "Light: selected item text (cobalt) on --nav-active",
+          "kind": "text",
+          "fg": "#0d4fa3",
+          "bg": "#f8f0e4",
+          "ratio": 6.97,
+          "pass": true
+        },
+        {
+          "label": "Light: tab / segment text (ink) on --nav-active",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#f8f0e4",
+          "ratio": 17.71,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 dashed line, hover border, on card",
+          "kind": "ui",
+          "fg": "#938a7d",
+          "bg": "#ffffff",
+          "ratio": 3.4,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 on page",
+          "kind": "ui",
+          "fg": "#938a7d",
+          "bg": "#f6f6f7",
+          "ratio": 3.15,
+          "pass": true
+        },
+        {
+          "label": "Light: bar fill (cobalt) on --ink-3 track",
+          "kind": "ui",
+          "fg": "#0d4fa3",
+          "bg": "#dcd8d1",
+          "ratio": 5.55,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-1 bar segment on card",
+          "kind": "ui",
+          "fg": "#70665a",
+          "bg": "#ffffff",
+          "ratio": 5.62,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-2 bar segment on card",
+          "kind": "ui",
+          "fg": "#80776b",
+          "bg": "#ffffff",
+          "ratio": 4.4,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-3 bar segment on card",
+          "kind": "ui",
+          "fg": "#8f8579",
+          "bg": "#ffffff",
+          "ratio": 3.62,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-4 bar segment on card",
+          "kind": "ui",
+          "fg": "#9c9286",
+          "bg": "#ffffff",
+          "ratio": 3.06,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in title (ink) on darkest gradient stop",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#f6ebde",
+          "ratio": 17.03,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in lead (#5f636b) on darkest gradient stop",
+          "kind": "text",
+          "fg": "#5f636b",
+          "bg": "#f6ebde",
+          "ratio": 5.13,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart line and bars on card",
+          "kind": "ui",
+          "fg": "#cac2b7",
+          "bg": "#0d1321",
+          "ratio": 10.52,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on surface",
+          "kind": "ui",
+          "fg": "#cac2b7",
+          "bg": "#10182b",
+          "ratio": 10.03,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-hover (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#131418",
+          "ratio": 17.04,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#202022",
+          "ratio": 15.06,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (second bar)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#262932",
+          "ratio": 13.45,
+          "pass": true
+        },
+        {
+          "label": "Dark: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#72685c",
+          "bg": "#0d1321",
+          "ratio": 3.4,
+          "pass": true
+        },
+        {
+          "label": "Dark: --silver-3 current-plan border on card",
+          "kind": "ui",
+          "fg": "#9b9285",
+          "bg": "#0d1321",
+          "ratio": 6.04,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-0 bar segment on card",
+          "kind": "ui",
+          "fg": "#e5dfd8",
+          "bg": "#0d1321",
+          "ratio": 14.02,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-1 bar segment on card",
+          "kind": "ui",
+          "fg": "#c1b9ae",
+          "bg": "#0d1321",
+          "ratio": 9.55,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-2 bar segment on card",
+          "kind": "ui",
+          "fg": "#9e9487",
+          "bg": "#0d1321",
+          "ratio": 6.22,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-3 bar segment on card",
+          "kind": "ui",
+          "fg": "#80776a",
+          "bg": "#0d1321",
+          "ratio": 4.21,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-4 bar segment on card",
+          "kind": "ui",
+          "fg": "#6a6155",
+          "bg": "#0d1321",
+          "ratio": 3.05,
+          "pass": true
+        },
+        {
+          "label": "Dark: --nav-label text on rail",
+          "kind": "text",
+          "fg": "#97928a",
+          "bg": "#06080e",
+          "ratio": 6.48,
+          "pass": true
+        },
+        {
+          "label": "Dark: --nav-label text on second bar",
+          "kind": "text",
+          "fg": "#97928a",
+          "bg": "#0d1321",
+          "ratio": 6,
+          "pass": true
+        }
+      ]
+    },
+    {
+      "letter": "E",
+      "name": "graphite",
+      "title": "Graphite",
+      "hue": 255,
+      "chroma": 0.006,
+      "intent": "No second colour at all: neutral greys carry selection and the second chart line, so cobalt is the one accent.",
+      "tokens": {
+        "l": {
+          "nav-active": "#eff1f5",
+          "ink-2": "#898b8f",
+          "ink-3": "#d7d8da",
+          "stack-1": "#65686b",
+          "stack-2": "#76787c",
+          "stack-3": "#84878b",
+          "stack-4": "#919397",
+          "signin-1": "#f8fafd",
+          "signin-2": "#f2f4f8",
+          "signin-3": "#ebedf1"
+        },
+        "d": {
+          "chart": "#c1c3c6",
+          "nav-tone": "#808286",
+          "ink-2": "#676a6d",
+          "silver-1": "#56585c",
+          "silver-3": "#909396",
+          "stack-0": "#dee0e1",
+          "stack-1": "#b7babc",
+          "stack-2": "#939699",
+          "stack-3": "#76797c",
+          "stack-4": "#606366",
+          "nav-label": "#919395"
+        }
+      },
+      "checks": [
+        {
+          "label": "Light: selected item text (cobalt) on --nav-active",
+          "kind": "text",
+          "fg": "#0d4fa3",
+          "bg": "#eff1f5",
+          "ratio": 6.97,
+          "pass": true
+        },
+        {
+          "label": "Light: tab / segment text (ink) on --nav-active",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#eff1f5",
+          "ratio": 17.71,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 dashed line, hover border, on card",
+          "kind": "ui",
+          "fg": "#898b8f",
+          "bg": "#ffffff",
+          "ratio": 3.41,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 on page",
+          "kind": "ui",
+          "fg": "#898b8f",
+          "bg": "#f6f6f7",
+          "ratio": 3.16,
+          "pass": true
+        },
+        {
+          "label": "Light: bar fill (cobalt) on --ink-3 track",
+          "kind": "ui",
+          "fg": "#0d4fa3",
+          "bg": "#d7d8da",
+          "ratio": 5.53,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-1 bar segment on card",
+          "kind": "ui",
+          "fg": "#65686b",
+          "bg": "#ffffff",
+          "ratio": 5.61,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-2 bar segment on card",
+          "kind": "ui",
+          "fg": "#76787c",
+          "bg": "#ffffff",
+          "ratio": 4.42,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-3 bar segment on card",
+          "kind": "ui",
+          "fg": "#84878b",
+          "bg": "#ffffff",
+          "ratio": 3.61,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-4 bar segment on card",
+          "kind": "ui",
+          "fg": "#919397",
+          "bg": "#ffffff",
+          "ratio": 3.08,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in title (ink) on darkest gradient stop",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#ebedf1",
+          "ratio": 17.08,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in lead (#5f636b) on darkest gradient stop",
+          "kind": "text",
+          "fg": "#5f636b",
+          "bg": "#ebedf1",
+          "ratio": 5.14,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart line and bars on card",
+          "kind": "ui",
+          "fg": "#c1c3c6",
+          "bg": "#0d1321",
+          "ratio": 10.5,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on surface",
+          "kind": "ui",
+          "fg": "#c1c3c6",
+          "bg": "#10182b",
+          "ratio": 10.01,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-hover (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#12141a",
+          "ratio": 17.05,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#1e2026",
+          "ratio": 15.08,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (second bar)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#242935",
+          "ratio": 13.47,
+          "pass": true
+        },
+        {
+          "label": "Dark: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#676a6d",
+          "bg": "#0d1321",
+          "ratio": 3.41,
+          "pass": true
+        },
+        {
+          "label": "Dark: --silver-3 current-plan border on card",
+          "kind": "ui",
+          "fg": "#909396",
+          "bg": "#0d1321",
+          "ratio": 6.01,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-0 bar segment on card",
+          "kind": "ui",
+          "fg": "#dee0e1",
+          "bg": "#0d1321",
+          "ratio": 14,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-1 bar segment on card",
+          "kind": "ui",
+          "fg": "#b7babc",
+          "bg": "#0d1321",
+          "ratio": 9.51,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-2 bar segment on card",
+          "kind": "ui",
+          "fg": "#939699",
+          "bg": "#0d1321",
+          "ratio": 6.24,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-3 bar segment on card",
+          "kind": "ui",
+          "fg": "#76797c",
+          "bg": "#0d1321",
+          "ratio": 4.24,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-4 bar segment on card",
+          "kind": "ui",
+          "fg": "#606366",
+          "bg": "#0d1321",
+          "ratio": 3.07,
+          "pass": true
+        },
+        {
+          "label": "Dark: --nav-label text on rail",
+          "kind": "text",
+          "fg": "#919395",
+          "bg": "#06080e",
+          "ratio": 6.49,
+          "pass": true
+        },
+        {
+          "label": "Dark: --nav-label text on second bar",
+          "kind": "text",
+          "fg": "#919395",
+          "bg": "#0d1321",
+          "ratio": 6.02,
+          "pass": true
+        }
+      ]
+    }
+  ]
+}
