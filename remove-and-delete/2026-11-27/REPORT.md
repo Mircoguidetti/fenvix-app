@@ -160,4 +160,51 @@ the App from that account by deleting the organization. This removes the integra
 
 ## Diff
 
-`git diff --stat origin/main...claude/remove-and-delete` (after the report commit) is in the PR description.
+`git diff --stat origin/main...claude/remove-and-delete` (the commit that added this report; this stat edit adds no new file):
+
+```
+ deploy/lib/migrate.mjs                             |   6 +
+ deploy/test/pipeline-2.test.mjs                    |   2 +-
+ github-app/scripts/prepare-test-db.sh              |   6 +-
+ github-app/src/api/context.ts                      |   9 +-
+ github-app/src/api/data.ts                         |  12 +
+ github-app/src/api/github.ts                       |  16 ++
+ github-app/src/api/openapi.gen.ts                  |   2 +-
+ github-app/src/api/orgs.ts                         |  19 ++
+ github-app/src/api/server.ts                       |   6 +-
+ github-app/src/service.ts                          |  85 ++++++-
+ github-app/src/warmup/warmups.ts                   |   5 +-
+ github-app/src/work.ts                             |  21 +-
+ github-app/tests/helpers/fake-github.ts            |   8 +
+ github-app/tests/helpers/harness.ts                |   4 +
+ .../tests/integration/remove-and-delete.test.ts    | 283 +++++++++++++++++++++
+ github-app/tests/unit/api.test.ts                  |   3 +-
+ openapi/fenvix-api.yaml                            |  42 ++-
+ remove-and-delete/2026-11-27/REPORT.md             | 163 ++++++++++++
+ .../shots/delete-account-desktop-1440x900-dark.png | Bin 0 -> 305300 bytes
+ .../delete-account-desktop-1440x900-light.png      | Bin 0 -> 293581 bytes
+ .../shots/delete-account-mobile-390x844-dark.png   | Bin 0 -> 141857 bytes
+ .../shots/delete-account-mobile-390x844-light.png  | Bin 0 -> 135568 bytes
+ .../shots/remove-project-desktop-1440x900-dark.png | Bin 0 -> 336298 bytes
+ .../remove-project-desktop-1440x900-light.png      | Bin 0 -> 326294 bytes
+ .../shots/remove-project-mobile-390x844-dark.png   | Bin 0 -> 126551 bytes
+ .../shots/remove-project-mobile-390x844-light.png  | Bin 0 -> 120864 bytes
+ scripts/remove-delete-checks.mjs                   | 153 +++++++++++
+ scripts/run.mjs                                    |   2 +-
+ src/api/schema.d.ts                                | 123 ++++++++-
+ src/components/TypedConfirmDialog.tsx              |  67 +++++
+ src/data/api.ts                                    |   7 +
+ src/data/ci-rows.ts                                |   1 +
+ src/data/client.ts                                 |   7 +
+ src/data/compat.ts                                 |   2 +
+ src/data/mock.ts                                   |  32 ++-
+ src/data/orgs-mock.ts                              |  13 +
+ src/data/orgs.ts                                   |   5 +
+ src/pages/Project.tsx                              |  83 +++++-
+ src/pages/Settings.tsx                             |  73 +++++-
+ src/styles.css                                     |   4 +
+ supabase/migrations/0021_remove_and_delete.sql     | 101 ++++++++
+ supabase/tests/remove-delete-rls.sql               |  16 ++
+ supabase/tests/run-local.sh                        |   9 +-
+ 43 files changed, 1358 insertions(+), 32 deletions(-)
+```
