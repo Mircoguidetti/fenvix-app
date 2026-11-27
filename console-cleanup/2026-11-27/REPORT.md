@@ -30,13 +30,13 @@ DONE
 
 ## Check 1: commands
 
-| Command | origin/main (worktree at 50d7fd9) | claude/console-cleanup (24a4744) |
+| Command | origin/main (worktree at 50d7fd9) | claude/console-cleanup (ab53d27) |
 |---|---|---|
 | `npm ci` | (node_modules copied from the branch's `npm ci`; same lockfile) | exit 0 |
 | `npm run typecheck` | exit 0 | exit 0 |
 | `npm run test:unit` | exit 0, 88 tests, 88 pass | exit 0, 91 tests, 91 pass |
 | `npm run build` | exit 0 | exit 0 |
-| `npm run check` | exit 0: checks 72 passed, organization 10, status colours 18, screenshots 170 pictures | exit 0: checks 72 passed, organization 10, status colours 18, cleanup 18 (after the added item), screenshots 170 pictures |
+| `npm run check` | exit 0: checks 72 passed, organization 10, status colours 18, screenshots 170 pictures | exit 0: checks 72 passed, organization 10, status colours 18, cleanup 18, screenshots 170 pictures |
 
 `npm run check` regenerates `docs/screenshots/`. That directory is not tracked by git (no change shown by `git status`), so it is not in this PR.
 
@@ -99,7 +99,7 @@ DONE
 
 ## Check 3: shots
 
-`shots/`: 28 pictures before (origin/main build, worktree at 50d7fd9) and 28 after (build of 6d54049). Mock backend, pre-installed Playwright, `deviceScaleFactor: 2`, light and dark, 1440x900 and 390x844. Pages: Connect, Usage, Settings, sign-in/welcome, loading screen, a coming-soon page (nightly), a toast. Command: `BASE_URL=… PREFIX=before|after node scripts/cleanup-shots.mjs`. Output: "28 pictures … console errors: 0" for both. The after shots predate the review fixes (24a4744), which change no layout: they add a failure note to the static loading screen and fix the `next` guard. The sign-in page stays light only, by design, so its light and dark shots are identical.
+`shots/`: 28 pictures before (origin/main build, worktree at 50d7fd9) and 28 after (taken again on the build of ab53d27: only the two 1440 px welcome pictures changed, for the new title; the other 26 came out byte-identical). Mock backend, pre-installed Playwright, `deviceScaleFactor: 2`, light and dark, 1440x900 and 390x844. Pages: Connect, Usage, Settings, sign-in/welcome, loading screen, a coming-soon page (nightly), a toast. Command: `BASE_URL=… PREFIX=before|after node scripts/cleanup-shots.mjs`. Output: "28 pictures … console errors: 0" for both. The sign-in page stays light only, by design, so its light and dark shots are identical.
 
 ## Check 4: files
 
