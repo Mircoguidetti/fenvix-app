@@ -1,0 +1,194 @@
+<meta charset="utf-8">
+<title>Fenvix Accent, Red-Orange</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one band per console page, today's colours first then A to E in a grid; palettes and contrast after. */
+:root {
+  --paper: #f6f6f7; --card: #ffffff; --ink: #06080e; --muted: #5d6169; --line: #e3e4e8; --cobalt: #0d4fa3;
+  --pass: #067a3a; --fail: #c4120a; --chip: #eceef1;
+  --display: "Schibsted Grotesk", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper: #06080e; --card: #0d1321; --ink: #f6f6f7; --muted: #a3acc0; --line: #1b2742; --cobalt: #8fb2ea;
+  --pass: #3ddc84; --fail: #ff6a5c; --chip: #151f37; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --paper: #06080e; --card: #0d1321; --ink: #f6f6f7; --muted: #a3acc0; --line: #1b2742; --cobalt: #8fb2ea;
+  --pass: #3ddc84; --fail: #ff6a5c; --chip: #151f37; color-scheme: dark }
+body { background: var(--paper); color: var(--ink); font: 15px/1.5 var(--display); }
+.wrap { max-width: 1480px; margin: 0 auto; padding-block: 40px 80px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 48px; }
+h1, h2, h3 { color: var(--ink); text-wrap: balance; margin: 0; font-weight: 600; letter-spacing: -0.02em; }
+h1 { font-size: clamp(28px, 4vw, 40px); }
+h2 { font-size: 22px; }
+h3 { font-size: 15px; }
+p { margin: 0; max-width: 70ch; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+header { display: flex; flex-direction: column; gap: 12px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px; }
+.facts span { font: 12px var(--mono); padding: 4px 8px; border-radius: 6px; background: var(--chip); }
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--paper); padding-block: 12px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--paper); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 3px; background: var(--card); flex-wrap: wrap; }
+.seg button { font: 500 13.5px var(--display); color: var(--muted); background: none; border: 0; border-radius: 999px; padding: 7px 14px; cursor: pointer; min-height: 36px; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.seg button:focus-visible, .shot:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.jump { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13.5px; }
+.jump a { color: var(--muted); text-decoration: none; }
+.jump a:hover { color: var(--ink); }
+section { display: flex; flex-direction: column; gap: 16px; scroll-margin-top: 80px; }
+.grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.grid.phone { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .grid.phone { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .grid { grid-template-columns: minmax(0, 1fr); } .grid.phone { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+figure { margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+figcaption { display: flex; gap: 8px; align-items: baseline; font-size: 13.5px; }
+.letter { font: 600 13px var(--mono); display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: var(--ink); color: var(--paper); flex-shrink: 0; }
+.letter.ref { background: var(--chip); color: var(--ink); width: auto; padding: 0 7px; }
+.shot { display: block; padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); cursor: zoom-in; }
+.shot img { display: block; width: 100%; height: auto; }
+.dirs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 1000px) { .dirs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .dirs { grid-template-columns: minmax(0, 1fr); } }
+.dir { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.dir-head { display: flex; gap: 10px; align-items: center; }
+.sw-row { display: flex; flex-direction: column; gap: 6px; }
+.sw-label { font: 11px var(--mono); color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+.sws { display: flex; flex-wrap: wrap; gap: 4px; }
+.sw { width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--line); }
+.hexes { font: 11.5px/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+table { border-collapse: collapse; width: 100%; min-width: 900px; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; white-space: normal; min-width: 220px; }
+#status-table td { white-space: normal; text-align: left; font-size: 12px; min-width: 150px; }
+thead th { font-weight: 600; position: sticky; top: 0; background: var(--card); }
+td.fail, span.fail { color: var(--fail); font-weight: 600; }
+td.ok { color: var(--ink); }
+tbody tr:last-child td { border-bottom: 0; }
+dialog { border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 94vh; }
+dialog::backdrop { background: rgba(6, 8, 14, 0.82); }
+dialog img { display: block; max-width: 96vw; max-height: 88vh; width: auto; height: auto; border-radius: 8px; }
+dialog p { color: #f6f6f7; font-size: 14px; padding-top: 8px; max-width: none; }
+@media (prefers-reduced-motion: no-preference) { .shot img { transition: opacity .15s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Accent colour: six red-orange directions</h1>
+    <p class="muted">Each direction replaces the cobalt accent and the light blue around it: the selected item, chart lines and bars, focus ring, sign-in sky. The near-night blues, the greys, fonts and layout are the same in every shot. Where an accent sits too close to the red of a failed test or the amber of a warning, that direction also moves the status colour, as shown on the failed run. Today's colours are the first picture in each row. Click a picture to see it full size.</p>
+    <div class="facts"><span>27 Nov 2026</span><span>mock data</span><span>1440×900 and 390×844</span><span>A–F, no order of preference</span></div>
+  </header>
+
+  <div class="bar">
+    <div class="seg" role="group" aria-label="View">
+      <button type="button" id="v-dl" data-view="desktop-light" aria-pressed="true">Desktop, light</button>
+      <button type="button" id="v-dd" data-view="desktop-dark" aria-pressed="false">Desktop, dark</button>
+      <button type="button" id="v-pl" data-view="phone-light" aria-pressed="false">Phone, light</button>
+    </div>
+    <nav class="jump" id="jump" aria-label="Pages"></nav>
+  </div>
+
+  <div id="pages" style="display:flex;flex-direction:column;gap:48px"></div>
+
+  <section id="palettes">
+    <h2>The colours</h2>
+    <p class="muted">Light: accent (selected text, focus), chart, selected-item tint, second chart line, bar track, stacked-bar ramp, sign-in sky. Dark: chart, menu tint, second chart line, chart fade and plan border, stacked-bar ramp. Status: danger and warning as each direction would ship them.</p>
+    <div class="dirs" id="dirs"></div>
+  </section>
+
+  <section id="status">
+    <h2>Next to failed and warning states</h2>
+    <p class="muted">OKLCH distance from each accent to the danger and warning colours (hue in degrees, lightness 0 to 1, ΔE in OKLab). Too close means ΔE under 0.10, or hue within 14° and lightness within 0.12. A direction that is too close moves the status colour; the distance after the move is shown under it. Failed and warning states keep their icon and label everywhere.</p>
+    <div class="table-wrap"><table id="status-table"></table></div>
+  </section>
+
+  <section id="contrast">
+    <h2>Contrast</h2>
+    <p class="muted">WCAG 2 ratios. Text needs 4.5:1, non-text UI 3:1. Tints are measured with the text that sits on them; the dark menu tints are blended at their opacity over the bar behind them.</p>
+    <div class="table-wrap"><table id="table"></table></div>
+  </section>
+</div>
+
+<dialog id="zoom"><img id="zoom-img" alt=""><p id="zoom-cap"></p></dialog>
+
+<script>
+const DATA = /*DATA*/null;
+const PAGES = [["overview", "Overview"], ["runs", "Project runs"], ["failed", "A failed run"], ["parallel", "Parallel with proof"], ["usage", "Usage"], ["settings", "Settings"], ["signin", "Sign-in"]];
+const KITS = [["reference", "Today", null], ...DATA.directions.map((d) => [d.letter.toLowerCase(), d.title, d.letter])];
+let view = "desktop-light";
+try { view = localStorage.getItem("sc-view") || view; } catch {}
+
+const pages = document.getElementById("pages");
+const jump = document.getElementById("jump");
+for (const [key, name] of PAGES) {
+  const a = document.createElement("a"); a.href = "#p-" + key; a.textContent = name; jump.appendChild(a);
+  const s = document.createElement("section"); s.id = "p-" + key;
+  s.innerHTML = `<h2>${name}</h2><div class="grid"></div>`;
+  const grid = s.querySelector(".grid");
+  for (const [kit, title, letter] of KITS) {
+    const f = document.createElement("figure");
+    const cap = letter ? `<span class="letter">${letter}</span><span>${title}</span>` : `<span class="letter ref">Today</span><span class="muted">reference</span>`;
+    f.innerHTML = `<button type="button" class="shot" data-kit="${kit}" data-page="${key}"><img loading="lazy" alt="${name}, ${letter ? "direction " + letter + ", " + title : "today's colours"}"></button><figcaption>${cap}</figcaption>`;
+    grid.appendChild(f);
+  }
+  pages.appendChild(s);
+}
+function render() {
+  document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
+  document.querySelectorAll(".grid").forEach((g) => g.classList.toggle("phone", view === "phone-light"));
+  document.querySelectorAll(".shot").forEach((b) => {
+    const img = b.querySelector("img");
+    img.src = `img/${b.dataset.kit}/${b.dataset.page}-${view}.jpg`;
+    img.width = view === "phone-light" ? 780 : 1440; img.height = view === "phone-light" ? 1688 : 900;
+  });
+}
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { view = b.dataset.view; try { localStorage.setItem("sc-view", view); } catch {} render(); }));
+render();
+
+const zoom = document.getElementById("zoom");
+pages.addEventListener("click", (e) => {
+  const b = e.target.closest(".shot"); if (!b) return;
+  const img = b.querySelector("img");
+  document.getElementById("zoom-img").src = img.src; document.getElementById("zoom-img").alt = img.alt;
+  document.getElementById("zoom-cap").textContent = img.alt + " · " + view.replace("-", ", ");
+  zoom.showModal();
+});
+zoom.addEventListener("click", () => zoom.close());
+
+const L_KEYS = ["accent", "chart", "nav-active", "ink-2", "ink-3", "stack-1", "stack-2", "stack-3", "stack-4", "signin-1", "signin-2", "signin-3"];
+const D_KEYS = ["chart", "nav-tone", "ink-2", "silver-1", "silver-3", "stack-0", "stack-1", "stack-2", "stack-3", "stack-4"];
+const S_KEYS = ["danger", "warning", "dangerDark", "warningDark"];
+const sw = (hex, k) => `<span class="sw" style="background:${hex}" title="--${k} ${hex}"></span>`;
+const hexes = (t, keys) => keys.map((k) => `--${k} ${t[k]}`).join(" · ");
+const dirs = document.getElementById("dirs");
+for (const d of [{ letter: "Today", title: "Reference", intent: "Today's cobalt and periwinkle, shown for comparison.", tokens: DATA.reference.tokens }, ...DATA.directions]) {
+  const el = document.createElement("div"); el.className = "dir";
+  el.innerHTML = `<div class="dir-head"><span class="letter${d.letter === "Today" ? " ref" : ""}">${d.letter}</span><h3>${d.title}</h3></div>
+    <p class="muted" style="font-size:14px">${d.intent}</p>
+    <div class="sw-row"><span class="sw-label">Light</span><div class="sws">${L_KEYS.map((k) => sw(d.tokens.l[k], k)).join("")}</div><div class="hexes">${hexes(d.tokens.l, L_KEYS)}</div></div>
+    <div class="sw-row"><span class="sw-label">Dark</span><div class="sws">${D_KEYS.map((k) => sw(d.tokens.d[k], k)).join("")}</div><div class="hexes">${hexes(d.tokens.d, D_KEYS)} (nav-tone at 10 % hover, 20 % selected)</div></div>
+    <div class="sw-row"><span class="sw-label">Status${d.tokens.status.dangerClose || d.tokens.status.warningClose ? " (moved)" : ""}</span><div class="sws">${S_KEYS.map((k) => sw(d.tokens.status[k], k)).join("")}</div><div class="hexes">${S_KEYS.map((k) => `${k} ${d.tokens.status[k]}`).join(" · ")}</div></div>`;
+  dirs.appendChild(el);
+}
+
+const cols = [["Today", DATA.reference.checks], ...DATA.directions.map((d) => [d.letter + " " + d.title, d.checks])];
+let html = `<thead><tr><th>Pairing</th><th>Bar</th>${cols.map(([n]) => `<th>${n}</th>`).join("")}</tr></thead><tbody>`;
+DATA.labels.forEach(([label, kind], i) => {
+  html += `<tr><td>${label}</td><td class="muted">${kind === "text" ? "4.5" : "3.0"}</td>${cols.map(([, c]) => `<td class="${c[i][1] ? "ok" : "fail"}">${c[i][0].toFixed(2)}${c[i][1] ? "" : " ✕"}</td>`).join("")}</tr>`;
+});
+document.getElementById("table").innerHTML = html + "</tbody>";
+
+const fd = (x) => x ? `Δh ${x.dh}° · ΔL ${x.dL.toFixed(2)} · ΔE ${x.dE.toFixed(3)}` : "";
+const close = (x) => x.dE < 0.1 || (x.dh < 14 && x.dL < 0.12);
+const cell = (x, after) => `<td class="${close(x) ? "fail" : "ok"}">${fd(x)}${close(x) ? " ✕" : ""}${after ? `<br><span class="${close(after) ? "fail" : "muted"}">after: ${fd(after)}${close(after) ? " ✕ still close: icon and label carry it" : ""}</span>` : ""}</td>`;
+let sh = `<thead><tr><th>Direction</th><th>Accent vs danger</th><th>Chart vs danger</th><th>Dark chart vs dark danger</th><th>Accent vs warning</th><th>Chart vs warning</th><th>Dark chart vs dark warning</th></tr></thead><tbody>`;
+const rd = DATA.reference.dist;
+sh += `<tr><td>Today (cobalt)</td>${cell(rd.lDanger)}${cell(rd.lDanger)}${cell(rd.dDanger)}${cell(rd.lWarning)}${cell(rd.lWarning)}${cell(rd.dWarning)}</tr>`;
+for (const d of DATA.directions) {
+  const s = d.tokens.dist;
+  sh += `<tr><td>${d.letter} ${d.title}</td>${cell(s.lDanger, s.lDangerNew)}${cell(s.lDangerChart, s.lDangerChartNew)}${cell(s.dDanger, s.dDangerNew)}${cell(s.lWarning, s.lWarningNew)}${cell(s.lWarningChart, s.lWarningChartNew)}${cell(s.dWarning, s.dWarningNew)}</tr>`;
+}
+document.getElementById("status-table").innerHTML = sh + "</tbody>";
+</script>

@@ -1,0 +1,2216 @@
+{
+  "reference": {
+    "tokens": {
+      "l": {
+        "accent": "#0d4fa3",
+        "chart": "#0d4fa3",
+        "nav-active": "#e6eef9",
+        "ink-2": "#6f9bd8",
+        "ink-3": "#c9d8ef",
+        "stack-1": "#3f72bd",
+        "stack-2": "#7199d3",
+        "stack-3": "#a3bfe5",
+        "stack-4": "#cfdcf0",
+        "signin-1": "#f3f6fb",
+        "signin-2": "#e5edf8",
+        "signin-3": "#d8e4f4"
+      },
+      "d": {
+        "chart": "#b6c6ed",
+        "nav-tone": "#6e91e6",
+        "ink-2": "#4262ae",
+        "silver-1": "#4560a1",
+        "silver-3": "#819bda",
+        "stack-0": "#dae1f1",
+        "stack-1": "#a6b7dd",
+        "stack-2": "#728dca",
+        "stack-3": "#4364b1",
+        "stack-4": "#30477e"
+      },
+      "status": {
+        "danger": "#d6140a",
+        "dangerDark": "#ff6a5c",
+        "warning": "#9c5900",
+        "warningDark": "#ffb020"
+      }
+    },
+    "checks": [
+      {
+        "label": "Light: selected item text (accent) on --nav-active",
+        "kind": "text",
+        "fg": "#0d4fa3",
+        "bg": "#e6eef9",
+        "ratio": 6.74,
+        "pass": true
+      },
+      {
+        "label": "Light: accent text on page",
+        "kind": "text",
+        "fg": "#0d4fa3",
+        "bg": "#f6f6f7",
+        "ratio": 7.3,
+        "pass": true
+      },
+      {
+        "label": "Light: tab text (ink) on --nav-active",
+        "kind": "text",
+        "fg": "#06080e",
+        "bg": "#e6eef9",
+        "ratio": 17.13,
+        "pass": true
+      },
+      {
+        "label": "Light: --chart lines and bars on card",
+        "kind": "ui",
+        "fg": "#0d4fa3",
+        "bg": "#ffffff",
+        "ratio": 7.88,
+        "pass": true
+      },
+      {
+        "label": "Light: --chart on page",
+        "kind": "ui",
+        "fg": "#0d4fa3",
+        "bg": "#f6f6f7",
+        "ratio": 7.3,
+        "pass": true
+      },
+      {
+        "label": "Light: --ink-2 dashed line on card",
+        "kind": "ui",
+        "fg": "#6f9bd8",
+        "bg": "#ffffff",
+        "ratio": 2.85,
+        "pass": false
+      },
+      {
+        "label": "Light: bar fill (--chart) on --ink-3 track",
+        "kind": "ui",
+        "fg": "#0d4fa3",
+        "bg": "#c9d8ef",
+        "ratio": 5.46,
+        "pass": true
+      },
+      {
+        "label": "Light: --stack-1 segment on card",
+        "kind": "ui",
+        "fg": "#3f72bd",
+        "bg": "#ffffff",
+        "ratio": 4.82,
+        "pass": true
+      },
+      {
+        "label": "Light: --stack-2 segment on card",
+        "kind": "ui",
+        "fg": "#7199d3",
+        "bg": "#ffffff",
+        "ratio": 2.92,
+        "pass": false
+      },
+      {
+        "label": "Light: --stack-3 segment on card",
+        "kind": "ui",
+        "fg": "#a3bfe5",
+        "bg": "#ffffff",
+        "ratio": 1.88,
+        "pass": false
+      },
+      {
+        "label": "Light: --stack-4 segment on card",
+        "kind": "ui",
+        "fg": "#cfdcf0",
+        "bg": "#ffffff",
+        "ratio": 1.39,
+        "pass": false
+      },
+      {
+        "label": "Light: sign-in lead (#5f636b) on darkest sky stop",
+        "kind": "text",
+        "fg": "#5f636b",
+        "bg": "#d8e4f4",
+        "ratio": 4.69,
+        "pass": true
+      },
+      {
+        "label": "Light: danger text on card",
+        "kind": "text",
+        "fg": "#d6140a",
+        "bg": "#ffffff",
+        "ratio": 5.3,
+        "pass": true
+      },
+      {
+        "label": "Light: warning text on card",
+        "kind": "text",
+        "fg": "#9c5900",
+        "bg": "#ffffff",
+        "ratio": 5.47,
+        "pass": true
+      },
+      {
+        "label": "Dark: --chart on card",
+        "kind": "ui",
+        "fg": "#b6c6ed",
+        "bg": "#0d1321",
+        "ratio": 10.85,
+        "pass": true
+      },
+      {
+        "label": "Dark: --chart on surface",
+        "kind": "ui",
+        "fg": "#b6c6ed",
+        "bg": "#10182b",
+        "ratio": 10.35,
+        "pass": true
+      },
+      {
+        "label": "Dark: menu text on --nav-active (rail)",
+        "kind": "text",
+        "fg": "#f6f6f7",
+        "bg": "#1b2339",
+        "ratio": 14.44,
+        "pass": true
+      },
+      {
+        "label": "Dark: menu text on --nav-active (second bar)",
+        "kind": "text",
+        "fg": "#f6f6f7",
+        "bg": "#202c48",
+        "ratio": 12.83,
+        "pass": true
+      },
+      {
+        "label": "Dark: --ink-2 dashed line on card",
+        "kind": "ui",
+        "fg": "#4262ae",
+        "bg": "#0d1321",
+        "ratio": 3.17,
+        "pass": true
+      },
+      {
+        "label": "Dark: --silver-3 plan border on card",
+        "kind": "ui",
+        "fg": "#819bda",
+        "bg": "#0d1321",
+        "ratio": 6.74,
+        "pass": true
+      },
+      {
+        "label": "Dark: --stack-0 segment on card",
+        "kind": "ui",
+        "fg": "#dae1f1",
+        "bg": "#0d1321",
+        "ratio": 14.15,
+        "pass": true
+      },
+      {
+        "label": "Dark: --stack-1 segment on card",
+        "kind": "ui",
+        "fg": "#a6b7dd",
+        "bg": "#0d1321",
+        "ratio": 9.22,
+        "pass": true
+      },
+      {
+        "label": "Dark: --stack-2 segment on card",
+        "kind": "ui",
+        "fg": "#728dca",
+        "bg": "#0d1321",
+        "ratio": 5.63,
+        "pass": true
+      },
+      {
+        "label": "Dark: --stack-3 segment on card",
+        "kind": "ui",
+        "fg": "#4364b1",
+        "bg": "#0d1321",
+        "ratio": 3.26,
+        "pass": true
+      },
+      {
+        "label": "Dark: --stack-4 segment on card",
+        "kind": "ui",
+        "fg": "#30477e",
+        "bg": "#0d1321",
+        "ratio": 2.06,
+        "pass": false
+      },
+      {
+        "label": "Dark: danger text on card",
+        "kind": "text",
+        "fg": "#ff6a5c",
+        "bg": "#0d1321",
+        "ratio": 6.6,
+        "pass": true
+      },
+      {
+        "label": "Dark: warning text on card",
+        "kind": "text",
+        "fg": "#ffb020",
+        "bg": "#0d1321",
+        "ratio": 10.14,
+        "pass": true
+      }
+    ],
+    "dist": {
+      "lDanger": {
+        "dh": 132,
+        "dL": 0.11,
+        "dE": 0.358
+      },
+      "lWarning": {
+        "dh": 165,
+        "dL": 0.09,
+        "dE": 0.283
+      },
+      "dDanger": {
+        "dh": 120,
+        "dL": 0.12,
+        "dE": 0.25
+      },
+      "dWarning": {
+        "dh": 167,
+        "dL": 0.01,
+        "dE": 0.222
+      }
+    }
+  },
+  "directions": [
+    {
+      "letter": "A",
+      "name": "vermilion",
+      "title": "Vermilion",
+      "intent": "A saturated red-orange on almost-white tints: the most signal-like of the six, every mark of the accent reads strongly.",
+      "oklch": {
+        "h": 30,
+        "C": 0.23
+      },
+      "tokens": {
+        "l": {
+          "accent": "#d91202",
+          "chart": "#ea2513",
+          "nav-active": "#fef4f2",
+          "ink-2": "#e75f4d",
+          "ink-3": "#e5d7d5",
+          "stack-1": "#e9593a",
+          "stack-2": "#da7352",
+          "stack-3": "#c78165",
+          "stack-4": "#b18c7c",
+          "signin-1": "#fff8f7",
+          "signin-2": "#fcf1f0",
+          "signin-3": "#f7e9e7"
+        },
+        "d": {
+          "chart": "#fb5e4a",
+          "nav-tone": "#d45746",
+          "ink-2": "#b0493b",
+          "silver-1": "#9f2317",
+          "silver-3": "#f66350",
+          "stack-0": "#feb6a9",
+          "stack-1": "#ff9278",
+          "stack-2": "#ee6b41",
+          "stack-3": "#c9541f",
+          "stack-4": "#9f4a1b"
+        },
+        "status": {
+          "danger": "#b1014f",
+          "dangerDark": "#e34e83",
+          "warning": "#9c5900",
+          "warningDark": "#ffb020",
+          "dangerClose": true,
+          "warningClose": false
+        },
+        "dist": {
+          "lDanger": {
+            "dh": 0,
+            "dL": 0,
+            "dE": 0.006
+          },
+          "lDangerChart": {
+            "dh": 1,
+            "dL": 0.05,
+            "dE": 0.046
+          },
+          "lWarning": {
+            "dh": 33,
+            "dL": 0.03,
+            "dE": 0.141
+          },
+          "lWarningChart": {
+            "dh": 32,
+            "dL": 0.07,
+            "dE": 0.159
+          },
+          "dDanger": {
+            "dh": 2,
+            "dL": 0.02,
+            "dE": 0.027
+          },
+          "dWarning": {
+            "dh": 45,
+            "dL": 0.13,
+            "dE": 0.191
+          },
+          "lDangerNew": {
+            "dh": 24,
+            "dL": 0.07,
+            "dE": 0.116
+          },
+          "lDangerChartNew": {
+            "dh": 24,
+            "dL": 0.11,
+            "dE": 0.147
+          },
+          "dDangerNew": {
+            "dh": 28,
+            "dL": 0.04,
+            "dE": 0.103
+          }
+        }
+      },
+      "checks": [
+        {
+          "label": "Light: selected item text (accent) on --nav-active",
+          "kind": "text",
+          "fg": "#d91202",
+          "bg": "#fef4f2",
+          "ratio": 4.81,
+          "pass": true
+        },
+        {
+          "label": "Light: accent text on page",
+          "kind": "text",
+          "fg": "#d91202",
+          "bg": "#f6f6f7",
+          "ratio": 4.82,
+          "pass": true
+        },
+        {
+          "label": "Light: tab text (ink) on --nav-active",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#fef4f2",
+          "ratio": 18.53,
+          "pass": true
+        },
+        {
+          "label": "Light: --chart lines and bars on card",
+          "kind": "ui",
+          "fg": "#ea2513",
+          "bg": "#ffffff",
+          "ratio": 4.4,
+          "pass": true
+        },
+        {
+          "label": "Light: --chart on page",
+          "kind": "ui",
+          "fg": "#ea2513",
+          "bg": "#f6f6f7",
+          "ratio": 4.07,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#e75f4d",
+          "bg": "#ffffff",
+          "ratio": 3.42,
+          "pass": true
+        },
+        {
+          "label": "Light: bar fill (--chart) on --ink-3 track",
+          "kind": "ui",
+          "fg": "#ea2513",
+          "bg": "#e5d7d5",
+          "ratio": 3.15,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-1 segment on card",
+          "kind": "ui",
+          "fg": "#e9593a",
+          "bg": "#ffffff",
+          "ratio": 3.53,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-2 segment on card",
+          "kind": "ui",
+          "fg": "#da7352",
+          "bg": "#ffffff",
+          "ratio": 3.2,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-3 segment on card",
+          "kind": "ui",
+          "fg": "#c78165",
+          "bg": "#ffffff",
+          "ratio": 3.11,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-4 segment on card",
+          "kind": "ui",
+          "fg": "#b18c7c",
+          "bg": "#ffffff",
+          "ratio": 3.04,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in lead (#5f636b) on darkest sky stop",
+          "kind": "text",
+          "fg": "#5f636b",
+          "bg": "#f7e9e7",
+          "ratio": 5.1,
+          "pass": true
+        },
+        {
+          "label": "Light: danger text on card",
+          "kind": "text",
+          "fg": "#b1014f",
+          "bg": "#ffffff",
+          "ratio": 7.03,
+          "pass": true
+        },
+        {
+          "label": "Light: warning text on card",
+          "kind": "text",
+          "fg": "#9c5900",
+          "bg": "#ffffff",
+          "ratio": 5.47,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on card",
+          "kind": "ui",
+          "fg": "#fb5e4a",
+          "bg": "#0d1321",
+          "ratio": 6.01,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on surface",
+          "kind": "ui",
+          "fg": "#fb5e4a",
+          "bg": "#10182b",
+          "ratio": 5.73,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#2f1819",
+          "ratio": 15.36,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (second bar)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#352128",
+          "ratio": 13.89,
+          "pass": true
+        },
+        {
+          "label": "Dark: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#b0493b",
+          "bg": "#0d1321",
+          "ratio": 3.41,
+          "pass": true
+        },
+        {
+          "label": "Dark: --silver-3 plan border on card",
+          "kind": "ui",
+          "fg": "#f66350",
+          "bg": "#0d1321",
+          "ratio": 6.02,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-0 segment on card",
+          "kind": "ui",
+          "fg": "#feb6a9",
+          "bg": "#0d1321",
+          "ratio": 11.02,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-1 segment on card",
+          "kind": "ui",
+          "fg": "#ff9278",
+          "bg": "#0d1321",
+          "ratio": 8.51,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-2 segment on card",
+          "kind": "ui",
+          "fg": "#ee6b41",
+          "bg": "#0d1321",
+          "ratio": 6.02,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-3 segment on card",
+          "kind": "ui",
+          "fg": "#c9541f",
+          "bg": "#0d1321",
+          "ratio": 4.21,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-4 segment on card",
+          "kind": "ui",
+          "fg": "#9f4a1b",
+          "bg": "#0d1321",
+          "ratio": 3.06,
+          "pass": true
+        },
+        {
+          "label": "Dark: danger text on card",
+          "kind": "text",
+          "fg": "#e34e83",
+          "bg": "#0d1321",
+          "ratio": 5.02,
+          "pass": true
+        },
+        {
+          "label": "Dark: warning text on card",
+          "kind": "text",
+          "fg": "#ffb020",
+          "bg": "#0d1321",
+          "ratio": 10.14,
+          "pass": true
+        }
+      ]
+    },
+    {
+      "letter": "B",
+      "name": "coral",
+      "title": "Coral",
+      "intent": "A soft, pastel pink-orange with a clearly tinted selection: light and friendly rather than loud.",
+      "oklch": {
+        "h": 22,
+        "C": 0.1
+      },
+      "tokens": {
+        "l": {
+          "accent": "#9c5250",
+          "chart": "#c77775",
+          "nav-active": "#ffe4e3",
+          "ink-2": "#b77c79",
+          "ink-3": "#fff6f6",
+          "stack-1": "#bd7d77",
+          "stack-2": "#b4847c",
+          "stack-3": "#ab8b83",
+          "stack-4": "#a2908b",
+          "signin-1": "#fef8f8",
+          "signin-2": "#fef1f1",
+          "signin-3": "#ffe6e5"
+        },
+        "d": {
+          "chart": "#e49e9a",
+          "nav-tone": "#a8716e",
+          "ink-2": "#8b5e5c",
+          "silver-1": "#774544",
+          "silver-3": "#c98986",
+          "stack-0": "#e6bebc",
+          "stack-1": "#dba29b",
+          "stack-2": "#bf847a",
+          "stack-3": "#a06b5f",
+          "stack-4": "#80594d"
+        },
+        "status": {
+          "danger": "#ae0360",
+          "dangerDark": "#df4f94",
+          "warning": "#7d6505",
+          "warningDark": "#eac52c",
+          "dangerClose": true,
+          "warningClose": true
+        },
+        "dist": {
+          "lDanger": {
+            "dh": 7,
+            "dL": 0.03,
+            "dE": 0.126
+          },
+          "lDangerChart": {
+            "dh": 8,
+            "dL": 0.1,
+            "dE": 0.157
+          },
+          "lWarning": {
+            "dh": 40,
+            "dL": 0,
+            "dE": 0.078
+          },
+          "lWarningChart": {
+            "dh": 41,
+            "dL": 0.13,
+            "dE": 0.148
+          },
+          "dDanger": {
+            "dh": 5,
+            "dL": 0.06,
+            "dE": 0.116
+          },
+          "dWarning": {
+            "dh": 52,
+            "dL": 0.05,
+            "dE": 0.14
+          },
+          "lDangerNew": {
+            "dh": 25,
+            "dL": 0.04,
+            "dE": 0.122
+          },
+          "lDangerChartNew": {
+            "dh": 24,
+            "dL": 0.17,
+            "dE": 0.201
+          },
+          "dDangerNew": {
+            "dh": 29,
+            "dL": 0.12,
+            "dE": 0.175
+          },
+          "lWarningNew": {
+            "dh": 70,
+            "dL": 0.01,
+            "dE": 0.116
+          },
+          "lWarningChartNew": {
+            "dh": 70,
+            "dL": 0.14,
+            "dE": 0.183
+          },
+          "dWarningNew": {
+            "dh": 71,
+            "dL": 0.07,
+            "dE": 0.169
+          }
+        }
+      },
+      "checks": [
+        {
+          "label": "Light: selected item text (accent) on --nav-active",
+          "kind": "text",
+          "fg": "#9c5250",
+          "bg": "#ffe4e3",
+          "ratio": 4.67,
+          "pass": true
+        },
+        {
+          "label": "Light: accent text on page",
+          "kind": "text",
+          "fg": "#9c5250",
+          "bg": "#f6f6f7",
+          "ratio": 5.2,
+          "pass": true
+        },
+        {
+          "label": "Light: tab text (ink) on --nav-active",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#ffe4e3",
+          "ratio": 16.65,
+          "pass": true
+        },
+        {
+          "label": "Light: --chart lines and bars on card",
+          "kind": "ui",
+          "fg": "#c77775",
+          "bg": "#ffffff",
+          "ratio": 3.32,
+          "pass": true
+        },
+        {
+          "label": "Light: --chart on page",
+          "kind": "ui",
+          "fg": "#c77775",
+          "bg": "#f6f6f7",
+          "ratio": 3.07,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#b77c79",
+          "bg": "#ffffff",
+          "ratio": 3.4,
+          "pass": true
+        },
+        {
+          "label": "Light: bar fill (--chart) on --ink-3 track",
+          "kind": "ui",
+          "fg": "#c77775",
+          "bg": "#fff6f6",
+          "ratio": 3.13,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-1 segment on card",
+          "kind": "ui",
+          "fg": "#bd7d77",
+          "bg": "#ffffff",
+          "ratio": 3.3,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-2 segment on card",
+          "kind": "ui",
+          "fg": "#b4847c",
+          "bg": "#ffffff",
+          "ratio": 3.21,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-3 segment on card",
+          "kind": "ui",
+          "fg": "#ab8b83",
+          "bg": "#ffffff",
+          "ratio": 3.11,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-4 segment on card",
+          "kind": "ui",
+          "fg": "#a2908b",
+          "bg": "#ffffff",
+          "ratio": 3.04,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in lead (#5f636b) on darkest sky stop",
+          "kind": "text",
+          "fg": "#5f636b",
+          "bg": "#ffe6e5",
+          "ratio": 5.08,
+          "pass": true
+        },
+        {
+          "label": "Light: danger text on card",
+          "kind": "text",
+          "fg": "#ae0360",
+          "bg": "#ffffff",
+          "ratio": 7.04,
+          "pass": true
+        },
+        {
+          "label": "Light: warning text on card",
+          "kind": "text",
+          "fg": "#7d6505",
+          "bg": "#ffffff",
+          "ratio": 5.62,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on card",
+          "kind": "ui",
+          "fg": "#e49e9a",
+          "bg": "#0d1321",
+          "ratio": 8.53,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on surface",
+          "kind": "ui",
+          "fg": "#e49e9a",
+          "bg": "#10182b",
+          "ratio": 8.13,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#261d21",
+          "ratio": 15.19,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (second bar)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#2c2630",
+          "ratio": 13.63,
+          "pass": true
+        },
+        {
+          "label": "Dark: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#8b5e5c",
+          "bg": "#0d1321",
+          "ratio": 3.4,
+          "pass": true
+        },
+        {
+          "label": "Dark: --silver-3 plan border on card",
+          "kind": "ui",
+          "fg": "#c98986",
+          "bg": "#0d1321",
+          "ratio": 6.54,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-0 segment on card",
+          "kind": "ui",
+          "fg": "#e6bebc",
+          "bg": "#0d1321",
+          "ratio": 11,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-1 segment on card",
+          "kind": "ui",
+          "fg": "#dba29b",
+          "bg": "#0d1321",
+          "ratio": 8.53,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-2 segment on card",
+          "kind": "ui",
+          "fg": "#bf847a",
+          "bg": "#0d1321",
+          "ratio": 6,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-3 segment on card",
+          "kind": "ui",
+          "fg": "#a06b5f",
+          "bg": "#0d1321",
+          "ratio": 4.21,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-4 segment on card",
+          "kind": "ui",
+          "fg": "#80594d",
+          "bg": "#0d1321",
+          "ratio": 3.05,
+          "pass": true
+        },
+        {
+          "label": "Dark: danger text on card",
+          "kind": "text",
+          "fg": "#df4f94",
+          "bg": "#0d1321",
+          "ratio": 5.02,
+          "pass": true
+        },
+        {
+          "label": "Dark: warning text on card",
+          "kind": "text",
+          "fg": "#eac52c",
+          "bg": "#0d1321",
+          "ratio": 11.06,
+          "pass": true
+        }
+      ]
+    },
+    {
+      "letter": "C",
+      "name": "burnt-orange",
+      "title": "Burnt orange",
+      "intent": "An earthy, dark orange close to copper: confident and grounded, a material rather than a signal.",
+      "oklch": {
+        "h": 56,
+        "C": 0.14
+      },
+      "tokens": {
+        "l": {
+          "accent": "#954c00",
+          "chart": "#954c00",
+          "nav-active": "#ffefe5",
+          "ink-2": "#be7c4b",
+          "ink-3": "#ecd5c6",
+          "stack-1": "#9f5f21",
+          "stack-2": "#a27347",
+          "stack-3": "#ab8d6c",
+          "stack-4": "#a09280",
+          "signin-1": "#fef9f5",
+          "signin-2": "#fff1e8",
+          "signin-3": "#ffe8d9"
+        },
+        "d": {
+          "chart": "#d4874e",
+          "nav-tone": "#ae7144",
+          "ink-2": "#915e39",
+          "silver-1": "#7d4514",
+          "silver-3": "#d08954",
+          "stack-0": "#eabfa2",
+          "stack-1": "#e0a370",
+          "stack-2": "#c2864b",
+          "stack-3": "#a06e33",
+          "stack-4": "#7e5c2e"
+        },
+        "status": {
+          "danger": "#b20446",
+          "dangerDark": "#e54d7a",
+          "warning": "#7d6505",
+          "warningDark": "#eac52c",
+          "dangerClose": true,
+          "warningClose": true
+        },
+        "dist": {
+          "lDanger": {
+            "dh": 26,
+            "dL": 0.06,
+            "dE": 0.137
+          },
+          "lDangerChart": {
+            "dh": 26,
+            "dL": 0.06,
+            "dE": 0.137
+          },
+          "lWarning": {
+            "dh": 7,
+            "dL": 0.03,
+            "dE": 0.036
+          },
+          "lWarningChart": {
+            "dh": 7,
+            "dL": 0.03,
+            "dE": 0.036
+          },
+          "dDanger": {
+            "dh": 28,
+            "dL": 0.02,
+            "dE": 0.098
+          },
+          "dWarning": {
+            "dh": 19,
+            "dL": 0.12,
+            "dE": 0.138
+          },
+          "lDangerNew": {
+            "dh": 46,
+            "dL": 0.01,
+            "dE": 0.139
+          },
+          "lDangerChartNew": {
+            "dh": 46,
+            "dL": 0.01,
+            "dE": 0.139
+          },
+          "dDangerNew": {
+            "dh": 49,
+            "dL": 0.05,
+            "dE": 0.153
+          },
+          "lWarningNew": {
+            "dh": 36,
+            "dL": 0.02,
+            "dE": 0.075
+          },
+          "lWarningChartNew": {
+            "dh": 36,
+            "dL": 0.02,
+            "dE": 0.075
+          },
+          "dWarningNew": {
+            "dh": 38,
+            "dL": 0.14,
+            "dE": 0.172
+          }
+        }
+      },
+      "checks": [
+        {
+          "label": "Light: selected item text (accent) on --nav-active",
+          "kind": "text",
+          "fg": "#954c00",
+          "bg": "#ffefe5",
+          "ratio": 5.66,
+          "pass": true
+        },
+        {
+          "label": "Light: accent text on page",
+          "kind": "text",
+          "fg": "#954c00",
+          "bg": "#f6f6f7",
+          "ratio": 5.87,
+          "pass": true
+        },
+        {
+          "label": "Light: tab text (ink) on --nav-active",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#ffefe5",
+          "ratio": 17.86,
+          "pass": true
+        },
+        {
+          "label": "Light: --chart lines and bars on card",
+          "kind": "ui",
+          "fg": "#954c00",
+          "bg": "#ffffff",
+          "ratio": 6.34,
+          "pass": true
+        },
+        {
+          "label": "Light: --chart on page",
+          "kind": "ui",
+          "fg": "#954c00",
+          "bg": "#f6f6f7",
+          "ratio": 5.87,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#be7c4b",
+          "bg": "#ffffff",
+          "ratio": 3.4,
+          "pass": true
+        },
+        {
+          "label": "Light: bar fill (--chart) on --ink-3 track",
+          "kind": "ui",
+          "fg": "#954c00",
+          "bg": "#ecd5c6",
+          "ratio": 4.5,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-1 segment on card",
+          "kind": "ui",
+          "fg": "#9f5f21",
+          "bg": "#ffffff",
+          "ratio": 5.08,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-2 segment on card",
+          "kind": "ui",
+          "fg": "#a27347",
+          "bg": "#ffffff",
+          "ratio": 4.13,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-3 segment on card",
+          "kind": "ui",
+          "fg": "#ab8d6c",
+          "bg": "#ffffff",
+          "ratio": 3.11,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-4 segment on card",
+          "kind": "ui",
+          "fg": "#a09280",
+          "bg": "#ffffff",
+          "ratio": 3.04,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in lead (#5f636b) on darkest sky stop",
+          "kind": "text",
+          "fg": "#5f636b",
+          "bg": "#ffe8d9",
+          "ratio": 5.11,
+          "pass": true
+        },
+        {
+          "label": "Light: danger text on card",
+          "kind": "text",
+          "fg": "#b20446",
+          "bg": "#ffffff",
+          "ratio": 7,
+          "pass": true
+        },
+        {
+          "label": "Light: warning text on card",
+          "kind": "text",
+          "fg": "#7d6505",
+          "bg": "#ffffff",
+          "ratio": 5.62,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on card",
+          "kind": "ui",
+          "fg": "#d4874e",
+          "bg": "#0d1321",
+          "ratio": 6.51,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on surface",
+          "kind": "ui",
+          "fg": "#d4874e",
+          "bg": "#10182b",
+          "ratio": 6.21,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#281d19",
+          "ratio": 15.19,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (second bar)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#2d2628",
+          "ratio": 13.7,
+          "pass": true
+        },
+        {
+          "label": "Dark: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#915e39",
+          "bg": "#0d1321",
+          "ratio": 3.41,
+          "pass": true
+        },
+        {
+          "label": "Dark: --silver-3 plan border on card",
+          "kind": "ui",
+          "fg": "#d08954",
+          "bg": "#0d1321",
+          "ratio": 6.53,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-0 segment on card",
+          "kind": "ui",
+          "fg": "#eabfa2",
+          "bg": "#0d1321",
+          "ratio": 11.02,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-1 segment on card",
+          "kind": "ui",
+          "fg": "#e0a370",
+          "bg": "#0d1321",
+          "ratio": 8.52,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-2 segment on card",
+          "kind": "ui",
+          "fg": "#c2864b",
+          "bg": "#0d1321",
+          "ratio": 6.01,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-3 segment on card",
+          "kind": "ui",
+          "fg": "#a06e33",
+          "bg": "#0d1321",
+          "ratio": 4.22,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-4 segment on card",
+          "kind": "ui",
+          "fg": "#7e5c2e",
+          "bg": "#0d1321",
+          "ratio": 3.05,
+          "pass": true
+        },
+        {
+          "label": "Dark: danger text on card",
+          "kind": "text",
+          "fg": "#e54d7a",
+          "bg": "#0d1321",
+          "ratio": 5.01,
+          "pass": true
+        },
+        {
+          "label": "Dark: warning text on card",
+          "kind": "text",
+          "fg": "#eac52c",
+          "bg": "#0d1321",
+          "ratio": 11.06,
+          "pass": true
+        }
+      ]
+    },
+    {
+      "letter": "D",
+      "name": "amber",
+      "title": "Amber orange",
+      "intent": "A golden orange that stays bright in charts and the dark theme, with a deep amber for text.",
+      "oklch": {
+        "h": 70,
+        "C": 0.16
+      },
+      "tokens": {
+        "l": {
+          "accent": "#996003",
+          "chart": "#c57e07",
+          "nav-active": "#ffefdf",
+          "ink-2": "#bb7e2e",
+          "ink-3": "#fff7ef",
+          "stack-1": "#bd811f",
+          "stack-2": "#b18949",
+          "stack-3": "#a88f63",
+          "stack-4": "#9e937c",
+          "signin-1": "#fef9f4",
+          "signin-2": "#fff2e5",
+          "signin-3": "#fde9d4"
+        },
+        "d": {
+          "chart": "#f8b054",
+          "nav-tone": "#ab7429",
+          "ink-2": "#8f6024",
+          "silver-1": "#764902",
+          "silver-3": "#cd8c34",
+          "stack-0": "#e7c195",
+          "stack-1": "#e1ab60",
+          "stack-2": "#bc8a30",
+          "stack-3": "#9a7216",
+          "stack-4": "#795f1d"
+        },
+        "status": {
+          "danger": "#d6140a",
+          "dangerDark": "#ff6a5c",
+          "warning": "#746805",
+          "warningDark": "#d8cb34",
+          "dangerClose": false,
+          "warningClose": true
+        },
+        "dist": {
+          "lDanger": {
+            "dh": 40,
+            "dL": 0.02,
+            "dE": 0.152
+          },
+          "lDangerChart": {
+            "dh": 41,
+            "dL": 0.1,
+            "dE": 0.175
+          },
+          "lWarning": {
+            "dh": 7,
+            "dL": 0.01,
+            "dE": 0.018
+          },
+          "lWarningChart": {
+            "dh": 7,
+            "dL": 0.12,
+            "dE": 0.125
+          },
+          "dDanger": {
+            "dh": 42,
+            "dL": 0.1,
+            "dE": 0.16
+          },
+          "dWarning": {
+            "dh": 5,
+            "dL": 0,
+            "dE": 0.032
+          },
+          "lWarningNew": {
+            "dh": 32,
+            "dL": 0.03,
+            "dE": 0.067
+          },
+          "lWarningChartNew": {
+            "dh": 31,
+            "dL": 0.14,
+            "dE": 0.158
+          },
+          "dWarningNew": {
+            "dh": 34,
+            "dL": 0.02,
+            "dE": 0.092
+          }
+        }
+      },
+      "checks": [
+        {
+          "label": "Light: selected item text (accent) on --nav-active",
+          "kind": "text",
+          "fg": "#996003",
+          "bg": "#ffefdf",
+          "ratio": 4.63,
+          "pass": true
+        },
+        {
+          "label": "Light: accent text on page",
+          "kind": "text",
+          "fg": "#996003",
+          "bg": "#f6f6f7",
+          "ratio": 4.83,
+          "pass": true
+        },
+        {
+          "label": "Light: tab text (ink) on --nav-active",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#ffefdf",
+          "ratio": 17.8,
+          "pass": true
+        },
+        {
+          "label": "Light: --chart lines and bars on card",
+          "kind": "ui",
+          "fg": "#c57e07",
+          "bg": "#ffffff",
+          "ratio": 3.3,
+          "pass": true
+        },
+        {
+          "label": "Light: --chart on page",
+          "kind": "ui",
+          "fg": "#c57e07",
+          "bg": "#f6f6f7",
+          "ratio": 3.06,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#bb7e2e",
+          "bg": "#ffffff",
+          "ratio": 3.42,
+          "pass": true
+        },
+        {
+          "label": "Light: bar fill (--chart) on --ink-3 track",
+          "kind": "ui",
+          "fg": "#c57e07",
+          "bg": "#fff7ef",
+          "ratio": 3.11,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-1 segment on card",
+          "kind": "ui",
+          "fg": "#bd811f",
+          "bg": "#ffffff",
+          "ratio": 3.32,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-2 segment on card",
+          "kind": "ui",
+          "fg": "#b18949",
+          "bg": "#ffffff",
+          "ratio": 3.21,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-3 segment on card",
+          "kind": "ui",
+          "fg": "#a88f63",
+          "bg": "#ffffff",
+          "ratio": 3.1,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-4 segment on card",
+          "kind": "ui",
+          "fg": "#9e937c",
+          "bg": "#ffffff",
+          "ratio": 3.04,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in lead (#5f636b) on darkest sky stop",
+          "kind": "text",
+          "fg": "#5f636b",
+          "bg": "#fde9d4",
+          "ratio": 5.1,
+          "pass": true
+        },
+        {
+          "label": "Light: danger text on card",
+          "kind": "text",
+          "fg": "#d6140a",
+          "bg": "#ffffff",
+          "ratio": 5.3,
+          "pass": true
+        },
+        {
+          "label": "Light: warning text on card",
+          "kind": "text",
+          "fg": "#746805",
+          "bg": "#ffffff",
+          "ratio": 5.64,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on card",
+          "kind": "ui",
+          "fg": "#f8b054",
+          "bg": "#0d1321",
+          "ratio": 10.01,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on surface",
+          "kind": "ui",
+          "fg": "#f8b054",
+          "bg": "#10182b",
+          "ratio": 9.54,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#271e13",
+          "ratio": 15.17,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (second bar)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#2d2623",
+          "ratio": 13.76,
+          "pass": true
+        },
+        {
+          "label": "Dark: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#8f6024",
+          "bg": "#0d1321",
+          "ratio": 3.42,
+          "pass": true
+        },
+        {
+          "label": "Dark: --silver-3 plan border on card",
+          "kind": "ui",
+          "fg": "#cd8c34",
+          "bg": "#0d1321",
+          "ratio": 6.53,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-0 segment on card",
+          "kind": "ui",
+          "fg": "#e7c195",
+          "bg": "#0d1321",
+          "ratio": 11,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-1 segment on card",
+          "kind": "ui",
+          "fg": "#e1ab60",
+          "bg": "#0d1321",
+          "ratio": 9,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-2 segment on card",
+          "kind": "ui",
+          "fg": "#bc8a30",
+          "bg": "#0d1321",
+          "ratio": 6.02,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-3 segment on card",
+          "kind": "ui",
+          "fg": "#9a7216",
+          "bg": "#0d1321",
+          "ratio": 4.23,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-4 segment on card",
+          "kind": "ui",
+          "fg": "#795f1d",
+          "bg": "#0d1321",
+          "ratio": 3.06,
+          "pass": true
+        },
+        {
+          "label": "Dark: danger text on card",
+          "kind": "text",
+          "fg": "#ff6a5c",
+          "bg": "#0d1321",
+          "ratio": 6.6,
+          "pass": true
+        },
+        {
+          "label": "Dark: warning text on card",
+          "kind": "text",
+          "fg": "#d8cb34",
+          "bg": "#0d1321",
+          "ratio": 11.05,
+          "pass": true
+        }
+      ]
+    },
+    {
+      "letter": "E",
+      "name": "rust",
+      "title": "Rust",
+      "intent": "A deep, muted brick: quiet and serious, the darkest of the six, reads almost as a warm ink.",
+      "oklch": {
+        "h": 38,
+        "C": 0.11
+      },
+      "tokens": {
+        "l": {
+          "accent": "#8a3e27",
+          "chart": "#8a3e27",
+          "nav-active": "#feefea",
+          "ink-2": "#ba7c69",
+          "ink-3": "#ebd5cf",
+          "stack-1": "#90533c",
+          "stack-2": "#936752",
+          "stack-3": "#ab8c7a",
+          "stack-4": "#a19187",
+          "signin-1": "#fff8f6",
+          "signin-2": "#fff1ed",
+          "signin-3": "#fde7e1"
+        },
+        "d": {
+          "chart": "#b9735e",
+          "nav-tone": "#aa7260",
+          "ink-2": "#8d5f50",
+          "silver-1": "#7a4535",
+          "silver-3": "#b67560",
+          "stack-0": "#e7bfb2",
+          "stack-1": "#dda38c",
+          "stack-2": "#c08569",
+          "stack-3": "#9f6d50",
+          "stack-4": "#7f5b42"
+        },
+        "status": {
+          "danger": "#b20446",
+          "dangerDark": "#e54d7a",
+          "warning": "#7d6505",
+          "warningDark": "#eac52c",
+          "dangerClose": true,
+          "warningClose": true
+        },
+        "dist": {
+          "lDanger": {
+            "dh": 8,
+            "dL": 0.1,
+            "dE": 0.148
+          },
+          "lDangerChart": {
+            "dh": 8,
+            "dL": 0.1,
+            "dE": 0.148
+          },
+          "lWarning": {
+            "dh": 25,
+            "dL": 0.07,
+            "dE": 0.087
+          },
+          "lWarningChart": {
+            "dh": 25,
+            "dL": 0.07,
+            "dE": 0.087
+          },
+          "dDanger": {
+            "dh": 9,
+            "dL": 0.08,
+            "dE": 0.124
+          },
+          "dWarning": {
+            "dh": 38,
+            "dL": 0.19,
+            "dE": 0.216
+          },
+          "lDangerNew": {
+            "dh": 27,
+            "dL": 0.03,
+            "dE": 0.112
+          },
+          "lDangerChartNew": {
+            "dh": 27,
+            "dL": 0.03,
+            "dE": 0.112
+          },
+          "dDangerNew": {
+            "dh": 31,
+            "dL": 0.01,
+            "dE": 0.12
+          },
+          "lWarningNew": {
+            "dh": 55,
+            "dL": 0.06,
+            "dE": 0.113
+          },
+          "lWarningChartNew": {
+            "dh": 55,
+            "dL": 0.06,
+            "dE": 0.113
+          },
+          "dWarningNew": {
+            "dh": 57,
+            "dL": 0.21,
+            "dE": 0.246
+          }
+        }
+      },
+      "checks": [
+        {
+          "label": "Light: selected item text (accent) on --nav-active",
+          "kind": "text",
+          "fg": "#8a3e27",
+          "bg": "#feefea",
+          "ratio": 6.7,
+          "pass": true
+        },
+        {
+          "label": "Light: accent text on page",
+          "kind": "text",
+          "fg": "#8a3e27",
+          "bg": "#f6f6f7",
+          "ratio": 6.95,
+          "pass": true
+        },
+        {
+          "label": "Light: tab text (ink) on --nav-active",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#feefea",
+          "ratio": 17.88,
+          "pass": true
+        },
+        {
+          "label": "Light: --chart lines and bars on card",
+          "kind": "ui",
+          "fg": "#8a3e27",
+          "bg": "#ffffff",
+          "ratio": 7.5,
+          "pass": true
+        },
+        {
+          "label": "Light: --chart on page",
+          "kind": "ui",
+          "fg": "#8a3e27",
+          "bg": "#f6f6f7",
+          "ratio": 6.95,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#ba7c69",
+          "bg": "#ffffff",
+          "ratio": 3.4,
+          "pass": true
+        },
+        {
+          "label": "Light: bar fill (--chart) on --ink-3 track",
+          "kind": "ui",
+          "fg": "#8a3e27",
+          "bg": "#ebd5cf",
+          "ratio": 5.34,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-1 segment on card",
+          "kind": "ui",
+          "fg": "#90533c",
+          "bg": "#ffffff",
+          "ratio": 6.02,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-2 segment on card",
+          "kind": "ui",
+          "fg": "#936752",
+          "bg": "#ffffff",
+          "ratio": 4.88,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-3 segment on card",
+          "kind": "ui",
+          "fg": "#ab8c7a",
+          "bg": "#ffffff",
+          "ratio": 3.1,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-4 segment on card",
+          "kind": "ui",
+          "fg": "#a19187",
+          "bg": "#ffffff",
+          "ratio": 3.04,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in lead (#5f636b) on darkest sky stop",
+          "kind": "text",
+          "fg": "#5f636b",
+          "bg": "#fde7e1",
+          "ratio": 5.08,
+          "pass": true
+        },
+        {
+          "label": "Light: danger text on card",
+          "kind": "text",
+          "fg": "#b20446",
+          "bg": "#ffffff",
+          "ratio": 7,
+          "pass": true
+        },
+        {
+          "label": "Light: warning text on card",
+          "kind": "text",
+          "fg": "#7d6505",
+          "bg": "#ffffff",
+          "ratio": 5.62,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on card",
+          "kind": "ui",
+          "fg": "#b9735e",
+          "bg": "#0d1321",
+          "ratio": 5.01,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on surface",
+          "kind": "ui",
+          "fg": "#b9735e",
+          "bg": "#10182b",
+          "ratio": 4.78,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#271d1e",
+          "ratio": 15.18,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (second bar)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#2c262e",
+          "ratio": 13.66,
+          "pass": true
+        },
+        {
+          "label": "Dark: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#8d5f50",
+          "bg": "#0d1321",
+          "ratio": 3.43,
+          "pass": true
+        },
+        {
+          "label": "Dark: --silver-3 plan border on card",
+          "kind": "ui",
+          "fg": "#b67560",
+          "bg": "#0d1321",
+          "ratio": 5.04,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-0 segment on card",
+          "kind": "ui",
+          "fg": "#e7bfb2",
+          "bg": "#0d1321",
+          "ratio": 11.03,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-1 segment on card",
+          "kind": "ui",
+          "fg": "#dda38c",
+          "bg": "#0d1321",
+          "ratio": 8.56,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-2 segment on card",
+          "kind": "ui",
+          "fg": "#c08569",
+          "bg": "#0d1321",
+          "ratio": 6.01,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-3 segment on card",
+          "kind": "ui",
+          "fg": "#9f6d50",
+          "bg": "#0d1321",
+          "ratio": 4.22,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-4 segment on card",
+          "kind": "ui",
+          "fg": "#7f5b42",
+          "bg": "#0d1321",
+          "ratio": 3.07,
+          "pass": true
+        },
+        {
+          "label": "Dark: danger text on card",
+          "kind": "text",
+          "fg": "#e54d7a",
+          "bg": "#0d1321",
+          "ratio": 5.01,
+          "pass": true
+        },
+        {
+          "label": "Dark: warning text on card",
+          "kind": "text",
+          "fg": "#eac52c",
+          "bg": "#0d1321",
+          "ratio": 11.06,
+          "pass": true
+        }
+      ]
+    },
+    {
+      "letter": "F",
+      "name": "ember",
+      "title": "Tangerine on sand",
+      "intent": "A bright, clean orange on beige-grey sand neutrals for tints and tracks: the warmest overall feel.",
+      "oklch": {
+        "h": 47,
+        "C": 0.2
+      },
+      "tokens": {
+        "l": {
+          "accent": "#b44e05",
+          "chart": "#e86604",
+          "nav-active": "#f5efe5",
+          "ink-2": "#d76e34",
+          "ink-3": "#fef7eb",
+          "stack-1": "#dc6f1f",
+          "stack-2": "#cb7d45",
+          "stack-3": "#bb875f",
+          "stack-4": "#9a9387",
+          "signin-1": "#fdf9f2",
+          "signin-2": "#f8f3ea",
+          "signin-3": "#f1ebdf"
+        },
+        "d": {
+          "chart": "#fd833e",
+          "nav-tone": "#c5652f",
+          "ink-2": "#a45428",
+          "silver-1": "#8b3b02",
+          "silver-3": "#ec793a",
+          "stack-0": "#fcb998",
+          "stack-1": "#f9985b",
+          "stack-2": "#db7a29",
+          "stack-3": "#b66301",
+          "stack-4": "#90540d"
+        },
+        "status": {
+          "danger": "#b20446",
+          "dangerDark": "#e54d7a",
+          "warning": "#7d6505",
+          "warningDark": "#eac52c",
+          "dangerClose": true,
+          "warningClose": true
+        },
+        "dist": {
+          "lDanger": {
+            "dh": 17,
+            "dL": 0.01,
+            "dE": 0.09
+          },
+          "lDangerChart": {
+            "dh": 17,
+            "dL": 0.11,
+            "dE": 0.128
+          },
+          "lWarning": {
+            "dh": 16,
+            "dL": 0.02,
+            "dE": 0.05
+          },
+          "lWarningChart": {
+            "dh": 16,
+            "dL": 0.13,
+            "dE": 0.15
+          },
+          "dDanger": {
+            "dh": 19,
+            "dL": 0.03,
+            "dE": 0.068
+          },
+          "dWarning": {
+            "dh": 28,
+            "dL": 0.08,
+            "dE": 0.111
+          },
+          "lDangerNew": {
+            "dh": 37,
+            "dL": 0.06,
+            "dE": 0.13
+          },
+          "lDangerChartNew": {
+            "dh": 37,
+            "dL": 0.17,
+            "dE": 0.209
+          },
+          "dDangerNew": {
+            "dh": 41,
+            "dL": 0.1,
+            "dE": 0.16
+          },
+          "lWarningNew": {
+            "dh": 45,
+            "dL": 0.03,
+            "dE": 0.111
+          },
+          "lWarningChartNew": {
+            "dh": 45,
+            "dL": 0.15,
+            "dE": 0.196
+          },
+          "dWarningNew": {
+            "dh": 47,
+            "dL": 0.1,
+            "dE": 0.162
+          }
+        }
+      },
+      "checks": [
+        {
+          "label": "Light: selected item text (accent) on --nav-active",
+          "kind": "text",
+          "fg": "#b44e05",
+          "bg": "#f5efe5",
+          "ratio": 4.55,
+          "pass": true
+        },
+        {
+          "label": "Light: accent text on page",
+          "kind": "text",
+          "fg": "#b44e05",
+          "bg": "#f6f6f7",
+          "ratio": 4.82,
+          "pass": true
+        },
+        {
+          "label": "Light: tab text (ink) on --nav-active",
+          "kind": "text",
+          "fg": "#06080e",
+          "bg": "#f5efe5",
+          "ratio": 17.51,
+          "pass": true
+        },
+        {
+          "label": "Light: --chart lines and bars on card",
+          "kind": "ui",
+          "fg": "#e86604",
+          "bg": "#ffffff",
+          "ratio": 3.32,
+          "pass": true
+        },
+        {
+          "label": "Light: --chart on page",
+          "kind": "ui",
+          "fg": "#e86604",
+          "bg": "#f6f6f7",
+          "ratio": 3.07,
+          "pass": true
+        },
+        {
+          "label": "Light: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#d76e34",
+          "bg": "#ffffff",
+          "ratio": 3.4,
+          "pass": true
+        },
+        {
+          "label": "Light: bar fill (--chart) on --ink-3 track",
+          "kind": "ui",
+          "fg": "#e86604",
+          "bg": "#fef7eb",
+          "ratio": 3.11,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-1 segment on card",
+          "kind": "ui",
+          "fg": "#dc6f1f",
+          "bg": "#ffffff",
+          "ratio": 3.31,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-2 segment on card",
+          "kind": "ui",
+          "fg": "#cb7d45",
+          "bg": "#ffffff",
+          "ratio": 3.2,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-3 segment on card",
+          "kind": "ui",
+          "fg": "#bb875f",
+          "bg": "#ffffff",
+          "ratio": 3.11,
+          "pass": true
+        },
+        {
+          "label": "Light: --stack-4 segment on card",
+          "kind": "ui",
+          "fg": "#9a9387",
+          "bg": "#ffffff",
+          "ratio": 3.04,
+          "pass": true
+        },
+        {
+          "label": "Light: sign-in lead (#5f636b) on darkest sky stop",
+          "kind": "text",
+          "fg": "#5f636b",
+          "bg": "#f1ebdf",
+          "ratio": 5.08,
+          "pass": true
+        },
+        {
+          "label": "Light: danger text on card",
+          "kind": "text",
+          "fg": "#b20446",
+          "bg": "#ffffff",
+          "ratio": 7,
+          "pass": true
+        },
+        {
+          "label": "Light: warning text on card",
+          "kind": "text",
+          "fg": "#7d6505",
+          "bg": "#ffffff",
+          "ratio": 5.62,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on card",
+          "kind": "ui",
+          "fg": "#fd833e",
+          "bg": "#0d1321",
+          "ratio": 7.5,
+          "pass": true
+        },
+        {
+          "label": "Dark: --chart on surface",
+          "kind": "ui",
+          "fg": "#fd833e",
+          "bg": "#10182b",
+          "ratio": 7.15,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (rail)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#2c1b15",
+          "ratio": 15.25,
+          "pass": true
+        },
+        {
+          "label": "Dark: menu text on --nav-active (second bar)",
+          "kind": "text",
+          "fg": "#f6f6f7",
+          "bg": "#322324",
+          "ratio": 13.87,
+          "pass": true
+        },
+        {
+          "label": "Dark: --ink-2 dashed line on card",
+          "kind": "ui",
+          "fg": "#a45428",
+          "bg": "#0d1321",
+          "ratio": 3.42,
+          "pass": true
+        },
+        {
+          "label": "Dark: --silver-3 plan border on card",
+          "kind": "ui",
+          "fg": "#ec793a",
+          "bg": "#0d1321",
+          "ratio": 6.5,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-0 segment on card",
+          "kind": "ui",
+          "fg": "#fcb998",
+          "bg": "#0d1321",
+          "ratio": 11.07,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-1 segment on card",
+          "kind": "ui",
+          "fg": "#f9985b",
+          "bg": "#0d1321",
+          "ratio": 8.54,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-2 segment on card",
+          "kind": "ui",
+          "fg": "#db7a29",
+          "bg": "#0d1321",
+          "ratio": 6.03,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-3 segment on card",
+          "kind": "ui",
+          "fg": "#b66301",
+          "bg": "#0d1321",
+          "ratio": 4.22,
+          "pass": true
+        },
+        {
+          "label": "Dark: --stack-4 segment on card",
+          "kind": "ui",
+          "fg": "#90540d",
+          "bg": "#0d1321",
+          "ratio": 3.06,
+          "pass": true
+        },
+        {
+          "label": "Dark: danger text on card",
+          "kind": "text",
+          "fg": "#e54d7a",
+          "bg": "#0d1321",
+          "ratio": 5.01,
+          "pass": true
+        },
+        {
+          "label": "Dark: warning text on card",
+          "kind": "text",
+          "fg": "#eac52c",
+          "bg": "#0d1321",
+          "ratio": 11.06,
+          "pass": true
+        }
+      ]
+    }
+  ],
+  "adjust": {
+    "danger": {
+      "l": "#b20446",
+      "d": "#e44d7e"
+    },
+    "warning": {
+      "l": "#7a6600",
+      "d": "#e3c72d"
+    }
+  }
+}
