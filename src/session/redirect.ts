@@ -24,7 +24,8 @@ export async function completeAuthRedirect(): Promise<void> {
   const failure = params.get("error_description") ?? params.get("error");
   if (!code && !failure) return;
 
-  if (failure) redirectError = decodeURIComponent(failure);
+  // URLSearchParams has already decoded it; decoding again throws on a literal "%" and the app never starts.
+  if (failure) redirectError = failure;
   else if (configError) redirectError = configError;
   else {
     try {

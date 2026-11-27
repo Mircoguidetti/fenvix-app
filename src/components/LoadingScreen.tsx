@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { LogoMark } from "./Logo";
 
-/** After this long from the page load, the screen adds that the service is waking up (a cold API or database). */
-export const SLOW_MS = 8000;
+/**
+ * After this long from the page load, the screen adds that the service is waking up (a cold API or database).
+ * Keep equal to the 8000 in index.html's inline script (the static copy of this screen).
+ */
+const SLOW_MS = 8000;
 
 /**
  * The loading screen, never a blank page: the logo and one quiet progress line, in both themes, still when the person

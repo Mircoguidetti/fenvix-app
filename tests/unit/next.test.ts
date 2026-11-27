@@ -14,7 +14,7 @@ test("a same-site path, with its query and hash, is kept", () => {
 });
 
 test("other hosts, schemes and look-alikes go to /", () => {
-  for (const bad of ["//x", "//evil.com/projects", "/\\x", "/\\evil.com", "https://x", "https://evil.com/projects", "http://console.fenvix.dev/projects", "javascript:alert(1)", "JavaScript:alert(1)", "data:text/html,x", "x", "projects/x", "", " /projects", "/\t/evil.com", "/\n/evil.com"]) {
+  for (const bad of ["//x", "//evil.com/projects", "/\\x", "/\\evil.com", "https://x", "https://evil.com/projects", "http://console.fenvix.dev/projects", "javascript:alert(1)", "JavaScript:alert(1)", "data:text/html,x", "x", "projects/x", "", " /projects", "/\t/evil.com", "/\n/evil.com", "/..//evil.com", "/.//evil.com", "/a/..//evil.com", "/%2e%2e//evil.com"]) {
     assert.equal(safeNext(bad, ORIGIN), "/", `${JSON.stringify(bad)} was kept`);
   }
   assert.equal(safeNext(null, ORIGIN), "/");

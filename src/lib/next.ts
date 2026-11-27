@@ -15,7 +15,9 @@ export function safeNext(raw: string | null | undefined, origin: string): string
   try {
     const url = new URL(raw, origin);
     if (url.origin !== new URL(origin).origin) return "/";
-    return `${url.pathname}${url.search}${url.hash}`;
+    // Normalising can make a path start with "//" again ("/..//evil.com" -> "//evil.com"): check the result too.
+    const out = `${url.pathname}${url.search}${url.hash}`;
+    return out.startsWith("//") || out.startsWith("/\\") ? "/" : out;
   } catch {
     return "/";
   }

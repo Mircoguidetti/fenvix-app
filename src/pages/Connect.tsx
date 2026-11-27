@@ -157,7 +157,7 @@ function InstallationBlock({ installation, repos, queued, onOpen, highlight, kin
   const mine = all.filter(show);
   const headingId = `inst-${secondary ? "on-" : ""}${installation.installationId}`;
   return (
-    <section className={secondary ? "install install-on" : "install"} aria-labelledby={headingId} data-highlight={highlight || undefined} data-status={installation.status}>
+    <section className="install" aria-labelledby={headingId} data-highlight={highlight || undefined} data-status={installation.status}>
       <div className="install-head">
         <span className="name-cell">
           <h3 id={headingId} className="mono break-anywhere">

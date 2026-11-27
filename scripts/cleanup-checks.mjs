@@ -87,6 +87,18 @@ const TESTS = {
     const t = seen[0];
     assert(Math.abs(t.top - 16) <= 1 && Math.abs(t.right - 16) <= 1, `the toast is at top ${t.top}, right ${t.right}`);
     if (vp.width < 600) assert(Math.abs(t.left - 16) <= 1, `below 600 px the toast does not span the width: left ${t.left}`);
+    // Two saves while the first toast is on screen: the same text is shown once (the provider dedupes it).
+    await page.getByLabel("Test command").fill("pytest tests -q -x");
+    await page.getByRole("button", { name: "Save settings" }).click();
+    await page.waitForTimeout(400);
+    assert((await toasts(page)).length === 1, `a second save showed the same toast again: ${JSON.stringify(await toasts(page))}`);
+    assert((await page.locator(".toast", { hasText: "Project settings saved" }).count()) === 1, "two identical toasts are on screen");
+    // Once dismissed, the next save shows it again.
+    await page.locator(".toast").getByRole("button", { name: "Dismiss message" }).click();
+    await page.locator(".toast").waitFor({ state: "detached" });
+    await page.getByLabel("Test command").fill("pytest tests");
+    await page.getByRole("button", { name: "Save settings" }).click();
+    await page.locator(".toast", { hasText: "Project settings saved" }).waitFor();
   },
 
   async "usage table at 400, 1280 and 1920 px: one-line cells, no column past the card"(page) {
@@ -164,8 +176,23 @@ const TESTS = {
     await page.waitForURL((u) => u.pathname === "/projects/prj_homehub");
   },
 
+  async "welcome: after a provider round-trip (back on /), the stored next is followed once, and only a same-site one"(page) {
+    for (const [stored, want] of [["/projects/prj_homehub/time-to-green", "/projects/prj_homehub/time-to-green"], ["//evil.example/x", "/projects/prj_homehub"]]) {
+      const { ctx, page: p } = await newPage(browser, { viewport: { width: 1280, height: 800 } });
+      await p.goto(BASE + "welcome");
+      await signInWelcome(p);
+      // GitHub or Google come back to the site root with the next the welcome page kept in sessionStorage.
+      await p.evaluate((v) => sessionStorage.setItem("fenvix-next", v), stored);
+      await p.goto(BASE);
+      await p.waitForURL((u) => u.pathname === want);
+      assert(new URL(p.url()).origin === new URL(BASE).origin, `left the site for ${p.url()}`);
+      assert((await p.evaluate(() => sessionStorage.getItem("fenvix-next"))) === null, "the stored next was not cleared");
+      await ctx.close();
+    }
+  },
+
   async "welcome: a next to another site goes to /"(page) {
-    for (const bad of ["//evil.example/x", "/\\evil.example", "https://evil.example/", "javascript:alert(1)"]) {
+    for (const bad of ["//evil.example/x", "/\\evil.example", "/..//evil.example", "https://evil.example/", "javascript:alert(1)"]) {
       const { ctx, page: p } = await newPage(browser, { viewport: { width: 1280, height: 800 } });
       await p.goto(`${BASE}welcome?next=${encodeURIComponent(bad)}`);
       await signInWelcome(p);
@@ -185,8 +212,11 @@ const TESTS = {
       window.__fenvixMockDelayMs = 3000;
       window.__emptyRoot = 0;
       window.__frames = 0;
+      window.__bootAt = null;
       const tick = () => {
         const r = document.getElementById("root");
+        // When the loading screen was first drawn, in ms from the start of the navigation (the page's own clock).
+        if (window.__bootAt === null && document.querySelector(".boot")) window.__bootAt = performance.now();
         if (r) {
           window.__frames++;
           if (r.children.length === 0) window.__emptyRoot++;
@@ -195,6 +225,7 @@ const TESTS = {
       };
       requestAnimationFrame(tick);
       new MutationObserver(() => {
+        if (window.__bootAt === null && document.querySelector(".boot")) window.__bootAt = performance.now();
         const r = document.getElementById("root");
         if (r && r.children.length === 0 && document.readyState !== "loading") window.__emptyRoot++;
       }).observe(document, { childList: true, subtree: true });
@@ -203,11 +234,10 @@ const TESTS = {
       await new Promise((r) => setTimeout(r, 3000));
       await route.continue();
     });
-    const t0 = Date.now();
     await p.goto(BASE + "overview", { waitUntil: "commit" });
-    await p.locator(".boot").waitFor({ state: "visible", timeout: 300 });
-    const shownAfter = Date.now() - t0;
-    assert(shownAfter <= 300 + 50, `the loading screen appeared after ${shownAfter} ms`);
+    await p.locator(".boot").waitFor({ state: "visible", timeout: 2000 });
+    const bootAt = await (await p.waitForFunction(() => window.__bootAt, null, { timeout: 2000 })).jsonValue();
+    assert(bootAt !== null && bootAt <= 300, `the loading screen was drawn ${bootAt} ms after the navigation started`);
     await p.getByRole("button", { name: "Continue with GitHub" }).waitFor({ timeout: 15000 });
     const m = await p.evaluate(() => ({ empty: window.__emptyRoot, frames: window.__frames }));
     assert(m.frames > 10, `only ${m.frames} frames were looked at`);
