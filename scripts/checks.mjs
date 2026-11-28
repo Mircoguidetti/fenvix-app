@@ -437,7 +437,8 @@ const TESTS = {
     await page.getByRole("link", { name: "Connect a project" }).first().click();
     await page.getByRole("heading", { name: "Connect a project", exact: true }).waitFor();
     await page.getByRole("button", { name: "Install the GitHub App" }).waitFor();
-    await page.getByText("No installation yet: install the app first.").waitFor();
+    // Changed (connect redesign, 28 Nov): no installation shows the one install card, not step 2's "No installation yet" line.
+    await page.getByRole("heading", { name: "Install the fenvix GitHub App" }).waitFor();
   },
 
   async "nothing reads as a demo; sample data says so once"(page) {
@@ -694,49 +695,55 @@ const TESTS = {
     await page.getByRole("heading", { name: "No open defects" }).waitFor();
   },
 
+  // Changed (connect redesign, 28 Nov): the page is built around connecting a new repository. The repositories to
+  // connect are in "Pick a repository to connect" with "Connect"; connected ones are on /projects; open pull requests
+  // are under "Waiting for your merge"; each installation is one line. protects=every onboarding state still reads in
+  // words where it is shown, the installation states are said, Connect opens the setup pull request, GitHub's return;
+  // fails_when=a state, an installation or the pull request flow is missing or wrong; no_claim=the App's own API.
   async "connect a project: installations, every onboarding state, the setup pull request, GitHub's return"(page) {
     await signIn(page, "projects/connect");
-    // The steps list the repositories still to connect; those on fenvix or with a pull request open are in a block
-    // below, collapsed with their count (console cleanup, 27 Nov). Open it to see every state.
-    const on = page.locator("details.connect-on");
-    assert((await on.getAttribute("open")) === null, "the block of connected repositories is not collapsed");
-    assert(!(await page.locator(".steps .repo-row", { hasText: "northwind/homehub" }).count()), "a connected repository is in the steps");
-    await on.locator("summary").click();
-    const counted = num(await on.locator("summary .tag").innerText());
-    assert(counted > 0 && counted === (await on.locator(".repo-row").count()), `the block counts ${counted} but lists ${await on.locator(".repo-row").count()}`);
-    const inst = (account) => page.locator(".steps .install", { has: page.getByRole("heading", { name: account, exact: true }) });
-    await inst("northwind").locator(".state-ok", { hasText: "Active" }).waitFor();
-    await inst("northwind-labs").locator(".state-warn", { hasText: "Suspended" }).waitFor();
-    await inst("elena-marsh").getByText("Uninstalled", { exact: true }).waitFor();
-    await inst("elena-marsh").getByText(/Uninstalled from GitHub/).waitFor();
-    assert(!(await inst("elena-marsh").locator(".repo-row").count()), "the repositories of an uninstalled installation are listed");
-    // All nine onboarding states, each with its words and the App's detail.
-    for (const [repo, label] of [["billing-worker", "Not set up yet"], ["mobile-app", "Pull request open"], ["homehub", "On fenvix"], ["analytics", "Pull request closed"], ["infra-scripts", "No workflow file"], ["design-system", "No test job found"], ["search-service", "Already on fenvix"], ["checkout-legacy", "Test runner not supported"], ["notifications", "Could not open the pull request"]]) {
-      const row = page.locator(".repo-row", { hasText: `northwind/${repo}` });
+    const pick = page.locator(".connect-pick");
+    const line = (account) => page.locator(".gh-line", { has: page.locator(".gh-account", { hasText: new RegExp(`^${account}$`) }) });
+    await line("northwind").getByRole("link", { name: "Choose more repositories for northwind on GitHub" }).waitFor();
+    await line("northwind-labs").getByText(/Suspended on GitHub/).waitFor();
+    await line("elena-marsh").getByText(/Uninstalled from GitHub/).waitFor();
+    assert(!(await line("elena-marsh").getByRole("link", { name: /Choose more/ }).count()), "an uninstalled installation offers Choose more");
+    // The states still to connect, each with its words and the App's detail where it is not ready.
+    for (const [repo, label] of [["analytics", "Pull request closed"], ["infra-scripts", "No workflow file"], ["design-system", "No test job found"], ["checkout-legacy", "Test runner not supported"], ["notifications", "Could not open the pull request"]]) {
+      const row = pick.locator(".repo-row", { hasText: `northwind/${repo}` });
       await row.locator(".state", { hasText: label }).waitFor();
       assert((await row.locator(".repo-detail").innerText()).length > 20, `northwind/${repo} has no detail`);
     }
+    // A repository ready to connect has no pill; one that cannot be connected has its button disabled.
+    assert(!(await pick.locator(".repo-row", { hasText: "northwind/billing-worker" }).locator(".state").count()), "a ready repository shows a state pill");
+    assert(await page.getByRole("button", { name: "Connect northwind/infra-scripts" }).isDisabled(), "a repository with no workflow file can be connected");
+    // Connected, open and on fenvix already: not in the list to connect.
+    for (const repo of ["northwind/homehub", "northwind/search-service", "northwind/mobile-app"]) assert(!(await pick.locator(".repo-row", { hasText: repo }).count()), `${repo} is offered to connect`);
+    await page.locator(".connect-waiting .repo-row", { hasText: "northwind/mobile-app" }).waitFor();
     // Detected, not written in: the language and runner of each repository come from the App.
-    await page.locator(".repo-row", { hasText: "northwind/checkout-legacy" }).getByText("Language and test runner not detected").waitFor();
-    await page.locator(".repo-row", { hasText: "northwind/mobile-app" }).getByText("Private · TypeScript / Node · jest").waitFor();
-    assert((await page.locator(".repo-row", { hasText: "northwind/mobile-app" }).getByRole("link", { name: /Setup pull request #812/ }).getAttribute("href")) === "https://github.com/northwind/mobile-app/pull/812", "the pull request link is wrong");
+    await pick.locator(".repo-row", { hasText: "northwind/checkout-legacy" }).getByText("Language and test runner not detected").waitFor();
+    await pick.locator(".repo-row", { hasText: "northwind/notifications" }).getByText("Private · TypeScript / Node · vitest").waitFor();
+    assert((await page.locator(".connect-waiting .repo-row", { hasText: "northwind/mobile-app" }).getByRole("link", { name: /Setup pull request #812/ }).getAttribute("href")) === "https://github.com/northwind/mobile-app/pull/812", "the pull request link is wrong");
     // A suspended installation: no pull request can be opened.
-    assert(await page.getByRole("button", { name: "Open setup pull request on northwind-labs/experiments" }).isDisabled(), "a pull request can be opened on a suspended installation");
-    // Open one: queued, then the list is asked again until the App has opened it.
-    const row = page.locator(".repo-row", { hasText: "northwind/billing-worker" });
+    assert(await page.getByRole("button", { name: "Connect northwind-labs/experiments" }).isDisabled(), "a pull request can be opened on a suspended installation");
+    // Connect one: queued, then the list is asked again until the App has opened it; it moves to Waiting for your merge.
+    const row = pick.locator(".repo-row", { hasText: "northwind/billing-worker" });
+    await row.locator(".pick-change > summary").click();
     assert((await row.locator(".diff").innerText()).includes("- runs-on: ubuntu-latest"), "the diff does not show the old runner");
-    await row.getByRole("button", { name: "Open setup pull request on northwind/billing-worker" }).click();
-    await row.getByText("Queued: the fenvix GitHub App is opening it.").waitFor();
-    await row.locator(".state-warn", { hasText: "Pull request open" }).waitFor({ timeout: 15000 });
-    assert((await row.getByRole("link", { name: /^Setup pull request #\d+/ }).getAttribute("href")).startsWith("https://github.com/northwind/billing-worker/pull/"), "the new pull request link is wrong");
+    await row.getByRole("button", { name: "Connect northwind/billing-worker" }).click();
+    await row.getByText("Queued: the fenvix GitHub App is opening the pull request.").waitFor();
+    const waiting = page.locator(".connect-waiting .repo-row", { hasText: "northwind/billing-worker" });
+    await waiting.waitFor({ timeout: 15000 });
+    assert((await waiting.getByRole("link", { name: /^Setup pull request #\d+/ }).getAttribute("href")).startsWith("https://github.com/northwind/billing-worker/pull/"), "the new pull request link is wrong");
     await toast(page, /Opened pull request #\d+ on northwind\/billing-worker/);
     // Another GitHub account: the install link, and GitHub sending the browser back (the mock stands in for GitHub).
-    await page.getByRole("button", { name: "Add another GitHub account" }).click();
+    await page.getByRole("button", { name: "Add another account" }).click();
     await page.locator(".callout-success").getByText("The fenvix GitHub App is installed on northwind-sandbox.").waitFor();
     const url = new URL(page.url());
     assert(url.searchParams.get("github") === "connected" && url.searchParams.get("installation") && url.searchParams.get("account") === "northwind-sandbox", `GitHub's return address was ${page.url()}`);
-    await inst("northwind-sandbox").locator(".state-ok", { hasText: "Active" }).waitFor();
-    assert((await page.locator(".steps .install").count()) === 4, "four installations are not all shown");
+    await line("northwind-sandbox").getByText("Just linked").waitFor();
+    assert((await page.locator(".gh-line").count()) === 4, "four installations are not all shown");
+    await pick.locator(".repo-row", { hasText: "northwind-sandbox/api" }).waitFor();
     await page.locator(".callout-success").getByRole("button", { name: "Dismiss" }).click();
     await eventually(async () => !new URL(page.url()).searchParams.get("github"), "the banner stays in the address");
     // Every way back from GitHub reads as a sentence.
@@ -1097,6 +1104,8 @@ const TESTS = {
     // protects=with side by side chosen, a repository's preview is the new file, not the runs-on change; fails_when=the
     // runs-on diff is still shown; no_claim=-.
     const row = page.locator(".repo-row", { hasText: "northwind/billing-worker" });
+    // Changed (connect redesign, 28 Nov): what the pull request changes is behind "What the pull request changes".
+    await row.locator(".pick-change > summary").click();
     await row.getByText(".github/workflows/fenvix-side-by-side.yml", { exact: false }).first().waitFor();
     assert(!(await row.locator(".diff").innerText().catch(() => "")).includes("runs-on: ubuntu-latest"), "the runs-on diff is shown for side by side");
     await go(page, "overview");
@@ -1149,7 +1158,8 @@ const TESTS = {
     await link.waitFor();
     assert((await link.getAttribute("href")) === "https://github.com/organizations/northwind/settings/installations/" + (await link.getAttribute("href")).split("/").pop(), "the link does not go to the organization's installation page");
     assert((await link.getAttribute("target")) === "_blank", "GitHub's page replaces the dashboard");
-    await page.getByRole("button", { name: "Add another GitHub account" }).waitFor();
+    // Changed (connect redesign, 28 Nov): "Add another account" sits on the GitHub line, as the layout names it.
+    await page.getByRole("button", { name: "Add another account" }).waitFor();
     await page.getByRole("button", { name: "Refresh repositories" }).click();
     await page.getByText("Setup pull request", { exact: false }).first().waitFor();
   },

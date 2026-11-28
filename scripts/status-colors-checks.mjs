@@ -159,30 +159,30 @@ const TESTS = {
     assert(/fingerprints differ/.test(unstable.text) && unstable.border === WARNING, `an unstable replay is not amber with words: "${unstable.text}"`);
   },
 
-  async "connect: a done step is green with a tick, the diff is red and green with - and +, each onboarding state has its colour and words"(page) {
+  // Changed (connect redesign, 28 Nov): Connect has no numbered checklist once an installation exists, so there is no
+  // done step to paint (state A's steps are never done; the tick stays in Step, checked by the unit test); connected
+  // and open repositories are no longer listed with their green/amber pills (the pill colours are checked by the unit
+  // test of OnboardingPill); the diff is behind "What the pull request changes"; a suspended or uninstalled
+  // installation is a warning with an amber icon on its GitHub line instead of a pill.
+  async "connect: the diff is red and green with - and +, each state still to connect has its colour and words, installation warnings are amber"(page) {
     await signIn(page, "projects/connect");
-    // Repositories on fenvix or with a pull request open are in the collapsed block below the steps (console cleanup).
-    await page.locator("details.connect-on > summary").click();
-    const done = await paint(page, ".step[data-done] .step-n");
-    assert(done.bg === SUCCESS && done.svg, `a done step is ${done.bg}`);
+    await page.locator('.repo-row:has-text("northwind/billing-worker") .pick-change > summary').click();
     const del = await paint(page, ".diff-del");
     const add = await paint(page, ".diff-add");
     assert(del.text.startsWith("-") && add.text.startsWith("+"), "the diff lines do not start with - and +");
     assert(del.color === "rgb(255, 106, 92)" && add.color === "rgb(61, 220, 132)", `the diff colours are ${del.color} / ${add.color}`);
     const pill = async (repo) => paint(page, `.repo-row:has-text("${repo}") .state`);
-    const expect = [["northwind/homehub", SUCCESS, "On fenvix"], ["northwind/search-service", SUCCESS, "Already on fenvix"], ["northwind/mobile-app", WARNING, "Pull request open"], ["northwind/notifications", DANGER, "Could not open the pull request"]];
-    for (const [repo, colour, word] of expect) {
-      const p = await pill(repo);
-      assert(p.border === colour && p.text === word && p.svg, `${repo}: "${p.text}" ${p.border}`);
-    }
-    for (const repo of ["northwind/billing-worker", "northwind/analytics", "northwind/infra-scripts", "northwind/design-system", "northwind/checkout-legacy"]) {
+    const n = await pill("northwind/notifications");
+    assert(n.border === DANGER && n.text === "Could not open the pull request" && n.svg, `northwind/notifications: "${n.text}" ${n.border}`);
+    for (const repo of ["northwind/analytics", "northwind/infra-scripts", "northwind/design-system", "northwind/checkout-legacy"]) {
       const p = await pill(repo);
       assert(!STATUS.includes(p.border) && p.svg && p.text, `${repo} is coloured: "${p.text}" ${p.border}`);
     }
-    const suspended = await paint(page, '.install:has(h3:text-is("northwind-labs")) .install-head .state');
-    assert(suspended.border === WARNING && suspended.text === "Suspended", `suspended: "${suspended.text}" ${suspended.border}`);
-    const uninstalled = await paint(page, '.install:has(h3:text-is("elena-marsh")) .install-head .state');
-    assert(!STATUS.includes(uninstalled.border) && uninstalled.text === "Uninstalled", `uninstalled: "${uninstalled.text}" ${uninstalled.border}`);
+    for (const status of ["suspended", "deleted"]) {
+      const icon = await paint(page, `.gh-line[data-status="${status}"] .gh-warn svg`);
+      const words = await paint(page, `.gh-line[data-status="${status}"] .gh-warn`);
+      assert(icon.color === WARNING && words.text.length > 20, `${status}: icon ${icon.color}, "${words.text}"`);
+    }
     await huesOnPage(page, STATUS);
     await fits(page);
     // Back from GitHub: a green confirmation, an amber wait, a red error, each with an icon and words.

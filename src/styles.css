@@ -1657,12 +1657,11 @@ table.data.dbs thead th { font-size: 12px; }
 .step { display: flex; gap: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
 .step-n { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--border-strong); display: inline-flex; align-items: center; justify-content: center; font: 600 12.5px var(--mono); }
 .step-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; flex: 1; }
-.step-title { font-size: 15px; font-weight: 600; }
+.step-title { margin: 0; font-size: 15px; font-weight: 600; }
 .setup-list { display: flex; flex-direction: column; gap: 12px; }
 .setup-row { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 10px; background: var(--surface); }
 .setup-row-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
-.setup-done { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin: 0; }
-.setup-done a, .facts a.row-link { display: inline-flex; align-items: center; gap: 4px; }
+.facts a.row-link { display: inline-flex; align-items: center; gap: 4px; }
 .diff { margin: 0; border-radius: 10px; background: var(--black); color: #d6d8dd; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
 .diff figcaption { color: #a8abb3; }
 .diff figcaption strong { color: #edeef0; }
@@ -1769,14 +1768,8 @@ table.data.dbs thead th { font-size: 12px; }
 .live-facts { margin: 0; }
 .shadow-note, .running-note, .addon-note { margin: 0; }
 /* GitHub App installations and their repositories. */
-.install { display: flex; flex-direction: column; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line-soft); }
-.install:first-of-type { border-top: 0; padding-top: 4px; }
-.install-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
-.install-head h3 { font-size: 15px; font-weight: 600; margin: 0; }
-.install-tags { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .repo-name { font-weight: 600; }
 .repo-detail { margin: 0; }
-.repo-cache { margin: 0; }
 .warm-cache { display: inline-flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .setup-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
 .install-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
@@ -1796,14 +1789,11 @@ table.data.dbs thead th { font-size: 12px; }
 .audit-item .hash { max-width: 100%; }
 /* Phone: links that stand alone (run numbers in tables, pull request and project links) are 44 px touch targets. */
 @media (max-width: 640px) {
-  td .row-link, .setup-done .row-link, .audit-list .row-link, .running-note .row-link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
+  td .row-link, .audit-list .row-link, .running-note .row-link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
 }
 @media (max-width: 640px) { .repo-row .name-cell > .row-link, .latest-title .row-link { display: inline-flex; align-items: center; min-height: 44px; } }
 
 /* Connect a project, step 1: the installations already connected, each with its way to choose more repositories. */
-.install-more { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.install-more-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 10px 12px; border-radius: 10px; background: var(--surface); }
-.install-more-row .btn { gap: 6px; }
 
 /* The project's second bar replaces the projects list: one level at a time, with the way back on top. */
 .cx-sub-back { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; min-height: 32px; margin: -4px 0 6px; padding: 0 10px 0 6px; border-radius: 8px; color: var(--muted); font-size: 13px; font-weight: 500; }
@@ -1845,10 +1835,55 @@ table.usage-table td.usage-project .usage-project-name { display: block; max-wid
 .account-id-email { grid-area: email; font-size: 13.5px; }
 .account-id-role { grid-area: role; }
 
-/* Connect a project: repositories already connected, below the steps, collapsed by default. */
-.connect-on { display: flex; flex-direction: column; gap: 12px; }
-.connect-on > summary { display: flex; align-items: center; gap: 10px; min-height: var(--touch, 44px); cursor: pointer; font-weight: 600; list-style-position: inside; }
-.connect-on:not([open]) > :not(summary) { display: none; }
+/* Connect a project (founder, 28 Nov): built around picking a repository not connected yet. */
+.steps-compact { gap: 0; }
+.steps-compact .step { background: transparent; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; padding: 14px 0; }
+.steps-compact .step:first-child { border-top: 0; padding-top: 4px; }
+.pick-list, .waiting-list, .gh-lines { list-style: none; margin: 0; padding: 0; }
+.pick-list { display: flex; flex-direction: column; }
+.pick-row { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.pick-row:first-child { border-top: 0; padding-top: 2px; }
+.pick-main { display: flex; justify-content: space-between; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.pick-end { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pick-end .btn { min-width: 96px; justify-content: center; }
+.pick-change > summary { width: fit-content; cursor: pointer; color: var(--muted); }
+.pick-change[open] { display: flex; flex-direction: column; gap: 8px; }
+.pick-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.pick-empty p { margin: 0; }
+.pick-empty .btn { gap: 6px; }
+.gh-lines { display: flex; flex-direction: column; gap: 2px; padding: 0 4px; }
+.gh-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 13.5px; color: var(--muted); }
+.gh-account { color: var(--text); }
+.gh-line .row-link { display: inline-flex; align-items: center; gap: 4px; }
+.gh-line .btn-link { padding: 2px 6px; font-weight: 500; color: var(--text); }
+.gh-warn { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
+.gh-warn svg { flex: none; color: var(--warning); }
+.connect-waiting h2 { margin: 0; }
+.waiting-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.waiting-row:first-child { border-top: 0; padding-top: 0; }
+.waiting-row .repo-name { flex: 1 1 220px; }
+.waiting-row .row-link { display: inline-flex; align-items: center; gap: 4px; }
+.connect-removed, .connect-what { display: block; padding-top: 8px; padding-bottom: 8px; }
+.connect-removed > summary, .connect-what > summary { display: flex; align-items: center; gap: 10px; min-height: var(--touch, 44px); cursor: pointer; font-weight: 600; list-style-position: inside; }
+.connect-removed > summary::before, .connect-what > summary::before { content: "▸"; color: var(--muted); }
+.connect-removed[open] > summary::before, .connect-what[open] > summary::before { content: "▾"; }
+.connect-removed > summary::-webkit-details-marker, .connect-what > summary::-webkit-details-marker { display: none; }
+.connect-removed > summary, .connect-what > summary { list-style: none; }
+.connect-removed > ul, .connect-what > ul { margin: 4px 0 12px; }
+.connect-projects { margin: 0; padding: 0 4px; }
+@media (max-width: 640px) {
+  .gh-line .row-link, .gh-line .btn-link, .waiting-row .row-link, .connect-projects .row-link, .pick-change > summary { min-height: var(--touch); display: inline-flex; align-items: center; }
+  .pick-end { width: 100%; }
+  .pick-end .btn { margin-left: auto; }
+  .gh-sep { display: none; }
+  .gh-line { gap: 0 12px; padding: 4px 0; }
+  .gh-line .btn-link { padding-inline: 0; }
+}
+.pick-change > summary { list-style: none; display: inline-flex; align-items: center; gap: 6px; }
+.pick-change > summary::-webkit-details-marker { display: none; }
+.pick-change > summary::before { content: "▸"; }
+.pick-change[open] > summary::before { content: "▾"; }
+.steps-compact .step-title { font-size: 14.5px; }
 
 /* /welcome: one line above the sign-in form. */
 .signin-welcome { margin: 0 0 4px; font-weight: 600; }

@@ -262,7 +262,8 @@ const TESTS = {
     await watchToasts(page);
     await go(page, "projects/connect?github=updated");
     await page.waitForURL((u) => u.pathname === "/projects/connect" && !u.searchParams.get("github"));
-    await page.locator(".steps .repo-row").first().waitFor();
+    // Changed (connect redesign, 28 Nov): the repositories to connect are in "Pick a repository to connect", not in steps.
+    await page.locator(".connect-pick .repo-row").first().waitFor();
     await page.waitForTimeout(400);
     assert(!(await page.getByRole("alert").count()), `an error shows: ${await page.getByRole("alert").first().innerText().catch(() => "")}`);
     assert(!(await page.getByText(/install link expired/i).count()), "the expired message shows");
