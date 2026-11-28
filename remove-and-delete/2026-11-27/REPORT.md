@@ -45,11 +45,36 @@ coordinator session, because this session had no access to Mircoguidetti/new-bra
   account" block at the bottom of Settings (General), for the owner only. Both use `TypedConfirmDialog`, which wraps
   `ConfirmDialog`; its button is enabled only by the exact repository full name or organization name. After a removal,
   one "Removed <repo>" toast appears and the page goes to /projects. After an account deletion the console signs out
-  and lands on the sign-in page, because console-cleanup has not merged, so there is no `/welcome`. The installation link
+  and lands on `/welcome` (added by console-cleanup, #30; before #30 merged it landed on the sign-in page). The installation link
   goes to `github.com/settings/installations/<id>` for a user account or `github.com/organizations/<login>/settings/installations/<id>`
   for an organization. The mock backend covers both flows.
-- **Not built yet:** Connect's "Removed from fenvix" row with "Add again" in `RepoRow`. The spec says to wait until the
-  console-cleanup PR merges, and PR #30 is open, not merged. The API (`restoreRepository`) and the mock are in place.
+- **Connect "Add again"** (built after #30 merged, commit 9f52349). A repository removed from fenvix is listed with
+  the ones to connect, with a "Removed from fenvix" label and no setup pull request button. An owner or admin gets
+  "Add again", which calls `restoreRepository`, shows an "Added <repo> again" toast and reads the list again once the
+  App has made the project. Members see the row with the button disabled. The mock keeps a removed project so that
+  "Add again" brings it back without its runs.
+
+## After #30 (console cleanup) merged
+
+`git fetch origin main && git merge --no-edit origin/main`: main was b3d272a, the merge commit is 827e51c. No rebase
+and no force push. Two conflicts:
+- `scripts/run.mjs`: both new check scripts kept (`remove-delete-checks.mjs` and `cleanup-checks.mjs`).
+- `src/pages/Settings.tsx`: main's imports and account card kept, and the "Delete account" block stays at the bottom.
+
+After the merge, account deletion lands on `/welcome`. The "Add again" UI was then built in 9f52349.
+
+Checks on 9f52349 (run one at a time):
+
+| Command | Result |
+|---|---|
+| `npm run typecheck` | exit 0 |
+| `npm run test:unit` | exit 0, 91 tests, 91 pass (main added 3) |
+| `npm run build` | exit 0 |
+| `npm run api:lint` | exit 0 |
+| `npm run check` (port 4173 checked free first) | exit 0: checks 72/72, organization checks 10/10, **remove/delete checks 8/8** (adds "Add again" and the `/welcome` landing), status colour checks 18/18, cleanup checks 18/18, screenshots: all checks passed (170 pictures) |
+| `github-app/`: `npm run db:prepare` | exit 0 |
+| `github-app/`: `npm test`, **with the local Supabase up** (`dockerd`, `scripts/local-supabase/up.sh` exit 0) | exit 0: typecheck, unit 237/237, integration 224/224, 0 skipped. The dashboard API suites ran this time: no "no local Supabase" skip lines in the log |
+| `npm run test:rls` | exit 0, all checks OK, including REMOVE DELETE RLS OK |
 
 ## Checks (branch head ed6bf78 plus this report; Postgres 16.15 scratch cluster on localhost)
 
@@ -156,7 +181,7 @@ the local Supabase was down. The PR's CI check is the run of record for those su
 | `supabase/tests/remove-delete-rls.sql` | the three functions are not executable by anon, authenticated or fenvix_github_app, are executable by fenvix_api, and `excluded_at` exists | a grant is wrong | — |
 | `api-dashboard.test.ts` role matrix (local Supabase) | member 403 on `removeProject`, `restoreRepository` and `deleteOrganization`; admin 2xx, 2xx, 403; owner 2xx, 2xx, 204; what each did | the contract's role marker or the handler's owner check changes | — |
 | `api-dashboard.test.ts` "deleting the organization deletes the owner's own Supabase login" | the owner's real Supabase login and identities go when no membership is left | the `auth.users` delete fails or is refused on Supabase's own schema | the hosted project's role grants |
-| `scripts/remove-delete-checks.mjs` (desktop 1440x900 and mobile 390x844) | both buttons stay disabled for an empty, case-changed, truncated or padded name and are enabled by the exact one; one "Removed <repo>" toast; the project is gone from /projects; after account deletion the browser is signed out and the mock no longer has the organization; a member sees neither block; no console errors; no horizontal scroll | the gate, the toast, the removal, the sign-out or the role gate breaks | the real API (the mock backend) |
+| `scripts/remove-delete-checks.mjs` (desktop 1440x900 and mobile 390x844) | both buttons stay disabled for an empty, case-changed, truncated or padded name and are enabled by the exact one; one "Removed <repo>" toast; the project is gone from /projects; Connect lists the removed repository as "Removed from fenvix" with no setup pull request button, and "Add again" shows its toast and brings the project back; after account deletion the browser is signed out on `/welcome` and the mock no longer has the organization; a member sees neither block; no console errors; no horizontal scroll | the gate, the toast, the removal, the sign-out or the role gate breaks | the real API (the mock backend) |
 
 ## Shots
 
