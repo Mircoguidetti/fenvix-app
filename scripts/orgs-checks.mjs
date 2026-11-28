@@ -111,8 +111,9 @@ const TESTS = {
     assert(names.join("|") === "Northwind Cloud|Harbor Analytics", `the switcher lists ${names.join(", ")}`);
     await noClippedText(page, ".org-panel, .org-item");
     await panel.getByRole("button", { name: /Harbor Analytics/ }).click();
-    await toast(page, "Switched to Harbor Analytics");
     await page.getByRole("heading", { name: "Harbor Analytics" }).waitFor();
+    // Switching needs no answer: no toast (console cleanup, 27 Nov).
+    assert(!(await page.locator(".toast").count()), "switching organization shows a toast");
     await page.locator(".readonly-note").getByText("view-only access").waitFor();
     assert((await page.locator(".workspace-sub").first().textContent()) === "Member", "the role under the name is not Member");
 
@@ -121,7 +122,7 @@ const TESTS = {
     await page.locator("main .page-kicker", { hasText: "harbor-analytics/homehub" }).waitFor();
     await page.locator("#project-settings").getByText("Only an owner or admin can change these.").waitFor();
     assert(!(await page.getByRole("button", { name: "Save settings" }).count()), "a member can save project settings");
-    assert(await page.getByRole("switch", { name: /Nightly exploration/ }).isDisabled(), "a member can switch nightly exploration");
+    assert(await page.getByRole("switch", { name: /Skip tests with proof/ }).isDisabled(), "a member can switch skip with proof");
     await go(page, "projects/connect");
     await page.getByText("Only an owner or admin can connect repositories.").waitFor();
     assert(await page.getByRole("button", { name: "Add another GitHub account" }).isDisabled(), "a member can install the GitHub App");

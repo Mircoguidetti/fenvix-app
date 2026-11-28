@@ -16,7 +16,8 @@ captureInviteFromUrl();
 
 // A provider sends the browser back with ?code=… in the query. That is finished here, before
 // the hash router mounts, so the app starts on a clean URL with the session already loaded.
-await completeAuthRedirect();
+// A failure here must not keep the loading screen up for ever: the sign-in page explains a failed redirect.
+await completeAuthRedirect().catch(() => undefined);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

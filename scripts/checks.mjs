@@ -411,14 +411,15 @@ const TESTS = {
     await openUserMenu(page, vp);
     await page.getByRole("button", { name: "Sign out" }).click();
     await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
-    await toast(page, "Signed out");
+    // Signing out needs no answer: no toast (console cleanup, 27 Nov).
+    assert(!(await page.locator(".toast").count()), "signing out shows a toast");
 
     await page.getByRole("button", { name: "Continue with Google" }).click();
     await page.locator(".shell").waitFor();
     await openUserMenu(page, vp);
     await page.getByRole("button", { name: "Sign out" }).click();
     await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
-    await toast(page, "Signed out");
+    assert(!(await page.locator(".toast").count()), "signing out shows a toast");
 
     await page.getByLabel("Work email").fill("not-an-email");
     await page.getByRole("button", { name: "Email me a sign-in link" }).click();
@@ -482,9 +483,10 @@ const TESTS = {
     assert(/^\d+%$/.test(values[2]) && num(values[2]) >= 90, `the median share skipped reads ${values[2]} (home-assistant-like runs dominate: about 97%)`);
     assert(/^\$[\d,.]+$/.test(values[4]), `the GitHub cost reads ${values[4]}`);
     assert((await page.locator(".chart svg").count()) >= 2, "the overview is missing charts");
-    await page.locator("#cost").getByText("$479", { exact: true }).waitFor();
-    await page.locator("#cost").getByText(/run units used\. Units included: not set yet\./).waitFor();
-    assert(!(await page.locator("#trial").count()), "a paying organization shows a trial");
+    // The cost against GitHub only: no plan and no run units until the price is decided (22 Dec).
+    await page.locator("#cost").getByText("On GitHub-hosted runners").waitFor();
+    assert(!/run units|Your plan/i.test(await page.locator("#cost").innerText()), "the cost card still prices by plan or run units");
+    assert(!(await page.locator("#trial").count()), "the overview shows the shadow trial");
     const cost = await addsUp(page, "#cost-minutes");
     assert(values[1] === `${cost.skipped.toLocaleString("en-US")} min`, `minutes saved ${values[1]} is not the skipped part ${cost.skipped}`);
     assert((await page.locator(".kpi", { hasText: "On GitHub-hosted" }).innerText()).includes(`${cost.total.toLocaleString("en-US")} min`), "the GitHub KPI does not show the same minutes");
@@ -525,15 +527,14 @@ const TESTS = {
     await page.getByRole("heading", { name: "The test job on fenvix" }).waitFor();
     assert((await page.locator(".codebox pre").innerText()).includes("runs-on: fenvix"), "the setup snippet does not say runs-on: fenvix");
     await page.locator(".diff", { hasText: "+ runs-on: fenvix" }).waitFor();
-    const sw = page.getByRole("switch", { name: /Nightly exploration/ });
-    await page.getByText(/A paid add-on; not counted in your run units/).waitFor();
-    const before = await sw.getAttribute("aria-checked");
-    await sw.click();
+    // Nightly exploration is coming soon: its switch is hidden and the saved value is left as it was.
+    assert(!(await page.getByRole("switch", { name: /Nightly exploration/ }).count()), "the nightly exploration switch is shown");
+    const before = (await page.evaluate(async () => (await window.__fenvixMock.getProject("prj_homehub")).settings)).nightlyExploration;
     await page.getByLabel("Test command").fill("pytest tests -p no:cacheprovider");
     await page.getByRole("button", { name: "Save settings" }).click();
     await toast(page, "Project settings saved");
     const saved = await page.evaluate(async () => (await window.__fenvixMock.getProject("prj_homehub")).settings);
-    assert(String(saved.nightlyExploration) !== before && saved.testCommand === "pytest tests -p no:cacheprovider", `the settings were not saved: ${JSON.stringify(saved)}`);
+    assert(saved.nightlyExploration === before && saved.testCommand === "pytest tests -p no:cacheprovider", `the settings were not saved: ${JSON.stringify(saved)}`);
   },
 
   async "skip with proof: audit reruns, the rule-of-three bound, keys no longer trusted"(page) {
@@ -551,18 +552,22 @@ const TESTS = {
     assert(/95% confidence/.test(bound), `the bound does not say its confidence: ${bound}`);
     assert((await audit.locator(".audit-list").first().locator("li").count()) === 2, "the untrusted keys are not listed");
     assert(/^[0-9a-f]{32}$/.test(await audit.locator(".audit-list .hash").first().innerText()), "an untrusted key is not a 32-hex cache key");
-    // Nightly exploration: Northwind has the add-on, so no note about it.
+    await page.getByRole("heading", { name: "Cache with proof", level: 1 }).waitFor();
+    // Nightly exploration is coming soon (live list): the shared page, no nights and no add-on note.
     await go(page, "projects/prj_homehub/nightly");
     await page.getByRole("heading", { name: "Nightly exploration" }).waitFor();
-    await page.locator("#nights").waitFor();
-    assert(!(await page.locator(".addon-note").count()), "an organization with the add-on is told it is paid");
+    await page.locator(".coming-soon").getByRole("heading", { name: "Coming soon" }).waitFor();
+    assert(!(await page.locator("#nights, .addon-note").count()), "the nightly page still shows nights or the add-on note");
     await go(page, "projects/prj_homehub/time-to-green");
     await page.locator("#ttg-chart .chart svg").waitFor();
   },
 
-  async "the shadow trial: days left, the 35% gate met and not met, shadow runs, the add-on note"(page) {
+  async "the shadow trial (on the hidden billing page only): days left, the 35% gate met and not met, shadow runs"(page) {
     await signIn(page, "overview");
     await useOrgOf(page, "org_harbor", "overview");
+    // The overview no longer shows the trial (console cleanup, 27 Nov); the billing page, reached by its URL, does.
+    assert(!(await page.locator("#trial").count()), "the overview shows the shadow trial");
+    await go(page, "billing");
     const trial = page.locator("#trial");
     await trial.getByRole("heading", { name: "Shadow trial: 12 days left" }).waitFor();
     const share = num(await trial.locator(".kpi-value").first().innerText());
@@ -570,21 +575,15 @@ const TESTS = {
     await trial.locator(".state-ok", { hasText: "35% gate met" }).waitFor();
     await trial.getByText("Run units", { exact: true }).waitFor();
     await trial.getByText("not billed during the trial").waitFor();
-    // The same trial in Billing.
-    await go(page, "billing");
-    await page.locator("#trial").getByText("35% gate met").waitFor();
     await page.locator("#current").getByText("In trial").waitFor();
     // A shadow run says that nothing was skipped.
     const run = await shadowRun(page);
     await go(page, `projects/${run.projectId}/runs/${run.runId}`);
     await page.getByText(`Shadow run: nothing was skipped; ${run.would.toLocaleString("en-US")} tests would have been.`).waitFor();
     await page.locator(".kpi", { hasText: "Would have skipped" }).waitFor();
-    // Nightly exploration is a paid add-on this organization does not have.
-    await go(page, "projects/prj_homehub/nightly");
-    await page.locator(".addon-note").getByText("Nightly exploration is a paid add-on").waitFor();
     // Below the gate (the mock's switch): the same screen says so, in amber, with words.
     await page.evaluate(() => sessionStorage.setItem("fenvix-mock-trial", "below"));
-    await page.goto(BASE + "overview");
+    await page.goto(BASE + "billing");
     await page.locator("#trial .state-warn", { hasText: "Below the 35% gate" }).waitFor();
     const low = num(await page.locator("#trial .kpi-value").first().innerText());
     assert(low < 35, `below the gate reads ${low}%`);
@@ -697,7 +696,15 @@ const TESTS = {
 
   async "connect a project: installations, every onboarding state, the setup pull request, GitHub's return"(page) {
     await signIn(page, "projects/connect");
-    const inst = (account) => page.locator(".install", { has: page.getByRole("heading", { name: account, exact: true }) });
+    // The steps list the repositories still to connect; those on fenvix or with a pull request open are in a block
+    // below, collapsed with their count (console cleanup, 27 Nov). Open it to see every state.
+    const on = page.locator("details.connect-on");
+    assert((await on.getAttribute("open")) === null, "the block of connected repositories is not collapsed");
+    assert(!(await page.locator(".steps .repo-row", { hasText: "northwind/homehub" }).count()), "a connected repository is in the steps");
+    await on.locator("summary").click();
+    const counted = num(await on.locator("summary .tag").innerText());
+    assert(counted > 0 && counted === (await on.locator(".repo-row").count()), `the block counts ${counted} but lists ${await on.locator(".repo-row").count()}`);
+    const inst = (account) => page.locator(".steps .install", { has: page.getByRole("heading", { name: account, exact: true }) });
     await inst("northwind").locator(".state-ok", { hasText: "Active" }).waitFor();
     await inst("northwind-labs").locator(".state-warn", { hasText: "Suspended" }).waitFor();
     await inst("elena-marsh").getByText("Uninstalled", { exact: true }).waitFor();
@@ -729,7 +736,7 @@ const TESTS = {
     const url = new URL(page.url());
     assert(url.searchParams.get("github") === "connected" && url.searchParams.get("installation") && url.searchParams.get("account") === "northwind-sandbox", `GitHub's return address was ${page.url()}`);
     await inst("northwind-sandbox").locator(".state-ok", { hasText: "Active" }).waitFor();
-    assert((await page.locator(".install").count()) === 4, "four installations are not all shown");
+    assert((await page.locator(".steps .install").count()) === 4, "four installations are not all shown");
     await page.locator(".callout-success").getByRole("button", { name: "Dismiss" }).click();
     await eventually(async () => !new URL(page.url()).searchParams.get("github"), "the banner stays in the address");
     // Every way back from GitHub reads as a sentence.
@@ -744,18 +751,15 @@ const TESTS = {
     await page.locator(".callout-warning").getByText("Waiting for an owner of the GitHub organization.").waitFor();
   },
 
-  async "usage: run units, per project, the rows add up, CSV export"(page) {
+  async "usage: per project, the rows add up, CSV export"(page) {
     await signIn(page, "usage");
-    const card = page.locator("#units-used");
-    await card.getByText("Units included in your plan: not set yet.").waitFor();
-    await card.getByText(/1 run unit = 10 baseline minutes/).waitFor();
-    const billed = num(await card.locator(".big-number").innerText());
-    const runsUsed = num((await card.locator(".card-desc").innerText()).match(/([\d,]+) billable/)[1]);
+    // No run units and no plan until the price is decided (22 Dec): no units card, no units column.
+    assert(!(await page.locator("#units-used").count()), "the run units card is shown");
+    assert(!(await page.locator("th", { hasText: "Run units" }).count()), "the table has a Run units column");
+    const runsUsed = num(await page.locator("tfoot td[data-key='runs']").innerText());
     const runs = (await page.locator("tbody td[data-label='Runs']").allTextContents()).map(num);
     assert(runs.length === 5 && runs.reduce((a, b) => a + b, 0) === runsUsed, `per-row runs ${runs} do not add up to ${runsUsed}`);
     await page.locator("tbody tr", { hasText: "Repositories not set up as projects" }).waitFor();
-    const unitsTotal = num(await page.locator("tfoot td[data-key='units']").innerText());
-    assert(billed >= unitsTotal && billed - unitsTotal < 1.1, `${billed} units billed for ${unitsTotal} used`);
     assert((await page.locator(".chart svg").count()) >= 1, "the runs-per-day chart is missing");
     // The minutes add up on screen: in the sentence, in every row, and down every column (units included).
     await addsUp(page, "#usage-minutes");
@@ -778,7 +782,8 @@ const TESTS = {
       const [, , , ran, saved, other, gh] = l.split(",").map(Number);
       assert(ran + saved + other === gh, `a CSV row does not add up: ${l}`);
     }
-    await toast(page, "CSV ready");
+    // The download is the answer: no toast.
+    assert(!(await page.locator(".toast").count()), "the export shows a toast");
     await choose(page, page.locator("#u-month"), "2026-10");
     await eventually(async () => new URL(page.url()).searchParams.get("month") === "2026-10", "the month did not change");
   },

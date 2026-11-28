@@ -1046,7 +1046,8 @@ function receiptOf(id: string): SkipReceipt | null {
 
 const mockError = (code: string, status: number, message: string, field?: string) => new ApiError(code, message, status, field);
 
-const wait = <T,>(value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(value), 90));
+// A check can make the mock answer slowly, as a cold API does (window.__fenvixMockDelayMs; scripts/cleanup-checks.mjs).
+const wait = <T,>(value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(value), (globalThis as { __fenvixMockDelayMs?: number }).__fenvixMockDelayMs ?? 90));
 const copy = <T,>(v: T): T => structuredClone(v);
 
 function plans(): Plan[] {

@@ -477,7 +477,7 @@ export function RunPage() {
           </div>
           <div>
             <dt>Mode</dt>
-            <dd>{shadow ? "Shadow (trial): every test runs" : "Skip with proof"}</dd>
+            <dd>{shadow ? "Shadow: every test runs" : "Skip with proof"}</dd>
           </div>
           <div>
             <dt>Region</dt>

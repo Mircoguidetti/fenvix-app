@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
 import { CircleAlert, CircleCheck, X } from "lucide-react";
 
 /**
@@ -9,14 +9,30 @@ export type ToastTone = "success" | "error";
 type Toast = { id: number; message: string; tone?: ToastTone };
 const ToastContext = createContext<(message: string, tone?: ToastTone) => void>(() => {});
 
-/** Short confirmation after an action. Stays for a few seconds and can be dismissed. */
+/**
+ * Short confirmation after a create, update or delete the person asked for (or its failure); never for something
+ * that needs no answer (signing in or out, switching organization, a download). Top right, stays for a few seconds
+ * and can be dismissed. The same text is shown once: a second call with it while it is on screen is ignored.
+ */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const dismiss = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
+  // The messages on screen, kept outside the state so two calls in the same tick see each other.
+  const shown = useRef(new Map<string, number>());
+  const dismiss = useCallback((id: number) => {
+    for (const [k, v] of shown.current) if (v === id) shown.current.delete(k);
+    setToasts((t) => t.filter((x) => x.id !== id));
+  }, []);
   const push = useCallback(
     (message: string, tone?: ToastTone) => {
+      const key = `${tone ?? "neutral"}:${message}`;
+      if (shown.current.has(key)) return;
       const id = Date.now() + Math.random();
-      setToasts((t) => [...t.slice(-2), { id, message, tone }]);
+      shown.current.set(key, id);
+      setToasts((t) => {
+        const kept = t.slice(-2);
+        for (const x of t) if (!kept.includes(x)) for (const [k, v] of shown.current) if (v === x.id) shown.current.delete(k);
+        return [...kept, { id, message, tone }];
+      });
       setTimeout(() => dismiss(id), 6000);
     },
     [dismiss],

@@ -14,14 +14,7 @@ import { formatCount, formatMinutes, formatMoney } from "../lib/format";
 const monthLabel = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 
 const units = (n: number) => new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(n);
-/** Units in the table: always one decimal, so the column lines up and adds up to its total. */
-const unitsCell = (n: number) => new Intl.NumberFormat("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n);
 export const UNIT_NOTE = "1 run unit = 10 baseline minutes: the minutes your job held a fenvix machine, as GitHub times the job (from its start to its end).";
-
-/** "123 of 2,000 run units used", or the units alone when the plan's included units are not set yet. */
-export function UnitsLine({ used, included }: { used: number; included: number | null }) {
-  return included === null ? <>{units(used)} run units used. Units included: not set yet.</> : <>{`${units(used)} of ${units(included)} run units used`}</>;
-}
 
 /** Run units used this month against the units the plan includes; with none set yet, the units and a plain note. */
 export function UnitsMeter({ used, included }: { used: number; included: number | null }) {
@@ -60,7 +53,6 @@ export function UsagePage() {
     try {
       const file = await client.exportUsage(month);
       download(file);
-      toast(`CSV ready: ${file.filename}`, "success");
     } catch (e) {
       toast(e instanceof Error ? e.message : "Export failed.", "error");
     } finally {
@@ -73,7 +65,7 @@ export function UsagePage() {
       <PageHeader
         back={<Kicker />}
         title="Usage"
-        description="Run units used against your plan, the test minutes fenvix skipped with proof, and what the same runs would cost on GitHub-hosted runners. Per project, for any month."
+        description="The test minutes your runs used on fenvix, the minutes skipped with proof, and what the same runs would cost on GitHub-hosted runners. Per project, for any month."
         actions={
           <button type="button" className="btn" onClick={exportCsv} disabled={exporting || !month}>
             <Download size={16} aria-hidden="true" />
@@ -94,14 +86,6 @@ export function UsagePage() {
         const u = report.data;
         return (
           <>
-            <div className="grid-2">
-              <Card id="units-used" title="Run units" description={`${u.plan ? `${u.plan.name} plan` : "No plan yet"}, ${monthLabel(u.month)}: ${formatCount(u.runsUsed)} billable ${u.runsUsed === 1 ? "run" : "runs"}.`}>
-                <UnitsMeter used={u.unitsUsed} included={u.unitsIncluded} />
-                <p className="muted small">{UNIT_NOTE} The month is billed as its units rounded up to a whole unit.</p>
-                <Link to="/billing" className="row-link small">
-                  Plans and billing
-                </Link>
-              </Card>
               <Card id="totals" title="Totals" description={`${monthLabel(u.month)}, every project.`}>
                 <dl className="facts">
                   <div>
@@ -127,23 +111,19 @@ export function UsagePage() {
                   ${u.rate.usdPerMinute} a minute, {u.rate.runner}, as stated on GitHub's pricing page ({u.rate.checkedOn}).
                 </p>
               </Card>
-            </div>
 
             <Card id="per-day" title="Runs per day" description="Split by project.">
               {u.daily.series.length > 0 ? <StackedBars days={u.daily.days} series={u.daily.series} valueLabel={(n) => `${formatCount(n)} runs`} /> : <p className="muted">No runs this month.</p>}
             </Card>
 
-            <div className="table-card">
-              <table className="data responsive">
+            <div className="table-card usage-table-card">
+              <table className="data responsive usage-table">
                 <caption className="sr-only">Usage per project, {monthLabel(u.month)}</caption>
                 <thead>
                   <tr>
                     <th scope="col">Project</th>
                     <th scope="col" className="num">
                       Runs
-                    </th>
-                    <th scope="col" className="num">
-                      Run units
                     </th>
                     <th scope="col" className="num">
                       Test minutes run
@@ -165,20 +145,19 @@ export function UsagePage() {
                 <tbody>
                   {u.rows.map((r) => (
                     <tr key={r.projectId || "unmatched"}>
-                      <td data-label="Project">
+                      <td data-label="Project" className="usage-project">
                         {r.projectId ? (
-                          <Link to={`/projects/${r.projectId}`} className="row-link mono break-anywhere">
+                          <Link to={`/projects/${r.projectId}`} className="row-link mono usage-project-name" title={r.fullName}>
                             {r.fullName}
                           </Link>
                         ) : (
-                          <span className="muted">{r.fullName}</span>
+                          <span className="muted usage-project-name" title={r.fullName}>
+                            {r.fullName}
+                          </span>
                         )}
                       </td>
                       <td data-label="Runs" data-key="runs" className="num mono">
                         {formatCount(r.runs)}
-                      </td>
-                      <td data-label="Run units" data-key="units" className="num mono">
-                        {unitsCell(r.units)}
                       </td>
                       <td data-label="Test minutes run" data-key="testMinutesRan" className="num mono">
                         {formatMinutes(r.testMinutesRan)}
@@ -205,9 +184,6 @@ export function UsagePage() {
                     </th>
                       <td data-total data-label="Runs" data-key="runs" className="num mono">
                         {formatCount(u.totals.runs)}
-                      </td>
-                      <td data-total data-label="Run units" data-key="units" className="num mono">
-                        {unitsCell(u.totals.units)}
                       </td>
                       <td data-total data-label="Test minutes run" data-key="testMinutesRan" className="num mono">
                         {formatMinutes(u.totals.testMinutesRan)}

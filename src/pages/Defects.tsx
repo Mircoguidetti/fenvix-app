@@ -55,7 +55,7 @@ export function DefectsPage({ fixedProjectId }: { fixedProjectId?: string } = {}
       <PageHeader
         back={<Kicker>{fixedProjectId && projects.status === "ready" ? projects.data.find((p) => p.id === fixedProjectId)?.fullName : undefined}</Kicker>}
         title="Defects"
-        description="Flaky tests turned into reproducible defects: the cause named, the smallest order of tests that fails, the seed, and a command that replays the failure 10 times out of 10. Grouped by cause."
+        description="Order and timing bugs fenvix found in your suite: the cause named, the smallest order of tests that fails, the seed, and a command that replays the failure 10 times out of 10. Grouped by cause."
       />
       <div className="toolbar">
         {!fixedProjectId && (
