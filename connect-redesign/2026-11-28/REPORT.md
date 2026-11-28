@@ -2,7 +2,7 @@ DONE
 
 # Connect a project, real redesign (rev 1) and the founder's follow-ups of 28 Nov
 
-Branch `claude/connect-redesign` from `origin/main` 3fc67ec. PR to main, not merged. Board: https://claude.ai/artifact/59TpMBcX9yCALY1S3v8QtV (private artifact "Connect: before / after").
+Branch `claude/connect-redesign` from `origin/main` 3fc67ec. PR to main, not merged: https://github.com/Mircoguidetti/fenvix-app/pull/32. Board: https://claude.ai/artifact/59TpMBcX9yCALY1S3v8QtV (private artifact "Connect: before / after").
 
 Commit identity: `git var GIT_AUTHOR_IDENT` and `git var GIT_COMMITTER_IDENT` both printed `Mirco Guidetti <mircoguidetti1994@gmail.com> …` before the first commit.
 
