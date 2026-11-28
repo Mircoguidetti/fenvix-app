@@ -1,13 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, BookOpen, Building2, ChartColumn, Check, ChevronDown, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, ShieldCheck, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, BookOpen, Building2, ChartColumn, Check, ChevronDown, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, ShieldCheck, SlidersHorizontal, Sun, X, type LucideIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { AccountMenu, OrgAvatar, useCurrentOrg } from "./AccountMenu";
 import { useFocusTrap } from "../lib/useFocusTrap";
 import { useOrg } from "../session/OrgProvider";
 import { useTheme } from "../lib/theme";
 import { client, type GitHubRepository, type ProjectRow, type SearchResult } from "../data";
-import { isSettingUp, setupPath } from "../lib/setup";
+import { isSettingUp, setupPath, setupTag } from "../lib/setup";
 import { setupSnippet } from "../data/ci";
 import { CopyButton } from "./CopyButton";
 import { ROLE_NAMES } from "../data/orgs";
@@ -49,7 +49,6 @@ const SETTINGS_PAGES = [
 ];
 const PROJECTS_PAGES = [
   { to: "/projects", label: "All projects", end: true },
-  { to: "/defects", label: "All defects", end: true },
   { to: "/projects/connect", label: "Connect a project", end: false },
 ];
 /**
@@ -61,9 +60,7 @@ type Section = { key: SectionKey; label: string; icon: LucideIcon; to: (id: stri
 const PROJECT_SECTIONS: Section[] = [
   { key: "runs", label: "Runs", icon: Play, to: (id) => `/projects/${id}` },
   { key: "parallel", label: "Parallel with proof", icon: ShieldCheck, to: (id) => `/projects/${id}/parallel-with-proof` },
-  { key: "defects", label: "Defects", icon: TriangleAlert, to: (id) => `/projects/${id}/defects` },
   { key: "skip", label: "Cache with proof", icon: Check, to: (id) => `/projects/${id}/skip-with-proof` },
-  { key: "ttg", label: "Time to green", icon: ChartColumn, to: (id) => `/projects/${id}/time-to-green` },
   // Live-list features not built yet: each opens its coming-soon page (src/components/ComingSoon.tsx).
   { key: "nightly", label: PROJECT_SOON.nightly.label, icon: Moon, to: (id) => `/projects/${id}/${PROJECT_SOON.nightly.path}`, soon: true },
   { key: "settings", label: "Settings", icon: SlidersHorizontal, to: (id) => `/projects/${id}/settings` },
@@ -244,7 +241,7 @@ function SubNav({ path, orgName }: { path: string; orgName: string }) {
               {settingUp.map((r) => (
                 <NavLink key={r.repositoryId} to={setupPath(r)} className="cx-sub-link cx-sub-setup">
                   <span className="break-anywhere">{r.fullName}</span>
-                  <span className="cx-sub-setup-tag">Setting up</span>
+                  <span className="cx-sub-setup-tag">{setupTag(r)}</span>
                 </NavLink>
               ))}
             </nav>
@@ -616,7 +613,6 @@ const JUMP_PAGES = [
   { label: "Overview", to: "/overview" },
   { label: "Projects", to: "/projects" },
   { label: "Connect a project", to: "/projects/connect" },
-  { label: "Defects", to: "/defects" },
   { label: "Usage", to: "/usage" },
   { label: "Organization settings", to: "/settings" },
   { label: "Members", to: "/settings/members" },

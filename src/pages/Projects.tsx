@@ -5,7 +5,7 @@ import { RunStatusPill, StatusPill } from "../components/StateBadge";
 import { SkipShare, WarmCacheNote } from "../components/ci";
 import { useAsync } from "../lib/useAsync";
 import { formatCount, formatMinutes, formatRelative } from "../lib/format";
-import { PR_OPEN, setupPath } from "../lib/setup";
+import { PR_OPEN, cannotDetectTests, setupPath, setupTag } from "../lib/setup";
 import { useSettingUp } from "../components/Shell";
 
 export function SetupStatePill({ state }: { state: SetupState }) {
@@ -50,9 +50,9 @@ export function ProjectsPage() {
                   <Link to={setupPath(r)} className="row-link mono break-anywhere">
                     {r.fullName}
                   </Link>
-                  <span className="muted small">{PR_OPEN.has(r.onboardingState) ? (r.setupPullRequest ? `Setup pull request #${r.setupPullRequest.number} waits for your merge` : "Its setup pull request waits for your merge") : "Waiting for its first run on fenvix"}</span>
+                  <span className="muted small">{PR_OPEN.has(r.onboardingState) ? (r.setupPullRequest ? `Setup pull request #${r.setupPullRequest.number} waits for your merge` : "Its setup pull request waits for your merge") : cannotDetectTests(r) ? "fenvix found no test runner in its workflows: open it to see what to change" : "Waiting for its first run on fenvix"}</span>
                 </span>
-                <span className="setting-up-tag">Setting up</span>
+                <span className="setting-up-tag">{setupTag(r)}</span>
               </li>
             ))}
           </ul>

@@ -21,3 +21,12 @@ export const isSettingUp = (r: GitHubRepository) => !r.removed && !r.excludedAt 
 
 /** The setup page of one repository. */
 export const setupPath = (r: { repositoryId: number }) => `/projects/connect/${r.repositoryId}`;
+
+/**
+ * Merged (or already on fenvix) but no test runner detected, so no project can be made (ci_projects needs language and
+ * runner): shown as "Cannot detect tests" instead of "Setting up" forever (founder, 28 Nov).
+ */
+export const cannotDetectTests = (r: GitHubRepository) => isSettingUp(r) && !PR_OPEN.has(r.onboardingState) && (!r.language || !r.testRunner);
+
+/** The tag shown for a repository in setup. */
+export const setupTag = (r: GitHubRepository) => (cannotDetectTests(r) ? "Cannot detect tests" : "Setting up");
