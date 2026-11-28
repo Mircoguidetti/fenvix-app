@@ -130,6 +130,45 @@ const TESTS = {
     await page.locator(".setting-up").getByRole("link", { name: "northwind/billing-worker" }).waitFor();
   },
 
+  // protects=a double click on "Open setup pull request" sends one request (the button is disabled before the request);
+  // fails_when=two requests reach the server; no_claim=the App opening it (the mock stands in).
+  async "setup page: a double click opens one pull request"(page) {
+    await signIn(page, "projects/connect");
+    await page.getByRole("link", { name: "Set up northwind/analytics" }).click();
+    await page.getByRole("heading", { name: "northwind/analytics", level: 1 }).waitFor();
+    await page.evaluate(() => {
+      const api = window.__fenvixMock;
+      const real = api.openSetupPullRequest.bind(api);
+      window.__opens = 0;
+      api.openSetupPullRequest = (id) => {
+        window.__opens++;
+        return real(id);
+      };
+    });
+    await page.getByRole("button", { name: "Open setup pull request again" }).dblclick();
+    await page.getByText("Queued: the fenvix GitHub App is opening it.").waitFor();
+    assert((await page.evaluate(() => window.__opens)) === 1, `${await page.evaluate(() => window.__opens)} requests for one double click`);
+  },
+
+  // protects=when the organization's way of running tests cannot be read, the setup page says so and does not let a
+  // pull request be opened from a preview that may be wrong; fails_when=no alert, or Open stays enabled; no_claim=-.
+  async "setup page: run mode not read, says so and Open is disabled"(page) {
+    await page.addInitScript(() => { window.__fenvixMockFail = ["getOnboardingKind"]; });
+    await signIn(page, "projects/connect");
+    await page.getByRole("link", { name: "Set up northwind/billing-worker" }).click();
+    await page.getByRole("alert").getByText("Could not read how fenvix runs your tests").waitFor();
+    assert(await page.getByRole("button", { name: "Open setup pull request" }).isDisabled(), "Open is enabled without the run mode");
+  },
+
+  // protects=when the projects cannot be read, the Projects page still offers Connect a project in its header;
+  // fails_when=no Connect button on the page; no_claim=-.
+  async "projects: the list could not be read, Connect a project stays in the header"(page) {
+    await page.addInitScript(() => { window.__fenvixMockFail = ["listProjects"]; });
+    await signIn(page, "projects");
+    await page.getByRole("alert").getByText("The projects could not be loaded.").waitFor();
+    assert(await page.locator(".page-header").getByRole("link", { name: "Connect a project" }).count(), "no Connect button when the list fails");
+  },
+
   // protects=a repository whose setup pull request is open: reached from "Setting up" on /projects (and the sidebar),
   // step 3 links its pull request; fails_when=it is not listed as setting up or the link is wrong; no_claim=-.
   async "setup page: pull request open, reached from Setting up"(page, vp) {

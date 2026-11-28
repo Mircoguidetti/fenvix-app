@@ -9,12 +9,16 @@ import { OnboardingPill } from "../components/StateBadge";
 import { useToast } from "../components/Toast";
 import { useAsync } from "../lib/useAsync";
 import { useOrg } from "../session/OrgProvider";
-import { CAN_OPEN, PR_OPEN, SetupDiff, Step, runnerText } from "./Connect";
+import { useSettingUp } from "../components/Shell";
+import { SetupDiff, Step, runnerText } from "./Connect";
+import { CAN_OPEN, PR_OPEN } from "../lib/setup";
 
 const POLLS = 6;
 const POLL_MS = 1500;
 /** While the pull request waits for its merge (or the project for its first run), the state is read again this often. */
 const LIVE_MS = 5000;
+/** Live reads that may fail in a row before the page says the state shown may be old. */
+const LIVE_FAILS = 3;
 
 /** What to do when the App found nothing it can move to fenvix. */
 const WHAT_TO_DO: Partial<Record<GitHubRepository["onboardingState"], string>> = {
@@ -47,12 +51,27 @@ function SetupPage({ id }: { id: number }) {
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [tick, setTick] = useState(0);
+  // Set before the request, so a second click cannot send a second one.
+  const [opening, setOpening] = useState(false);
+  // The App did not open it within the polling budget: said, with Check again.
+  const [slow, setSlow] = useState(false);
+  // Live reads that failed in a row: after LIVE_FAILS the page says the state shown may be old.
+  const [liveFails, setLiveFails] = useState(0);
   const polls = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => () => void (mounted.current = false), []);
   // The redirect to the project happens only for a repository that had its project when the page opened; one that
   // gets it while the page is open shows "Open project" instead of moving the person away.
   const firstLook = useRef<GitHubRepository | null | undefined>(undefined);
 
-  const list = repos.status === "ready" ? repos.data : [];
+  const listed = repos.status === "ready" ? repos.data : null;
+  const list = listed ?? [];
+  // The sidebar's "Setting up" follows the list read here (opened, merged, first run).
+  const { update: updateSettingUp } = useSettingUp();
+  useEffect(() => {
+    if (listed) updateSettingUp(listed);
+  }, [listed, updateSettingUp]);
+  const reading = useRef(false);
   const repo = list.find((r) => r.repositoryId === id && !r.removed) ?? null;
   if (repos.status === "ready" && firstLook.current === undefined) firstLook.current = repo;
   const installation = connection.status === "ready" ? connection.data.installations.find((i) => i.installationId === repo?.installationId) : undefined;
@@ -62,9 +81,14 @@ function SetupPage({ id }: { id: number }) {
   const merged = !!state && isSetupMerged(state);
 
   async function read() {
-    const now = await client.listGitHubRepositories();
-    repos.setData(now);
-    return now;
+    reading.current = true;
+    try {
+      const now = await client.listGitHubRepositories();
+      repos.setData(now);
+      return now;
+    } finally {
+      reading.current = false;
+    }
   }
 
   // After "Open setup pull request": ask a few times until the App has opened it; one toast then.
@@ -72,29 +96,48 @@ function SetupPage({ id }: { id: number }) {
     if (!queued) return;
     if (polls.current >= POLLS) {
       setQueued(false);
+      setSlow(true);
       return;
     }
     const t = window.setTimeout(async () => {
       polls.current++;
       try {
         const now = (await read()).find((r) => r.repositoryId === id);
+        if (!mounted.current) return;
         if (now && !CAN_OPEN.has(now.onboardingState)) {
           setQueued(false);
-          toast(now.setupPullRequest ? `Opened pull request #${now.setupPullRequest.number} on ${now.fullName}` : `${now.fullName}: ${now.onboardingDetail}`, "success");
+          // Opened: one success toast. The App could not open it (no workflow, unsupported…): its reason, as an error.
+          if (PR_OPEN.has(now.onboardingState) && now.setupPullRequest) toast(`Opened pull request #${now.setupPullRequest.number} on ${now.fullName}`, "success");
+          else toast(`Could not open a pull request on ${now.fullName}: ${now.onboardingDetail}`, "error");
         } else setTick((n) => n + 1);
       } catch {
+        if (!mounted.current) return;
         setQueued(false);
+        setSlow(true);
       }
     }, POLL_MS);
     return () => window.clearTimeout(t);
   }, [queued, tick]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Live state: while the pull request waits for its merge, or the project for its first run.
+  // Live state: while the pull request waits for its merge, or the project for its first run. Not while the pull
+  // request is being opened (that has its own polling), not while the tab is hidden (read once when it is shown
+  // again), and never two reads at once.
   useEffect(() => {
-    if (!(prOpen || (merged && !repo?.projectId))) return;
-    const t = window.setInterval(() => void read().catch(() => undefined), LIVE_MS);
-    return () => window.clearInterval(t);
-  }, [prOpen, merged, repo?.projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (queued || !(prOpen || (merged && !repo?.projectId))) return;
+    const tick = () => {
+      if (document.visibilityState !== "visible" || reading.current) return;
+      read().then(
+        () => mounted.current && setLiveFails(0),
+        () => mounted.current && setLiveFails((n) => n + 1),
+      );
+    };
+    const t = window.setInterval(tick, LIVE_MS);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [queued, prOpen, merged, repo?.projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shownKind: OnboardingKind = kind ?? (kindState.status === "ready" ? kindState.data.kind : "move");
   async function chooseKind(next: OnboardingKind) {
@@ -112,22 +155,31 @@ function SetupPage({ id }: { id: number }) {
   }
 
   async function open() {
-    if (!repo) return;
+    if (!repo || opening) return;
+    setOpening(true);
     setError(null);
+    setSlow(false);
     try {
       const now = await client.openSetupPullRequest(repo.repositoryId);
-      repos.setData(list.map((r) => (r.repositoryId === now.repositoryId ? now : r)));
+      if (!mounted.current) return;
+      // The list as it is now (a live read may have landed meanwhile), with this repository's answer.
+      const current = repos.status === "ready" ? repos.data : list;
+      repos.setData(current.map((r) => (r.repositoryId === now.repositoryId ? now : r)));
       polls.current = 0;
       setQueued(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not open the pull request. Try again.");
+    } finally {
+      if (mounted.current) setOpening(false);
     }
   }
 
   async function checkAgain() {
     setChecking(true);
+    setSlow(false);
     try {
       await read();
+      setLiveFails(0);
     } catch {
       /* the state on show stays */
     } finally {
@@ -142,7 +194,7 @@ function SetupPage({ id }: { id: number }) {
   );
   if (repos.status === "loading") return <Message>Loading the repository</Message>;
   if (repos.status === "error") return <Message role="alert">{repos.message}</Message>;
-  if (firstLook.current?.projectId && isSetupMerged(firstLook.current.onboardingState)) return <Navigate to={`/projects/${firstLook.current.projectId}`} replace />;
+  if (firstLook.current?.projectId && !firstLook.current.excludedAt && isSetupMerged(firstLook.current.onboardingState)) return <Navigate to={`/projects/${firstLook.current.projectId}`} replace />;
   if (!repo)
     return (
       <>
@@ -171,8 +223,17 @@ function SetupPage({ id }: { id: number }) {
           </Link>
         </div>
       ) : (
+        <>
+        {liveFails >= LIVE_FAILS && (
+          <div className="install-error">
+            <Message role="alert">{`The state shown may be old: fenvix could not read it the last ${liveFails} times.`}</Message>
+            <button type="button" className="btn btn-sm" onClick={() => void checkAgain()} disabled={checking}>
+              {checking ? "Checking…" : "Check again"}
+            </button>
+          </div>
+        )}
         <ol className="steps setup-steps">
-          <Step n={1} done={!!pr || merged} title="How fenvix runs it" heading="h2">
+          <Step n={1} done={!!pr || merged} title="How fenvix runs it">
             {kindState.status === "ready" && kindState.data.sideBySideAvailable ? (
               <div className="connect-kind">
                 <Segmented<OnboardingKind>
@@ -191,10 +252,11 @@ function SetupPage({ id }: { id: number }) {
               {shownKind === "side_by_side"
                 ? "The pull request adds one new workflow file that runs a copy of your test job on fenvix. Your workflow is not changed and decides green or red alone; fenvix shows both side by side."
                 : "The pull request changes one line in your test job: runs-on: fenvix."}{" "}
-              This choice applies to your organization: every new setup pull request uses it.
+              {pr || merged ? "This repository's pull request keeps the way it was opened; the choice applies to your organization's next setup pull requests." : "This choice applies to your organization: every new setup pull request uses it."}
             </p>
+            {kindState.status === "error" && <Message role="alert">{`Could not read how fenvix runs your tests: ${kindState.message} Reload the page before opening the pull request.`}</Message>}
           </Step>
-          <Step n={2} done={!!pr || merged} title="Open the setup pull request" heading="h2">
+          <Step n={2} done={!!pr || merged} title="Open the setup pull request">
             {!detected ? (
               <>
                 <p className="small">{repo.onboardingDetail}</p>
@@ -216,12 +278,23 @@ function SetupPage({ id }: { id: number }) {
                   <SetupDiff change={{ path: repo.workflowPath, job: repo.job, before: "runs-on: ubuntu-latest", after: "runs-on: fenvix" }} />
                 ))}
                 <div className="row-actions">
-                  <button type="button" className="btn btn-primary" onClick={() => void open()} disabled={queued || !active || !org.canManage}>
+                  <button type="button" className="btn btn-primary" onClick={() => void open()} disabled={opening || queued || !active || !org.canManage || kindState.status !== "ready"}>
                     {repo.onboardingState === "pending" ? "Open setup pull request" : "Open setup pull request again"}
                   </button>
                   <span className="muted small" role="status">
-                    {queued ? "Queued: the fenvix GitHub App is opening it." : !active ? "The installation must be active first." : "fenvix opens it; you review and merge it."}
+                    {queued || opening
+                      ? "Queued: the fenvix GitHub App is opening it."
+                      : slow
+                        ? "The fenvix GitHub App has not opened it yet. Check again in a minute."
+                        : !active
+                          ? "The installation must be active first."
+                          : "fenvix opens it; you review and merge it."}
                   </span>
+                  {slow && (
+                    <button type="button" className="btn btn-sm" onClick={() => void checkAgain()} disabled={checking}>
+                      {checking ? "Checking…" : "Check again"}
+                    </button>
+                  )}
                 </div>
                 {error && <Message role="alert">{error}</Message>}
               </>
@@ -229,7 +302,7 @@ function SetupPage({ id }: { id: number }) {
               <p className="muted small">{pr ? `Opened: pull request #${pr.number}.` : repo.onboardingDetail}</p>
             )}
           </Step>
-          <Step n={3} done={merged} title="Merge it on GitHub" heading="h2">
+          <Step n={3} done={merged} title="Merge it on GitHub">
             {prOpen ? (
               <>
                 <div className="row-actions">
@@ -260,7 +333,7 @@ function SetupPage({ id }: { id: number }) {
               <p className="muted small">Once the pull request is open, merge it on GitHub. Nothing runs on fenvix before that.</p>
             )}
           </Step>
-          <Step n={4} done={!!repo.projectId} title="First run" heading="h2">
+          <Step n={4} done={!!repo.projectId} title="First run">
             {repo.projectId ? (
               <div className="row-actions">
                 <Link to={`/projects/${repo.projectId}`} className="btn btn-primary">
@@ -277,6 +350,7 @@ function SetupPage({ id }: { id: number }) {
             )}
           </Step>
         </ol>
+        </>
       )}
     </>
   );

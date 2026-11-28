@@ -31,7 +31,7 @@ Files: `src/pages/Connect.tsx`, `src/pages/ConnectSetup.tsx` (new), `src/pages/P
 - `npm run typecheck`: exit 0.
 - `npm run test:unit`: exit 0, 91 tests, 91 pass, 0 fail.
 - `npm run build`: exit 0.
-- `npm run check`: exit 0. checks 72 passed, organization 10, remove/delete 8, status colours 18, cleanup 18, connect 20, screenshots "all checks passed, 170 pictures" (axe and layout included).
+- `npm run check`: exit 0. checks 72 passed, organization 10, remove/delete 8, status colours 18, cleanup 18, connect 26, screenshots "all checks passed, 170 pictures" (axe and layout included). Last run on the final head, after the second review.
 - `scripts/e2e-real-api.mjs`: **not run**. It needs a local Supabase stack, which this session does not have. Its Connect expectations were updated (below) but are unverified.
 
 ### Changed checks, one per line with the reason
@@ -49,13 +49,16 @@ Files: `src/pages/Connect.tsx`, `src/pages/ConnectSetup.tsx` (new), `src/pages/P
 - `scripts/e2e-real-api.mjs`: dropped the warm-cache markers on Connect, because connected repositories are no longer listed there. The pick-list states are read in `<main>`, since the sidebar lists projects and repositories in setup. The install button is matched by "Install the GitHub App" or "Add another account". The marker "Warm-up not possible (ccccccc)…" is not checked anywhere now (not run, see above).
 - `scripts/run.mjs`: runs the new `scripts/connect-checks.mjs`.
 
-### UI tests (`scripts/connect-checks.mjs`, mock backend, desktop 1440x900 and mobile 390x844; 20 of 20 passed)
+### UI tests (`scripts/connect-checks.mjs`, mock backend, desktop 1440x900 and mobile 390x844; 26 of 26 passed)
 
 Each test carries protects / fails_when / no_claim in the source.
 - state A: no installation shows the install card, no steps and no repository list.
 - state B: the pick list leaves out connected, open and removed repositories; Set up goes to the setup page; no steps, no mode toggle, no "Waiting for your merge"; the Removed list is collapsed; "See your projects" goes to /projects.
 - setup page, not detected: why, what to do, Check again, no pull request offered.
 - setup page, ready: Open setup pull request, exactly one toast, then "Merge it on GitHub" with the new pull request, and listed as "Setting up" on /projects.
+- setup page, double click: "Open setup pull request" sends one request. Against the previous head (b140366) this test failed with "2 requests for one double click".
+- setup page, run mode not read: an alert, and Open is disabled (the mock's failure hook `__fenvixMockFail` now covers `getOnboardingKind`).
+- Projects, list not read: "Connect a project" stays in the header (the hook also covers `listProjects`). These two also fail on the previous head, but partly because the old mock had no hook for them.
 - setup page, pull request open: reached from "Setting up" (Projects, and the sidebar on desktop); the merge link goes to pull request #812.
 - setup page, merged without a project: waits for the first run. Active: redirects to `/projects/prj_homehub`. An unknown id: "Repository not found".
 - removed: Python and the four tabs are not in the navigation (sidebar, drawer, command palette), and their old URLs give "Page not found"; the kept tabs are still there.
@@ -89,9 +92,31 @@ Board (57 images): https://claude.ai/artifact/59TpMBcX9yCALY1S3v8QtV
   - Carried over unchanged from main (the spec keeps that behaviour): polling/refresh/restore timing, the toast tone on an undetected result, and the account name in the `?github=connected` banner.
   - Outside the files I may touch: `InstallationStatusPill` is now unused (src/components/StateBadge.tsx), and `docs/status-colors.md` rows 85 and 87–89 still describe the old Connect page.
 - Gate edits: 1 listed, 1 read, 0 findings. The one tagged hunk (RH-16) is an empty `catch` in the shot script's wait for the preview server.
-- The coordinator's v2 changes came after this review and were not reviewed by gstack again. Their verification is the checks above.
+- The coordinator's v2 changes came after this review; the second review below covers them.
+
+## gstack /review, second pass (full PR diff `origin/main...HEAD`, including v2 and ConnectSetup.tsx; coordinator request)
+
+- Specialists: testing, maintainability, security, performance, design, simplification; Claude adversarial pass (Codex not installed).
+- Results: security and design found nothing. Gate edits: 4 listed, 4 read, 0 findings. Two (RH-16) are empty `catch` blocks in the shot scripts' wait for the preview server. Two (RH-13) are `eslint-disable-line react-hooks/exhaustive-deps` comments, the same pattern Connect.tsx already used on main.
+- Fixed, tested where the mock can reach the case:
+  - Setup page, a double click sent two POSTs: an `opening` flag set before the request (test above).
+  - Setup page, a failed run-mode read showed a preview that might be wrong: an alert, and Open disabled (test above).
+  - Setup page, the 5 s live read: it now pauses while the tab is hidden, skips while a read is in flight or the pull request is being opened, and after 3 failed reads in a row says the state may be old, with Check again.
+  - Setup page, opening: after the polling budget it says "has not opened it yet" with Check again, instead of silently re-enabling the button. A result with no pull request toasts as an error ("Could not open a pull request on …"). No toast after leaving the page. The list it writes is the current one, not the render-time copy.
+  - Setup page, the redirect to a project skips a removed repository.
+  - Step 1 says an open pull request keeps the way it was opened.
+  - Shell: the repository list is read when the Projects area is entered, not on every navigation. Connect and the setup page hand their list over, so Projects no longer fetches it a second time. When a repository leaves "Setting up", the project list is read again so it moves to "Your projects".
+  - Projects: the "Setting up" line follows the onboarding state, not the pull request's state field. When the projects list cannot be read, the header keeps "Connect a project" (test above).
+  - The setup helpers moved to `src/lib/setup.ts`, which removes the Projects ↔ Connect import cycle and Shell's import of a page.
+  - Step's dead `heading` prop is gone, and so is an orphaned CSS comment.
+- Not covered by a test (the mock cannot produce the case): the slow-opening message, the error toast for a result with no pull request, the stale-state warning after failed live reads, and the project list refresh when a setup completes.
+- Not changed:
+  - InstallationStatusPill is unused but pinned by a unit test, and lives outside these files.
+  - Carried over from main: the Connect page's restore timer and the unchecked account name in the `?github=connected` banner.
+  - Needs a product decision: an `already_fenvix` or `side_by_side` repository whose project can never be made (no language or runner detected) stays "Setting up", waiting for a first run.
 
 ## Not done or not verified
 
 - `scripts/e2e-real-api.mjs` was not run (no local Supabase here).
 - The setup page's live state (polling every 5 s while the pull request is open) is checked only through the mock, where a pull request never merges on its own.
+- A temporary git worktree used to run the tests against the previous head is still registered under the session's scratchpad (`git worktree list`). It is outside the repository and nothing of it is committed. Its removal was skipped because it needs a permission prompt nobody can answer here.

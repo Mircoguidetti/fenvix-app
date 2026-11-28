@@ -1802,8 +1802,6 @@ table.data.dbs thead th { font-size: 12px; }
 }
 @media (max-width: 640px) { .repo-row .name-cell > .row-link, .latest-title .row-link { display: inline-flex; align-items: center; min-height: 44px; } }
 
-/* Connect a project, step 1: the installations already connected, each with its way to choose more repositories. */
-
 /* The project's second bar replaces the projects list: one level at a time, with the way back on top. */
 .cx-sub-back { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; min-height: 32px; margin: -4px 0 6px; padding: 0 10px 0 6px; border-radius: 8px; color: var(--muted); font-size: 13px; font-weight: 500; }
 .cx-sub-back:hover { background: var(--nav-hover); color: var(--text); }

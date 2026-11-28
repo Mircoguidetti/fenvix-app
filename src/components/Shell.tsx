@@ -7,7 +7,7 @@ import { useFocusTrap } from "../lib/useFocusTrap";
 import { useOrg } from "../session/OrgProvider";
 import { useTheme } from "../lib/theme";
 import { client, type GitHubRepository, type ProjectRow, type SearchResult } from "../data";
-import { isSettingUp, setupPath } from "../pages/Connect";
+import { isSettingUp, setupPath } from "../lib/setup";
 import { setupSnippet } from "../data/ci";
 import { CopyButton } from "./CopyButton";
 import { ROLE_NAMES } from "../data/orgs";
@@ -104,8 +104,14 @@ export function useOpenProjectName(): string {
 
 /** The organization's projects, loaded once for the frame (switcher, the project the frame shows). */
 const ProjectsList = createContext<ProjectRow[] | null>(null);
-/** Repositories in setup (setup pull request open, or merged with no project yet): listed as "Setting up" (founder, 28 Nov). */
-const SettingUpList = createContext<GitHubRepository[]>([]);
+/**
+ * Repositories in setup (setup pull request open, or merged with no project yet): listed as "Setting up" (founder,
+ * 28 Nov). Read once when the Projects area is entered; the pages that read the repository list themselves (Connect,
+ * a setup page) hand it over with `update`, so the list follows a setup without asking again.
+ */
+type SettingUp = { list: GitHubRepository[]; update: (repos: GitHubRepository[]) => void };
+const SettingUpList = createContext<SettingUp>({ list: [], update: () => undefined });
+export const useSettingUp = () => useContext(SettingUpList);
 
 /** The project the frame is about: the one in the address (a project page, or the defects filtered to one project). */
 function useProjectContext(): { projectId: string | null; section: SectionKey | null; runId: string | null } {
@@ -200,7 +206,7 @@ function SubNav({ path, orgName }: { path: string; orgName: string }) {
   const { projectId } = useProjectContext();
   const info = useProjectInfo(projectId);
   const list = useContext(ProjectsList) ?? [];
-  const settingUp = useContext(SettingUpList);
+  const settingUp = useContext(SettingUpList).list;
   if (area === null || area === "overview") return null;
   return (
     <aside className="cx-sub" aria-label="Pages">
@@ -745,17 +751,28 @@ export function Shell({ children }: { children: ReactNode }) {
     };
   }, []);
   const { pathname } = useLocation();
-  // Read again on each page of the Projects area, so a setup that moves on shows up without a reload.
+  // Read when the Projects area is entered (not on every page of it); pages that read the list hand it over.
   const [settingUp, setSettingUp] = useState<GitHubRepository[]>([]);
+  // A repository that leaves "Setting up" has usually just become a project: the project list is read again then, so
+  // it moves to "Your projects" instead of leaving the sidebar until a reload.
+  const shownIds = useRef<Set<number>>(new Set());
+  const updateSettingUp = useCallback((repos: GitHubRepository[]) => {
+    const next = repos.filter(isSettingUp);
+    const ids = new Set(next.map((r) => r.repositoryId));
+    const left = [...shownIds.current].some((id) => !ids.has(id));
+    shownIds.current = ids;
+    setSettingUp(next);
+    if (left) client.listProjects().then(setProjects, () => undefined);
+  }, []);
   const inProjects = pathname.startsWith("/projects");
   useEffect(() => {
-    if (!inProjects && settingUp.length === 0 && pathname !== "/") return;
+    if (!inProjects) return;
     let live = true;
-    client.listGitHubRepositories().then((rs) => live && setSettingUp(rs.filter(isSettingUp)), () => undefined);
+    client.listGitHubRepositories().then((rs) => live && updateSettingUp(rs), () => undefined);
     return () => {
       live = false;
     };
-  }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [inProjects, updateSettingUp]);
   const drawer = useRef<HTMLElement>(null);
   const current = useCurrentOrg();
   const orgName = current.status === "ready" ? current.name : "";
@@ -772,7 +789,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <ProjectsList.Provider value={projects}>
-    <SettingUpList.Provider value={settingUp}>
+    <SettingUpList.Provider value={{ list: settingUp, update: updateSettingUp }}>
     <ProjectTitle.Provider value={{ info: projectInfo, set: setProjectInfo }}>
       <div className="shell cx-shell">
         <a href="#main" className="skip-link">

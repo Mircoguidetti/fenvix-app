@@ -1117,6 +1117,8 @@ export const mockClient: DataClient & { liveCalls(): number } = {
   },
 
   listProjects() {
+    // The checks make it fail (window.__fenvixMockFail) to see the page without it.
+    if ((globalThis as { __fenvixMockFail?: string[] }).__fenvixMockFail?.includes("listProjects")) return Promise.reject(new Error("The projects could not be loaded."));
     const s = store();
     return wait(copy(s.projects.map((p) => oldShape(projectRow(p, s.runs, s.defects, NOW), ({ lastRunNotProven: _l, ...p }) => p))));
   },
@@ -1355,7 +1357,10 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     if (fail?.includes("getSideBySide")) return Promise.reject(new Error("The side-by-side runs could not be loaded."));
     return wait(copy(mockSideBySide(projectId, page)));
   },
-  getOnboardingKind: () => wait({ kind: store().onboardingKind ?? "move", sideBySideAvailable: true }),
+  getOnboardingKind: () =>
+    (globalThis as { __fenvixMockFail?: string[] }).__fenvixMockFail?.includes("getOnboardingKind")
+      ? Promise.reject(new Error("The service did not answer."))
+      : wait({ kind: store().onboardingKind ?? "move", sideBySideAvailable: true }),
   async setOnboardingKind(kind) {
     assertMockCanManage();
     store().onboardingKind = kind;

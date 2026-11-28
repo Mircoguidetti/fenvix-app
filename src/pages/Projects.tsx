@@ -5,7 +5,8 @@ import { RunStatusPill, StatusPill } from "../components/StateBadge";
 import { SkipShare, WarmCacheNote } from "../components/ci";
 import { useAsync } from "../lib/useAsync";
 import { formatCount, formatMinutes, formatRelative } from "../lib/format";
-import { isSettingUp, setupPath } from "./Connect";
+import { PR_OPEN, setupPath } from "../lib/setup";
+import { useSettingUp } from "../components/Shell";
 
 export function SetupStatePill({ state }: { state: SetupState }) {
   if (state === "active") return <StatusPill tone="ok">On fenvix</StatusPill>;
@@ -18,13 +19,13 @@ export const languageLabel = (l: ProjectRow["language"]) => LANG[l];
 
 export function ProjectsPage() {
   const projects = useAsync(() => client.listProjects(), []);
-  // Repositories in setup (no project yet): listed as "Setting up", each linked to its setup page. Optional: a failed
-  // request just leaves them out.
-  const repos = useAsync(() => client.listGitHubRepositories(), []);
-  const settingUp = repos.status === "ready" ? repos.data.filter(isSettingUp) : [];
+  // Repositories in setup (no project yet), as the shell reads them: listed as "Setting up", each linked to its setup
+  // page. Optional: a failed request just leaves them out.
+  const settingUp = useSettingUp().list;
   const now = client.now();
   // One "Connect a project" button (founder, 28 Nov): the header's once there are projects, the empty state's before.
-  const hasProjects = projects.status === "ready" && projects.data.length > 0;
+  // When the list could not be read, the header keeps it, so the page always offers a way to connect.
+  const hasProjects = (projects.status === "ready" && projects.data.length > 0) || projects.status === "error";
   return (
     <>
       <PageHeader
@@ -49,7 +50,7 @@ export function ProjectsPage() {
                   <Link to={setupPath(r)} className="row-link mono break-anywhere">
                     {r.fullName}
                   </Link>
-                  <span className="muted small">{r.setupPullRequest && r.setupPullRequest.state === "open" ? `Setup pull request #${r.setupPullRequest.number} waits for your merge` : "Waiting for its first run on fenvix"}</span>
+                  <span className="muted small">{PR_OPEN.has(r.onboardingState) ? (r.setupPullRequest ? `Setup pull request #${r.setupPullRequest.number} waits for your merge` : "Its setup pull request waits for your merge") : "Waiting for its first run on fenvix"}</span>
                 </span>
                 <span className="setting-up-tag">Setting up</span>
               </li>

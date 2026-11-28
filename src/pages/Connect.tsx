@@ -10,22 +10,22 @@ import { useOrg } from "../session/OrgProvider";
 import { activeOrgId, setActiveOrgId } from "../lib/org";
 import { formatDate } from "../lib/format";
 import { languageLabel } from "./Projects";
-import { isSetupMerged } from "../data/ci-rows";
+import { isConnectedOrOpen, isSettingUp, setupPath } from "../lib/setup";
 import { installationConfigureUrl } from "../lib/github";
+import { useSettingUp } from "../components/Shell";
 
-/** One numbered step. `heading` is its level in the page outline (h3 inside a card, h2 directly under the page title). */
-export function Step({ n, done, title, heading = "h3", children }: { n: number; done: boolean; title: string; heading?: "h2" | "h3"; children?: ReactNode }) {
-  const H = heading;
+/** One numbered step of a repository's setup page (ConnectSetup), directly under the page title. */
+export function Step({ n, done, title, children }: { n: number; done: boolean; title: string; children?: ReactNode }) {
   return (
     <li className="step" data-done={done || undefined}>
       <span className="step-n" aria-hidden="true">
         {done ? <Check size={14} strokeWidth={2.5} /> : n}
       </span>
       <div className="step-body">
-        <H className="step-title">
+        <h2 className="step-title">
           {title}
           {done && <span className="sr-only"> (done)</span>}
-        </H>
+        </h2>
         {children}
       </div>
     </li>
@@ -62,21 +62,6 @@ export const INSTALL_ERRORS: Record<string, string> = {
   github: "GitHub did not answer while the installation was being linked. Try again in a few minutes.",
   error: "Something went wrong while the installation was being linked. Try again.",
 };
-
-/**
- * Repositories already on fenvix or with their setup pull request open: not offered in "Pick a repository to connect".
- * The connected ones live in /projects; those with a pull request open are "Setting up" (Projects and the sidebar),
- * each with its own setup page (founder, 28 Nov).
- */
-const CONNECTED_OR_OPEN = new Set(["pr_open", "side_by_side_pr_open", "merged", "already_fenvix", "side_by_side"]);
-export const isConnectedOrOpen = (r: GitHubRepository) => CONNECTED_OR_OPEN.has(r.onboardingState) || !!r.projectId;
-export const PR_OPEN = new Set(["pr_open", "side_by_side_pr_open"]);
-/** States from which the App can open (or open again) the setup pull request. */
-export const CAN_OPEN = new Set(["pending", "closed", "failed"]);
-
-/** In setup: its setup pull request is open, or merged with its project not made yet. Linked to its setup page. */
-export const isSettingUp = (r: GitHubRepository) => !r.removed && !r.excludedAt && !r.projectId && (PR_OPEN.has(r.onboardingState) || isSetupMerged(r.onboardingState));
-export const setupPath = (r: { repositoryId: number }) => `/projects/connect/${r.repositoryId}`;
 
 export function runnerText(r: GitHubRepository): string {
   if (!r.language && !r.testRunner) return "Language and test runner not detected";
@@ -232,6 +217,12 @@ export function ConnectPage() {
   // Set when the person went to GitHub's page of an installation to choose more repositories: coming back reads the list again.
   const [chose, setChose] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // The sidebar's "Setting up" follows the list read here.
+  const { update: updateSettingUp } = useSettingUp();
+  const listed = repos.status === "ready" ? repos.data : null;
+  useEffect(() => {
+    if (listed) updateSettingUp(listed);
+  }, [listed, updateSettingUp]);
 
   useEffect(() => {
     if (github !== "confirm") return;
