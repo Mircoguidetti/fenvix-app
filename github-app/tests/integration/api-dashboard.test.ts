@@ -396,7 +396,7 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
   describe("every operation marked x-fenvix-role: admin: a member is refused (403), an admin and an owner may", () => {
     let owner: Person; let adm: Person; let mem: Person; let targets: Person[];
     let ws: string;
-    let projectId: string; let repositoryId: number;
+    let projectId: string; let repositoryId: number; let installationId: number;
 
     before(async () => {
       owner = await signUp(admin, "m-owner"); adm = await signUp(admin, "m-admin"); mem = await signUp(admin, "m-member");
@@ -407,9 +407,14 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       for (const t of targets) await addTo(admin, t, ws, "member");
       const seeded = await seedOrg(admin, ws, `matrix-${githubId()}`);
       projectId = seeded.projects.shop;
+      installationId = seeded.installationId;
       repositoryId = seeded.repoIds.loose;
     });
 
+    const removed: string[] = [];
+    const doomed: Partial<Record<"member" | "admin" | "owner", string>> = {};
+    /** Operations of the matrix that an admin may not call either (the contract marks admin; the handler wants an owner). */
+    const ADMIN_REFUSED = new Set(["deleteOrganization"]);
     const matrix: Record<string, (who: Person, role: "member" | "admin" | "owner") => Promise<number>> = {
       renameOrganization: async (who, role) => (await call(api, "renameOrganization", { token: who.token, ws, body: { name: `Renamed by ${role}` } })).status,
       saveSettings: async (who, role) => (await call(api, "saveSettings", { token: who.token, ws, body: { workspaceName: `Set by ${role}`, emailNotices: role !== "owner", region: role === "owner" ? "eu" : "us" } })).status,
@@ -423,7 +428,23 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       changeMemberRole: async (who, role) => (await call(api, "changeMemberRole", { token: who.token, ws, params: { userId: targets[0]!.userId }, body: { role: role === "owner" ? "admin" : "member" } })).status,
       removeMember: async (who, role) => (await call(api, "removeMember", { token: who.token, ws, params: { userId: targets[role === "owner" ? 1 : role === "admin" ? 2 : 3]!.userId } })).status,
       createInstallLink: async (who) => (await call(api, "createInstallLink", { token: who.token, ws })).status,
+      // Each call removes a project of its own (made here), so the organization's projects stay for the others.
+      removeProject: async (who, role) => {
+        const id = (await admin.query<{ id: string }>(`insert into public.ci_projects (workspace_id, full_name, language, test_runner, installation_id) values ($1, $2, 'python', 'pytest', $3) returning id`,
+          [ws, `matrix-${role}/remove-${githubId()}`, installationId])).rows[0]!.id;
+        removed.push(id);
+        return (await call(api, "removeProject", { token: who.token, ws, params: { projectId: id } })).status;
+      },
+      restoreRepository: async (who) => (await call(api, "restoreRepository", { token: who.token, ws, params: { repositoryId } })).status,
       openSetupPullRequest: async (who) => (await call(api, "openSetupPullRequest", { token: who.token, ws, params: { repositoryId } })).status,
+      // An organization of its own each time, where the person has the role: the owner's deletion must not take the
+      // matrix's organization with it. The owner only (an admin is refused too: ADMIN_REFUSED).
+      deleteOrganization: async (who, role) => {
+        const own = await signUp(admin, `m-del-${role}-${githubId()}`);
+        await addTo(admin, who, own.workspaceId, role);
+        doomed[role] = own.workspaceId;
+        return (await call(api, "deleteOrganization", { token: who.token, ws: own.workspaceId })).status;
+      },
       setOnboardingKind: async (who, role) => (await call(api, "setOnboardingKind", { token: who.token, ws, body: { kind: role === "admin" ? "side_by_side" : "move" } })).status,
     };
 
@@ -435,7 +456,8 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       for (const [op, run] of Object.entries(matrix)) {
         assert.equal(await run(mem, "member"), 403, `${op}: member`);
         const a = await run(adm, "admin");
-        assert.ok(a >= 200 && a < 300, `${op}: admin got ${a}`);
+        if (ADMIN_REFUSED.has(op)) assert.equal(a, 403, `${op}: admin`);
+        else assert.ok(a >= 200 && a < 300, `${op}: admin got ${a}`);
         const o = await run(owner, "owner");
         assert.ok(o >= 200 && o < 300, `${op}: owner got ${o}`);
       }
@@ -448,7 +470,15 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
       const left = (await admin.query("select user_id from workspace_members where workspace_id = $1", [ws])).rows.map((r) => r.user_id);
       assert.ok(!left.includes(targets[1]!.userId) && !left.includes(targets[2]!.userId) && left.includes(targets[3]!.userId));
       assert.equal(queue.sent.filter((x) => x.kind === "onboard" && x.repositoryId === repositoryId).length, 2);
-      assert.deepEqual(queue.sent.at(-1), { kind: "onboard", repositoryId });
+      assert.deepEqual(queue.sent.filter((x) => x.kind === "onboard").at(-1), { kind: "onboard", repositoryId });
+      // Remove project: the member's project stays, the admin's and the owner's are gone.
+      const still = (await admin.query("select id from ci_projects where id = any($1::uuid[])", [removed])).rows.map((r) => r.id);
+      assert.deepEqual(still, [removed[0]]);
+      // Add again: queued for the admin and the owner, not the member.
+      assert.equal(queue.sent.filter((x) => x.kind === "sync_repository" && x.repositoryId === repositoryId).length, 2);
+      // Delete organization: only the owner's organization is gone.
+      const left2 = (await admin.query("select id from workspaces where id = any($1::uuid[])", [[doomed.member, doomed.admin, doomed.owner]])).rows.map((r) => r.id).sort();
+      assert.deepEqual(left2, [doomed.member, doomed.admin].sort());
     });
 
     it("what an admin may not do even so: invite or manage admins and owners, change their own role", async () => {
@@ -769,11 +799,22 @@ describe("dashboard API: every operation, real tokens, real database", { skip: S
     }
   });
 
+  it("deleting the organization deletes the owner's own Supabase login (real auth.users, with its identities) when no membership is left", async () => {
+    const solo = await signUp(admin, `solo-${githubId()}`);
+    assert.equal((await admin.query("select count(*)::int as n from auth.identities where user_id = $1", [solo.userId])).rows[0].n, 1);
+    const r = await call(api, "deleteOrganization", { token: solo.token, ws: solo.workspaceId });
+    assert.equal(r.status, 204);
+    assert.equal((await admin.query("select count(*)::int as n from auth.users where id = $1", [solo.userId])).rows[0].n, 0);
+    assert.equal((await admin.query("select count(*)::int as n from auth.identities where user_id = $1", [solo.userId])).rows[0].n, 0);
+    assert.equal((await admin.query("select count(*)::int as n from public.workspaces where id = $1", [solo.workspaceId])).rows[0].n, 0);
+  });
+
   it("every dashboard operation of the contract was called and answered as the contract says", () => {
     const all = dashboardOperations().map((o) => o.operationId).sort();
     assert.deepEqual(all.filter((x) => !covered.has(x)), []);
     // Rule 3 (spec 20261126-side-by-side-runs): three operations added (getOnboardingKind, setOnboardingKind, getSideBySide).
-    assert.equal(all.length, 46);
+    // Spec 20261127-remove-and-delete: three more (removeProject, restoreRepository, deleteOrganization).
+    assert.equal(all.length, 49);
     void NOW;
   });
 });
