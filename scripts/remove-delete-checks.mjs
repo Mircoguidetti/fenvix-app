@@ -1,6 +1,7 @@
 // Removing a project and deleting the account, on desktop and on a phone, against the mock backend: both dialogs keep
 // their button disabled until the exact name is typed; after "Remove project" the project is gone from /projects with
-// one "Removed <repo>" toast; after "Delete account" the browser is signed out; a member sees neither block.
+// one "Removed <repo>" toast; Connect lists a removed repository with "Add again", which brings its project back;
+// after "Delete account" the browser is signed out; a member sees neither block.
 // Usage: npm run check (builds, serves and runs everything), or with a preview server on :4173:
 //   node scripts/remove-delete-checks.mjs
 // SHOTS=<dir> also saves both dialogs, light and dark, at 1440x900 and 390x844 (deviceScaleFactor 2).
@@ -54,6 +55,25 @@ const TESTS = {
     assert(!(await page.locator("main").getByText(p.fullName, { exact: true }).count()), "the project is still on /projects");
   },
 
+  async "Add again: a removed repository is listed on Connect as removed, and adding it again brings its project back"(page) {
+    await signIn(page, "projects");
+    const p = await firstProject(page);
+    // Removed through the mock server (the dialog itself is checked above).
+    await page.evaluate(async (id) => window.__fenvixMock.removeProject(id), p.id);
+    await go(page, "projects/connect");
+    await settled(page);
+    const add = page.getByRole("button", { name: `Add ${p.fullName} again` });
+    await add.waitFor();
+    const row = page.locator("li.repo-row", { has: add });
+    await row.getByText("Removed from fenvix").waitFor();
+    assert(!(await row.getByRole("button", { name: /Open setup pull request/ }).count()), "a removed repository offers a setup pull request");
+    await add.click();
+    await page.locator(".toast", { hasText: `Added ${p.fullName} again` }).waitFor();
+    await add.waitFor({ state: "detached" });
+    const back = await page.evaluate(async () => (await window.__fenvixMock.listProjects()).map((x) => x.fullName));
+    assert(back.includes(p.fullName), "the project did not come back");
+  },
+
   async "delete the account: typed organization name, then signed out"(page) {
     await signIn(page, "settings");
     const name = "Northwind Cloud";
@@ -66,6 +86,7 @@ const TESTS = {
     await confirm.click();
     await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
     assert(!(await page.locator(".shell").count()), "the dashboard is still shown after the account was deleted");
+    assert(new URL(page.url()).pathname === "/welcome", `landed on ${page.url()}, not /welcome`);
     await page.goto(`${BASE}overview`);
     await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
     // The organization is gone from the mock server; the person still belongs to Harbor Analytics.

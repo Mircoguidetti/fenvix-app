@@ -1101,6 +1101,9 @@ function oldShape<T>(v: T, strip: (x: Loose) => Loose): T {
 /** Every live-view question, for the checks (polling must stop once the run has finished). */
 let liveCount = 0;
 
+/** Projects removed in this tab, by organization and repository: "Add again" brings each back (without its runs). */
+const removedProjects = new Map<string, Project>();
+
 /** The mock as the API: the DataClient, and for the checks the number of live-view questions so far. */
 export const mockClient: DataClient & { liveCalls(): number } = {
   now: () => NOW,
@@ -1138,7 +1141,12 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     if (!p) throw mockError("not_found", 404, "That project does not exist in this organization.");
     // As api_remove_project: the repository is excluded first, then the project and its runs, defects and receipts go.
     const at = NOW.toISOString();
-    for (const r of s.repos) if (r.projectId === id || (!r.projectId && r.fullName.toLowerCase() === p.fullName.toLowerCase())) Object.assign(r, { excludedAt: at, projectId: null });
+    for (const r of s.repos) {
+      if (r.projectId === id || (!r.projectId && r.fullName.toLowerCase() === p.fullName.toLowerCase())) {
+        Object.assign(r, { excludedAt: at, projectId: null });
+        removedProjects.set(`${activeOrgId() ?? "org_northwind"}:${r.repositoryId}`, { ...p });
+      }
+    }
     s.projects = s.projects.filter((x) => x.id !== id);
     const gone = new Set(s.runs.filter((r) => r.projectId === id).map((r) => r.id));
     s.runs = s.runs.filter((r) => !gone.has(r.id));
@@ -1330,6 +1338,14 @@ export const mockClient: DataClient & { liveCalls(): number } = {
     const repo = s.repos.find((x) => x.repositoryId === repositoryId);
     if (!repo) throw mockError("not_found", 404, "That repository is not in this organization's GitHub installations.");
     repo.excludedAt = null;
+    // As the App's worker does after "sync_repository": the project is made again (its runs are gone).
+    const key = `${activeOrgId() ?? "org_northwind"}:${repositoryId}`;
+    const back = removedProjects.get(key);
+    if (back && !s.projects.some((x) => x.id === back.id)) {
+      s.projects.push(back);
+      repo.projectId = back.id;
+      removedProjects.delete(key);
+    }
     return wait(copy(repo));
   },
 
