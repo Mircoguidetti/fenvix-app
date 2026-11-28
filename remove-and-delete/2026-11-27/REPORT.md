@@ -62,7 +62,7 @@ coordinator session, because this session had no access to Mircoguidetti/new-bra
 | `npm run check` | exit 0: checks 72/72, organization checks 10/10, **remove/delete checks 6/6**, status colour checks 18/18, screenshots: all checks passed (170 pictures) | exit 0: 72/72, 10/10, 18/18, 170 pictures |
 | `npm run api:lint` | exit 0 ("Your API description is valid") | exit 0 |
 | `github-app/`: `npm run db:prepare` | exit 0 ("0014 to 0021 twice") | exit 0 |
-| `github-app/`: `npm test` | exit 0: typecheck, unit 237/237, integration 185/185 | exit 0: unit 237/237, integration 173/173 |
+| `github-app/`: `npm test` | exit 0: typecheck, unit 237/237, integration 185/185, **but the two dashboard API suites (`api-dashboard.test.ts`, `api-warm-cache.test.ts`) were skipped** ("no local Supabase"); see "CI failure on PR #31" below | exit 0: unit 237/237, integration 173/173 (same two suites skipped) |
 | `npm run test:rls` (`TEST_DATABASE_URL` = scratch `rls_final`) | exit 0: API, CI, CI EXPLORE, GH, WARM RLS OK, RUNNERS, RUN PROOF, SIDE BY SIDE CHECK OK, **REMOVE DELETE RLS OK**, SIDE BY SIDE ROLLBACK OK | exit 0 (without the new check) |
 | `deploy/`: `npm test` (`FENVIX_DEPLOY_TEST_DB` = scratch) | exit 0: 90 tests, 89 pass, 1 skipped (needs a local Supabase; skipped on main as well), including "0021 cut before its last statement: the deploy stops" | not run on main |
 
@@ -75,12 +75,47 @@ Notes on the runs:
   not drop it. After dropping those scratch databases and the leftover role, it passed. This is environment state, not
   the change: the script expects an otherwise empty cluster.
 
-Not proven here:
-- The `auth.users` delete was checked locally only, against the stub `auth.users` table (`supabase/tests/local-stub.sql`).
-  Production migrations run as `postgres` through the session pooler, and the function runs as its owner there. Whether
-  that delete succeeds on Supabase's real `auth.users` (with auth.identities and auth.sessions cascading) is not proven
-  by anything run here.
-- Nothing ran against a remote database.
+## CI failure on PR #31 and the fix
+
+The PR's GitHub "Tests" check failed (run 46056006442, job 140698530737) on two tests in
+`github-app/tests/integration/api-dashboard.test.ts`:
+- `:430` "the matrix covers exactly the contract's admin operations";
+- `:772` "every dashboard operation of the contract was called".
+
+**Why the local run missed it:** both dashboard API suites need a local Supabase (Docker). The container had no Docker
+daemon running, so node:test skipped the two suites ("# no local Supabase: run bash scripts/local-supabase/up.sh
+(Docker) first", lines 374-375 of the run log). The summary still read "185 pass, 0 skipped", because the skip is on
+the describe block. So the file did not run locally; it was not run against an older contract. My "integration
+185/185" above was true only for the suites that ran.
+
+**Fix (commit 4a9d25e):**
+- The role matrix gains `removeProject` and `restoreRepository`: member 403, admin and owner 2xx.
+- It gains `deleteOrganization`: member 403, **admin 403**, owner 204. Each call runs in an organization of its own, and
+  admins are refused through an explicit `ADMIN_REFUSED` set, not by loosening the check.
+- Its effects are asserted: only the admin's and the owner's projects are gone; `sync_repository` is queued twice; only
+  the owner's organization is gone.
+- The contract walk now calls all three. Its operation count goes from 46 to 49, with a comment naming this spec.
+- Nothing is skipped or weakened.
+
+**Run on a local Supabase:** started with `dockerd` and `bash scripts/local-supabase/up.sh` (exit 0). That is the real
+`supabase/postgres:15.8.1.085` image and `supabase/gotrue:v2.186.0`, with migrations applied as `postgres`. Results:
+- `node --test --test-concurrency=1 tests/integration/api-dashboard.test.ts tests/integration/api-warm-cache.test.ts`:
+  exit 0, 37 tests, 37 pass.
+- After the `auth.users` test below was added, `api-dashboard.test.ts` alone: exit 0, 35/35.
+
+A worker restart then stopped the Docker daemon. The next full `npm run db:prepare && npm test` ran typecheck, unit
+237/237 and integration 185 passed. The two dashboard suites failed only with `ECONNREFUSED 127.0.0.1:54322`, because
+the local Supabase was down. The PR's CI check is the run of record for those suites on the pushed head.
+
+## Proven and not proven
+
+- **The `auth.users` delete, now proven on the real Supabase image** (not only the stub). New test in
+  `api-dashboard.test.ts`, "deleting the organization deletes the owner's own Supabase login (real auth.users, with its
+  identities) when no membership is left". A person who signed up through the real Supabase Auth deletes their only
+  organization: 204, their `auth.users` row and their `auth.identities` row are gone, and so is the workspace. The
+  migrations ran as `postgres`, as production's do.
+- **Still not proven:** behaviour on the hosted project itself, whose role grants may differ from the image's. Nothing
+  ran against a remote database.
 
 ## Changes to tests and check scripts (each with its reason first)
 
@@ -96,6 +131,10 @@ Not proven here:
   Change: `supabase/tests/run-local.sh` runs `remove-delete-rls.sql`, and both migration lists apply 0021 twice.
 - Reason: the UI checks for this feature run in `npm run check`.
   Change: `scripts/run.mjs` runs `scripts/remove-delete-checks.mjs`.
+- Reason: the role matrix and the contract walk in `github-app/tests/integration/api-dashboard.test.ts` must cover
+  every admin and every dashboard operation, and this PR adds three.
+  Change: the three operations are in the matrix. `deleteOrganization` is in an `ADMIN_REFUSED` set (admin expected 403;
+  everything else stays 2xx). The expected operation count goes from 46 to 49. A real-Supabase `auth.users` test is added.
 - No timeout or threshold was changed.
 
 ## Test cards
@@ -115,6 +154,8 @@ Not proven here:
 | "a removal stays with its installation" | a repository under a new installation (another organization) is not excluded there | `upsertRepositories` keeps `excluded_at` across installations | — |
 | "an owner who belongs to another organization keeps their login" | the login is deleted only when no membership is left | the `auth.users` delete ignores other memberships | — |
 | `supabase/tests/remove-delete-rls.sql` | the three functions are not executable by anon, authenticated or fenvix_github_app, are executable by fenvix_api, and `excluded_at` exists | a grant is wrong | — |
+| `api-dashboard.test.ts` role matrix (local Supabase) | member 403 on `removeProject`, `restoreRepository` and `deleteOrganization`; admin 2xx, 2xx, 403; owner 2xx, 2xx, 204; what each did | the contract's role marker or the handler's owner check changes | — |
+| `api-dashboard.test.ts` "deleting the organization deletes the owner's own Supabase login" | the owner's real Supabase login and identities go when no membership is left | the `auth.users` delete fails or is refused on Supabase's own schema | the hosted project's role grants |
 | `scripts/remove-delete-checks.mjs` (desktop 1440x900 and mobile 390x844) | both buttons stay disabled for an empty, case-changed, truncated or padded name and are enabled by the exact one; one "Removed <repo>" toast; the project is gone from /projects; after account deletion the browser is signed out and the mock no longer has the organization; a member sees neither block; no console errors; no horizontal scroll | the gate, the toast, the removal, the sign-out or the role gate breaks | the real API (the mock backend) |
 
 ## Shots
