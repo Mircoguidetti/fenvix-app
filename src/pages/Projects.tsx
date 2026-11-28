@@ -5,6 +5,8 @@ import { RunStatusPill, StatusPill } from "../components/StateBadge";
 import { SkipShare, WarmCacheNote } from "../components/ci";
 import { useAsync } from "../lib/useAsync";
 import { formatCount, formatMinutes, formatRelative } from "../lib/format";
+import { PR_OPEN, setupPath } from "../lib/setup";
+import { useSettingUp } from "../components/Shell";
 
 export function SetupStatePill({ state }: { state: SetupState }) {
   if (state === "active") return <StatusPill tone="ok">On fenvix</StatusPill>;
@@ -17,7 +19,13 @@ export const languageLabel = (l: ProjectRow["language"]) => LANG[l];
 
 export function ProjectsPage() {
   const projects = useAsync(() => client.listProjects(), []);
+  // Repositories in setup (no project yet), as the shell reads them: listed as "Setting up", each linked to its setup
+  // page. Optional: a failed request just leaves them out.
+  const settingUp = useSettingUp().list;
   const now = client.now();
+  // One "Connect a project" button (founder, 28 Nov): the header's once there are projects, the empty state's before.
+  // When the list could not be read, the header keeps it, so the page always offers a way to connect.
+  const hasProjects = (projects.status === "ready" && projects.data.length > 0) || projects.status === "error";
   return (
     <>
       <PageHeader
@@ -25,11 +33,31 @@ export function ProjectsPage() {
         title="Projects"
         description="Repositories connected through the fenvix GitHub App. Numbers are for this month. Minutes saved count skipped test time only: checkout, install and build still run on fenvix."
         actions={
-          <Link to="/projects/connect" className="btn btn-primary">
-            Connect a project
-          </Link>
+          hasProjects ? (
+            <Link to="/projects/connect" className="btn btn-primary">
+              Connect a project
+            </Link>
+          ) : undefined
         }
       />
+      {settingUp.length > 0 && (
+        <section className="card setting-up" aria-labelledby="setting-up-h">
+          <h2 id="setting-up-h">Setting up</h2>
+          <ul className="setting-up-list">
+            {settingUp.map((r) => (
+              <li key={r.repositoryId} className="setting-up-row">
+                <span className="name-cell">
+                  <Link to={setupPath(r)} className="row-link mono break-anywhere">
+                    {r.fullName}
+                  </Link>
+                  <span className="muted small">{PR_OPEN.has(r.onboardingState) ? (r.setupPullRequest ? `Setup pull request #${r.setupPullRequest.number} waits for your merge` : "Its setup pull request waits for your merge") : "Waiting for its first run on fenvix"}</span>
+                </span>
+                <span className="setting-up-tag">Setting up</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {projects.status === "loading" && <Message>Loading projects</Message>}
       {projects.status === "error" && <Message role="alert">{projects.message}</Message>}
       {projects.status === "ready" && projects.data.length === 0 && (

@@ -8,15 +8,19 @@ import { useOrg } from "../session/OrgProvider";
 import { useSession } from "../session/SessionProvider";
 import { clearPendingInvite } from "../lib/invite";
 
-/** The full-screen frame of the screens shown before the dashboard: the same dark page as sign-in. */
+/**
+ * The full-screen frame of the screens shown before the dashboard: the logo, one centred card with the form, and the
+ * signed-in line right under it. Its own layout (founder, 28 Nov): the sign-in page's two-column grid, restyled in
+ * PR 28 and PR 30, left these screens at the top-left with no logo.
+ */
 function Frame({ children, label }: { children: React.ReactNode; label: string }) {
   const { user, signOut } = useSession();
   return (
-    <main id="main" className="signin-page" tabIndex={-1} aria-label={label}>
-      <div className="signin-mark">
+    <main id="main" className="gate-page" tabIndex={-1} aria-label={label}>
+      <div className="gate-mark">
         <Logo />
       </div>
-      <div className="signin-card">{children}</div>
+      <div className="gate-card">{children}</div>
       {user && (
         <p className="gate-foot">
           <span className="gate-who">Signed in as {user.email}</span>

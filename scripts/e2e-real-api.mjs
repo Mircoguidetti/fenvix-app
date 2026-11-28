@@ -131,7 +131,9 @@ const pages = [
   ["members", "/settings/members", ["Olive Owner", "Max Member"]],
   ["settings", "/settings", ["Acme Robotics", "Region"]],
   ["api-keys", "/api-keys", ["oming soon"]],
-  ["connect", "/projects/connect", [account, `olive-${run}`, "uspended", "Cache warm since 4a7c2e9", "Warming up b81f0d3: running the test job", "Warm-up not possible (ccccccc): the job needs the outputs of job build"]],
+  // Connect lists only repositories still to connect (connect redesign, 28 Nov): the warm-cache lines of connected
+  // repositories are checked on /projects above, no longer here.
+  ["connect", "/projects/connect", [account, `olive-${run}`, "uspended", "Pick a repository to connect", "See your projects"]],
 ];
 
 async function visit(page, name, path, markers, { shot = true } = {}) {
@@ -192,12 +194,18 @@ await phone.context().close();
   const page = ownerPage;
   const text = await visit(page, "connect-connected", `/projects/connect?github=connected&installation=${seeded.installationId}&account=${account}`, [account], { shot: true });
   check("connect-connected", text.includes(`The fenvix GitHub App is installed on ${account}`), "says the App is installed on the account GitHub sent back");
-  for (const st of STATES) check("connect", text.includes(`repo-${st.replace(/_/g, "-")}`), `lists the repository in state ${st}`);
+  // Changed (connect redesign, 28 Nov): "Pick a repository to connect" lists only repositories not on fenvix and with no
+  // setup pull request open; those are on /projects and in the sidebar ("Setting up"). Read in <main> only, since the
+  // sidebar lists projects and repositories in setup.
+  const main = await page.locator("main").innerText();
+  const NOT_PICKED = new Set(["merged", "already_fenvix", "side_by_side", "pr_open", "side_by_side_pr_open"]);
+  for (const st of STATES) check("connect", main.includes(`repo-${st.replace(/_/g, "-")}`) !== NOT_PICKED.has(st), NOT_PICKED.has(st) ? `leaves out of the pick list the repository in state ${st}` : `lists the repository in state ${st}`);
   await visit(page, "connect-error", "/projects/connect?github=error&reason=not_admin", [], { shot: true });
   let installUrl = null;
   await page.route("https://github.com/**", (route) => { installUrl = route.request().url(); return route.abort(); });
   await page.goto(`${WEB}/projects/connect`, { waitUntil: "networkidle" });
-  const btn = page.getByRole("button", { name: /install|connect|add another/i }).first();
+  // "Connect <repo>" opens a setup pull request now: the install link is "Install the GitHub App" or "Add another account".
+  const btn = page.getByRole("button", { name: /^(Install the GitHub App|Add another account)$/ }).first();
   if (await btn.count()) {
     await btn.click();
     await page.waitForTimeout(1500);

@@ -748,6 +748,15 @@ textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflo
   .member-name { justify-content: flex-end; }
   .members-table td.actions-cell .row-actions { flex-wrap: wrap; }
 }
+/* The screens before the dashboard (name the organization, no organization, an invitation): logo, one centred card, the signed-in line under it. */
+.gate-page { min-height: 100vh; min-height: 100dvh; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 40px 16px; background: var(--bg); }
+html:has(.gate-page), body:has(.gate-page) { background: var(--bg); }
+.gate-mark { color: var(--text); }
+.gate-mark .logo-word { font-size: 18px; }
+.gate-card { width: min(420px, 100%); display: flex; flex-direction: column; gap: 18px; background: var(--bg); border: 1px solid var(--border); border-radius: 14px; padding: 28px; }
+.gate-card h1 { font-size: 26px; letter-spacing: -0.02em; text-wrap: balance; }
+.gate-card .btn-lg { height: 48px; border-radius: 999px; font-size: 15px; }
+@media (max-width: 420px) { .gate-card { padding: 22px 18px; } }
 .gate-foot { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 14px; color: var(--muted); font-size: 13.5px; max-width: min(420px, 100%); text-align: center; }
 .gate-who { overflow-wrap: anywhere; }
 .btn-link { background: transparent; border: 0; padding: 4px 10px; border-radius: 8px; color: var(--text); cursor: pointer; font: inherit; font-weight: 600; }
@@ -1657,12 +1666,11 @@ table.data.dbs thead th { font-size: 12px; }
 .step { display: flex; gap: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
 .step-n { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--border-strong); display: inline-flex; align-items: center; justify-content: center; font: 600 12.5px var(--mono); }
 .step-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; flex: 1; }
-.step-title { font-size: 15px; font-weight: 600; }
+.step-title { margin: 0; font-size: 15px; font-weight: 600; }
 .setup-list { display: flex; flex-direction: column; gap: 12px; }
 .setup-row { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 10px; background: var(--surface); }
 .setup-row-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
-.setup-done { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin: 0; }
-.setup-done a, .facts a.row-link { display: inline-flex; align-items: center; gap: 4px; }
+.facts a.row-link { display: inline-flex; align-items: center; gap: 4px; }
 .diff { margin: 0; border-radius: 10px; background: var(--black); color: #d6d8dd; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
 .diff figcaption { color: #a8abb3; }
 .diff figcaption strong { color: #edeef0; }
@@ -1769,14 +1777,8 @@ table.data.dbs thead th { font-size: 12px; }
 .live-facts { margin: 0; }
 .shadow-note, .running-note, .addon-note { margin: 0; }
 /* GitHub App installations and their repositories. */
-.install { display: flex; flex-direction: column; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line-soft); }
-.install:first-of-type { border-top: 0; padding-top: 4px; }
-.install-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
-.install-head h3 { font-size: 15px; font-weight: 600; margin: 0; }
-.install-tags { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .repo-name { font-weight: 600; }
 .repo-detail { margin: 0; }
-.repo-cache { margin: 0; }
 .warm-cache { display: inline-flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .setup-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
 .install-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
@@ -1796,14 +1798,9 @@ table.data.dbs thead th { font-size: 12px; }
 .audit-item .hash { max-width: 100%; }
 /* Phone: links that stand alone (run numbers in tables, pull request and project links) are 44 px touch targets. */
 @media (max-width: 640px) {
-  td .row-link, .setup-done .row-link, .audit-list .row-link, .running-note .row-link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
+  td .row-link, .audit-list .row-link, .running-note .row-link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
 }
 @media (max-width: 640px) { .repo-row .name-cell > .row-link, .latest-title .row-link { display: inline-flex; align-items: center; min-height: 44px; } }
-
-/* Connect a project, step 1: the installations already connected, each with its way to choose more repositories. */
-.install-more { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.install-more-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 10px 12px; border-radius: 10px; background: var(--surface); }
-.install-more-row .btn { gap: 6px; }
 
 /* The project's second bar replaces the projects list: one level at a time, with the way back on top. */
 .cx-sub-back { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; min-height: 32px; margin: -4px 0 6px; padding: 0 10px 0 6px; border-radius: 8px; color: var(--muted); font-size: 13px; font-weight: 500; }
@@ -1845,10 +1842,50 @@ table.usage-table td.usage-project .usage-project-name { display: block; max-wid
 .account-id-email { grid-area: email; font-size: 13.5px; }
 .account-id-role { grid-area: role; }
 
-/* Connect a project: repositories already connected, below the steps, collapsed by default. */
-.connect-on { display: flex; flex-direction: column; gap: 12px; }
-.connect-on > summary { display: flex; align-items: center; gap: 10px; min-height: var(--touch, 44px); cursor: pointer; font-weight: 600; list-style-position: inside; }
-.connect-on:not([open]) > :not(summary) { display: none; }
+/* Connect a project (founder, 28 Nov): built around picking a repository not connected yet. */
+.pick-list, .gh-lines { list-style: none; margin: 0; padding: 0; }
+.pick-list { display: flex; flex-direction: column; }
+.pick-row { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.pick-row:first-child { border-top: 0; padding-top: 2px; }
+.pick-main { display: flex; justify-content: space-between; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.pick-end { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pick-end .btn { min-width: 96px; justify-content: center; }
+.pick-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.pick-empty p { margin: 0; }
+.pick-empty .btn { gap: 6px; }
+.gh-lines { display: flex; flex-direction: column; gap: 2px; padding: 0 4px; }
+.gh-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 13.5px; color: var(--muted); }
+.gh-account { color: var(--text); }
+.gh-line .row-link { display: inline-flex; align-items: center; gap: 4px; }
+.gh-line .btn-link { padding: 2px 6px; font-weight: 500; color: var(--text); }
+.gh-warn { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
+.gh-warn svg { flex: none; color: var(--warning); }
+.connect-removed, .connect-what { display: block; padding-top: 8px; padding-bottom: 8px; }
+.connect-removed > summary, .connect-what > summary { display: flex; align-items: center; gap: 10px; min-height: var(--touch, 44px); cursor: pointer; font-weight: 600; list-style-position: inside; }
+.connect-removed > summary::before, .connect-what > summary::before { content: "▸"; color: var(--muted); }
+.connect-removed[open] > summary::before, .connect-what[open] > summary::before { content: "▾"; }
+.connect-removed > summary::-webkit-details-marker, .connect-what > summary::-webkit-details-marker { display: none; }
+.connect-removed > summary, .connect-what > summary { list-style: none; }
+.connect-removed > ul, .connect-what > ul { margin: 4px 0 12px; }
+.connect-projects { margin: 0; padding: 0 4px; }
+/* A repository in setup, in the sidebar's "Your projects" and on /projects. */
+.cx-sub-setup { flex-direction: column; align-items: flex-start; justify-content: center; gap: 0; padding-block: 6px; }
+.cx-sub-setup-tag, .setting-up-tag { flex: none; font: 500 10.5px var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--warning); white-space: nowrap; }
+.setup-steps .step-title { font-size: 16px; }
+.setup-steps .connect-kind { margin: 0; }
+.setting-up { display: flex; flex-direction: column; gap: 10px; }
+.setting-up-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.setting-up-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.setting-up-row:first-child { border-top: 0; padding-top: 0; }
+@media (max-width: 640px) {
+  .gh-line .row-link, .gh-line .btn-link, .connect-projects .row-link { min-height: var(--touch); display: inline-flex; align-items: center; }
+  .pick-end { width: 100%; }
+  .pick-end .btn { margin-left: auto; }
+  .gh-sep { display: none; }
+  .gh-line { gap: 0 12px; padding: 4px 0; }
+  .gh-line .btn-link { padding-inline: 0; }
+}
+
 
 /* /welcome: one line above the sign-in form. */
 .signin-welcome { margin: 0 0 4px; font-weight: 600; }

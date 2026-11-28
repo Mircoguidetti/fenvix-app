@@ -262,7 +262,8 @@ const TESTS = {
     await watchToasts(page);
     await go(page, "projects/connect?github=updated");
     await page.waitForURL((u) => u.pathname === "/projects/connect" && !u.searchParams.get("github"));
-    await page.locator(".steps .repo-row").first().waitFor();
+    // Changed (connect redesign, 28 Nov): the repositories to connect are in "Pick a repository to connect", not in steps.
+    await page.locator(".connect-pick .repo-row").first().waitFor();
     await page.waitForTimeout(400);
     assert(!(await page.getByRole("alert").count()), `an error shows: ${await page.getByRole("alert").first().innerText().catch(() => "")}`);
     assert(!(await page.getByText(/install link expired/i).count()), "the expired message shows");
@@ -271,17 +272,11 @@ const TESTS = {
 
   async "coming soon: every live-list item has a nav entry that opens its page"(page, vp) {
     await signIn(page, "projects/prj_homehub");
-    const items = [
-      ["Detailed proof", "/projects/prj_homehub/proof"],
-      ["Compatibility", "/projects/prj_homehub/compatibility"],
-      ["Is this red real?", "/projects/prj_homehub/is-this-red-real"],
-      ["Database copies", "/projects/prj_homehub/database"],
-      ["Nightly exploration", "/projects/prj_homehub/nightly"],
-      ["Python", "/python"],
-    ];
+    // Changed (founder, 28 Nov): Detailed proof, Compatibility, Is this red real?, Database copies and Python were
+    // removed; Nightly exploration is the one coming-soon page left (the removed ones are checked in connect-checks).
+    const items = [["Nightly exploration", "/projects/prj_homehub/nightly"]];
     for (const [label, to] of items) {
-      // Python belongs to the Projects area (no project needed); the others are sections of the open project.
-      await go(page, to === "/python" ? "projects" : "projects/prj_homehub");
+      await go(page, "projects/prj_homehub");
       await settled(page);
       let nav = page.locator(".cx-sub");
       if (isMobile(vp)) {

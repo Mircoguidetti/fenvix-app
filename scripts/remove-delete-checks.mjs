@@ -62,11 +62,13 @@ const TESTS = {
     await page.evaluate(async (id) => window.__fenvixMock.removeProject(id), p.id);
     await go(page, "projects/connect");
     await settled(page);
+    // Changed (connect redesign, 28 Nov): removed repositories are in a collapsed "Removed" list.
+    await page.locator("details.connect-removed > summary").click();
     const add = page.getByRole("button", { name: `Add ${p.fullName} again` });
     await add.waitFor();
     const row = page.locator("li.repo-row", { has: add });
     await row.getByText("Removed from fenvix").waitFor();
-    assert(!(await row.getByRole("button", { name: /Open setup pull request/ }).count()), "a removed repository offers a setup pull request");
+    assert(!(await page.getByRole("link", { name: `Set up ${p.fullName}` }).count()), "a removed repository offers Set up");
     await add.click();
     await page.locator(".toast", { hasText: `Added ${p.fullName} again` }).waitFor();
     await add.waitFor({ state: "detached" });

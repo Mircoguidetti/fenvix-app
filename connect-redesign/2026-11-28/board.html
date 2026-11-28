@@ -1,0 +1,307 @@
+<title>Connect: before / after</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a contact sheet. One section per state, one row per viewport and theme, before | after side by side. */
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --fg: #0d1220;
+  --muted: #5b6375;
+  --line: #dfe2e8;
+  --accent: #1d4fd8;
+  --before: #8a5a00;
+  --font-ui: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #070a12; --panel: #0e1424; --fg: #eef0f4; --muted: #9aa3b5; --line: #1d2638; --accent: #7aa2ff; --before: #ffb020; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #070a12; --panel: #0e1424; --fg: #eef0f4; --muted: #9aa3b5; --line: #1d2638; --accent: #7aa2ff; --before: #ffb020; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.55 var(--font-ui); }
+.wrap { max-width: 1480px; margin: 0 auto; padding-block: 32px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 40px; }
+header { display: flex; flex-direction: column; gap: 10px; max-width: 68ch; }
+.kicker { font: 500 12px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+h1 { margin: 0; font-size: clamp(28px, 4vw, 40px); line-height: 1.1; font-weight: 700; text-wrap: balance; }
+h2 { margin: 0; font-size: 22px; font-weight: 600; text-wrap: balance; }
+h3 { margin: 0; font: 500 13px var(--font-mono); color: var(--muted); }
+p { margin: 0; }
+.muted { color: var(--muted); }
+code { font: 13px var(--font-mono); }
+.state { display: flex; flex-direction: column; gap: 20px; }
+.state > p { max-width: 75ch; }
+.row { display: flex; flex-direction: column; gap: 10px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.pair.phone { grid-template-columns: repeat(2, minmax(0, 390px)); }
+figure { margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+figcaption { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+.tag { font: 500 11px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 6px; border: 1px solid currentColor; }
+.tag.before { color: var(--before); }
+.tag.after { color: var(--accent); }
+.shot { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.shot img { display: block; width: 100%; height: auto; }
+.changes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 24px; padding: 0; margin: 0; list-style: none; }
+.changes li { border-top: 1px solid var(--line); padding-top: 10px; }
+.changes strong { display: block; }
+a { color: var(--accent); }
+@media (max-width: 760px) { .pair, .pair.phone { grid-template-columns: 1fr; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="kicker">fenvix console · /projects/connect · 28 Nov 2026</span>
+    <h1>Connect: before / after</h1>
+    <p class="muted">The Connect page rebuilt around connecting a new repository. Mock backend, full-length captures at <code>deviceScaleFactor: 2</code>. Before is origin/main 3fc67ec; after is branch <code>claude/connect-redesign</code>. 0 console errors in every capture.</p>
+  </header>
+
+  <ul class="changes">
+    <li><strong>Connect is a pick list</strong><span class="muted">Repositories not on fenvix yet, each with Set up. No checklist, no mode toggle, no global list of pull requests.</span></li>
+    <li><strong>Each repository has its own setup page</strong><span class="muted">How fenvix runs it, the setup pull request, its merge, the first run. With a project already, it goes straight to the project.</span></li>
+    <li><strong>Repositories in setup are visible</strong><span class="muted">"Setting up" in the sidebar and on Projects, linked to their setup page.</span></li>
+    <li><strong>Less that is not real</strong><span class="muted">Python and four invented project tabs are gone; their old URLs give 404. Projects has one Connect button.</span></li>
+    <li><strong>Gate screens fixed</strong><span class="muted">Name your organization, No organization and Join an organization get their own centred layout.</span></li>
+  </ul>
+
+  <section class="state" aria-labelledby="s-h">
+    <h2 id="s-h">New · The setup page of one repository</h2>
+    <p class="muted"><code>/projects/connect/:repositoryId</code>. A project exists only once the language and test runner are detected and the setup pull request is merged, so until then this page is the repository's place.</p>
+    <div class="row">
+      <h3>Ready: open the setup pull request</h3>
+      <div class="pair">
+        <figure><figcaption>1440 × 900 · light</figcaption><div class="shot"><img src="shots/after-setup-ready-1440-light.png" alt="Ready: open the setup pull request, 1440 light" loading="lazy"></div></figure>
+        <figure><figcaption>1440 × 900 · dark</figcaption><div class="shot"><img src="shots/after-setup-ready-1440-dark.png" alt="Ready: open the setup pull request, 1440 dark" loading="lazy"></div></figure>
+      </div>
+      <div class="pair phone">
+        <figure><figcaption>390 × 844 · light</figcaption><div class="shot"><img src="shots/after-setup-ready-390-light.png" alt="Ready: open the setup pull request, 390 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>Pull request open: merge it on GitHub</h3>
+      <div class="pair">
+        <figure><figcaption>1440 × 900 · light</figcaption><div class="shot"><img src="shots/after-setup-pr-open-1440-light.png" alt="Pull request open: merge it on GitHub, 1440 light" loading="lazy"></div></figure>
+        <figure><figcaption>1440 × 900 · dark</figcaption><div class="shot"><img src="shots/after-setup-pr-open-1440-dark.png" alt="Pull request open: merge it on GitHub, 1440 dark" loading="lazy"></div></figure>
+      </div>
+      <div class="pair phone">
+        <figure><figcaption>390 × 844 · light</figcaption><div class="shot"><img src="shots/after-setup-pr-open-390-light.png" alt="Pull request open: merge it on GitHub, 390 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>Not detected: why, and what to do</h3>
+      <div class="pair">
+        <figure><figcaption>1440 × 900 · light</figcaption><div class="shot"><img src="shots/after-setup-not-detected-1440-light.png" alt="Not detected: why, and what to do, 1440 light" loading="lazy"></div></figure>
+        <figure><figcaption>1440 × 900 · dark</figcaption><div class="shot"><img src="shots/after-setup-not-detected-1440-dark.png" alt="Not detected: why, and what to do, 1440 dark" loading="lazy"></div></figure>
+      </div>
+      <div class="pair phone">
+        <figure><figcaption>390 × 844 · light</figcaption><div class="shot"><img src="shots/after-setup-not-detected-390-light.png" alt="Not detected: why, and what to do, 390 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="state" aria-labelledby="b-h">
+    <h2 id="b-h">State B · GitHub App installed (the founder's case)</h2>
+    <p class="muted">Northwind Cloud: installations active, suspended and uninstalled; repositories in every onboarding state.</p>
+    <div class="row">
+      <h3>1440 × 900 · light</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-B-1440-light-full.png" alt="Before, state B, desktop light: three numbered steps with installations and every repository" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-B-1440-light-full.png" alt="After, state B, desktop light: Pick a repository to connect, GitHub lines, Waiting for your merge" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>1440 × 900 · dark</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-B-1440-dark-full.png" alt="Before, state B, desktop dark" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-B-1440-dark-full.png" alt="After, state B, desktop dark" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>390 × 844 · light</h3>
+      <div class="pair phone">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-B-390-light-full.png" alt="Before, state B, phone light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-B-390-light-full.png" alt="After, state B, phone light" loading="lazy"></div></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="state" aria-labelledby="a-h">
+    <h2 id="a-h">State A · No GitHub App yet (first time)</h2>
+    <p class="muted">A new organization made through the email sign-in: nothing installed.</p>
+    <div class="row">
+      <h3>1440 × 900 · light</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-A-1440-light-full.png" alt="Before, state A, desktop light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-A-1440-light-full.png" alt="After, state A, desktop light: one Install the fenvix GitHub App card with three steps" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>1440 × 900 · dark</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-A-1440-dark-full.png" alt="Before, state A, desktop dark" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-A-1440-dark-full.png" alt="After, state A, desktop dark" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>390 × 844 · light</h3>
+      <div class="pair phone">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-A-390-light-full.png" alt="Before, state A, phone light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-A-390-light-full.png" alt="After, state A, phone light" loading="lazy"></div></figure>
+      </div>
+    </div>
+  </section>
+  <section class="state" aria-labelledby="p-h">
+    <h2 id="p-h">Projects · no project yet</h2>
+    <p class="muted">One Connect a project button: the empty state's. With projects, only the header's.</p>
+    <div class="row">
+      <h3>1440 × 900 · light</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-projects-empty-1440-light.png" alt="Before: Projects empty state, 1440 light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-projects-empty-1440-light.png" alt="After: Projects empty state, 1440 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>1440 × 900 · dark</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-projects-empty-1440-dark.png" alt="Before: Projects empty state, 1440 dark" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-projects-empty-1440-dark.png" alt="After: Projects empty state, 1440 dark" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>390 × 844 · light</h3>
+      <div class="pair phone">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-projects-empty-390-light.png" alt="Before: Projects empty state, 390 light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-projects-empty-390-light.png" alt="After: Projects empty state, 390 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="state" aria-labelledby="n-h">
+    <h2 id="n-h">Projects navigation · Python removed</h2>
+    <p class="muted">Python is a language the engine will support, not a page.</p>
+    <div class="row">
+      <h3>1440 × 900 · light</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-projects-nav-1440-light.png" alt="Before: Projects area navigation, 1440 light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-projects-nav-1440-light.png" alt="After: Projects area navigation, 1440 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>1440 × 900 · dark</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-projects-nav-1440-dark.png" alt="Before: Projects area navigation, 1440 dark" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-projects-nav-1440-dark.png" alt="After: Projects area navigation, 1440 dark" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>390 × 844 · light</h3>
+      <div class="pair phone">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-projects-nav-390-light.png" alt="Before: Projects area navigation, 390 light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-projects-nav-390-light.png" alt="After: Projects area navigation, 390 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="state" aria-labelledby="t-h">
+    <h2 id="t-h">Project tabs · four removed</h2>
+    <p class="muted">Detailed proof, Compatibility, Is this red real? and Database copies are gone; Runs, Parallel with proof, Defects, Cache with proof, Time to green, Nightly exploration and Settings stay.</p>
+    <div class="row">
+      <h3>1440 × 900 · light</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-project-tabs-1440-light.png" alt="Before: project navigation, 1440 light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-project-tabs-1440-light.png" alt="After: project navigation, 1440 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>1440 × 900 · dark</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-project-tabs-1440-dark.png" alt="Before: project navigation, 1440 dark" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-project-tabs-1440-dark.png" alt="After: project navigation, 1440 dark" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>390 × 844 · light</h3>
+      <div class="pair phone">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-project-tabs-390-light.png" alt="Before: project navigation, 390 light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-project-tabs-390-light.png" alt="After: project navigation, 390 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="state" aria-labelledby="g1-h">
+    <h2 id="g1-h">Gate · Name your organization</h2>
+    <p class="muted">Before: the card stuck at the top-left of the sign-in grid, no logo. After: logo, one centred card, the signed-in line under it.</p>
+    <div class="row">
+      <h3>1440 × 900 · light</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-gate-name-1440-light.png" alt="Before: Name your organization, 1440 light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-gate-name-1440-light.png" alt="After: Name your organization, 1440 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>1440 × 900 · dark</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-gate-name-1440-dark.png" alt="Before: Name your organization, 1440 dark" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-gate-name-1440-dark.png" alt="After: Name your organization, 1440 dark" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>390 × 844 · light</h3>
+      <div class="pair phone">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-gate-name-390-light.png" alt="Before: Name your organization, 390 light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-gate-name-390-light.png" alt="After: Name your organization, 390 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="state" aria-labelledby="g2-h">
+    <h2 id="g2-h">Gate · No organization</h2>
+    <div class="row">
+      <h3>1440 × 900 · light</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-gate-noorg-1440-light.png" alt="Before: No organization, 1440 light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-gate-noorg-1440-light.png" alt="After: No organization, 1440 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>1440 × 900 · dark</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-gate-noorg-1440-dark.png" alt="Before: No organization, 1440 dark" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-gate-noorg-1440-dark.png" alt="After: No organization, 1440 dark" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>390 × 844 · light</h3>
+      <div class="pair phone">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-gate-noorg-390-light.png" alt="Before: No organization, 390 light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-gate-noorg-390-light.png" alt="After: No organization, 390 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="state" aria-labelledby="g3-h">
+    <h2 id="g3-h">Gate · Join an organization</h2>
+    <div class="row">
+      <h3>1440 × 900 · light</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-gate-invite-1440-light.png" alt="Before: Join an organization, 1440 light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-gate-invite-1440-light.png" alt="After: Join an organization, 1440 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>1440 × 900 · dark</h3>
+      <div class="pair">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-gate-invite-1440-dark.png" alt="Before: Join an organization, 1440 dark" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-gate-invite-1440-dark.png" alt="After: Join an organization, 1440 dark" loading="lazy"></div></figure>
+      </div>
+    </div>
+    <div class="row">
+      <h3>390 × 844 · light</h3>
+      <div class="pair phone">
+        <figure><figcaption><span class="tag before">Before</span></figcaption><div class="shot"><img src="shots/before-gate-invite-390-light.png" alt="Before: Join an organization, 390 light" loading="lazy"></div></figure>
+        <figure><figcaption><span class="tag after">After</span></figcaption><div class="shot"><img src="shots/after-gate-invite-390-light.png" alt="After: Join an organization, 390 light" loading="lazy"></div></figure>
+      </div>
+    </div>
+  </section>
+
+</div>
