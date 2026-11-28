@@ -68,7 +68,7 @@ const TESTS = {
     await add.waitFor();
     const row = page.locator("li.repo-row", { has: add });
     await row.getByText("Removed from fenvix").waitFor();
-    assert(!(await page.getByRole("button", { name: `Connect ${p.fullName}` }).count()), "a removed repository offers Connect");
+    assert(!(await page.getByRole("link", { name: `Set up ${p.fullName}` }).count()), "a removed repository offers Set up");
     await add.click();
     await page.locator(".toast", { hasText: `Added ${p.fullName} again` }).waitFor();
     await add.waitFor({ state: "detached" });

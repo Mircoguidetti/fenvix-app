@@ -194,10 +194,12 @@ await phone.context().close();
   const page = ownerPage;
   const text = await visit(page, "connect-connected", `/projects/connect?github=connected&installation=${seeded.installationId}&account=${account}`, [account], { shot: true });
   check("connect-connected", text.includes(`The fenvix GitHub App is installed on ${account}`), "says the App is installed on the account GitHub sent back");
-  // Connected repositories are on /projects, not on Connect (connect redesign, 28 Nov); every other state is listed,
-  // to connect or under "Waiting for your merge".
-  const CONNECTED = new Set(["merged", "already_fenvix", "side_by_side"]);
-  for (const st of STATES) check("connect", text.includes(`repo-${st.replace(/_/g, "-")}`) !== CONNECTED.has(st), CONNECTED.has(st) ? `leaves out the connected repository in state ${st}` : `lists the repository in state ${st}`);
+  // Changed (connect redesign, 28 Nov): "Pick a repository to connect" lists only repositories not on fenvix and with no
+  // setup pull request open; those are on /projects and in the sidebar ("Setting up"). Read in <main> only, since the
+  // sidebar lists projects and repositories in setup.
+  const main = await page.locator("main").innerText();
+  const NOT_PICKED = new Set(["merged", "already_fenvix", "side_by_side", "pr_open", "side_by_side_pr_open"]);
+  for (const st of STATES) check("connect", main.includes(`repo-${st.replace(/_/g, "-")}`) !== NOT_PICKED.has(st), NOT_PICKED.has(st) ? `leaves out of the pick list the repository in state ${st}` : `lists the repository in state ${st}`);
   await visit(page, "connect-error", "/projects/connect?github=error&reason=not_admin", [], { shot: true });
   let installUrl = null;
   await page.route("https://github.com/**", (route) => { installUrl = route.request().url(); return route.abort(); });

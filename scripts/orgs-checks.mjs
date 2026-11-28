@@ -125,9 +125,11 @@ const TESTS = {
     assert(await page.getByRole("switch", { name: /Skip tests with proof/ }).isDisabled(), "a member can switch skip with proof");
     await go(page, "projects/connect");
     await page.getByText("Only an owner or admin can connect repositories.").waitFor();
-    // Changed (connect redesign, 28 Nov): the buttons are "Add another account" and "Connect <repository>".
+    // Changed (connect redesign, 28 Nov): the button is "Add another account"; the setup pull request is opened from
+    // the repository's own setup page (Set up).
     assert(await page.getByRole("button", { name: "Add another account" }).isDisabled(), "a member can install the GitHub App");
-    assert(await page.getByRole("button", { name: "Connect harbor-analytics/etl-jobs" }).isDisabled(), "a member can open a setup pull request");
+    await page.getByRole("link", { name: "Set up harbor-analytics/etl-jobs" }).click();
+    assert(await page.getByRole("button", { name: "Open setup pull request" }).isDisabled(), "a member can open a setup pull request");
     // Reading is open: runs, defects, usage.
     await go(page, "defects");
     await page.locator("main tbody tr").first().waitFor();

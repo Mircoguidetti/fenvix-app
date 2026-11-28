@@ -70,7 +70,8 @@ for (const scheme of SCHEMES) {
       const underlined = await page.evaluate(() => [...document.querySelectorAll("body *")].filter((e) => getComputedStyle(e).textDecorationLine.includes("underline")).map((e) => `${e.tagName.toLowerCase()}.${e.className}`));
       if (underlined.length) fail(`${label}: underlined ${underlined.slice(0, 3).join(", ")}`);
       const seam = await page.evaluate(() => {
-        const full = document.querySelector(".signin-page");
+        // Changed (gate screens fix, 28 Nov): the screens before the dashboard have their own frame, .gate-page.
+        const full = document.querySelector(".signin-page, .gate-page");
         if (!full) return null;
         const bgs = new Set([document.documentElement, document.body, full].map((e) => getComputedStyle(e).backgroundColor));
         return bgs.size === 1 ? null : [...bgs].join(" / ");
@@ -234,7 +235,8 @@ for (const scheme of SCHEMES) {
       await fresh.page.evaluate(() => document.fonts.ready);
       (await layoutProblems(fresh.page)).forEach((x) => fail(`name-organization ${tag}: ${x}`));
       (await axeViolations(fresh.page)).forEach((v) => fail(`name-organization ${tag}: ${v}`));
-      const bgs = await fresh.page.evaluate(() => [document.documentElement, document.body, document.querySelector(".signin-page")].map((e) => getComputedStyle(e).backgroundColor));
+      // Changed (gate screens fix, 28 Nov): "Name your organization" is drawn in .gate-page, no longer .signin-page.
+      const bgs = await fresh.page.evaluate(() => [document.documentElement, document.body, document.querySelector(".gate-page")].map((e) => getComputedStyle(e).backgroundColor));
       if (new Set(bgs).size !== 1) fail(`name-organization ${tag}: more than one background (${bgs.join(" / ")})`);
       const prefill = await fresh.page.getByLabel("Organization name").inputValue();
       if (prefill !== "Spazio Milano") fail(`name-organization ${tag}: the field starts with "${prefill}"`);

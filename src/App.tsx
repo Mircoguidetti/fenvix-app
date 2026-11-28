@@ -6,11 +6,11 @@ import { Shell } from "./components/Shell";
 import { OverviewPage } from "./pages/Overview";
 import { ProjectsPage } from "./pages/Projects";
 import { ConnectPage } from "./pages/Connect";
+import { ConnectSetupPage } from "./pages/ConnectSetup";
 import { ProjectPage } from "./pages/Project";
 import { RunPage } from "./pages/Run";
 import { ParallelWithProofPage, ProjectComingSoon, SkipWithProofPage, TimeToGreenPage } from "./pages/ProjectSections";
-import { ComingSoon, PROJECT_SOON, PYTHON_SOON } from "./components/ComingSoon";
-import { Kicker } from "./components/PageHeader";
+import { PROJECT_SOON } from "./components/ComingSoon";
 import { client } from "./data";
 import { rememberedProject } from "./components/Shell";
 import { useEffect, useState } from "react";
@@ -152,6 +152,7 @@ function Dashboard() {
         <Route path="/overview" element={<OverviewPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/connect" element={<ConnectPage />} />
+        <Route path="/projects/connect/:repositoryId" element={<ConnectSetupPage />} />
         <Route path="/projects/:id" element={<ProjectPage />} />
         <Route path="/projects/:id/parallel-with-proof" element={<ParallelWithProofPage />} />
         <Route path="/projects/:id/defects" element={<ProjectDefectsPage />} />
@@ -159,7 +160,6 @@ function Dashboard() {
         {(Object.keys(PROJECT_SOON) as (keyof typeof PROJECT_SOON)[]).map((k) => (
           <Route key={k} path={`/projects/:id/${PROJECT_SOON[k].path}`} element={<ProjectComingSoon key={k} item={k} />} />
         ))}
-        <Route path={PYTHON_SOON.to} element={<ComingSoon kicker={<Kicker>Projects</Kicker>} title={PYTHON_SOON.label} sentence={PYTHON_SOON.sentence} />} />
         <Route path="/projects/:id/time-to-green" element={<TimeToGreenPage />} />
         <Route path="/projects/:id/settings" element={<ProjectPage section="settings" />} />
         <Route path="/projects/:projectId/runs/:runId" element={<RunPage />} />

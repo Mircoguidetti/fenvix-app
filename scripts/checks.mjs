@@ -696,10 +696,11 @@ const TESTS = {
   },
 
   // Changed (connect redesign, 28 Nov): the page is built around connecting a new repository. The repositories to
-  // connect are in "Pick a repository to connect" with "Connect"; connected ones are on /projects; open pull requests
-  // are under "Waiting for your merge"; each installation is one line. protects=every onboarding state still reads in
-  // words where it is shown, the installation states are said, Connect opens the setup pull request, GitHub's return;
-  // fails_when=a state, an installation or the pull request flow is missing or wrong; no_claim=the App's own API.
+  // connect are in "Pick a repository to connect", each with "Set up", which opens its own setup page (steps for that
+  // repository: the setup pull request, its merge, the first run); connected and open ones are on /projects; each
+  // installation is one line. protects=every onboarding state still reads in words where it is shown, the
+  // installation states are said, the setup page opens the setup pull request, GitHub's return; fails_when=a state,
+  // an installation or the pull request flow is missing or wrong; no_claim=the App's own API.
   async "connect a project: installations, every onboarding state, the setup pull request, GitHub's return"(page) {
     await signIn(page, "projects/connect");
     const pick = page.locator(".connect-pick");
@@ -714,28 +715,28 @@ const TESTS = {
       await row.locator(".state", { hasText: label }).waitFor();
       assert((await row.locator(".repo-detail").innerText()).length > 20, `northwind/${repo} has no detail`);
     }
-    // A repository ready to connect has no pill; one that cannot be connected has its button disabled.
+    // A repository ready to connect has no pill; every row has Set up, which goes to its own page.
     assert(!(await pick.locator(".repo-row", { hasText: "northwind/billing-worker" }).locator(".state").count()), "a ready repository shows a state pill");
-    assert(await page.getByRole("button", { name: "Connect northwind/infra-scripts" }).isDisabled(), "a repository with no workflow file can be connected");
     // Connected, open and on fenvix already: not in the list to connect.
     for (const repo of ["northwind/homehub", "northwind/search-service", "northwind/mobile-app"]) assert(!(await pick.locator(".repo-row", { hasText: repo }).count()), `${repo} is offered to connect`);
-    await page.locator(".connect-waiting .repo-row", { hasText: "northwind/mobile-app" }).waitFor();
     // Detected, not written in: the language and runner of each repository come from the App.
     await pick.locator(".repo-row", { hasText: "northwind/checkout-legacy" }).getByText("Language and test runner not detected").waitFor();
     await pick.locator(".repo-row", { hasText: "northwind/notifications" }).getByText("Private · TypeScript / Node · vitest").waitFor();
-    assert((await page.locator(".connect-waiting .repo-row", { hasText: "northwind/mobile-app" }).getByRole("link", { name: /Setup pull request #812/ }).getAttribute("href")) === "https://github.com/northwind/mobile-app/pull/812", "the pull request link is wrong");
-    // A suspended installation: no pull request can be opened.
-    assert(await page.getByRole("button", { name: "Connect northwind-labs/experiments" }).isDisabled(), "a pull request can be opened on a suspended installation");
-    // Connect one: queued, then the list is asked again until the App has opened it; it moves to Waiting for your merge.
-    const row = pick.locator(".repo-row", { hasText: "northwind/billing-worker" });
-    await row.locator(".pick-change > summary").click();
-    assert((await row.locator(".diff").innerText()).includes("- runs-on: ubuntu-latest"), "the diff does not show the old runner");
-    await row.getByRole("button", { name: "Connect northwind/billing-worker" }).click();
-    await row.getByText("Queued: the fenvix GitHub App is opening the pull request.").waitFor();
-    const waiting = page.locator(".connect-waiting .repo-row", { hasText: "northwind/billing-worker" });
-    await waiting.waitFor({ timeout: 15000 });
-    assert((await waiting.getByRole("link", { name: /^Setup pull request #\d+/ }).getAttribute("href")).startsWith("https://github.com/northwind/billing-worker/pull/"), "the new pull request link is wrong");
+    // A suspended installation: its setup page cannot open a pull request.
+    await page.getByRole("link", { name: "Set up northwind-labs/experiments" }).click();
+    await page.locator(".setup-steps").getByText("The installation must be active first.").first().waitFor();
+    assert(await page.getByRole("button", { name: "Open setup pull request" }).isDisabled(), "a pull request can be opened on a suspended installation");
+    // Open one from its setup page: queued, then the list is asked again until the App has opened it; one toast.
+    await go(page, "projects/connect");
+    await page.getByRole("link", { name: "Set up northwind/billing-worker" }).click();
+    await page.getByRole("heading", { name: "northwind/billing-worker", level: 1 }).waitFor();
+    assert((await page.locator(".diff").innerText()).includes("- runs-on: ubuntu-latest"), "the diff does not show the old runner");
+    await page.getByRole("button", { name: "Open setup pull request" }).click();
+    await page.getByText("Queued: the fenvix GitHub App is opening it.").waitFor();
     await toast(page, /Opened pull request #\d+ on northwind\/billing-worker/);
+    assert((await page.getByRole("link", { name: /^Merge it on GitHub: pull request #\d+/ }).getAttribute("href")).startsWith("https://github.com/northwind/billing-worker/pull/"), "the new pull request link is wrong");
+    await go(page, "projects/connect");
+    await pick.waitFor();
     // Another GitHub account: the install link, and GitHub sending the browser back (the mock stands in for GitHub).
     await page.getByRole("button", { name: "Add another account" }).click();
     await page.locator(".callout-success").getByText("The fenvix GitHub App is installed on northwind-sandbox.").waitFor();
@@ -1092,24 +1093,26 @@ const TESTS = {
   // Side-by-side runs (spec 20261126-side-by-side-runs). protects=the owner's choice in Connect is saved and shown
   // again; fails_when=the choice is missing, not saved, or reverts on reload; no_claim=the API (tested in github-app).
   async "connect: the side-by-side choice is saved"(page) {
+    // Changed (connect redesign, 28 Nov): the choice is step 1 of a repository's setup page ("applies to your
+    // organization"), no longer on Connect.
     await signIn(page, "projects/connect");
+    await page.getByRole("link", { name: "Set up northwind/billing-worker" }).click();
+    const setup = new URL(page.url()).pathname.slice(1);
     const group = page.getByRole("group", { name: "How fenvix runs your tests" });
     await group.waitFor();
+    await page.getByText("This choice applies to your organization").waitFor();
     const side = group.getByRole("button", { name: "Run side by side (your workflow stays as it is)" });
     assert((await side.getAttribute("aria-pressed")) === "false", "side by side is not the default");
     await side.click();
     await toast(page, "New pull requests will add a side-by-side workflow");
     assert((await side.getAttribute("aria-pressed")) === "true", "side by side is not chosen after the click");
     await page.getByText("The pull request adds one new workflow file").waitFor();
-    // protects=with side by side chosen, a repository's preview is the new file, not the runs-on change; fails_when=the
+    // protects=with side by side chosen, the repository's preview is the new file, not the runs-on change; fails_when=the
     // runs-on diff is still shown; no_claim=-.
-    const row = page.locator(".repo-row", { hasText: "northwind/billing-worker" });
-    // Changed (connect redesign, 28 Nov): what the pull request changes is behind "What the pull request changes".
-    await row.locator(".pick-change > summary").click();
-    await row.getByText(".github/workflows/fenvix-side-by-side.yml", { exact: false }).first().waitFor();
-    assert(!(await row.locator(".diff").innerText().catch(() => "")).includes("runs-on: ubuntu-latest"), "the runs-on diff is shown for side by side");
+    await page.getByText(".github/workflows/fenvix-side-by-side.yml", { exact: false }).first().waitFor();
+    assert(!(await page.locator(".diff").count()), "the runs-on diff is shown for side by side");
     await go(page, "overview");
-    await go(page, "projects/connect");
+    await go(page, setup);
     await page.getByRole("group", { name: "How fenvix runs your tests" }).getByRole("button", { name: "Run side by side (your workflow stays as it is)", pressed: true }).waitFor();
   },
 

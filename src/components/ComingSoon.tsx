@@ -20,15 +20,12 @@ export function ComingSoon({ title, sentence, kicker }: { title: string; sentenc
   );
 }
 
-/** The live-list features not built yet, as project sections: path under /projects/:id, nav label, sentence. */
+/**
+ * The live-list features not built yet, as project sections: path under /projects/:id, nav label, sentence.
+ * Founder, 28 Nov: Detailed proof, Compatibility, Is this red real? and Database copies were removed (invented as
+ * pages), and Python is a language the engine will support, not a page.
+ */
 export const PROJECT_SOON = {
   nightly: { path: "nightly", label: "Nightly exploration", sentence: "Your suite run at night in many orders and seeds on fenvix machines, and the hidden order and timing bugs it found." },
-  red: { path: "is-this-red-real", label: "Is this red real?", sentence: "For each failed run, whether the same tests were already red on the base branch, so you know which reds are yours." },
-  database: { path: "database", label: "Database copies", sentence: "Each parallel lane gets its own copy of your test database, with no change to your code; this page will show the copies each run used." },
-  compatibility: { path: "compatibility", label: "Compatibility", sentence: "How much of your suite can run in parallel with proof, predicted at connect and then measured, with what blocks the rest, whose it is, and the change that frees it." },
-  proof: { path: "proof", label: "Detailed proof", sentence: "For each run, test by test, the parallel result next to the serial one and the evidence that they are identical." },
 } as const;
 export type ProjectSoonKey = keyof typeof PROJECT_SOON;
-
-/** The organization-level coming-soon page (no project needed to reach it). */
-export const PYTHON_SOON = { to: "/python", label: "Python", sentence: "pytest suites in parallel with proof, like Vitest, Jest and node:test today." } as const;

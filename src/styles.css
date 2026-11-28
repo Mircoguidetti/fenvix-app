@@ -748,6 +748,15 @@ textarea.editor { min-height: 320px; resize: vertical; white-space: pre; overflo
   .member-name { justify-content: flex-end; }
   .members-table td.actions-cell .row-actions { flex-wrap: wrap; }
 }
+/* The screens before the dashboard (name the organization, no organization, an invitation): logo, one centred card, the signed-in line under it. */
+.gate-page { min-height: 100vh; min-height: 100dvh; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 40px 16px; background: var(--bg); }
+html:has(.gate-page), body:has(.gate-page) { background: var(--bg); }
+.gate-mark { color: var(--text); }
+.gate-mark .logo-word { font-size: 18px; }
+.gate-card { width: min(420px, 100%); display: flex; flex-direction: column; gap: 18px; background: var(--bg); border: 1px solid var(--border); border-radius: 14px; padding: 28px; }
+.gate-card h1 { font-size: 26px; letter-spacing: -0.02em; text-wrap: balance; }
+.gate-card .btn-lg { height: 48px; border-radius: 999px; font-size: 15px; }
+@media (max-width: 420px) { .gate-card { padding: 22px 18px; } }
 .gate-foot { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 14px; color: var(--muted); font-size: 13.5px; max-width: min(420px, 100%); text-align: center; }
 .gate-who { overflow-wrap: anywhere; }
 .btn-link { background: transparent; border: 0; padding: 4px 10px; border-radius: 8px; color: var(--text); cursor: pointer; font: inherit; font-weight: 600; }
@@ -1836,18 +1845,13 @@ table.usage-table td.usage-project .usage-project-name { display: block; max-wid
 .account-id-role { grid-area: role; }
 
 /* Connect a project (founder, 28 Nov): built around picking a repository not connected yet. */
-.steps-compact { gap: 0; }
-.steps-compact .step { background: transparent; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; padding: 14px 0; }
-.steps-compact .step:first-child { border-top: 0; padding-top: 4px; }
-.pick-list, .waiting-list, .gh-lines { list-style: none; margin: 0; padding: 0; }
+.pick-list, .gh-lines { list-style: none; margin: 0; padding: 0; }
 .pick-list { display: flex; flex-direction: column; }
 .pick-row { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
 .pick-row:first-child { border-top: 0; padding-top: 2px; }
 .pick-main { display: flex; justify-content: space-between; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
 .pick-end { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pick-end .btn { min-width: 96px; justify-content: center; }
-.pick-change > summary { width: fit-content; cursor: pointer; color: var(--muted); }
-.pick-change[open] { display: flex; flex-direction: column; gap: 8px; }
 .pick-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 .pick-empty p { margin: 0; }
 .pick-empty .btn { gap: 6px; }
@@ -1858,11 +1862,6 @@ table.usage-table td.usage-project .usage-project-name { display: block; max-wid
 .gh-line .btn-link { padding: 2px 6px; font-weight: 500; color: var(--text); }
 .gh-warn { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
 .gh-warn svg { flex: none; color: var(--warning); }
-.connect-waiting h2 { margin: 0; }
-.waiting-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 10px 0; border-top: 1px solid var(--line-soft); }
-.waiting-row:first-child { border-top: 0; padding-top: 0; }
-.waiting-row .repo-name { flex: 1 1 220px; }
-.waiting-row .row-link { display: inline-flex; align-items: center; gap: 4px; }
 .connect-removed, .connect-what { display: block; padding-top: 8px; padding-bottom: 8px; }
 .connect-removed > summary, .connect-what > summary { display: flex; align-items: center; gap: 10px; min-height: var(--touch, 44px); cursor: pointer; font-weight: 600; list-style-position: inside; }
 .connect-removed > summary::before, .connect-what > summary::before { content: "▸"; color: var(--muted); }
@@ -1871,19 +1870,24 @@ table.usage-table td.usage-project .usage-project-name { display: block; max-wid
 .connect-removed > summary, .connect-what > summary { list-style: none; }
 .connect-removed > ul, .connect-what > ul { margin: 4px 0 12px; }
 .connect-projects { margin: 0; padding: 0 4px; }
+/* A repository in setup, in the sidebar's "Your projects" and on /projects. */
+.cx-sub-setup { flex-direction: column; align-items: flex-start; justify-content: center; gap: 0; padding-block: 6px; }
+.cx-sub-setup-tag, .setting-up-tag { flex: none; font: 500 10.5px var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--warning); white-space: nowrap; }
+.setup-steps .step-title { font-size: 16px; }
+.setup-steps .connect-kind { margin: 0; }
+.setting-up { display: flex; flex-direction: column; gap: 10px; }
+.setting-up-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.setting-up-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.setting-up-row:first-child { border-top: 0; padding-top: 0; }
 @media (max-width: 640px) {
-  .gh-line .row-link, .gh-line .btn-link, .waiting-row .row-link, .connect-projects .row-link, .pick-change > summary { min-height: var(--touch); display: inline-flex; align-items: center; }
+  .gh-line .row-link, .gh-line .btn-link, .connect-projects .row-link { min-height: var(--touch); display: inline-flex; align-items: center; }
   .pick-end { width: 100%; }
   .pick-end .btn { margin-left: auto; }
   .gh-sep { display: none; }
   .gh-line { gap: 0 12px; padding: 4px 0; }
   .gh-line .btn-link { padding-inline: 0; }
 }
-.pick-change > summary { list-style: none; display: inline-flex; align-items: center; gap: 6px; }
-.pick-change > summary::-webkit-details-marker { display: none; }
-.pick-change > summary::before { content: "▸"; }
-.pick-change[open] > summary::before { content: "▾"; }
-.steps-compact .step-title { font-size: 14.5px; }
+
 
 /* /welcome: one line above the sign-in form. */
 .signin-welcome { margin: 0 0 4px; font-weight: 600; }

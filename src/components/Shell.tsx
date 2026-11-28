@@ -1,16 +1,17 @@
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, BookOpen, Building2, ChartColumn, Check, ChevronDown, CircleHelp, Database, FileCheck, FolderGit2, Gauge, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, ShieldCheck, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, BookOpen, Building2, ChartColumn, Check, ChevronDown, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, ShieldCheck, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { AccountMenu, OrgAvatar, useCurrentOrg } from "./AccountMenu";
 import { useFocusTrap } from "../lib/useFocusTrap";
 import { useOrg } from "../session/OrgProvider";
 import { useTheme } from "../lib/theme";
-import { client, type ProjectRow, type SearchResult } from "../data";
+import { client, type GitHubRepository, type ProjectRow, type SearchResult } from "../data";
+import { isSettingUp, setupPath } from "../pages/Connect";
 import { setupSnippet } from "../data/ci";
 import { CopyButton } from "./CopyButton";
 import { ROLE_NAMES } from "../data/orgs";
-import { PROJECT_SOON, PYTHON_SOON } from "./ComingSoon";
+import { PROJECT_SOON } from "./ComingSoon";
 
 /*
  * The console's frame, laid out like the mockup (fenvix-brain, Fenvix console 3):
@@ -33,7 +34,7 @@ type AreaKey = "overview" | "projects" | "usage" | "org";
 type Area = { key: AreaKey; label: string; icon: LucideIcon; to: string; match: (path: string) => boolean };
 const AREAS: Area[] = [
   { key: "overview", label: "Overview", icon: LayoutDashboard, to: "/overview", match: (p) => p.startsWith("/overview") },
-  { key: "projects", label: "Projects", icon: FolderGit2, to: "/projects", match: (p) => p.startsWith("/projects") || p.startsWith("/defects") || p === "/python" },
+  { key: "projects", label: "Projects", icon: FolderGit2, to: "/projects", match: (p) => p.startsWith("/projects") || p.startsWith("/defects") },
   { key: "usage", label: "Usage", icon: ChartColumn, to: "/usage", match: (p) => p.startsWith("/usage") || p.startsWith("/billing") },
   { key: "org", label: "Organization", icon: Building2, to: "/settings", match: (p) => p.startsWith("/settings") || p.startsWith("/api-keys") },
 ];
@@ -50,13 +51,12 @@ const PROJECTS_PAGES = [
   { to: "/projects", label: "All projects", end: true },
   { to: "/defects", label: "All defects", end: true },
   { to: "/projects/connect", label: "Connect a project", end: false },
-  { to: PYTHON_SOON.to, label: PYTHON_SOON.label, end: true },
 ];
 /**
  * The project's sections, as in the dashboard drawn in the landing (founder, 2026-11-17): the icons of the rail and the
  * first links of the second bar.
  */
-type SectionKey = "runs" | "parallel" | "defects" | "skip" | "nightly" | "ttg" | "settings" | "proof" | "compatibility" | "red" | "database";
+type SectionKey = "runs" | "parallel" | "defects" | "skip" | "nightly" | "ttg" | "settings";
 type Section = { key: SectionKey; label: string; icon: LucideIcon; to: (id: string) => string; soon?: boolean };
 const PROJECT_SECTIONS: Section[] = [
   { key: "runs", label: "Runs", icon: Play, to: (id) => `/projects/${id}` },
@@ -65,14 +65,10 @@ const PROJECT_SECTIONS: Section[] = [
   { key: "skip", label: "Cache with proof", icon: Check, to: (id) => `/projects/${id}/skip-with-proof` },
   { key: "ttg", label: "Time to green", icon: ChartColumn, to: (id) => `/projects/${id}/time-to-green` },
   // Live-list features not built yet: each opens its coming-soon page (src/components/ComingSoon.tsx).
-  { key: "proof", label: PROJECT_SOON.proof.label, icon: FileCheck, to: (id) => `/projects/${id}/${PROJECT_SOON.proof.path}`, soon: true },
-  { key: "compatibility", label: PROJECT_SOON.compatibility.label, icon: Gauge, to: (id) => `/projects/${id}/${PROJECT_SOON.compatibility.path}`, soon: true },
-  { key: "red", label: PROJECT_SOON.red.label, icon: CircleHelp, to: (id) => `/projects/${id}/${PROJECT_SOON.red.path}`, soon: true },
-  { key: "database", label: PROJECT_SOON.database.label, icon: Database, to: (id) => `/projects/${id}/${PROJECT_SOON.database.path}`, soon: true },
   { key: "nightly", label: PROJECT_SOON.nightly.label, icon: Moon, to: (id) => `/projects/${id}/${PROJECT_SOON.nightly.path}`, soon: true },
   { key: "settings", label: "Settings", icon: SlidersHorizontal, to: (id) => `/projects/${id}/settings` },
 ];
-const SECTION_OF: Record<string, SectionKey> = { "parallel-with-proof": "parallel", defects: "defects", "skip-with-proof": "skip", nightly: "nightly", "time-to-green": "ttg", settings: "settings", runs: "runs", proof: "proof", compatibility: "compatibility", "is-this-red-real": "red", database: "database" };
+const SECTION_OF: Record<string, SectionKey> = { "parallel-with-proof": "parallel", defects: "defects", "skip-with-proof": "skip", nightly: "nightly", "time-to-green": "ttg", settings: "settings", runs: "runs" };
 const LAST_PROJECT = "fenvix-last-project";
 export function rememberProject(id: string) {
   try {
@@ -108,6 +104,8 @@ export function useOpenProjectName(): string {
 
 /** The organization's projects, loaded once for the frame (switcher, the project the frame shows). */
 const ProjectsList = createContext<ProjectRow[] | null>(null);
+/** Repositories in setup (setup pull request open, or merged with no project yet): listed as "Setting up" (founder, 28 Nov). */
+const SettingUpList = createContext<GitHubRepository[]>([]);
 
 /** The project the frame is about: the one in the address (a project page, or the defects filtered to one project). */
 function useProjectContext(): { projectId: string | null; section: SectionKey | null; runId: string | null } {
@@ -202,6 +200,7 @@ function SubNav({ path, orgName }: { path: string; orgName: string }) {
   const { projectId } = useProjectContext();
   const info = useProjectInfo(projectId);
   const list = useContext(ProjectsList) ?? [];
+  const settingUp = useContext(SettingUpList);
   if (area === null || area === "overview") return null;
   return (
     <aside className="cx-sub" aria-label="Pages">
@@ -232,10 +231,16 @@ function SubNav({ path, orgName }: { path: string; orgName: string }) {
           <nav aria-label="Projects" className="cx-sub-nav">
             <PageLinks pages={PROJECTS_PAGES} />
           </nav>
-          {list.length > 0 && (
+          {(list.length > 0 || settingUp.length > 0) && (
             <nav aria-label="Your projects" className="cx-sub-nav cx-sub-nav-more">
               <span className="cx-sub-kind cx-sub-group">Your projects</span>
               <PageLinks pages={list.map((p) => ({ to: `/projects/${p.id}`, label: p.fullName, end: false }))} />
+              {settingUp.map((r) => (
+                <NavLink key={r.repositoryId} to={setupPath(r)} className="cx-sub-link cx-sub-setup">
+                  <span className="break-anywhere">{r.fullName}</span>
+                  <span className="cx-sub-setup-tag">Setting up</span>
+                </NavLink>
+              ))}
             </nav>
           )}
         </>
@@ -610,7 +615,6 @@ const JUMP_PAGES = [
   { label: "Organization settings", to: "/settings" },
   { label: "Members", to: "/settings/members" },
   { label: "API keys", to: "/api-keys" },
-  { label: PYTHON_SOON.label, to: PYTHON_SOON.to },
 ];
 
 /**
@@ -741,6 +745,17 @@ export function Shell({ children }: { children: ReactNode }) {
     };
   }, []);
   const { pathname } = useLocation();
+  // Read again on each page of the Projects area, so a setup that moves on shows up without a reload.
+  const [settingUp, setSettingUp] = useState<GitHubRepository[]>([]);
+  const inProjects = pathname.startsWith("/projects");
+  useEffect(() => {
+    if (!inProjects && settingUp.length === 0 && pathname !== "/") return;
+    let live = true;
+    client.listGitHubRepositories().then((rs) => live && setSettingUp(rs.filter(isSettingUp)), () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   const drawer = useRef<HTMLElement>(null);
   const current = useCurrentOrg();
   const orgName = current.status === "ready" ? current.name : "";
@@ -757,6 +772,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <ProjectsList.Provider value={projects}>
+    <SettingUpList.Provider value={settingUp}>
     <ProjectTitle.Provider value={{ info: projectInfo, set: setProjectInfo }}>
       <div className="shell cx-shell">
         <a href="#main" className="skip-link">
@@ -798,6 +814,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </aside>
       </div>
     </ProjectTitle.Provider>
+    </SettingUpList.Provider>
     </ProjectsList.Provider>
   );
 }

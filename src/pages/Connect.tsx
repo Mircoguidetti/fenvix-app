@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Check, CircleCheck, ExternalLink, Lock, TriangleAlert } from "lucide-react";
-import { client, type GitHubRepository, type Installation, type OnboardingKind, type SetupChange } from "../data";
-import { Segmented } from "../components/Segmented";
+import { Check, ChevronRight, CircleCheck, ExternalLink, Lock, TriangleAlert } from "lucide-react";
+import { client, type GitHubRepository, type Installation, type SetupChange } from "../data";
 import { Message, PageHeader, Kicker } from "../components/PageHeader";
 import { OnboardingPill, StatusPill } from "../components/StateBadge";
 import { useToast } from "../components/Toast";
@@ -11,19 +10,22 @@ import { useOrg } from "../session/OrgProvider";
 import { activeOrgId, setActiveOrgId } from "../lib/org";
 import { formatDate } from "../lib/format";
 import { languageLabel } from "./Projects";
+import { isSetupMerged } from "../data/ci-rows";
 import { installationConfigureUrl } from "../lib/github";
 
-function Step({ n, done, title, children }: { n: number; done: boolean; title: string; children?: ReactNode }) {
+/** One numbered step. `heading` is its level in the page outline (h3 inside a card, h2 directly under the page title). */
+export function Step({ n, done, title, heading = "h3", children }: { n: number; done: boolean; title: string; heading?: "h2" | "h3"; children?: ReactNode }) {
+  const H = heading;
   return (
     <li className="step" data-done={done || undefined}>
       <span className="step-n" aria-hidden="true">
         {done ? <Check size={14} strokeWidth={2.5} /> : n}
       </span>
       <div className="step-body">
-        <h3 className="step-title">
+        <H className="step-title">
           {title}
           {done && <span className="sr-only"> (done)</span>}
-        </h3>
+        </H>
         {children}
       </div>
     </li>
@@ -63,19 +65,20 @@ export const INSTALL_ERRORS: Record<string, string> = {
 
 /**
  * Repositories already on fenvix or with their setup pull request open: not offered in "Pick a repository to connect".
- * The connected ones live in /projects; the open pull requests are under "Waiting for your merge" (founder, 28 Nov:
- * the page is built around connecting a new project).
+ * The connected ones live in /projects; those with a pull request open are "Setting up" (Projects and the sidebar),
+ * each with its own setup page (founder, 28 Nov).
  */
 const CONNECTED_OR_OPEN = new Set(["pr_open", "side_by_side_pr_open", "merged", "already_fenvix", "side_by_side"]);
-const isConnectedOrOpen = (r: GitHubRepository) => CONNECTED_OR_OPEN.has(r.onboardingState) || !!r.projectId;
-const PR_OPEN = new Set(["pr_open", "side_by_side_pr_open"]);
-
+export const isConnectedOrOpen = (r: GitHubRepository) => CONNECTED_OR_OPEN.has(r.onboardingState) || !!r.projectId;
+export const PR_OPEN = new Set(["pr_open", "side_by_side_pr_open"]);
 /** States from which the App can open (or open again) the setup pull request. */
-const CAN_OPEN = new Set(["pending", "closed", "failed"]);
-const POLLS = 6;
-const POLL_MS = 1500;
+export const CAN_OPEN = new Set(["pending", "closed", "failed"]);
 
-function runnerText(r: GitHubRepository): string {
+/** In setup: its setup pull request is open, or merged with its project not made yet. Linked to its setup page. */
+export const isSettingUp = (r: GitHubRepository) => !r.removed && !r.excludedAt && !r.projectId && (PR_OPEN.has(r.onboardingState) || isSetupMerged(r.onboardingState));
+export const setupPath = (r: { repositoryId: number }) => `/projects/connect/${r.repositoryId}`;
+
+export function runnerText(r: GitHubRepository): string {
   if (!r.language && !r.testRunner) return "Language and test runner not detected";
   return `${r.language ? languageLabel(r.language) : "Language not detected"} · ${r.testRunner ?? "test runner not detected"}`;
 }
@@ -114,25 +117,12 @@ function RemovedRepoRow({ repo, installation, restoring, onRestore }: { repo: Gi
 }
 
 /**
- * One repository fenvix can see and that is not connected yet: its name, language and test runner, a state pill when
- * it is not ready, and "Connect" (the App opens the setup pull request). What the pull request changes is one click away.
+ * One repository fenvix can see and that is not on fenvix yet: its name, language and test runner, a state pill when
+ * it is not ready, and "Set up", which opens its own setup page.
  */
-function PickRow({ repo, installation, queued, onOpen, kind }: { repo: GitHubRepository; installation: Installation | undefined; queued: boolean; onOpen: (r: GitHubRepository) => void; kind: OnboardingKind }) {
-  const org = useOrg();
-  const active = installation?.status === "active";
-  const canOpen = CAN_OPEN.has(repo.onboardingState);
+function PickRow({ repo, installation }: { repo: GitHubRepository; installation: Installation | undefined }) {
   const ready = repo.onboardingState === "pending";
-  const why = queued
-    ? "Queued: the fenvix GitHub App is opening the pull request."
-    : !active
-      ? "The installation must be active first."
-      : !canOpen
-        ? repo.onboardingDetail
-        : !org.canManage
-          ? "Only an owner or admin can connect it."
-          : ready
-            ? null
-            : repo.onboardingDetail;
+  const note = installation?.status !== "active" ? "The installation must be active first." : ready ? null : repo.onboardingDetail;
   return (
     <li className="pick-row repo-row" data-state={repo.onboardingState}>
       <div className="pick-main">
@@ -143,29 +133,14 @@ function PickRow({ repo, installation, queued, onOpen, kind }: { repo: GitHubRep
           </span>
         </span>
         <span className="pick-end">
-          {!ready && !queued && <OnboardingPill state={repo.onboardingState} />}
-          <button type="button" className="btn btn-primary" onClick={() => onOpen(repo)} disabled={queued || !canOpen || !active || !org.canManage} aria-label={`Connect ${repo.fullName}`}>
-            {queued ? "Connecting…" : "Connect"}
-          </button>
+          {!ready && <OnboardingPill state={repo.onboardingState} />}
+          <Link to={setupPath(repo)} className="btn btn-primary" aria-label={`Set up ${repo.fullName}`}>
+            Set up
+            <ChevronRight size={15} aria-hidden="true" />
+          </Link>
         </span>
       </div>
-      {why && (
-        <p className="small muted repo-detail" role="status">
-          {why}
-        </p>
-      )}
-      {canOpen && repo.workflowPath && repo.job && (
-        <details className="pick-change">
-          <summary className="small">What the pull request changes</summary>
-          {kind === "side_by_side" ? (
-            <p className="small muted">
-              It adds <span className="mono">.github/workflows/fenvix-side-by-side.yml</span>, a copy of job <strong>{repo.job}</strong> on fenvix; <span className="mono">{repo.workflowPath}</span> stays as it is.
-            </p>
-          ) : (
-            <SetupDiff change={{ path: repo.workflowPath, job: repo.job, before: "runs-on: ubuntu-latest", after: "runs-on: fenvix" }} />
-          )}
-        </details>
-      )}
+      {note && <p className="small muted repo-detail">{note}</p>}
     </li>
   );
 }
@@ -210,7 +185,7 @@ function GitHubLine({ installation, highlight, onChoose, last, onAdd, addDisable
   );
 }
 
-function WhatAccess() {
+export function WhatAccess() {
   return (
     <details className="card connect-what" id="what">
       <summary>What fenvix does with access</summary>
@@ -231,10 +206,10 @@ function WhatAccess() {
 
 /**
  * Connect a new project with the fenvix GitHub App. With no installation yet, one card: install the App on a GitHub
- * account (the API makes the link; GitHub sends the browser back here with ?github=…). With an installation, the page
- * is the list of repositories fenvix can see and that are not connected yet, each with "Connect" (the App opens the
- * setup pull request); then one line per installation, the pull requests waiting for a merge, and the removed
- * repositories. Connected repositories are in /projects, not here.
+ * account (the API makes the link; GitHub sends the browser back here with ?github=…). With an installation: the
+ * repositories fenvix can see and that are not on fenvix yet, each with "Set up" (its own page, ConnectSetupPage, with
+ * the steps for that repository); one line per installation; the removed repositories. No numbered steps, no global
+ * list of setup pull requests (founder, 28 Nov).
  *
  * GitHub's return with ?github=confirm#completion=<code>: the App checked the GitHub side; the link is completed here,
  * through the API with the signed-in person's own session, and only if this person asked for the install link
@@ -247,16 +222,10 @@ export function ConnectPage() {
   const [params] = useSearchParams();
   const github = params.get("github");
   const connection = useAsync(() => client.getGitHubConnection(), []);
-  const kindState = useAsync(() => client.getOnboardingKind(), []);
-  const [kind, setKind] = useState<OnboardingKind | null>(null);
-  const [savingKind, setSavingKind] = useState(false);
   const repos = useAsync(() => client.listGitHubRepositories(), []);
   const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [queued, setQueued] = useState<Set<number>>(new Set());
   const [restoring, setRestoring] = useState<Set<number>>(new Set());
-  const polls = useRef(0);
-  const timer = useRef<number | undefined>(undefined);
   const [completing, setCompleting] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
   const completed = useRef<string | null>(null);
@@ -289,32 +258,6 @@ export function ConnectPage() {
       },
     ).finally(() => setCompleting(false));
   }, [github]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // After a pull request is queued, ask for the repositories a few times until the App has done it.
-  useEffect(() => {
-    if (queued.size === 0) return;
-    if (polls.current >= POLLS) {
-      setQueued(new Set());
-      return;
-    }
-    timer.current = window.setTimeout(async () => {
-      polls.current++;
-      try {
-        const list = await client.listGitHubRepositories();
-        repos.setData(list);
-        const done = new Set([...queued].filter((id) => !CAN_OPEN.has(list.find((r) => r.repositoryId === id)?.onboardingState ?? "")));
-        for (const id of done) {
-          const r = list.find((x) => x.repositoryId === id);
-          if (r) toast(r.setupPullRequest ? `Opened pull request #${r.setupPullRequest.number} on ${r.fullName}` : `${r.fullName}: ${r.onboardingDetail}`, "success");
-        }
-        // Functional update: a Connect clicked while this request was in flight stays queued.
-        setQueued((q) => new Set([...q].filter((id) => !done.has(id))));
-      } catch {
-        setQueued(new Set());
-      }
-    }, POLL_MS);
-    return () => window.clearTimeout(timer.current);
-  }, [queued]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function refresh() {
     setRefreshing(true);
@@ -349,21 +292,6 @@ export function ConnectPage() {
     };
   }, [chose]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const shownKind: OnboardingKind = kind ?? (kindState.status === "ready" ? kindState.data.kind : "move");
-  async function chooseKind(next: OnboardingKind) {
-    if (next === shownKind || savingKind) return;
-    setSavingKind(true);
-    try {
-      const saved = await client.setOnboardingKind(next);
-      setKind(saved.kind);
-      toast(saved.kind === "side_by_side" ? "New pull requests will add a side-by-side workflow; your workflow stays as it is." : "New pull requests will move the test job to fenvix.", "success");
-    } catch (e) {
-      toast(e instanceof Error ? e.message : "The choice could not be saved.", "error");
-    } finally {
-      setSavingKind(false);
-    }
-  }
-
   async function install() {
     setInstalling(true);
     setError(null);
@@ -393,30 +321,17 @@ export function ConnectPage() {
     }
   }
 
-  /** Connect: the App opens the setup pull request; the list is asked again until it has (one toast then). */
-  async function open(repo: GitHubRepository) {
-    setError(null);
-    try {
-      const now = await client.openSetupPullRequest(repo.repositoryId);
-      repos.setData((repos.status === "ready" ? repos.data : []).map((r) => (r.repositoryId === now.repositoryId ? now : r)));
-      polls.current = 0;
-      setQueued((q) => new Set([...q, repo.repositoryId]));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not open the pull request. Try again.");
-    }
-  }
-
   const installations = connection.status === "ready" ? connection.data.installations : [];
   const seen = installations.filter((i) => i.status !== "deleted");
   const list = repos.status === "ready" ? repos.data : [];
   const instOf = (r: GitHubRepository) => installations.find((i) => i.installationId === r.installationId);
   // Repositories fenvix still sees: given to the App, on an installation that is not uninstalled.
   const live = list.filter((r) => !r.removed && !!instOf(r) && instOf(r)!.status !== "deleted");
-  // Still to connect (and those whose pull request is being opened right now); removed ones have their own list.
-  const toPick = live.filter((r) => !r.excludedAt && (queued.has(r.repositoryId) || !isConnectedOrOpen(r)));
-  const waiting = live.filter((r) => !r.excludedAt && !queued.has(r.repositoryId) && PR_OPEN.has(r.onboardingState));
+  // Not on fenvix yet, no setup pull request open, not removed (removed ones have their own list).
+  const toPick = live.filter((r) => !r.excludedAt && !isConnectedOrOpen(r));
   const removed = live.filter((r) => !!r.excludedAt);
-  const connectedCount = live.filter((r) => !r.excludedAt && isConnectedOrOpen(r) && !PR_OPEN.has(r.onboardingState)).length;
+  const settingUp = live.filter(isSettingUp).length;
+  const connectedCount = live.filter((r) => !r.excludedAt && isConnectedOrOpen(r) && !isSettingUp(r)).length;
   // Where "Choose more repositories on GitHub" goes when nothing is left to pick: an active installation, else any still installed.
   const chooseMoreOn = seen.find((i) => i.status === "active") ?? seen[0];
   const noneYet = live.filter((r) => !r.excludedAt).length === 0;
@@ -431,7 +346,7 @@ export function ConnectPage() {
       <PageHeader
         back={<Kicker>Projects</Kicker>}
         title="Connect a project"
-        description={firstTime ? "Install the fenvix GitHub App, then pick a repository: fenvix opens one pull request on it. Nothing changes in a repository until you merge that pull request." : "Pick a repository and fenvix opens one pull request on it. Nothing changes in the repository until you merge that pull request."}
+        description={firstTime ? "Install the fenvix GitHub App, then set up a repository: fenvix opens one pull request on it. Nothing changes in a repository until you merge that pull request." : "Pick a repository to set up on fenvix. Nothing changes in it until you merge the pull request fenvix opens."}
       />
       {!org.canManage && <Message tone="warning">Only an owner or admin can connect repositories.</Message>}
 
@@ -451,7 +366,7 @@ export function ConnectPage() {
           <p className="callout-row">
             <CircleCheck size={16} aria-hidden="true" />
             <span>
-              <strong>The fenvix GitHub App is installed on {params.get("account") ?? "your GitHub account"}.</strong> Its repositories are listed below: press Connect on each one you want on fenvix.
+              <strong>The fenvix GitHub App is installed on {params.get("account") ?? "your GitHub account"}.</strong> Its repositories are listed below: press Set up on each one you want on fenvix.
             </span>
           </p>
           <div className="row-actions">
@@ -497,22 +412,12 @@ export function ConnectPage() {
               <p className="muted card-desc">It sees only the repositories you choose on GitHub: their code, workflow files and pull requests. It never pushes to a branch.</p>
             </div>
           </div>
-          <ol className="steps steps-compact">
-            <Step n={1} done={false} title="Install the GitHub App">
-              <div className="row-actions">
-                <button type="button" className="btn btn-primary" onClick={install} disabled={installing || completing || !org.canManage}>
-                  Install the GitHub App
-                </button>
-                <span className="muted small">GitHub asks which repositories fenvix may see, then sends you back here.</span>
-              </div>
-            </Step>
-            <Step n={2} done={false} title="Pick a repository">
-              <p className="muted small">Press Connect on it: fenvix opens one setup pull request on it.</p>
-            </Step>
-            <Step n={3} done={false} title="Merge the pull request">
-              <p className="muted small">The next test run goes to fenvix and the repository becomes a project.</p>
-            </Step>
-          </ol>
+          <div className="row-actions">
+            <button type="button" className="btn btn-primary" onClick={install} disabled={installing || completing || !org.canManage}>
+              Install the GitHub App
+            </button>
+            <span className="muted small">GitHub asks which repositories fenvix may see, then sends you back here to set one up.</span>
+          </div>
           {installations.length > 0 && (
             <ul className="gh-lines" aria-label="Your GitHub installations">
               {installations.map((i) => (
@@ -520,6 +425,7 @@ export function ConnectPage() {
               ))}
             </ul>
           )}
+          {error && <Message role="alert">{error}</Message>}
         </section>
       )}
 
@@ -529,44 +435,24 @@ export function ConnectPage() {
             <div className="card-head">
               <div className="card-head-main">
                 <h2 id="pick-h">Pick a repository to connect</h2>
-                <p className="muted card-desc">fenvix opens one pull request on it; you review and merge it on GitHub.</p>
+                <p className="muted card-desc">Set up opens its own page with the steps for that repository.</p>
               </div>
               <button type="button" className="btn btn-sm" onClick={() => void refresh()} disabled={refreshing}>
                 {refreshing ? "Refreshing…" : "Refresh repositories"}
               </button>
             </div>
-            {kindState.status === "ready" && kindState.data.sideBySideAvailable && (
-              <div className="connect-kind">
-                <Segmented<OnboardingKind>
-                  label="How fenvix runs your tests"
-                  value={shownKind}
-                  disabled={!org.canManage || savingKind}
-                  onChange={(v) => void chooseKind(v)}
-                  options={[
-                    { value: "move", label: "Move the test job to fenvix" },
-                    { value: "side_by_side", label: "Run side by side (your workflow stays as it is)" },
-                  ]}
-                />
-                <p className="muted small">
-                  {shownKind === "side_by_side"
-                    ? "The pull request adds one new workflow file that runs a copy of your test job on fenvix. Your workflow is not changed and decides green or red alone; fenvix shows both side by side."
-                    : "The pull request changes one line in your test job: runs-on: fenvix."}
-                  {!org.canManage && " Only an owner or admin can change this."}
-                </p>
-              </div>
-            )}
             {repos.status === "loading" && <Message>Loading repositories</Message>}
             {repos.status === "error" && <Message role="alert">{repos.message}</Message>}
             {repos.status === "ready" && toPick.length > 0 && (
               <ul className="pick-list" aria-label="Repositories to connect">
                 {toPick.map((r) => (
-                  <PickRow key={r.repositoryId} repo={r} installation={instOf(r)} queued={queued.has(r.repositoryId)} onOpen={open} kind={shownKind} />
+                  <PickRow key={r.repositoryId} repo={r} installation={instOf(r)} />
                 ))}
               </ul>
             )}
             {repos.status === "ready" && toPick.length === 0 && (
               <div className="pick-empty">
-                <p>{noneYet ? "No repository yet: choose the repositories fenvix may see on GitHub." : "All the repositories fenvix can see are connected."}</p>
+                <p>{noneYet ? "No repository yet: choose the repositories fenvix may see on GitHub." : "All the repositories fenvix can see are connected or being set up."}</p>
                 {chooseMoreOn && (
                   <a href={installationConfigureUrl(chooseMoreOn)} target="_blank" rel="noreferrer" className="btn" onClick={() => setChose(true)}>
                     Choose more repositories on GitHub
@@ -584,32 +470,6 @@ export function ConnectPage() {
             ))}
           </ul>
 
-          {waiting.length > 0 && (
-            <section className="card connect-waiting" aria-labelledby="waiting-h">
-              <h2 id="waiting-h">Waiting for your merge</h2>
-              <ul className="waiting-list">
-                {waiting.map((r) => (
-                  <li key={r.repositoryId} className="waiting-row repo-row" data-state={r.onboardingState}>
-                    <span className="mono break-anywhere repo-name">{r.fullName}</span>
-                    {r.setupPullRequest ? (
-                      <>
-                        <a href={r.setupPullRequest.url} target="_blank" rel="noreferrer" className="row-link">
-                          Setup pull request #{r.setupPullRequest.number}
-                          <ExternalLink size={13} aria-hidden="true" />
-                        </a>
-                        <a href={r.setupPullRequest.url} target="_blank" rel="noreferrer" className="btn btn-sm" aria-label={`Merge it on GitHub: ${r.fullName} pull request #${r.setupPullRequest.number}`}>
-                          Merge it on GitHub
-                        </a>
-                      </>
-                    ) : (
-                      <span className="muted small">{r.onboardingDetail}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
           {removed.length > 0 && (
             <details className="card connect-removed">
               <summary>
@@ -625,14 +485,14 @@ export function ConnectPage() {
           )}
 
           <p className="connect-projects muted">
-            {connectedCount > 0 ? `${plural(connectedCount, "repository is", "repositories are")} already connected. ` : ""}
+            {connectedCount > 0 ? `${plural(connectedCount, "repository is", "repositories are")} on fenvix` : "Nothing is on fenvix yet"}
+            {settingUp > 0 ? `, ${plural(settingUp, "is", "are")} being set up. ` : ". "}
             <Link to="/projects" className="row-link">
               See your projects
             </Link>
           </p>
         </>
       )}
-      {firstTime && error && <Message role="alert">{error}</Message>}
 
       <WhatAccess />
     </>

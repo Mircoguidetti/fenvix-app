@@ -162,15 +162,16 @@ const TESTS = {
   // Changed (connect redesign, 28 Nov): Connect has no numbered checklist once an installation exists, so there is no
   // done step to paint (state A's steps are never done; the tick stays in Step, checked by the unit test); connected
   // and open repositories are no longer listed with their green/amber pills (the pill colours are checked by the unit
-  // test of OnboardingPill); the diff is behind "What the pull request changes"; a suspended or uninstalled
+  // test of OnboardingPill); the diff is on the repository's setup page (Set up); a suspended or uninstalled
   // installation is a warning with an amber icon on its GitHub line instead of a pill.
   async "connect: the diff is red and green with - and +, each state still to connect has its colour and words, installation warnings are amber"(page) {
     await signIn(page, "projects/connect");
-    await page.locator('.repo-row:has-text("northwind/billing-worker") .pick-change > summary').click();
+    await page.getByRole("link", { name: "Set up northwind/billing-worker" }).click();
     const del = await paint(page, ".diff-del");
     const add = await paint(page, ".diff-add");
     assert(del.text.startsWith("-") && add.text.startsWith("+"), "the diff lines do not start with - and +");
     assert(del.color === "rgb(255, 106, 92)" && add.color === "rgb(61, 220, 132)", `the diff colours are ${del.color} / ${add.color}`);
+    await go(page, "projects/connect");
     const pill = async (repo) => paint(page, `.repo-row:has-text("${repo}") .state`);
     const n = await pill("northwind/notifications");
     assert(n.border === DANGER && n.text === "Could not open the pull request" && n.svg, `northwind/notifications: "${n.text}" ${n.border}`);
