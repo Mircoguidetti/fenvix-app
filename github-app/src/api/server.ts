@@ -23,18 +23,18 @@ import { dashboardOperations, type Operation } from "./spec.ts";
 /** Every dashboard operation of the contract, by operationId. */
 export const HANDLERS: Record<string, Handler> = {
   getMe: orgs.getMe, listOrganizations: orgs.listOrganizations, createOrganization: orgs.createOrganization,
-  getOrganization: orgs.getOrganization, renameOrganization: orgs.renameOrganization, leaveOrganization: orgs.leaveOrganization,
+  getOrganization: orgs.getOrganization, renameOrganization: orgs.renameOrganization, leaveOrganization: orgs.leaveOrganization, deleteOrganization: orgs.deleteOrganization,
   listMembers: orgs.listMembers, changeMemberRole: orgs.changeMemberRole, removeMember: orgs.removeMember,
   listInvitations: orgs.listInvitations, createInvitation: orgs.createInvitation, revokeInvitation: orgs.revokeInvitation,
   acceptInvitation: orgs.acceptInvitation, getSettings: orgs.getSettings, saveSettings: orgs.saveSettings, getOnboardingKind: orgs.getOnboardingKind, setOnboardingKind: orgs.setOnboardingKind, getSideBySide: sideBySide.getSideBySide,
-  getOverview: data.getOverview, listProjects: data.listProjects, getProject: data.getProject, saveProjectSettings: data.saveProjectSettings,
+  getOverview: data.getOverview, listProjects: data.listProjects, getProject: data.getProject, saveProjectSettings: data.saveProjectSettings, removeProject: data.removeProject,
   listRuns: data.listRuns, getSkipShareSeries: data.getSkipShareSeries, listExplorations: data.listExplorations, getAudit: data.getAudit,
   getSetupChange: data.getSetupChange, listActivity: data.listActivity, getRun: data.getRun, listTestResults: data.listTestResults,
   listRunFiles: data.listRunFiles, getSkipReceipt: data.getSkipReceipt, listDefects: data.listDefects, listDefectFamilies: data.listDefectFamilies,
   getDefect: data.getDefect, listUsageMonths: data.listUsageMonths, getUsage: data.getUsage, exportUsage: data.exportUsage,
   listPlans: data.listPlans, getBilling: data.getBilling, search: data.search,
   getGitHubConnection: github.getGitHubConnection, createInstallLink: github.createInstallLink, completeGitHubInstall: github.completeGitHubInstall,
-  listGitHubRepositories: github.listGitHubRepositories, openSetupPullRequest: github.openSetupPullRequest,
+  listGitHubRepositories: github.listGitHubRepositories, openSetupPullRequest: github.openSetupPullRequest, restoreRepository: github.restoreRepository,
 };
 
 /** What the browser may send and read across origins. */

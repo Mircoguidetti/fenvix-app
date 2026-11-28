@@ -227,6 +227,14 @@ export class FakeGitHub {
       if (!this.installations.has(id)) return this.notFound();
       return [200, this.installationJson(id, exampleResponse("GET", "/app/installations/{installation_id}", 200))];
     }
+    // Uninstalls the App from the account (an organization deleted on fenvix): 204, then 404 for that id.
+    if ((m = /^\/app\/installations\/(\d+)$/.exec(p)) && method === "DELETE") {
+      if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];
+      const id = Number(m[1]);
+      if (!this.installations.has(id)) return this.notFound();
+      this.installations.delete(id);
+      return [204, null];
+    }
     if ((m = /^\/repos\/([^/]+)\/([^/]+)\/installation$/.exec(p)) && method === "GET") {
       if (!this.appAuth(auth)) return [401, { message: "A JSON web token could not be decoded", documentation_url: "https://docs.github.com/rest", status: "401" }];
       const repo = this.repos.get(`${decodeURIComponent(m[1]!)}/${decodeURIComponent(m[2]!)}`);

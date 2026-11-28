@@ -76,6 +76,19 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Organization" } } } }
         default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [dashboard]
+      operationId: deleteOrganization
+      x-fenvix-role: admin
+      summary: Delete the organization (the owner only)
+      description: |
+        The owner only (an admin gets 403). Deletes the organization and everything of it: its projects, runs, defects,
+        receipts, members' access, API keys, invitations and usage records. After the commit the GitHub App is
+        uninstalled from every GitHub account the organization connected (queued work). The caller's own sign-in is
+        deleted too when they belong to no other organization; other members keep theirs and lose access.
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
   /organization/leave:
     parameters: [{ $ref: "#/components/parameters/Workspace" }]
     post:
@@ -221,6 +234,19 @@ paths:
       operationId: getProject
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectRow" } } } }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [dashboard]
+      operationId: removeProject
+      x-fenvix-role: admin
+      summary: Remove a project from fenvix
+      description: |
+        Deletes the project with its runs, defects and receipts, and marks its repository removed from fenvix: the
+        GitHub App starts no machine for it and does not create the project again. The repository stays in the GitHub
+        App installation; POST /github/repositories/{repositoryId}/restore adds it again. 404 for an unknown project or
+        another organization's.
+      responses:
+        "204": { description: Removed }
         default: { $ref: "#/components/responses/Error" }
   /projects/{projectId}/settings:
     parameters: [{ $ref: "#/components/parameters/Workspace" }, { $ref: "#/components/parameters/ProjectId" }]
@@ -532,6 +558,19 @@ paths:
         Asks the App to open (or find) the setup pull request of one repository. The work is queued; the answer is the
         repository as it is now (its `onboardingState` moves to `pr_open`, or says why no pull request was opened, when
         the work is done: ask GET /github/repositories again).
+      responses:
+        "202": { description: Queued, content: { application/json: { schema: { $ref: "#/components/schemas/GitHubRepository" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /github/repositories/{repositoryId}/restore:
+    parameters: [{ $ref: "#/components/parameters/Workspace" }, { name: repositoryId, in: path, required: true, description: GitHub's repository id, schema: { type: integer, minimum: 1 } }]
+    post:
+      tags: [dashboard]
+      operationId: restoreRepository
+      x-fenvix-role: admin
+      summary: Add a removed repository to fenvix again
+      description: |
+        Clears the repository's removal (`excludedAt`); the App then creates its project again (queued work). The answer
+        is the repository as it is now. 404 for a repository of another organization or unknown.
       responses:
         "202": { description: Queued, content: { application/json: { schema: { $ref: "#/components/schemas/GitHubRepository" } } } }
         default: { $ref: "#/components/responses/Error" }
@@ -1439,13 +1478,14 @@ components:
         sideBySideAvailable: { type: boolean, description: "False while side-by-side runs are turned off (SIDE_BY_SIDE_ENABLED=false): the choice is hidden." }
     GitHubRepository:
       type: object
-      required: [repositoryId, installationId, fullName, private, removed, language, testRunner, onboardingState, onboardingDetail, workflowPath, job, setupPullRequest, projectId, warmCache]
+      required: [repositoryId, installationId, fullName, private, removed, excludedAt, language, testRunner, onboardingState, onboardingDetail, workflowPath, job, setupPullRequest, projectId, warmCache]
       properties:
         repositoryId: { type: integer }
         installationId: { type: integer }
         fullName: { type: string }
         private: { type: boolean }
         removed: { type: boolean, description: "No longer given by its installation." }
+        excludedAt: { type: [string, "null"], format: date-time, description: "When its organization removed its project from fenvix (null: not removed)." }
         language: { oneOf: [{ $ref: "#/components/schemas/Language" }, { type: "null" }] }
         testRunner: { oneOf: [{ $ref: "#/components/schemas/TestRunner" }, { type: "null" }] }
         onboardingState: { $ref: "#/components/schemas/OnboardingState" }

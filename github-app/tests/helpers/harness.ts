@@ -62,6 +62,10 @@ export async function resetDb(): Promise<pg.Client> {
   if (!(await admin.query("select to_regclass('public.gh_customer_jobs') as t")).rows[0].t) {
     execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0020_side_by_side.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
   }
+  // A database prepared before migration 0021 (remove a project, delete an organization): safe to repeat.
+  if (!(await admin.query("select 1 from information_schema.columns where table_name = 'gh_repositories' and column_name = 'excluded_at'")).rowCount) {
+    execFileSync("psql", [ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-q", "-f", fileURLToPath(new URL("../../../supabase/migrations/0021_remove_and_delete.sql", import.meta.url))], { stdio: ["ignore", "ignore", "inherit"] });
+  }
   await admin.query(`truncate gh_customer_jobs, gh_install_completions, ci_trial_accounts, gh_webhook_deliveries, gh_run_summaries, gh_run_results, gh_jobs, gh_pushes, gh_pull_requests, ci_usage_events, gh_warmups, gh_repositories,
     gh_installations, ci_test_results, ci_skip_receipts, ci_audit_reruns, ci_defects, ci_explorations, ci_runs, ci_projects, ci_subscriptions cascade`);
   await admin.query("delete from auth.users where email like '%@gh.fenvix.invalid'");

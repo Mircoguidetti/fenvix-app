@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The database's own tests against a SCRATCH Postgres (15 or newer): the Supabase stand-ins, the migrations 0001 to 0013
-# once, then 0014 to 0020 twice each (they must be safe to repeat; 0001 to 0013 are not any more once 0014 has removed the earlier
+# once, then 0014 to 0021 twice each (they must be safe to repeat; 0001 to 0013 are not any more once 0014 has removed the earlier
 # product, which is expected), then the row level security tests:
 #   api-rls.sql         the dashboard API's role fenvix_api: members read their organization only, owners and admins
 #                       change settings, region, project settings, members and invitations; the browser's roles (anon,
@@ -11,6 +11,8 @@
 #   warm-rls.sql        warm-ups and the repositories' cache state (0017): the App writes them, members read their own
 #   runners-check.sql   the runner lists accept node:test and mocha, one CHECK constraint per column (0018)
 #   run-proof-check.sql the not_proven status and outcome, proof and its counts, one CHECK constraint each (0019)
+#   remove-delete-rls.sql  removing a project, adding a repository again, deleting an organization (0021): fenvix_api's
+#                       functions only, never anon's or authenticated's
 #   side-by-side-check.sql  side-by-side runs' CHECK constraints (0020); then the 0020 rollback, side-by-side-rollback-check.sql
 #                       (no side-by-side job left for the older publish path), and 0020 applied again
 #
@@ -43,7 +45,7 @@ check() {  # file, the line a clean run prints
 }
 
 echo "1/3 local stand-ins for Supabase"; psql_run -f supabase/tests/local-stub.sql >/dev/null
-echo "2/3 migrations: 0001 to 0013 once, then 0014 to 0020 twice each"
+echo "2/3 migrations: 0001 to 0013 once, then 0014 to 0021 twice each"
 for f in 0001_init 0002_control_plane 0003_close_dashboard_write_path 0004_data_explorer 0005_engine_users 0007_database_users \
          0008_organizations 0009_ip_allowlist 0010_public_api_keys 0011_ci_runs 0012_ci_explorations 0013_github_app; do
   migrate "$f"
@@ -62,6 +64,8 @@ migrate 0019_run_proof
 migrate 0019_run_proof
 migrate 0020_side_by_side
 migrate 0020_side_by_side
+migrate 0021_remove_and_delete
+migrate 0021_remove_and_delete
 echo "3/3 row level security"
 check api-rls.sql "API RLS OK"
 check ci-rls.sql "CI RLS OK"
@@ -71,6 +75,7 @@ check warm-rls.sql "WARM RLS OK"
 check runners-check.sql "RUNNERS CHECK OK"
 check run-proof-check.sql "RUN PROOF CHECK OK"
 check side-by-side-check.sql "SIDE BY SIDE CHECK OK"
+check remove-delete-rls.sql "REMOVE DELETE RLS OK"
 # The rollback, on a side-by-side job not yet published and an ordinary one; then 0020 again (it must apply after it).
 psql_run -c "insert into public.gh_jobs (job_id, repository_id, installation_id, run_id, head_sha, status, kind) values
   (990101, 9901, 9901, 1, repeat('a', 40), 'completed', 'side_by_side'), (990102, 9901, 9901, 1, repeat('a', 40), 'completed', 'ci_run')" >/dev/null

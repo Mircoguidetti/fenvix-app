@@ -174,6 +174,19 @@ export const mockOrgs: OrgsClient = {
     await later(null);
   },
 
+  async deleteOrganization() {
+    const { org, role } = current();
+    if (role !== "owner") throw new ApiError("forbidden", "Only an owner can delete the organization.", 403);
+    const u = me();
+    state.orgs = state.orgs.filter((o) => o.id !== org.id);
+    state.invites = state.invites.filter((i) => i.orgId !== org.id);
+    // As the API: the caller's own sign-in goes too when no membership is left for it.
+    if (!state.orgs.some((o) => o.members.some((m) => m.userId === u.id))) state.provisioned = state.provisioned.filter((id) => id !== u.id);
+    save();
+    setActiveOrgId(null);
+    await later(null);
+  },
+
   async listMembers() {
     const { org } = current();
     const items: Member[] = org.members.map((m) => ({ ...m, you: m.userId === me().id }));

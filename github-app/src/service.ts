@@ -100,6 +100,8 @@ interface RepoRow {
   repository_id: number; installation_id: number; workspace_id: string | null; full_name: string; default_branch: string | null;
   project_id: string | null; onboarding_state: string; setup_pr_number: number | null; setup_pr_url: string | null;
   detected_language: string | null; detected_test_runner: string | null; removed_at?: Date | null;
+  /** Its organization removed its project from fenvix (DELETE /v1/projects/{id}); cleared by "Add again". */
+  excluded_at?: Date | null;
   awaiting_link?: boolean; private?: boolean; onboarding_workflow_path?: string | null; onboarding_job?: string | null;
   side_by_side_matrix_suffix?: string | null; side_by_side_job_name?: string | null; side_by_side_test_step?: string | null; side_by_side_timeout_minutes?: number | null;
   history_cursor?: unknown; history_next_at?: Date | null;
@@ -249,7 +251,10 @@ export class GitHubService {
       await this.db.q(
         `insert into gh_repositories (repository_id, installation_id, full_name, private, onboarding_detail) values ($1, $2, $3, $4, $5)
          on conflict (repository_id) do update set installation_id = excluded.installation_id, full_name = excluded.full_name,
-           private = excluded.private, removed_at = null, updated_at = now()`,
+           private = excluded.private, removed_at = null,
+           -- Removed from fenvix by an organization: that choice does not follow the repository into another installation.
+           excluded_at = case when gh_repositories.installation_id = excluded.installation_id then gh_repositories.excluded_at end,
+           updated_at = now()`,
         [r.id, installationId, r.full_name, r.private ?? true, PENDING_DETAIL]);
     }
   }
@@ -337,6 +342,12 @@ export class GitHubService {
   async onboard(repositoryId: number): Promise<OnboardingResult> {
     const [repo] = await this.db.q<RepoRow>("select * from gh_repositories where repository_id = $1", [repositoryId]);
     if (!repo) throw new Error(`repository ${repositoryId} is not known`);
+    // Removed from fenvix by its organization: no pull request until it is added again (Connect a project, "Add again").
+    if (repo.excluded_at) {
+      this.log.info({ repository: repo.full_name }, "repository removed from fenvix by its organization");
+      await this.db.q("update gh_repositories set awaiting_link = false where repository_id = $1", [repositoryId]);
+      return { state: "failed", detail: "repository removed from fenvix by its organization", defaultBranch: repo.default_branch, language: null, testRunner: null };
+    }
     const kind = await this.onboardingKind(repo.workspace_id);
     if (kind === "side_by_side" && !this.sbs.enabled) {
       const detail = "side-by-side runs are turned off: no pull request was opened";
@@ -421,6 +432,14 @@ export class GitHubService {
    * or moves to another installation of the same organization (found by gh_repositories.project_id).
    */
   private async syncProject(c: Client, repo: RepoRow, fromRun: Stack | null): Promise<string | null> {
+    // Removed from fenvix by its organization: no project until it is added again. Read with a row lock inside this
+    // transaction: api_remove_project updates this row before it deletes the project, so a removal either commits first
+    // (seen here) or waits for this transaction (and then deletes what it wrote).
+    const excluded = (await c.query<{ excluded_at: Date | null }>("select excluded_at from gh_repositories where repository_id = $1 for update", [repo.repository_id])).rows[0]?.excluded_at;
+    if (excluded) {
+      this.log.info({ repository: repo.full_name }, "repository removed from fenvix by its organization");
+      return null;
+    }
     const prState = repo.onboarding_state === "merged" || (repo.onboarding_state === "side_by_side" && repo.setup_pr_number) ? "merged" : repo.onboarding_state === "closed" ? "closed" : repo.setup_pr_number ? "open" : null;
     const setup = repo.onboarding_state === "pr_open" || repo.onboarding_state === "side_by_side_pr_open" ? "pr_open" : "app_installed";
     if (repo.project_id) {
@@ -452,7 +471,7 @@ export class GitHubService {
 
   /** After a link: every repository of the installation gets its project where the language is known. */
   async syncInstallation(installationId: number): Promise<void> {
-    const repos = await this.db.q<RepoRow>("select * from gh_repositories where installation_id = $1 and removed_at is null order by repository_id", [installationId]);
+    const repos = await this.db.q<RepoRow>("select * from gh_repositories where installation_id = $1 and removed_at is null and excluded_at is null order by repository_id", [installationId]);
     for (const r of repos) if (r.workspace_id) await this.db.tx(r.workspace_id, (c) => this.syncProject(c, r, null));
   }
 
@@ -485,7 +504,7 @@ export class GitHubService {
    */
   async refreshDefaultBranch(repositoryId: number): Promise<void> {
     const repo = await this.repo(repositoryId);
-    if (!repo || repo.removed_at) return;
+    if (!repo || repo.removed_at || repo.excluded_at) return;
     const fresh = await this.db.q("select 1 from gh_repositories where repository_id = $1 and updated_at > now() - interval '1 minute'", [repositoryId]);
     if (fresh.length) return;
     const r = await this.gh.installation(repo.installation_id).request<{ default_branch?: string }>("GET", `/repos/${repo.full_name}`);
@@ -683,7 +702,7 @@ export class GitHubService {
     const clock = o.clock ?? Date.now;
     const repo = await this.repo(repositoryId);
     const stop = () => this.db.q("update gh_repositories set history_next_at = null where repository_id = $1", [repositoryId]);
-    if (!repo || repo.removed_at || !SIDE_BY_SIDE_STATES.includes(repo.onboarding_state) || !repo.onboarding_workflow_path || !repo.side_by_side_job_name) {
+    if (!repo || repo.removed_at || repo.excluded_at || !SIDE_BY_SIDE_STATES.includes(repo.onboarding_state) || !repo.onboarding_workflow_path || !repo.side_by_side_job_name) {
       if (repo) await stop();
       return "skipped";
     }
@@ -852,6 +871,10 @@ export class GitHubService {
       this.log.warn({ job: jobId, installation: installationId }, "no runner machine: the installation is not linked to an organization");
       return;
     }
+    if ((await this.repo(repo.id))?.excluded_at) {
+      this.log.warn({ job: jobId, installation: installationId, repository: repo.full_name }, "no runner machine: repository removed from fenvix by its organization");
+      return;
+    }
     // The machine runs in the organization's region, or not at all: an EU organization's job never runs in the US.
     const org = await this.db.tx(inst.workspace_id, (c) => this.orgContext(c));
     // The mode the machine gets (FENVIX_MODE) is the run's mode, whatever the job later reports (review R-016 F4).
@@ -956,6 +979,7 @@ export class GitHubService {
     // Only a repository fenvix onboarded side by side gets side-by-side machines: a file of that name added by hand to
     // another repository gets none (they would be free machines).
     const current = await this.repo(repo.id);
+    if (current?.excluded_at) return none("repository removed from fenvix by its organization");
     const state = current?.onboarding_state ?? "";
     if (!SIDE_BY_SIDE_STATES.includes(state) || !current?.side_by_side_job_name) return none(`the repository is not onboarded side by side (state ${state || "unknown"})`);
     const org = await this.db.tx(inst.workspace_id, (c) => this.orgContext(c));
@@ -1288,9 +1312,15 @@ export class GitHubService {
     for (const j of due) {
       try { await this.tryPublish(j.job_id, true); } catch (e) { this.log.warn({ job: j.job_id, err: e instanceof Error ? e.message : String(e) }, "sweep: publish failed"); }
     }
+    // Uninstalls asked for by a deleted organization whose message was lost (or failed): tried again here.
+    const uninstalls = await this.db.q<{ installation_id: number }>(
+      "select installation_id from gh_installations where uninstall_requested_at is not null and uninstall_requested_at < now() - interval '10 minutes' and workspace_id is null order by uninstall_requested_at limit 10");
+    for (const i of uninstalls) {
+      try { await this.uninstallInstallation(i.installation_id); } catch (e) { this.log.warn({ installation: i.installation_id, err: e instanceof Error ? e.message : String(e) }, "sweep: uninstall failed"); }
+    }
     // Side-by-side histories whose time came (paused by the rate limit, or never queued): read again.
     const histories = await this.db.q<{ repository_id: number }>(
-      "select repository_id from gh_repositories where history_next_at is not null and history_next_at <= now() and removed_at is null order by history_next_at limit 10");
+      "select repository_id from gh_repositories where history_next_at is not null and history_next_at <= now() and removed_at is null and excluded_at is null order by history_next_at limit 10");
     for (const r of histories) {
       await this.db.q("update gh_repositories set history_next_at = now() + interval '1 hour' where repository_id = $1", [r.repository_id]);
       try {
@@ -1640,7 +1670,7 @@ export class GitHubService {
     await this.syncInstallation(installationId);
     // Repositories chosen one by one before the link: their pull request now, of the organization's kind.
     const waiting = await this.db.q<{ repository_id: number; workspace_id: string | null; onboarding_state: string }>(
-      "select repository_id, workspace_id, onboarding_state from gh_repositories where installation_id = $1 and removed_at is null and awaiting_link order by repository_id", [installationId]);
+      "select repository_id, workspace_id, onboarding_state from gh_repositories where installation_id = $1 and removed_at is null and excluded_at is null and awaiting_link order by repository_id", [installationId]);
     for (const x of waiting) {
       if (!x.workspace_id) continue;
       // Onboarded meanwhile by another path (the dashboard): nothing more to open.
@@ -1653,9 +1683,50 @@ export class GitHubService {
       }
     }
     const onboarded = await this.db.q<{ repository_id: number }>(
-      "select repository_id from gh_repositories where installation_id = $1 and removed_at is null and onboarding_state in ('merged', 'already_fenvix') order by repository_id",
+      "select repository_id from gh_repositories where installation_id = $1 and removed_at is null and excluded_at is null and onboarding_state in ('merged', 'already_fenvix') order by repository_id",
       [installationId]);
     for (const x of onboarded) await this.warm("linked", () => this.warmups.requestHead(x.repository_id, "linked"));
+  }
+
+  /**
+   * The worker (work kind "sync_repository", after POST /v1/github/repositories/{id}/restore): a repository its
+   * organization added again gets its project back. Only a repository of a linked installation that is not excluded:
+   * a forged message changes nothing else.
+   */
+  async syncRepository(repositoryId: number): Promise<string | null> {
+    const repo = await this.repo(repositoryId);
+    if (!repo?.workspace_id || repo.removed_at || repo.excluded_at) return null;
+    const [inst] = await this.db.q<{ workspace_id: string | null; deleted_at: Date | null }>(
+      "select workspace_id, deleted_at from gh_installations where installation_id = $1", [repo.installation_id]);
+    if (!inst?.workspace_id || inst.deleted_at) return null;
+    return this.db.tx(repo.workspace_id, (c) => this.syncProject(c, repo, null));
+  }
+
+  /**
+   * The worker (work kind "uninstall_installation", after DELETE /v1/organization): the App is uninstalled from the
+   * GitHub account (DELETE /app/installations/{id}, with the App's own credential). Only an installation no
+   * organization holds (its organization was deleted, so workspace_id is null): a forged message, or an installation
+   * linked again meanwhile, is left alone. GitHub's 404 (already uninstalled) counts as done; any other error throws, and
+   * the queue tries again.
+   */
+  async uninstallInstallation(installationId: number): Promise<"uninstalled" | "gone" | "skipped"> {
+    const [inst] = await this.db.q<{ workspace_id: string | null; uninstall_requested_at: Date | null }>(
+      "select workspace_id, uninstall_requested_at from gh_installations where installation_id = $1", [installationId]);
+    if (!inst || inst.workspace_id || !inst.uninstall_requested_at) {
+      // Linked again meanwhile: the request is void.
+      if (inst?.workspace_id && inst.uninstall_requested_at) await this.db.q("update gh_installations set uninstall_requested_at = null where installation_id = $1", [installationId]);
+      this.log.warn({ installation: installationId }, "uninstall skipped: no deleted organization asked for it, or the installation is linked to an organization");
+      return "skipped";
+    }
+    const r = await this.gh.app.request("DELETE", `/app/installations/${installationId}`, { allow: [404] });
+    // The same as the installation.deleted webhook that GitHub sends after it (which may come first, or not at all).
+    await this.db.q("update gh_installations set deleted_at = coalesce(deleted_at, now()), uninstall_requested_at = null, updated_at = now() where installation_id = $1", [installationId]);
+    await this.db.q("update gh_repositories set removed_at = now(), updated_at = now() where installation_id = $1 and removed_at is null", [installationId]);
+    await this.warmups.cancelInstallation(installationId, "the organization was deleted");
+    this.gh.forget(installationId);
+    const out = r.status === 404 ? "gone" as const : "uninstalled" as const;
+    this.log.info({ installation: installationId, result: out }, "GitHub App uninstalled: its organization was deleted");
+    return out;
   }
 
   async isAdmin(workspaceId: string, userId: string): Promise<boolean> {

@@ -81,10 +81,26 @@ export const openSetupPullRequest: Handler = async (ctx) => {
   if (!ctx.cfg.githubConfigured) throw githubNotConfigured();
   const row = await ctx.t.one(`${REPOSITORIES} and r.repository_id = $2`, [ws, repositoryId]);
   if (!row) throw notFound("That repository is not in this organization's GitHub installations.");
+  if (row.excluded_at) throw conflict("This repository was removed from fenvix. Add it again first.");
   try {
     await ctx.queue.enqueue({ kind: "onboard", repositoryId });
   } catch {
     throw unavailable("The request could not be queued. Try again in a minute.");
   }
   return new Reply(202, mapGitHubRepository(row));
+};
+
+/**
+ * Adds a repository its organization had removed from fenvix again (an owner or admin): api_restore_repository clears
+ * excluded_at; after the commit the App's worker creates its project again ("sync_repository"). 404 for a repository of
+ * another organization or unknown.
+ */
+export const restoreRepository: Handler = async (ctx) => {
+  const { id: ws } = orgOf(ctx);
+  const repositoryId = Number(ctx.params.repositoryId);
+  const r = await ctx.t.one<{ restored: boolean }>("select public.api_restore_repository($1::bigint) as restored", [repositoryId]);
+  if (!r?.restored) throw notFound("That repository is not in this organization's GitHub installations.");
+  const row = await ctx.t.one(`${REPOSITORIES} and r.repository_id = $2`, [ws, repositoryId]);
+  ctx.afterCommit(() => ctx.queue.enqueue({ kind: "sync_repository", repositoryId }));
+  return new Reply(202, mapGitHubRepository(row!));
 };

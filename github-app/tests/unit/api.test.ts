@@ -55,7 +55,8 @@ describe("the contract inside the bundle", () => {
 });
 
 describe("the role table", () => {
-  const ADMIN_OPS = ["changeMemberRole", "createInstallLink", "createInvitation", "listInvitations", "openSetupPullRequest", "removeMember", "renameOrganization", "revokeInvitation", "saveProjectSettings", "saveSettings", "setOnboardingKind"];
+  // deleteOrganization is marked admin and its handler (and api_delete_organization) refuse anyone but an owner.
+  const ADMIN_OPS = ["changeMemberRole", "createInstallLink", "createInvitation", "deleteOrganization", "listInvitations", "openSetupPullRequest", "removeMember", "removeProject", "renameOrganization", "restoreRepository", "revokeInvitation", "saveProjectSettings", "saveSettings", "setOnboardingKind"];
 
   it("x-fenvix-role: admin marks exactly the owner-or-admin operations", () => {
     assert.deepEqual(dashboardOperations().filter((o) => o.admin).map((o) => o.operationId).sort(), ADMIN_OPS);

@@ -50,7 +50,14 @@ export interface paths {
         get: operations["getOrganization"];
         put: operations["renameOrganization"];
         post?: never;
-        delete?: never;
+        /**
+         * Delete the organization (the owner only)
+         * @description The owner only (an admin gets 403). Deletes the organization and everything of it: its projects, runs, defects,
+         *     receipts, members' access, API keys, invitations and usage records. After the commit the GitHub App is
+         *     uninstalled from every GitHub account the organization connected (queued work). The caller's own sign-in is
+         *     deleted too when they belong to no other organization; other members keep theirs and lose access.
+         */
+        delete: operations["deleteOrganization"];
         options?: never;
         head?: never;
         patch?: never;
@@ -270,7 +277,14 @@ export interface paths {
         get: operations["getProject"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Remove a project from fenvix
+         * @description Deletes the project with its runs, defects and receipts, and marks its repository removed from fenvix: the
+         *     GitHub App starts no machine for it and does not create the project again. The repository stays in the GitHub
+         *     App installation; POST /github/repositories/{repositoryId}/restore adds it again. 404 for an unknown project or
+         *     another organization's.
+         */
+        delete: operations["removeProject"];
         options?: never;
         head?: never;
         patch?: never;
@@ -833,6 +847,33 @@ export interface paths {
          *     the work is done: ask GET /github/repositories again).
          */
         post: operations["openSetupPullRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/github/repositories/{repositoryId}/restore": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                /** @description GitHub's repository id */
+                repositoryId: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a removed repository to fenvix again
+         * @description Clears the repository's removal (`excludedAt`); the App then creates its project again (queued work). The answer
+         *     is the repository as it is now. 404 for a repository of another organization or unknown.
+         */
+        post: operations["restoreRepository"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1766,6 +1807,11 @@ export interface components {
             private: boolean;
             /** @description No longer given by its installation. */
             removed: boolean;
+            /**
+             * Format: date-time
+             * @description When its organization removed its project from fenvix (null: not removed).
+             */
+            excludedAt: string | null;
             language: components["schemas"]["Language"] | null;
             testRunner: components["schemas"]["TestRunner"] | null;
             onboardingState: components["schemas"]["OnboardingState"];
@@ -2125,6 +2171,28 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Organization"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteOrganization: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };
@@ -2525,6 +2593,30 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ProjectRow"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    removeProject: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };
@@ -3234,6 +3326,33 @@ export interface operations {
         };
     };
     openSetupPullRequest: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The organization the request is for. The person must be a member of it. */
+                "X-Fenvix-Workspace": components["parameters"]["Workspace"];
+            };
+            path: {
+                /** @description GitHub's repository id */
+                repositoryId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubRepository"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    restoreRepository: {
         parameters: {
             query?: never;
             header: {

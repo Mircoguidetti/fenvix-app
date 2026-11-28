@@ -73,6 +73,8 @@ export function withCompat<C extends DataClient>(c: C): C {
         items: [], total: 0, page: q?.page ?? 1, pageSize: q?.pageSize ?? 50, counts: { passed: 0, failed: 0, skipped_with_proof: 0, not_proven: 0 },
       }))),
     search: (q) => compatSearch(c.search ? c.search(q) : Promise.resolve([])),
+    // An API without project removal sends no excludedAt: nothing was removed.
+    listGitHubRepositories: async () => (await c.listGitHubRepositories()).map((r) => ({ ...r, excludedAt: r.excludedAt ?? null })),
   };
   return new Proxy(c, { get: (target, key, recv) => (key in wrapped ? wrapped[key as keyof DataClient] : Reflect.get(target, key, recv)) });
 }

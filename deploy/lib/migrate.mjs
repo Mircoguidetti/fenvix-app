@@ -105,6 +105,12 @@ export const PROBES = {
     first: `exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'workspaces' and column_name = 'onboarding_kind')`,
     last: pol("ci_runner_label_rates", "ci_runner_label_rates_read"),
   },
+  // 0021 (remove a project, delete an organization) adds gh_repositories.excluded_at first and api_delete_organization last
+  // (only its grants and the schema reload come after it, in the same file).
+  "0021": {
+    first: `exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'gh_repositories' and column_name = 'excluded_at')`,
+    last: `exists (select 1 from pg_proc where pronamespace = 'public'::regnamespace and proname = 'api_delete_organization')`,
+  },
 };
 /** The first migration with a probe: a database without it is either empty or not one of ours. */
 const FIRST_PROBED = "0011";

@@ -5,7 +5,7 @@ import { client, type GitHubRepository, type Installation, type OnboardingKind, 
 import { isSetupMerged } from "../data/ci-rows";
 import { Segmented } from "../components/Segmented";
 import { Card, Message, PageHeader, Kicker } from "../components/PageHeader";
-import { InstallationStatusPill, OnboardingPill } from "../components/StateBadge";
+import { InstallationStatusPill, OnboardingPill, StatusPill } from "../components/StateBadge";
 import { useToast } from "../components/Toast";
 import { WarmCacheNote } from "../components/ci";
 import { useAsync } from "../lib/useAsync";
@@ -83,6 +83,37 @@ function runnerText(r: GitHubRepository): string {
   return `${r.language ? languageLabel(r.language) : "Language not detected"} · ${r.testRunner ?? "test runner not detected"}`;
 }
 
+/**
+ * A repository its organization removed from fenvix (Remove project): no project, no runs, no setup pull request until
+ * an owner or admin adds it again (POST /github/repositories/{id}/restore; the App creates its project again).
+ */
+function RemovedRepoRow({ repo, installation, restoring, onRestore }: { repo: GitHubRepository; installation: Installation | undefined; restoring: boolean; onRestore: (r: GitHubRepository) => void }) {
+  const org = useOrg();
+  const active = installation?.status === "active";
+  return (
+    <li className="setup-row repo-row" data-state="excluded">
+      <div className="setup-row-head">
+        <span className="name-cell">
+          <span className="mono break-anywhere repo-name">{repo.fullName}</span>
+          <span className="muted small">
+            {repo.private ? "Private" : "Public"} · {runnerText(repo)}
+          </span>
+        </span>
+        <StatusPill tone="neutral">Removed from fenvix</StatusPill>
+      </div>
+      <p className="small repo-detail">Its project was removed{repo.excludedAt ? ` on ${formatDate(repo.excludedAt)}` : ""}. fenvix runs none of its jobs until it is added again.</p>
+      <div className="row-actions">
+        <button type="button" className="btn" onClick={() => onRestore(repo)} disabled={restoring || !active || !org.canManage} aria-label={`Add ${repo.fullName} again`}>
+          Add again
+        </button>
+        <span className="muted small" role="status">
+          {restoring ? "Adding it again" : !org.canManage ? "Only an owner or admin can add it again." : !active ? "The installation must be active first." : "Its project comes back; its earlier runs do not."}
+        </span>
+      </div>
+    </li>
+  );
+}
+
 function RepoRow({ repo, installation, queued, onOpen, kind }: { repo: GitHubRepository; installation: Installation | undefined; queued: boolean; onOpen: (r: GitHubRepository) => void; kind: OnboardingKind }) {
   const org = useOrg();
   const active = installation?.status === "active";
@@ -152,7 +183,7 @@ function RepoRow({ repo, installation, queued, onOpen, kind }: { repo: GitHubRep
  * One GitHub installation and the repositories of it that `show` keeps. In the secondary block (`secondary`) the
  * installation's own notices are left out: the steps above already show them.
  */
-function InstallationBlock({ installation, repos, queued, onOpen, highlight, kind, show, secondary = false }: { installation: Installation; repos: GitHubRepository[]; queued: Set<number>; onOpen: (r: GitHubRepository) => void; highlight: boolean; kind: OnboardingKind; show: (r: GitHubRepository) => boolean; secondary?: boolean }) {
+function InstallationBlock({ installation, repos, queued, onOpen, restoring, onRestore, highlight, kind, show, secondary = false }: { installation: Installation; repos: GitHubRepository[]; queued: Set<number>; onOpen: (r: GitHubRepository) => void; restoring: Set<number>; onRestore: (r: GitHubRepository) => void; highlight: boolean; kind: OnboardingKind; show: (r: GitHubRepository) => boolean; secondary?: boolean }) {
   const all = repos.filter((r) => r.installationId === installation.installationId && !r.removed);
   const mine = all.filter(show);
   const headingId = `inst-${secondary ? "on-" : ""}${installation.installationId}`;
@@ -186,7 +217,9 @@ function InstallationBlock({ installation, repos, queued, onOpen, highlight, kin
       ) : (
         <ul className="setup-list">
           {mine.map((r) => (
-            <RepoRow key={r.repositoryId} repo={r} installation={installation} queued={queued.has(r.repositoryId)} onOpen={onOpen} kind={kind} />
+            r.excludedAt
+              ? <RemovedRepoRow key={r.repositoryId} repo={r} installation={installation} restoring={restoring.has(r.repositoryId)} onRestore={onRestore} />
+              : <RepoRow key={r.repositoryId} repo={r} installation={installation} queued={queued.has(r.repositoryId)} onOpen={onOpen} kind={kind} />
           ))}
         </ul>
       )}
@@ -217,6 +250,7 @@ export function ConnectPage() {
   const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [queued, setQueued] = useState<Set<number>>(new Set());
+  const [restoring, setRestoring] = useState<Set<number>>(new Set());
   const polls = useRef(0);
   const timer = useRef<number | undefined>(undefined);
   const [completing, setCompleting] = useState(false);
@@ -337,6 +371,23 @@ export function ConnectPage() {
     }
   }
 
+  /** Add again: the repository as the API answers it now (not excluded); the project shows up once the App made it. */
+  async function restore(repo: GitHubRepository) {
+    setError(null);
+    setRestoring((q) => new Set([...q, repo.repositoryId]));
+    try {
+      const now = await client.restoreRepository(repo.repositoryId);
+      repos.setData((repos.status === "ready" ? repos.data : []).map((r) => (r.repositoryId === now.repositoryId ? now : r)));
+      toast(`Added ${repo.fullName} again`, "success");
+      // The App's worker makes its project after this answer: read the list again shortly.
+      setTimeout(() => void client.listGitHubRepositories().then((list) => repos.setData(list), () => undefined), 1500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not add the repository again. Try again.");
+    } finally {
+      setRestoring((q) => new Set([...q].filter((id) => id !== repo.repositoryId)));
+    }
+  }
+
   async function open(repo: GitHubRepository) {
     setError(null);
     try {
@@ -357,7 +408,8 @@ export function ConnectPage() {
   const merged = live.some((r) => isSetupMerged(r.onboardingState));
   const highlighted = github === "connected" ? Number(params.get("installation")) : null;
   // Step 2 lists the repositories still to connect (and those whose pull request is being opened right now).
-  const toConnect = (r: GitHubRepository) => queued.has(r.repositoryId) || !isConnectedOrOpen(r);
+  // A repository removed from fenvix (its project removed) is listed with the ones to connect, with "Add again".
+  const toConnect = (r: GitHubRepository) => queued.has(r.repositoryId) || !!r.excludedAt || !isConnectedOrOpen(r);
   const onFenvix = (r: GitHubRepository) => !toConnect(r);
   const connectedCount = list.filter((r) => !r.removed && installations.some((i) => i.installationId === r.installationId) && onFenvix(r)).length;
   const reason = params.get("reason") ?? "error";
@@ -485,7 +537,7 @@ export function ConnectPage() {
           {repos.status === "loading" && <Message>Loading repositories</Message>}
           {repos.status === "error" && <Message role="alert">{repos.message}</Message>}
           {connection.status === "ready" && repos.status === "ready" && installations.length === 0 && <p className="muted small">No installation yet: install the app first.</p>}
-          {connection.status === "ready" && repos.status === "ready" && installations.map((i) => <InstallationBlock key={i.installationId} installation={i} repos={list} queued={queued} onOpen={open} highlight={i.installationId === highlighted} kind={shownKind} show={toConnect} />)}
+          {connection.status === "ready" && repos.status === "ready" && installations.map((i) => <InstallationBlock key={i.installationId} installation={i} repos={list} queued={queued} onOpen={open} restoring={restoring} onRestore={restore} highlight={i.installationId === highlighted} kind={shownKind} show={toConnect} />)}
         </Step>
         <Step n={3} done={merged} title="Merge it on GitHub">
           <p className="muted">After the merge, the next test run goes to fenvix and the repository becomes a project, with its runs, defects and minutes saved. fenvix also runs the test job once on the default branch, at no charge, so your first pull request finds the cache warm.</p>
@@ -505,7 +557,7 @@ export function ConnectPage() {
           {installations
             .filter((i) => list.some((r) => r.installationId === i.installationId && !r.removed && onFenvix(r)))
             .map((i) => (
-              <InstallationBlock key={i.installationId} installation={i} repos={list} queued={queued} onOpen={open} highlight={false} kind={shownKind} show={onFenvix} secondary />
+              <InstallationBlock key={i.installationId} installation={i} repos={list} queued={queued} onOpen={open} restoring={restoring} onRestore={restore} highlight={false} kind={shownKind} show={onFenvix} secondary />
             ))}
         </details>
       )}

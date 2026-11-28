@@ -26,6 +26,11 @@ export interface OrgsClient {
   /** Renames the current organization and confirms its name. */
   renameOrganization(name: string): Promise<Organization>;
   leaveOrganization(): Promise<void>;
+  /**
+   * The owner only: deletes the current organization and everything of it; the GitHub App is uninstalled from the
+   * accounts it connected; the caller's own sign-in is deleted when they belong to no other organization.
+   */
+  deleteOrganization(): Promise<void>;
   listMembers(): Promise<{ items: Member[]; limit: number }>;
   changeRole(userId: string, role: OrgRole): Promise<void>;
   removeMember(userId: string): Promise<void>;

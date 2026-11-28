@@ -13,13 +13,16 @@ export function allowed(op: { admin: boolean }, role: Role): boolean {
 }
 
 /**
- * The work the API hands to the App's worker (github-app/src/work.ts): "onboard" (a setup pull request) and
- * "installation_linked" (an installation was just linked: its repositories get their projects).
+ * The work the API hands to the App's worker (github-app/src/work.ts): "onboard" (a setup pull request),
+ * "installation_linked" (an installation was just linked: its repositories get their projects), "sync_repository" (a
+ * repository was added again: its project comes back) and "uninstall_installation" (its organization was deleted).
  */
 export type OnboardWork =
   | { kind: "onboard"; repositoryId: number }
   | { kind: "installation_linked"; installationId: number }
-  | { kind: "refresh_default_branch"; repositoryId: number };
+  | { kind: "refresh_default_branch"; repositoryId: number }
+  | { kind: "sync_repository"; repositoryId: number }
+  | { kind: "uninstall_installation"; installationId: number };
 export interface OnboardQueue { enqueue(work: OnboardWork): Promise<void> }
 
 export interface Org { id: string; name: string; nameConfirmed: boolean; region: "us" | "eu"; emailNotices: boolean }
