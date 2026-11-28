@@ -161,6 +161,8 @@ const TESTS = {
 
   async "connect: a done step is green with a tick, the diff is red and green with - and +, each onboarding state has its colour and words"(page) {
     await signIn(page, "projects/connect");
+    // Repositories on fenvix or with a pull request open are in the collapsed block below the steps (console cleanup).
+    await page.locator("details.connect-on > summary").click();
     const done = await paint(page, ".step[data-done] .step-n");
     assert(done.bg === SUCCESS && done.svg, `a done step is ${done.bg}`);
     const del = await paint(page, ".diff-del");
@@ -208,7 +210,8 @@ const TESTS = {
     assert(!STATUS.includes(bar.bg), `the progress bar is ${bar.bg}`);
     await huesOnPage(page, STATUS);
     await fits(page);
-    await useOrgOf(page, "org_harbor", "overview");
+    // The trial shows on the billing page only (hidden from the navigation, reached by its URL).
+    await useOrgOf(page, "org_harbor", "billing");
     const gate = await paint(page, "#trial .state-ok");
     assert(gate.text === "35% gate met" && gate.border === SUCCESS && gate.svg, `the gate: "${gate.text}" ${gate.border}`);
     await huesOnPage(page, STATUS);

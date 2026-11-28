@@ -1,9 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, BookOpen, Building2, ChartColumn, Check, ChevronDown, FolderGit2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, ShieldCheck, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, BookOpen, Building2, ChartColumn, Check, ChevronDown, CircleHelp, Database, FileCheck, FolderGit2, Gauge, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, Search, ShieldCheck, SlidersHorizontal, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { AccountMenu, OrgAvatar, useCurrentOrg } from "./AccountMenu";
-import { useToast } from "./Toast";
 import { useFocusTrap } from "../lib/useFocusTrap";
 import { useOrg } from "../session/OrgProvider";
 import { useTheme } from "../lib/theme";
@@ -11,6 +10,7 @@ import { client, type ProjectRow, type SearchResult } from "../data";
 import { setupSnippet } from "../data/ci";
 import { CopyButton } from "./CopyButton";
 import { ROLE_NAMES } from "../data/orgs";
+import { PROJECT_SOON, PYTHON_SOON } from "./ComingSoon";
 
 /*
  * The console's frame, laid out like the mockup (fenvix-brain, Fenvix console 3):
@@ -33,16 +33,14 @@ type AreaKey = "overview" | "projects" | "usage" | "org";
 type Area = { key: AreaKey; label: string; icon: LucideIcon; to: string; match: (path: string) => boolean };
 const AREAS: Area[] = [
   { key: "overview", label: "Overview", icon: LayoutDashboard, to: "/overview", match: (p) => p.startsWith("/overview") },
-  { key: "projects", label: "Projects", icon: FolderGit2, to: "/projects", match: (p) => p.startsWith("/projects") || p.startsWith("/defects") },
-  { key: "usage", label: "Usage and billing", icon: ChartColumn, to: "/usage", match: (p) => p.startsWith("/usage") || p.startsWith("/billing") },
+  { key: "projects", label: "Projects", icon: FolderGit2, to: "/projects", match: (p) => p.startsWith("/projects") || p.startsWith("/defects") || p === "/python" },
+  { key: "usage", label: "Usage", icon: ChartColumn, to: "/usage", match: (p) => p.startsWith("/usage") || p.startsWith("/billing") },
   { key: "org", label: "Organization", icon: Building2, to: "/settings", match: (p) => p.startsWith("/settings") || p.startsWith("/api-keys") },
 ];
 const areaOf = (path: string): AreaKey | null => AREAS.find((a) => a.match(path))?.key ?? null;
 
-const USAGE_PAGES = [
-  { to: "/usage", label: "Usage", end: false },
-  { to: "/billing", label: "Plans and billing", end: false },
-];
+// Plans and billing is hidden until the price is decided (22 Dec): the /billing route and its page stay, with no link.
+const USAGE_PAGES = [{ to: "/usage", label: "Usage", end: false }];
 const SETTINGS_PAGES = [
   { to: "/settings", label: "General", end: true },
   { to: "/settings/members", label: "Members", end: false },
@@ -52,23 +50,29 @@ const PROJECTS_PAGES = [
   { to: "/projects", label: "All projects", end: true },
   { to: "/defects", label: "All defects", end: true },
   { to: "/projects/connect", label: "Connect a project", end: false },
+  { to: PYTHON_SOON.to, label: PYTHON_SOON.label, end: true },
 ];
 /**
  * The project's sections, as in the dashboard drawn in the landing (founder, 2026-11-17): the icons of the rail and the
  * first links of the second bar.
  */
-type SectionKey = "runs" | "parallel" | "defects" | "skip" | "nightly" | "ttg" | "settings";
-type Section = { key: SectionKey; label: string; icon: LucideIcon; to: (id: string) => string };
+type SectionKey = "runs" | "parallel" | "defects" | "skip" | "nightly" | "ttg" | "settings" | "proof" | "compatibility" | "red" | "database";
+type Section = { key: SectionKey; label: string; icon: LucideIcon; to: (id: string) => string; soon?: boolean };
 const PROJECT_SECTIONS: Section[] = [
   { key: "runs", label: "Runs", icon: Play, to: (id) => `/projects/${id}` },
   { key: "parallel", label: "Parallel with proof", icon: ShieldCheck, to: (id) => `/projects/${id}/parallel-with-proof` },
   { key: "defects", label: "Defects", icon: TriangleAlert, to: (id) => `/projects/${id}/defects` },
-  { key: "skip", label: "Skip with proof", icon: Check, to: (id) => `/projects/${id}/skip-with-proof` },
-  { key: "nightly", label: "Nightly exploration", icon: Moon, to: (id) => `/projects/${id}/nightly` },
+  { key: "skip", label: "Cache with proof", icon: Check, to: (id) => `/projects/${id}/skip-with-proof` },
   { key: "ttg", label: "Time to green", icon: ChartColumn, to: (id) => `/projects/${id}/time-to-green` },
+  // Live-list features not built yet: each opens its coming-soon page (src/components/ComingSoon.tsx).
+  { key: "proof", label: PROJECT_SOON.proof.label, icon: FileCheck, to: (id) => `/projects/${id}/${PROJECT_SOON.proof.path}`, soon: true },
+  { key: "compatibility", label: PROJECT_SOON.compatibility.label, icon: Gauge, to: (id) => `/projects/${id}/${PROJECT_SOON.compatibility.path}`, soon: true },
+  { key: "red", label: PROJECT_SOON.red.label, icon: CircleHelp, to: (id) => `/projects/${id}/${PROJECT_SOON.red.path}`, soon: true },
+  { key: "database", label: PROJECT_SOON.database.label, icon: Database, to: (id) => `/projects/${id}/${PROJECT_SOON.database.path}`, soon: true },
+  { key: "nightly", label: PROJECT_SOON.nightly.label, icon: Moon, to: (id) => `/projects/${id}/${PROJECT_SOON.nightly.path}`, soon: true },
   { key: "settings", label: "Settings", icon: SlidersHorizontal, to: (id) => `/projects/${id}/settings` },
 ];
-const SECTION_OF: Record<string, SectionKey> = { "parallel-with-proof": "parallel", defects: "defects", "skip-with-proof": "skip", nightly: "nightly", "time-to-green": "ttg", settings: "settings", runs: "runs" };
+const SECTION_OF: Record<string, SectionKey> = { "parallel-with-proof": "parallel", defects: "defects", "skip-with-proof": "skip", nightly: "nightly", "time-to-green": "ttg", settings: "settings", runs: "runs", proof: "proof", compatibility: "compatibility", "is-this-red-real": "red", database: "database" };
 const LAST_PROJECT = "fenvix-last-project";
 export function rememberProject(id: string) {
   try {
@@ -173,6 +177,7 @@ function ProjectSectionLinks({ projectId, onNavigate, keys }: { projectId: strin
       {PROJECT_SECTIONS.filter((s) => !keys || keys.includes(s.key)).map((s) => (
         <Link key={s.key} to={s.to(projectId)} onClick={onNavigate} className={section === s.key ? "cx-sub-link active" : "cx-sub-link"} aria-current={section === s.key ? "page" : undefined}>
           {s.label}
+          {s.soon && <span className="cx-soon">Soon</span>}
         </Link>
       ))}
     </>
@@ -237,10 +242,10 @@ function SubNav({ path, orgName }: { path: string; orgName: string }) {
       ) : (
         <>
           <div className="cx-sub-head">
-            <span className="cx-sub-kind">{area === "usage" ? "Usage and billing" : "Organization"}</span>
+            <span className="cx-sub-kind">{area === "usage" ? "Usage" : "Organization"}</span>
             <span className="cx-sub-title">{orgName || " "}</span>
           </div>
-          <nav aria-label={area === "usage" ? "Usage and billing" : "Organization settings"} className="cx-sub-nav">
+          <nav aria-label={area === "usage" ? "Usage" : "Organization settings"} className="cx-sub-nav">
             <PageLinks pages={area === "usage" ? USAGE_PAGES : SETTINGS_PAGES} />
           </nav>
         </>
@@ -387,8 +392,8 @@ function Drawer({ onClose }: { path: string; onClose: () => void }) {
             <ProjectSectionLinks projectId={projectId} onNavigate={onClose} />
           </nav>
         )}
-        <nav aria-label="Usage and billing" className="cx-drawer-group">
-          <p className="cx-drawer-label">Usage and billing</p>
+        <nav aria-label="Usage" className="cx-drawer-group">
+          <p className="cx-drawer-label">Usage</p>
           <PageLinks pages={USAGE_PAGES} onNavigate={onClose} />
         </nav>
         <nav aria-label="Organization settings" className="cx-drawer-group">
@@ -411,7 +416,6 @@ function Drawer({ onClose }: { path: string; onClose: () => void }) {
 function OrgCrumb({ name }: { name: string }) {
   const org = useOrg();
   const navigate = useNavigate();
-  const toast = useToast();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
   const listId = useId();
@@ -455,7 +459,6 @@ function OrgCrumb({ name }: { name: string }) {
                 if (o.id === org.current?.id) return;
                 org.switchTo(o.id);
                 navigate("/overview");
-                toast(`Switched to ${o.name}`, "success");
               }}
             >
               <OrgAvatar name={o.name} size={24} />
@@ -604,10 +607,10 @@ const JUMP_PAGES = [
   { label: "Connect a project", to: "/projects/connect" },
   { label: "Defects", to: "/defects" },
   { label: "Usage", to: "/usage" },
-  { label: "Billing", to: "/billing" },
   { label: "Organization settings", to: "/settings" },
   { label: "Members", to: "/settings/members" },
   { label: "API keys", to: "/api-keys" },
+  { label: PYTHON_SOON.label, to: PYTHON_SOON.to },
 ];
 
 /**

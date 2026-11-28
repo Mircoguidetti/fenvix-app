@@ -12,8 +12,10 @@ export const lastRedirectError = () => redirectError;
  *
  * Supabase sends the browser back to the site root with `?code=…` in the query string. This
  * runs before React renders: the code is read from `location.search`, exchanged for a session,
- * and the address is then replaced with `/overview` (no query, no history entry), so the router
+ * and the address keeps its path but loses its query and hash (no history entry), so the router
  * mounts on a clean URL with the session already stored. Nothing downstream ever sees the code.
+ * The page asked for before sign-in is not handled here (this runs only with the API backend): it is
+ * the `next` of /welcome, kept in sessionStorage, and App.tsx (SignedInReturn) goes there for both backends.
  */
 export async function completeAuthRedirect(): Promise<void> {
   if (backend !== "api" || typeof window === "undefined") return;
@@ -22,7 +24,8 @@ export async function completeAuthRedirect(): Promise<void> {
   const failure = params.get("error_description") ?? params.get("error");
   if (!code && !failure) return;
 
-  if (failure) redirectError = decodeURIComponent(failure);
+  // URLSearchParams has already decoded it; decoding again throws on a literal "%" and the app never starts.
+  if (failure) redirectError = failure;
   else if (configError) redirectError = configError;
   else {
     try {

@@ -280,6 +280,11 @@ export async function buildApp(deps: Deps): Promise<App> {
     const back = (params: Record<string, string>, fragment?: Record<string, string>) =>
       reply.redirect(`${cfg.dashboardUrl}/projects/connect?${new URLSearchParams(params)}${fragment ? `#${new URLSearchParams(fragment)}` : ""}`, 303);
     if (q.setup_action === "request") return back({ github: "requested" });
+    // "Choose more repositories" opens GitHub's installation settings directly, with no fenvix state; GitHub then
+    // comes back here with setup_action=update and no state. That links nothing and consumes nothing: the repository
+    // change itself arrives by the installation_repositories webhook. A state that is present but bad still gives
+    // "expired" below.
+    if (q.setup_action === "update" && !q.state) return back({ github: "updated" });
     const state = verifyState(cfg.stateSigningKey, q.state);
     if (!state) return back({ github: "error", reason: "expired" });
     const installationId = Number(q.installation_id);

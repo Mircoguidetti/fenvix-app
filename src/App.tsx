@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes, Link } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, Link, useLocation, useNavigate } from "react-router-dom";
 import { ToastProvider } from "./components/Toast";
 import { SessionProvider, useSession } from "./session/SessionProvider";
 import { SignInPage } from "./pages/SignIn";
@@ -8,7 +8,9 @@ import { ProjectsPage } from "./pages/Projects";
 import { ConnectPage } from "./pages/Connect";
 import { ProjectPage } from "./pages/Project";
 import { RunPage } from "./pages/Run";
-import { NightlyPage, ParallelWithProofPage, SkipWithProofPage, TimeToGreenPage } from "./pages/ProjectSections";
+import { ParallelWithProofPage, ProjectComingSoon, SkipWithProofPage, TimeToGreenPage } from "./pages/ProjectSections";
+import { ComingSoon, PROJECT_SOON, PYTHON_SOON } from "./components/ComingSoon";
+import { Kicker } from "./components/PageHeader";
 import { client } from "./data";
 import { rememberedProject } from "./components/Shell";
 import { useEffect, useState } from "react";
@@ -22,6 +24,8 @@ import { STYLEGUIDE_ON, StyleguidePage } from "./pages/Styleguide";
 import { OrgProvider, useOrg } from "./session/OrgProvider";
 import { InviteScreen, NameOrgScreen, NoOrgScreen } from "./components/OrgScreens";
 import { usePendingInvite } from "./lib/invite";
+import { LoadingScreen } from "./components/LoadingScreen";
+import { forgetNext, rememberNext, safeNext, storedNext, welcomeUrl } from "./lib/next";
 
 function NotFound() {
   return (
@@ -48,20 +52,72 @@ function Gated() {
   const org = useOrg();
   const invite = usePendingInvite();
   if (invite) return <InviteScreen token={invite} />;
-  if (org.status === "loading") return null;
+  if (org.status === "loading") return <LoadingScreen />;
   if (org.status === "ready" && org.orgs.length === 0) return <NoOrgScreen />;
   if (org.current?.role === "owner" && !org.current.nameConfirmed) return <NameOrgScreen key={org.current.id} />;
   return <Dashboard key={org.current?.id ?? "default"} />;
 }
 
+/**
+ * Signed out, every console URL goes to /welcome?next=<the path asked for> (replace: Back does not return to the
+ * redirect). The mock's one-time email link (?token=…) is carried along so it still signs the browser in.
+ */
+function SignedOut() {
+  const { pathname, search, hash } = useLocation();
+  if (pathname === "/welcome") {
+    const next = new URLSearchParams(search).get("next");
+    if (next) rememberNext(next);
+    return <SignInPage welcome />;
+  }
+  const params = new URLSearchParams(search);
+  const token = params.get("token");
+  params.delete("token");
+  const rest = params.toString();
+  const to = welcomeUrl(`${pathname}${rest ? `?${rest}` : ""}${hash}`);
+  return <Navigate to={token ? `${to}${to.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : to} replace />;
+}
+
+/**
+ * Signed in at /welcome (just signed in there, or a visit): go to its `next` (or the one kept in sessionStorage)
+ * when it is a same-site path, otherwise to "/".
+ */
+function WelcomeSignedIn() {
+  const { search } = useLocation();
+  const to = safeNext(new URLSearchParams(search).get("next") ?? storedNext(), window.location.origin);
+  useEffect(forgetNext, []);
+  return <Navigate to={to} replace />;
+}
+
+/**
+ * The first screen after a sign-in that left the site (GitHub or Google come back to the site root): go to the `next`
+ * kept in sessionStorage, when it is a same-site path. Runs once per signed-in person.
+ */
+function SignedInReturn() {
+  const { pathname, search } = useLocation();
+  const navigate = useNavigate();
+  const [stored] = useState(storedNext);
+  useEffect(() => {
+    forgetNext();
+    if (!stored) return;
+    const to = safeNext(stored, window.location.origin);
+    if (to !== `${pathname}${search}`) navigate(to, { replace: true });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
+}
+
 function Routed() {
   const { status, user } = useSession();
-  if (status === "loading") return null;
-  if (!user) return <SignInPage />;
+  const { pathname } = useLocation();
+  if (status === "loading") return <LoadingScreen />;
+  if (!user) return <SignedOut />;
+  if (pathname === "/welcome") return <WelcomeSignedIn />;
   return (
-    <OrgProvider key={user.id}>
-      <Gated />
-    </OrgProvider>
+    <>
+      <SignedInReturn key={user.id} />
+      <OrgProvider key={user.id}>
+        <Gated />
+      </OrgProvider>
+    </>
   );
 }
 
@@ -84,7 +140,7 @@ function Home() {
       live = false;
     };
   }, []);
-  return to ? <Navigate to={to} replace /> : null;
+  return to ? <Navigate to={to} replace /> : <LoadingScreen inline />;
 }
 
 /** Keyed by the organization: switching remounts every screen, so nothing of the previous one stays on show. */
@@ -100,7 +156,10 @@ function Dashboard() {
         <Route path="/projects/:id/parallel-with-proof" element={<ParallelWithProofPage />} />
         <Route path="/projects/:id/defects" element={<ProjectDefectsPage />} />
         <Route path="/projects/:id/skip-with-proof" element={<SkipWithProofPage />} />
-        <Route path="/projects/:id/nightly" element={<NightlyPage />} />
+        {(Object.keys(PROJECT_SOON) as (keyof typeof PROJECT_SOON)[]).map((k) => (
+          <Route key={k} path={`/projects/:id/${PROJECT_SOON[k].path}`} element={<ProjectComingSoon key={k} item={k} />} />
+        ))}
+        <Route path={PYTHON_SOON.to} element={<ComingSoon kicker={<Kicker>Projects</Kicker>} title={PYTHON_SOON.label} sentence={PYTHON_SOON.sentence} />} />
         <Route path="/projects/:id/time-to-green" element={<TimeToGreenPage />} />
         <Route path="/projects/:id/settings" element={<ProjectPage section="settings" />} />
         <Route path="/projects/:projectId/runs/:runId" element={<RunPage />} />
@@ -120,7 +179,7 @@ function Dashboard() {
 }
 
 // BrowserRouter: real URLs (/overview, /projects/…). The host must answer every path with index.html (see vercel.json).
-// Signed-out visitors see the sign-in page on every route.
+// Signed-out visitors are sent to /welcome?next=<path> (the sign-in page with a welcome line).
 export default function App() {
   return (
     <BrowserRouter>

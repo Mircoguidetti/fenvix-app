@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { client, type Region, type Settings } from "../data";
 import { orgs } from "../data/orgs-client";
 import { ROLE_NAMES, orgNameProblem } from "../data/orgs";
@@ -150,7 +150,7 @@ function RegionCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Se
 
 /**
  * The owner only: deletes the organization and everything of it. The typed organization name enables the button.
- * After it the console signs out (the person's sign-in may be gone) and lands on the sign-in page.
+ * After it the console signs out (the person's sign-in may be gone) and lands on /welcome.
  */
 function DeleteAccountCard() {
   const org = useOrg();
@@ -175,7 +175,7 @@ function DeleteAccountCard() {
     setOpen(false);
     // The sign-in may already be gone with the account: signing out here only clears this browser.
     await signOut().catch(() => undefined);
-    navigate("/", { replace: true });
+    navigate("/welcome", { replace: true });
   }
 
   return (
@@ -225,6 +225,7 @@ export function SettingsPage() {
   const [form, setForm] = useState<Settings | null>(null);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
   const readOnly = !org.canManage;
   // With the organizations API the name has its own card; without it, it stays in this form as before.
   const nameHere = org.status !== "ready";
@@ -271,7 +272,7 @@ export function SettingsPage() {
                 )}
                 <label className="check">
                   <input type="checkbox" checked={form.emailNotices} onChange={(e) => { setSaved(false); setForm({ ...form, emailNotices: e.target.checked }); }} />
-                  Email me about new defects, run units nearing what the plan includes, and account notices
+                  Email me about new defects and account notices
                 </label>
               </fieldset>
               {error && <p id="ws-error" className="error" role="alert">{error}</p>}
@@ -288,30 +289,22 @@ export function SettingsPage() {
         {current && <RegionCard settings={current} onSaved={(next) => (loaded.setData(next), setForm((f) => (f ? { ...f, region: next.region } : next)))} />}
 
         <Card id="account" title="Account" description="You are signed in on this device.">
-          <dl className="facts facts-fill">
-            <div>
-              <dt>Name</dt>
-              <dd>{user?.name}</dd>
-            </div>
-            <div>
-              <dt>Email</dt>
-              <dd className="ellipsis">{user?.email}</dd>
-            </div>
-            <div>
-              <dt>Plan</dt>
-              <dd>
-                <Link to="/billing" className="row-link">
-                  See billing
-                </Link>
-              </dd>
-            </div>
-            <div>
-              <dt>Role</dt>
-              <dd>{org.role ? ROLE_NAMES[org.role] : "Owner"}</dd>
-            </div>
+          {/* Name, email and role in one compact block: no stretched rows (founder review, 27 Nov). */}
+          <dl className="account-id">
+            <dt className="sr-only">Name</dt>
+            <dd className="account-id-name">{user?.name}</dd>
+            <dt className="sr-only">Email</dt>
+            <dd className="account-id-email muted ellipsis" title={user?.email}>
+              {user?.email}
+            </dd>
+            <dt className="sr-only">Role</dt>
+            <dd className="account-id-role">
+              <span className="tag">{org.role ? ROLE_NAMES[org.role] : "Owner"}</span>
+            </dd>
           </dl>
           <div className="row-actions">
-            <button type="button" className="btn" onClick={async () => (await signOut(), toast("Signed out", "success"))}>
+            {/* Disabled while signing out: a second click on a slow sign-out used to sign out (and toast) twice. */}
+            <button type="button" className="btn" disabled={signingOut} onClick={() => (setSigningOut(true), void signOut().catch(() => setSigningOut(false)))}>
               Sign out
             </button>
             <span className="muted small">Signing out affects this browser only.</span>

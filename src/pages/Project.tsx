@@ -347,7 +347,7 @@ function SettingsTab({ project, onSaved }: { project: ProjectRow; onSaved: () =>
         <fieldset disabled={readOnly} className="plain-fieldset stack">
           <Switch id="s-skip" checked={form.skipWithProof} onChange={(v) => setForm({ ...form, skipWithProof: v })} label="Skip tests with proof" help="Reuse a test's result only when the code it ran, the files and environment variables it read, the runtime and the configuration are all proven unchanged." disabled={readOnly} />
           <Switch id="s-comment" checked={form.commentOnPullRequests} onChange={(v) => setForm({ ...form, commentOnPullRequests: v })} label="Comment on pull requests" help="One comment per pull request: tests skipped with proof, failures, and the replay command of any flaky defect." disabled={readOnly} />
-          <Switch id="s-nightly" checked={form.nightlyExploration} onChange={(v) => setForm({ ...form, nightlyExploration: v })} label="Nightly exploration" help="Runs the suite at night in many orders and seeds on fenvix machines to find hidden order and timing bugs. A paid add-on; not counted in your run units." disabled={readOnly} />
+          {/* Nightly exploration is coming soon (live list): its switch is hidden; the setting stays in the data as it is. */}
           <div className="field">
             <label htmlFor="s-cmd">Test command</label>
             <input id="s-cmd" className="mono" value={form.testCommand} maxLength={500} placeholder={project.testRunner === "pytest" ? "pytest" : project.testRunner === "go test" ? "go test ./..." : `npx ${project.testRunner}`} onChange={(e) => setForm({ ...form, testCommand: e.target.value })} aria-describedby="s-cmd-help" />
@@ -482,7 +482,7 @@ export function ProjectPage({ section = "runs" }: { section?: "runs" | "settings
         <SetupTab project={p} />
         {canManageOrg && <RemoveProjectCard project={p} />}
         <p className="muted small">
-          Organization: <Link to="/settings" className="row-link">settings</Link> · <Link to="/settings/members" className="row-link">members</Link> · <Link to="/billing" className="row-link">plans and billing</Link>
+          Organization: <Link to="/settings" className="row-link">settings</Link> · <Link to="/settings/members" className="row-link">members</Link>
         </p>
       </>
     );

@@ -456,8 +456,9 @@ table.data tr[data-selected] { background: var(--surface-2); }
 .pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
 
 /* Toasts */
-.toasts { position: fixed; left: 0; right: 0; bottom: 16px; z-index: 80; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 0 16px; pointer-events: none; }
-.toast { pointer-events: auto; display: flex; align-items: center; gap: 12px; max-width: min(560px, 100%); padding: 8px 8px 8px 16px; background: var(--text); color: var(--on-text); border-radius: 12px; font-weight: 500; }
+.toasts { position: fixed; top: 16px; right: 16px; z-index: 80; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; width: min(420px, calc(100vw - 32px)); pointer-events: none; }
+@media (max-width: 599px) { .toasts { left: 16px; width: auto; align-items: stretch; } }
+.toast { pointer-events: auto; display: flex; align-items: center; gap: 12px; max-width: 100%; padding: 8px 8px 8px 16px; background: var(--text); color: var(--on-text); border-radius: 12px; font-weight: 500; }
 .toast-close { width: 32px; height: 32px; border-color: transparent; background: transparent; color: inherit; flex-shrink: 0; }
 .toast-close:hover { background: transparent; opacity: 0.7; }
 .toast-close:focus-visible { outline-color: var(--on-text); }
@@ -1823,3 +1824,34 @@ table.data.dbs thead th { font-size: 12px; }
 .side-by-side .kpis .kpi-value { font-size: clamp(17px, 2.2vw, 24px); }
 .sbs-table .name-cell > .state { align-self: flex-start; }
 @media (max-width: 640px) { .connect-kind .seg button { min-height: var(--touch); } }
+
+/* Usage per project: the project on one line (full name on hover), numbers never wrap, headers wrap to two lines;
+   a table still wider than its card scrolls inside the card, never the page. */
+.table-card.usage-table-card { overflow-x: auto; }
+table.usage-table th, table.usage-table td { padding: 0 12px; }
+table.usage-table thead th { white-space: normal; line-height: 1.25; }
+table.usage-table thead th.num { min-width: 72px; }
+table.usage-table td.num { white-space: nowrap; }
+table.usage-table td.usage-project .usage-project-name { display: block; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 820px) {
+  table.usage-table th, table.usage-table td { padding: 3px 0; }
+  table.usage-table td.usage-project .usage-project-name { flex: 1 1 auto; min-width: 0; max-width: none; text-align: right; }
+}
+
+/* Settings, account card: name, email and role together at the top of the card. */
+.account-id { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name role" "email role"; column-gap: 12px; row-gap: 2px; align-items: center; margin: 0; }
+.account-id dd { margin: 0; }
+.account-id-name { grid-area: name; font-weight: 600; overflow-wrap: anywhere; }
+.account-id-email { grid-area: email; font-size: 13.5px; }
+.account-id-role { grid-area: role; }
+
+/* Connect a project: repositories already connected, below the steps, collapsed by default. */
+.connect-on { display: flex; flex-direction: column; gap: 12px; }
+.connect-on > summary { display: flex; align-items: center; gap: 10px; min-height: var(--touch, 44px); cursor: pointer; font-weight: 600; list-style-position: inside; }
+.connect-on:not([open]) > :not(summary) { display: none; }
+
+/* /welcome: one line above the sign-in form. */
+.signin-welcome { margin: 0 0 4px; font-weight: 600; }
+
+/* A project section that opens a coming-soon page. */
+.cx-soon { margin-left: auto; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: 6px; font: 500 10.5px/18px var(--mono); letter-spacing: 0.04em; color: var(--muted); }
