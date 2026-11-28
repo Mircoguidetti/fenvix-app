@@ -31,17 +31,17 @@
   --nav-border: #e8e9ee;
   --nav-hover: #f1f2f5;
   --nav-active: #dfe6ef; /* the selected menu item: a slate tint */
-  --nav-on: #0d4fa3; /* its text and icon */
+  --nav-on: #4b5d74; /* its text and icon */
   --nav-box: #f3f3f5; /* the box at the bottom of the second bar */
   --grid: #ececef;
   --ink-2: #5e7088; /* the second line of a chart, dashed: slate */
   --ink-3: #c6cfdb; /* the soft part of a bar: slate */
-  --chart: #0d4fa3; /* chart lines and bars: the landing blue */
-  --chart-fill: rgba(13, 79, 163, 0.06);
-  --area-1: #0d4fa3; --area-1-o: 0.16; --area-2: #0d4fa3; --area-2-o: 0.05; /* the fade under chart lines */
+  --chart: #4b5d74; /* chart lines and bars: the landing blue */
+  --chart-fill: rgba(75, 93, 116, 0.06);
+  --area-1: #4b5d74; --area-1-o: 0.16; --area-2: #4b5d74; --area-2-o: 0.05; /* the fade under chart lines */
   --shadow: none;
   --shadow-lg: 0 12px 32px rgba(6, 8, 14, 0.12);
-  --focus: 0 0 0 3px rgba(13, 79, 163, 0.18);
+  --focus: 0 0 0 3px rgba(75, 93, 116, 0.18);
 
   /* Status colours, flat. On the light content: at least 4.5:1, so text may use them. */
   --success: #067a3a;
@@ -517,9 +517,9 @@ html:has(.signin-page), body:has(.signin-page) { background: var(--bg); }
 .kpi-spark { margin-top: auto; padding-top: 8px; }
 .spark { display: block; width: 100%; height: 30px; }
 .spark-line { stroke: var(--chart); stroke-width: 1.25; stroke-linejoin: round; }
-.spark-area { fill: rgba(13, 79, 163, 0.07); } /* fallback; the charts fill it with the silver gradient */
+.spark-area { fill: rgba(75, 93, 116, 0.07); } /* fallback; the charts fill it with the silver gradient */
 
-.chart-area { fill: rgba(13, 79, 163, 0.08); }
+.chart-area { fill: rgba(75, 93, 116, 0.08); }
 .chart-line { stroke: var(--chart); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
 .chart-line-dash { stroke: var(--ink-2); stroke-width: 1.5; stroke-dasharray: 5 4; }
 .chart-dot { fill: var(--chart); }
@@ -534,7 +534,7 @@ html:has(.signin-page), body:has(.signin-page) { background: var(--bg); }
 .key-block { width: 11px; height: 11px; border-radius: 3px; }
 .legend-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; }
 .legend-list li { display: inline-flex; align-items: center; gap: 6px; }
-:root { --stack-0: #0d4fa3; --stack-1: #4b5d74; --stack-2: #5e7088; --stack-3: #6f8197; --stack-4: #7d8ea4; --stack-5: #e4e6ea; }
+:root { --stack-0: #4b5d74; --stack-1: #4b5d74; --stack-2: #5e7088; --stack-3: #6f8197; --stack-4: #7d8ea4; --stack-5: #e4e6ea; }
 :root[data-theme="dark"] { --stack-0: #d7e1ed; --stack-1: #acbbcf; --stack-2: #8597ae; --stack-3: #6b7c92; --stack-4: #5e7088; --stack-5: #1f2e51; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --stack-0: #d7e1ed; --stack-1: #acbbcf; --stack-2: #8597ae; --stack-3: #6b7c92; --stack-4: #5e7088; --stack-5: #1f2e51; } }
 
@@ -1580,8 +1580,8 @@ input:focus-visible, textarea:focus-visible, .select-btn:focus-visible { border-
 
 /* Sign-in, light: the landing's hero. White sky turning blue at the horizon, a static band of small blue squares
    rising from the bottom, and the landing's title type. Same values as fenvix-landing. */
-.signin-hero { color: var(--text); background: radial-gradient(70% 46% at 50% 104%, rgba(13, 79, 163, 0.2), rgba(13, 79, 163, 0) 70%), linear-gradient(180deg, #ffffff 0%, #ffffff 40%, #f3f6fb 60%, #e5edf8 80%, #d8e4f4 100%); }
-.signin-hero::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: conic-gradient(from 270deg at 1.2px 1.2px, rgba(13, 79, 163, 0.42) 25%, rgba(13, 79, 163, 0) 0); background-size: 5px 5px; -webkit-mask-image: linear-gradient(to top, #fff 0%, rgba(255, 255, 255, 0.55) 22%, rgba(255, 255, 255, 0) 52%); mask-image: linear-gradient(to top, #fff 0%, rgba(255, 255, 255, 0.55) 22%, rgba(255, 255, 255, 0) 52%); }
+.signin-hero { color: var(--text); background: radial-gradient(70% 46% at 50% 104%, rgba(75, 93, 116, 0.2), rgba(75, 93, 116, 0) 70%), linear-gradient(180deg, #ffffff 0%, #ffffff 40%, #f3f6fb 60%, #e5edf8 80%, #d8e4f4 100%); }
+.signin-hero::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: conic-gradient(from 270deg at 1.2px 1.2px, rgba(75, 93, 116, 0.42) 25%, rgba(75, 93, 116, 0) 0); background-size: 5px 5px; -webkit-mask-image: linear-gradient(to top, #fff 0%, rgba(255, 255, 255, 0.55) 22%, rgba(255, 255, 255, 0) 52%); mask-image: linear-gradient(to top, #fff 0%, rgba(255, 255, 255, 0.55) 22%, rgba(255, 255, 255, 0) 52%); }
 .signin-hero .logo { color: var(--text); }
 .signin-hero-title { font-size: clamp(40px, 4.4vw, 64px); line-height: 1; letter-spacing: -0.045em; font-weight: 600; }
 .signin-hero-lead { color: #5f636b; font-size: clamp(16.5px, 1.3vw, 19px); line-height: 1.5; }
